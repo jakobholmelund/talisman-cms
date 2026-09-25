@@ -1,8 +1,8 @@
 import { AstroIntegration } from 'astro';
 import { T as TalismanAuthAdapter } from './types-B9Ys5hZL.js';
 import { E as EmailRuntimeDescriptor } from './types-CqOBvOgc.js';
-import { C as CollectionConfig, G as GlobalConfig, P as Plugin } from './types-ENgZDEOO.js';
-export { B as BlockDefinition, a as CollectionHookArgs, b as CollectionHooks, c as ComponentDefinition, d as ComponentSlotDefinition, F as FieldDefinition, e as FieldType, f as RuntimeCollectionHooks, U as UiComponentPresetDefinition, g as UiLibraryBlockAdapter, h as UiLibraryComponentAdapter, i as UiLibraryDefinition } from './types-ENgZDEOO.js';
+import { C as CollectionConfig, G as GlobalConfig, P as Plugin } from './types-DZZq-VQM.js';
+export { B as BlockDefinition, a as CollectionHookArgs, b as CollectionHooks, c as ComponentDefinition, d as ComponentSlotDefinition, F as FieldDefinition, e as FieldType, f as RuntimeCollectionHooks, U as UiComponentPresetDefinition, g as UiLibraryBlockAdapter, h as UiLibraryComponentAdapter, i as UiLibraryDefinition } from './types-DZZq-VQM.js';
 
 interface TalismanCmsOptions {
     /**

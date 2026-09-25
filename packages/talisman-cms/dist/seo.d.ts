@@ -1,4 +1,4 @@
-import { F as FieldDefinition, G as GlobalConfig } from './types-ENgZDEOO.js';
+import { F as FieldDefinition, G as GlobalConfig } from './types-DZZq-VQM.js';
 
 interface SeoSiteSettings {
     siteName?: string;

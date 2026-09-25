@@ -6,22 +6,22 @@ import {
 } from "../chunk-CP2YO37X.js";
 import "../chunk-6LYWG22B.js";
 import {
-  CUSTOMER_SESSION_COOKIE,
-  findCustomerSession
-} from "../chunk-2S5ZQZIQ.js";
-import {
   bindCommerceApi
-} from "../chunk-GXIIVRLB.js";
-import "../chunk-K2FMPEG6.js";
+} from "../chunk-V63N6CZ5.js";
+import "../chunk-QMKGVIUH.js";
 import {
   REFERRAL_COOKIE
-} from "../chunk-5JBBAHBQ.js";
+} from "../chunk-LDDVV7H7.js";
+import {
+  CUSTOMER_SESSION_COOKIE,
+  findCustomerSession
+} from "../chunk-NTGZYO6Q.js";
 import {
   readCartSessionToken
 } from "../chunk-MDTTSWBR.js";
-import "../chunk-AGAY2N6E.js";
-import "../chunk-4DBNSZO2.js";
-import "../chunk-6RT3KMIV.js";
+import "../chunk-YXNRHYNN.js";
+import "../chunk-4AHWGSV4.js";
+import "../chunk-CLEUXV3O.js";
 
 // src/routes/ecommerce-checkout.ts
 import { readSetting } from "talisman-cms/env";
@@ -98,7 +98,7 @@ var POST = async ({ request, cookies }) => {
       headers: { "Content-Type": "application/json" }
     });
   } catch (error) {
-    const status = error.message === "Cart is empty or not found" || error.message === "Cart is closed" || error.message === "Checkout already started for this cart" || error.message?.startsWith("Insufficient stock for ") || error.message?.startsWith("Insufficient stock or checkout") || error.message?.startsWith("Product is not available") || error.message?.startsWith("A positive price is required") || error.message?.startsWith("Insufficient shared component stock") || error.message === "Shipping address is required for physical products" || error.message === "Discount code is no longer available" || error.message === "Gift card is no longer available" || error.message === "Store credit changed during checkout; please try again" || error.message?.startsWith("Discount code") || error.message?.startsWith("Gift card") || error.message === "A payment provider must be selected and configured before checkout" ? 409 : 500;
+    const status = error.message === "Cart is empty or not found" || error.message === "Cart is closed" || error.message === "Checkout already started for this cart" || error.message?.startsWith("Insufficient stock for ") || error.message?.startsWith("Insufficient stock or checkout") || error.message?.startsWith("Product is not available") || error.message?.startsWith("Select an option for ") || error.message?.startsWith("A positive price is required") || error.message?.startsWith("Insufficient shared component stock") || error.message === "Shipping address is required for physical products" || error.message === "Discount code is no longer available" || error.message === "Gift card is no longer available" || error.message === "Store credit changed during checkout; please try again" || error.message?.startsWith("Discount code") || error.message?.startsWith("Gift card") || error.message === "A payment provider must be selected and configured before checkout" ? 409 : 500;
     return new Response(JSON.stringify({ error: error.message }), {
       status,
       headers: { "Content-Type": "application/json" }

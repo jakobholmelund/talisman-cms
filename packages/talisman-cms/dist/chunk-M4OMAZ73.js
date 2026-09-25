@@ -1,9 +1,9 @@
 import {
   getAccessEmail
-} from "./chunk-73U764HX.js";
+} from "./chunk-6JPMDYGU.js";
 import {
   readSetting
-} from "./chunk-XG3TKNL6.js";
+} from "./chunk-R6EGKTST.js";
 import {
   __export
 } from "./chunk-MLKGABMK.js";
@@ -413,6 +413,9 @@ function LocalAuthAdapter(adminPath = "/admin", options = {}) {
       const response = await auth.handler(request);
       const headers = new Headers(response.headers);
       headers.set("Cache-Control", "no-store");
+      if (action === "sign-in/email" && response.status >= 400 && response.status < 500 && response.status !== 429) {
+        return invalidCredentials();
+      }
       if (action === "sign-in/email" && response.ok) {
         const signedIn = await response.clone().json().catch(() => null);
         const db = drizzle(env.DB, { schema: local_schema_exports });

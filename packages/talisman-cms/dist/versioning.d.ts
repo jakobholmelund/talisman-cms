@@ -1,6 +1,6 @@
+import { T as TalismanEnv } from './client-DHZVVe7w.js';
 import * as drizzle_orm_d1 from 'drizzle-orm/d1';
 import { s as schema, c as collections, e as entries } from './media-Cm407HSH.js';
-import { TalismanEnv } from './client.js';
 import 'drizzle-orm/sqlite-core';
 
 declare const DEFAULT_PUBLISHING_WORKFLOW_BINDING = "TALISMAN_PUBLISH_WORKFLOW";
@@ -27,6 +27,11 @@ declare class EntryNotFoundError extends Error {
     constructor(message: string);
 }
 declare function isEntryNotFound(error: unknown): boolean;
+/**
+ * A publish or archive that fails this way fails again on retry: a stale revision, a slug another
+ * entry serves, or an entry, collection or action that does not exist.
+ */
+declare function isPermanentPublishError(error: unknown): boolean;
 type CollectionRecord = typeof collections.$inferSelect;
 type EntryRecord = typeof entries.$inferSelect;
 declare function normalizeEntryDataForRead(entry: any, version?: 'draft' | 'published'): any;
@@ -193,21 +198,45 @@ declare function runPublishingTransition(env: TalismanEnv, payload: PublishWorkf
     publishedAt: Date | null;
     archivedAt: Date | null;
 }>;
+/**
+ * What TalismanPublishWorkflow returns. A transition that cannot succeed (see isPermanentPublishError)
+ * ends the instance as complete with `ok: false` and the error, which the waiting request rethrows.
+ */
+type PublishWorkflowResult = {
+    ok: true;
+    entryId: string;
+    status: string;
+} | {
+    ok: false;
+    error: {
+        name: string;
+        message: string;
+    };
+};
+/** A publish or archive Workflow instance that was still running when the request stopped waiting. */
+interface PendingPublishWorkflow {
+    status: 'pending';
+    instanceId: string;
+}
+declare class PublishWorkflowPendingError extends Error {
+    instanceId: string;
+    constructor(instanceId: string, timeoutMs: number);
+}
+/**
+ * Polls the instance until it completes, resolving to its status, or fails, throwing its error (also
+ * when it completes with a failed transition). An instance still running after `timeoutMs` throws
+ * PublishWorkflowPendingError and keeps running on its own.
+ */
 declare function waitForWorkflowCompletion(instance: WorkflowInstance, timeoutMs?: number): Promise<InstanceStatus>;
-declare function triggerPublishingWorkflow(env: TalismanEnv, payload: PublishWorkflowPayload, bindingName?: string): Promise<{
-    id: string;
-    slug: string;
-    data: unknown;
-    createdAt: Date;
-    collectionId: string;
-    draftSlug: string | null;
-    status: "draft" | "published" | "archived";
-    publishedData: unknown;
-    publishedRevisionId: string | null;
-    updatedAt: Date;
-    publishedAt: Date | null;
-    archivedAt: Date | null;
+/**
+ * Runs a publish or archive, through the Workflow binding when there is one. The result is the entry
+ * after the transition. When the Workflow instance is still running after the wait, it is the entry as
+ * stored before the transition, with `workflow: { status: 'pending', instanceId }`; the instance
+ * finishes on its own and clears the cache. Failures throw the same errors in both modes.
+ */
+declare function triggerPublishingWorkflow(env: TalismanEnv, payload: PublishWorkflowPayload, bindingName?: string): Promise<EntryRecord & {
+    workflow?: PendingPublishWorkflow;
 }>;
 declare function invalidateEntryCache(env: TalismanEnv, collectionSlug: string, entryId?: string): Promise<void>;
 
-export { DEFAULT_PUBLISHING_WORKFLOW_BINDING, EntryNotFoundError, type EntryStatus, type PublishWorkflowAction, type PublishWorkflowPayload, RevisionConflictError, type RevisionType, SlugConflictError, archiveEntry, assertPublishableSlug, createDraftEntry, getCollectionBySlug, getEntryRevision, getLatestRevision, getVersionedEntry, invalidateEntryCache, isEntryNotFound, isRevisionConflict, isSlugConflict, listEntryRevisions, normalizeEntryDataForRead, publishEntry, restoreEntryRevision, runPublishingTransition, saveDraftEntry, toEditableEntry, triggerPublishingWorkflow, waitForWorkflowCompletion };
+export { DEFAULT_PUBLISHING_WORKFLOW_BINDING, EntryNotFoundError, type EntryStatus, type PendingPublishWorkflow, type PublishWorkflowAction, type PublishWorkflowPayload, PublishWorkflowPendingError, type PublishWorkflowResult, RevisionConflictError, type RevisionType, SlugConflictError, archiveEntry, assertPublishableSlug, createDraftEntry, getCollectionBySlug, getEntryRevision, getLatestRevision, getVersionedEntry, invalidateEntryCache, isEntryNotFound, isPermanentPublishError, isRevisionConflict, isSlugConflict, listEntryRevisions, normalizeEntryDataForRead, publishEntry, restoreEntryRevision, runPublishingTransition, saveDraftEntry, toEditableEntry, triggerPublishingWorkflow, waitForWorkflowCompletion };

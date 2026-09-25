@@ -1,14 +1,14 @@
 import {
   buildEmailVirtualModule
-} from "./chunk-ELO2IWIG.js";
+} from "./chunk-7KSHAODO.js";
 import {
   registerAuthAdapter
 } from "./chunk-UKQJWUX7.js";
 import {
   getPluginUiLibraryMetadata,
   resolveFieldDefinitions
-} from "./chunk-JZDNEAP6.js";
-import "./chunk-XG3TKNL6.js";
+} from "./chunk-JBF4ODXW.js";
+import "./chunk-R6EGKTST.js";
 import "./chunk-MLKGABMK.js";
 
 // src/integration.ts

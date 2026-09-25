@@ -1,13 +1,16 @@
 import {
   getReferralPolicy
-} from "./chunk-5JBBAHBQ.js";
+} from "./chunk-LDDVV7H7.js";
+import {
+  hasPurchaseHistory
+} from "./chunk-NTGZYO6Q.js";
 import {
   customerAccounts,
   discountCodes,
   discountRedemptions,
   referralCodes,
   referralSettings
-} from "./chunk-6RT3KMIV.js";
+} from "./chunk-CLEUXV3O.js";
 
 // src/promotions.ts
 import { and, count, eq, inArray } from "drizzle-orm";
@@ -74,9 +77,8 @@ async function evaluateDiscountCode(env, input) {
   const account = input.accountId ? await db.select().from(customerAccounts).where(eq(customerAccounts.id, input.accountId)).get() : null;
   const emailNormalized = account?.emailNormalized ?? input.customerEmail.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNormalized)) throw new Error("Valid email required for a discount");
-  if (code.firstOrderOnly) {
-    const known = account ?? await db.select({ id: customerAccounts.id }).from(customerAccounts).where(eq(customerAccounts.emailNormalized, emailNormalized)).get();
-    if (known) throw new Error("Discount is for a first purchase only");
+  if (code.firstOrderOnly && await hasPurchaseHistory(env, { emails: [emailNormalized], accountIds: [account?.id] })) {
+    throw new Error("Discount is for a first purchase only");
   }
   if (code.maxUses !== null) {
     const [{ uses }] = await db.select({ uses: count() }).from(discountRedemptions).where(and(

@@ -1,5 +1,5 @@
 import { a as TalismanUser } from '../types-B9Ys5hZL.js';
-import { C as CollectionConfig } from '../types-ENgZDEOO.js';
+import { C as CollectionConfig } from '../types-DZZq-VQM.js';
 import 'astro';
 
 type CollectionOperation = 'read' | 'create' | 'update' | 'delete';

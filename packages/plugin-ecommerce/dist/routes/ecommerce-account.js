@@ -1,24 +1,26 @@
 import {
+  bindCommerceApi
+} from "../chunk-V63N6CZ5.js";
+import "../chunk-QMKGVIUH.js";
+import "../chunk-LDDVV7H7.js";
+import {
   CUSTOMER_SESSION_COOKIE,
   CUSTOMER_SESSION_MAX_AGE,
+  CustomerRequestLimitError,
   consumeCustomerEmailSignIn,
   findCustomerSession,
+  previewCustomerEmailSignIn,
   requestCustomerEmailSignIn,
   revokeCustomerSession
-} from "../chunk-2S5ZQZIQ.js";
-import {
-  bindCommerceApi
-} from "../chunk-GXIIVRLB.js";
-import "../chunk-K2FMPEG6.js";
-import "../chunk-5JBBAHBQ.js";
+} from "../chunk-NTGZYO6Q.js";
 import {
   CART_SESSION_COOKIE,
   LEGACY_CART_SESSION_COOKIE,
   readCartSessionToken
 } from "../chunk-MDTTSWBR.js";
-import "../chunk-AGAY2N6E.js";
-import "../chunk-4DBNSZO2.js";
-import "../chunk-6RT3KMIV.js";
+import "../chunk-YXNRHYNN.js";
+import "../chunk-4AHWGSV4.js";
+import "../chunk-CLEUXV3O.js";
 
 // src/routes/ecommerce-account.ts
 import { readSetting } from "talisman-cms/env";
@@ -42,6 +44,7 @@ function shopperSignInEmail({ link, siteName }) {
 }
 
 // src/routes/ecommerce-account.ts
+var INVALID_LINK = "This sign-in link is invalid or has expired.";
 function originOf(value) {
   try {
     return value ? new URL(value).origin : void 0;
@@ -92,7 +95,7 @@ var ALL = async ({ request, cookies }) => {
         // The token travels in the fragment, so it never reaches the server or its request logs.
         (token) => `${publicOrigin}/account/verify#token=${encodeURIComponent(token)}`,
         async (to, link) => {
-          await sendEmail(settings, { to, from, ...shopperSignInEmail({ link, siteName }) }, provider);
+          await sendEmail(settings, { to: { email: to }, from, ...shopperSignInEmail({ link, siteName }) }, provider);
         },
         request.headers.get("cf-connecting-ip")
       );
@@ -121,9 +124,21 @@ var ALL = async ({ request, cookies }) => {
       return Response.json({ error: "The sign-in email could not be sent. Please try again later." }, { status: 503, headers });
     }
   }
+  if (body?.token !== void 0 && body.preview !== void 0 && body.preview !== false) {
+    try {
+      const email = await previewCustomerEmailSignIn(runtimeEnv, body.token, request.headers.get("cf-connecting-ip"));
+      if (!email) return Response.json({ error: INVALID_LINK }, { status: 400, headers });
+      return Response.json({ email }, { headers });
+    } catch (error) {
+      if (error instanceof CustomerRequestLimitError) {
+        return Response.json({ error: "Too many sign-in requests. Please try again later." }, { status: 429, headers });
+      }
+      throw error;
+    }
+  }
   if (typeof body?.token === "string") {
     const result = await consumeCustomerEmailSignIn(runtimeEnv, body.token);
-    if (!result) return Response.json({ error: "Sign-in link is invalid or expired" }, { status: 400, headers });
+    if (!result) return Response.json({ error: INVALID_LINK }, { status: 400, headers });
     await revokeCustomerSession(runtimeEnv, sessionToken);
     cookies.set(CUSTOMER_SESSION_COOKIE, result.token, {
       path: "/",

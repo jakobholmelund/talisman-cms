@@ -617,6 +617,9 @@ interface CommercePurgeOptions {
 declare function purgeStaleCommerceData(options: CommercePurgeOptions): Promise<{
     carts: number;
     customerSessions: number;
+    signInTokens: number;
+    unverifiedAccounts: number;
+    rateLimits: number;
     authSessions: number;
     authRateLimits: number;
 }>;

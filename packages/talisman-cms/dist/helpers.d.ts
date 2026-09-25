@@ -1,4 +1,4 @@
-import { R as RelationReference, B as BlockDefinition } from './types-ENgZDEOO.js';
+import { R as RelationReference, B as BlockDefinition } from './types-DZZq-VQM.js';
 
 interface CollectionRepeaterBlockOptions {
     slug: string;

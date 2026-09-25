@@ -2,10 +2,10 @@ import {
   entries,
   entryRevisions,
   schema_exports
-} from "./chunk-DJKMKP5C.js";
+} from "./chunk-NSKY6EIU.js";
 import {
   readBinding
-} from "./chunk-XG3TKNL6.js";
+} from "./chunk-R6EGKTST.js";
 
 // src/versioning.ts
 import { and, desc, eq, isNull, ne, or } from "drizzle-orm";
@@ -39,6 +39,9 @@ var EntryNotFoundError = class extends Error {
 };
 function isEntryNotFound(error) {
   return error instanceof EntryNotFoundError || error instanceof Error && /^(Entry|Revision) .+ not found/.test(error.message);
+}
+function isPermanentPublishError(error) {
+  return isRevisionConflict(error) || isSlugConflict(error) || isEntryNotFound(error) || error instanceof Error && /^(Collection .+ not found|Unsupported publish workflow action)/.test(error.message);
 }
 function createId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
@@ -173,12 +176,23 @@ function buildBaselineRevision(db, entry) {
   }
   return queries;
 }
+function errorMessages(error) {
+  const messages = [];
+  for (let current = error, depth = 0; current && depth < 5; current = current.cause, depth += 1) {
+    if (typeof current.message === "string") messages.push(current.message);
+  }
+  return messages.join("\n");
+}
 async function writeRevisionBatch(db, queries) {
   try {
     await db.batch(queries);
   } catch (error) {
-    if (error instanceof Error && /UNIQUE constraint failed.*(entry_id|revision_number)|galaxy_entry_revisions_entry_number_unique/i.test(error.message)) {
+    const messages = errorMessages(error);
+    if (/UNIQUE constraint failed.*(entry_id|revision_number)|galaxy_entry_revisions_entry_number_unique/i.test(messages)) {
       throw new RevisionConflictError();
+    }
+    if (/UNIQUE constraint failed: galaxy_entries\.collection_id, galaxy_entries\.slug|galaxy_entries_published_slug_unique/i.test(messages)) {
+      throw new SlugConflictError();
     }
     throw error;
   }
@@ -327,19 +341,39 @@ async function runPublishingTransition(env, payload) {
   }
   throw new Error(`Unsupported publish workflow action: ${payload.action}`);
 }
-async function waitForWorkflowCompletion(instance, timeoutMs = 5e3) {
+var PublishWorkflowPendingError = class extends Error {
+  instanceId;
+  constructor(instanceId, timeoutMs) {
+    super(`Workflow ${instanceId} did not complete within ${timeoutMs}ms`);
+    this.name = "PublishWorkflowPendingError";
+    this.instanceId = instanceId;
+  }
+};
+function workflowFailure(message) {
+  if (isRevisionConflict(new Error(message))) return new RevisionConflictError();
+  if (isSlugConflict(new Error(message))) return new SlugConflictError();
+  if (isEntryNotFound(new Error(message))) return new EntryNotFoundError(message);
+  return new Error(message);
+}
+async function waitForWorkflowCompletion(instance, timeoutMs = 1e4) {
   const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
+  for (let delay = 100; ; delay = Math.min(delay * 2, 1e3)) {
     const status = await instance.status();
     if (status.status === "complete") {
+      const output = status.output;
+      if (output?.ok === false) {
+        throw workflowFailure(output.error?.message || `Workflow ${instance.id} could not apply the transition`);
+      }
       return status;
     }
     if (status.status === "errored" || status.status === "terminated") {
-      throw new Error(status.error?.message || `Workflow ${instance.id} ended with status ${status.status}`);
+      throw workflowFailure(status.error?.message || `Workflow ${instance.id} ended with status ${status.status}`);
     }
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    const remaining = timeoutMs - (Date.now() - startedAt);
+    if (remaining <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(delay, remaining)));
   }
-  throw new Error(`Workflow ${instance.id} did not complete within ${timeoutMs}ms`);
+  throw new PublishWorkflowPendingError(instance.id, timeoutMs);
 }
 function workflowInstanceId(payload) {
   const target = `${payload.collectionSlug}-${payload.entryId}`.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 60);
@@ -350,13 +384,20 @@ async function triggerPublishingWorkflow(env, payload, bindingName = DEFAULT_PUB
   if (!workflow) {
     return runPublishingTransition(env, payload);
   }
+  const db = createVersioningDb(env);
+  const collection = await getCollectionBySlug(db, payload.collectionSlug);
+  const entry = await getVersionedEntry(db, collection.id, payload.entryId);
+  if (payload.action === "publish") await assertPublishableSlug(db, entry);
   const instance = await workflow.create({
     id: workflowInstanceId(payload),
     params: payload
   });
-  await waitForWorkflowCompletion(instance);
-  const db = createVersioningDb(env);
-  const collection = await getCollectionBySlug(db, payload.collectionSlug);
+  try {
+    await waitForWorkflowCompletion(instance);
+  } catch (error) {
+    if (!(error instanceof PublishWorkflowPendingError)) throw error;
+    return { ...await getVersionedEntry(db, collection.id, payload.entryId), workflow: { status: "pending", instanceId: instance.id } };
+  }
   return getVersionedEntry(db, collection.id, payload.entryId);
 }
 async function invalidateEntryCache(env, collectionSlug, entryId) {
@@ -379,6 +420,7 @@ export {
   isSlugConflict,
   EntryNotFoundError,
   isEntryNotFound,
+  isPermanentPublishError,
   normalizeEntryDataForRead,
   toEditableEntry,
   getCollectionBySlug,
@@ -393,6 +435,7 @@ export {
   archiveEntry,
   restoreEntryRevision,
   runPublishingTransition,
+  PublishWorkflowPendingError,
   waitForWorkflowCompletion,
   triggerPublishingWorkflow,
   invalidateEntryCache

@@ -215,7 +215,20 @@ var customerSessions = sqliteTable("_ecommerce_customer_sessions", {
   expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   revokedAt: integer("revoked_at", { mode: "timestamp" }),
+  /** `email_challenge` rows come from sign-in links sent before migration 0024; new links use `signInTokens`. */
   purpose: text("purpose").$type().notNull().default("session")
+});
+var signInTokens = sqliteTable("_ecommerce_sign_in_tokens", {
+  tokenHash: text("token_hash").primaryKey(),
+  emailNormalized: text("email_normalized").notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  revokedAt: integer("revoked_at", { mode: "timestamp" })
+});
+var rateLimits = sqliteTable("_ecommerce_rate_limits", {
+  key: text("key").primaryKey(),
+  count: integer("count").notNull(),
+  windowStart: integer("window_start").notNull()
 });
 var fulfillments = sqliteTable("_ecommerce_fulfillments", {
   id: text("id").primaryKey(),
@@ -458,6 +471,8 @@ export {
   customers,
   customerAccounts,
   customerSessions,
+  signInTokens,
+  rateLimits,
   fulfillments,
   referralCodes,
   referrals,

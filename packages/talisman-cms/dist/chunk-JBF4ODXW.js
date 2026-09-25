@@ -280,42 +280,10 @@ function resolveFieldDefinitions(fields, plugins = []) {
     };
   });
 }
-function getNativeIdColumn(collectionConfig) {
-  return collectionConfig?.nativeSchemaMapping?.idColumn || "id";
-}
-function prepareNativeWritePayload(collectionConfig, data, mode, now = /* @__PURE__ */ new Date()) {
-  if (!collectionConfig.nativeSchemaMapping) {
-    return { ...data };
-  }
-  const payload = { ...data };
-  const idColumn = getNativeIdColumn(collectionConfig);
-  const idField = collectionConfig.fields?.find((field) => field.name === idColumn);
-  for (const field of collectionConfig.fields || []) {
-    if (field.type === "array" && field.fields?.length === 1 && field.fields[0].name === "url" && Array.isArray(payload[field.name])) {
-      payload[field.name] = payload[field.name].map(
-        (item) => item && typeof item === "object" && "url" in item ? item.url : item
-      );
-    }
-  }
-  for (const fieldName of [idColumn, "createdAt", "updatedAt"]) {
-    if (payload[fieldName] === "") {
-      delete payload[fieldName];
-    }
-  }
-  if (mode === "update") {
-    delete payload[idColumn];
-    delete payload.createdAt;
-    payload.updatedAt = now;
-    return payload;
-  }
-  if (payload[idColumn] === void 0 || payload[idColumn] === null) {
-    if (idField?.type !== "number") {
-      payload[idColumn] = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    }
-  }
-  payload.createdAt = now;
-  payload.updatedAt = now;
-  return payload;
+function nextNativeUpdatedAt(stored, now = /* @__PURE__ */ new Date()) {
+  if (!(stored instanceof Date) || Number.isNaN(stored.getTime())) return now;
+  const next = stored.getTime() + 1e3;
+  return next > now.getTime() && next - now.getTime() <= 5 * 6e4 ? new Date(next) : now;
 }
 function buildComponentSlotSchema(slot) {
   const inlineSchemas = slot.allowInline !== false && slot.components && slot.components.length > 0 ? slot.components.map(
@@ -389,14 +357,17 @@ function requireValue(field, schema) {
 function isRelationshipFieldType(type) {
   return type === "relationship" || type === "relation";
 }
+var blankAsNull = (schema) => z.preprocess((value) => value === "" ? null : value, schema);
 function buildZodSchemaForFields(fields) {
   const shape = {};
   if (!fields) return z.object({});
   for (const field of fields) {
     let fieldSchema;
+    let blankIsEmpty = false;
     switch (field.type) {
       case "number":
         fieldSchema = z.number();
+        blankIsEmpty = true;
         break;
       case "boolean":
         fieldSchema = z.boolean();
@@ -419,6 +390,7 @@ function buildZodSchemaForFields(fields) {
         break;
       case "select":
         fieldSchema = field.options && field.options.length > 0 ? z.enum(field.options) : z.string();
+        blankIsEmpty = Boolean(field.options?.length) && !field.options.includes("");
         break;
       case "group":
         fieldSchema = field.fields ? buildZodSchemaForFields(field.fields) : z.any();
@@ -449,7 +421,7 @@ function buildZodSchemaForFields(fields) {
         break;
     }
     fieldSchema = field.required ? requireValue(field, fieldSchema) : fieldSchema.optional().nullable();
-    shape[field.name] = fieldSchema;
+    shape[field.name] = blankIsEmpty ? blankAsNull(fieldSchema) : fieldSchema;
   }
   return z.object(shape).passthrough();
 }
@@ -509,7 +481,7 @@ export {
   isRelationReference,
   isInlineComponentValue,
   resolveFieldDefinitions,
-  prepareNativeWritePayload,
+  nextNativeUpdatedAt,
   buildZodSchemaForFields,
   isGlobalData,
   decodeGlobalData,

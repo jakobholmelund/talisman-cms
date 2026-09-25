@@ -1,6 +1,7 @@
 import {
   DEFAULT_PUBLISHING_WORKFLOW_BINDING,
   EntryNotFoundError,
+  PublishWorkflowPendingError,
   RevisionConflictError,
   SlugConflictError,
   archiveEntry,
@@ -12,6 +13,7 @@ import {
   getVersionedEntry,
   invalidateEntryCache,
   isEntryNotFound,
+  isPermanentPublishError,
   isRevisionConflict,
   isSlugConflict,
   listEntryRevisions,
@@ -23,13 +25,14 @@ import {
   toEditableEntry,
   triggerPublishingWorkflow,
   waitForWorkflowCompletion
-} from "./chunk-QLZSBNTN.js";
-import "./chunk-DJKMKP5C.js";
-import "./chunk-XG3TKNL6.js";
+} from "./chunk-4QKJECEV.js";
+import "./chunk-NSKY6EIU.js";
+import "./chunk-R6EGKTST.js";
 import "./chunk-MLKGABMK.js";
 export {
   DEFAULT_PUBLISHING_WORKFLOW_BINDING,
   EntryNotFoundError,
+  PublishWorkflowPendingError,
   RevisionConflictError,
   SlugConflictError,
   archiveEntry,
@@ -41,6 +44,7 @@ export {
   getVersionedEntry,
   invalidateEntryCache,
   isEntryNotFound,
+  isPermanentPublishError,
   isRevisionConflict,
   isSlugConflict,
   listEntryRevisions,

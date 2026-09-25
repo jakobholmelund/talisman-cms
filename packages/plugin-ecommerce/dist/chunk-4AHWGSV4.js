@@ -1,7 +1,7 @@
 import {
   giftCardPurchases,
   giftCards
-} from "./chunk-6RT3KMIV.js";
+} from "./chunk-CLEUXV3O.js";
 
 // src/gift-cards.ts
 import { eq } from "drizzle-orm";

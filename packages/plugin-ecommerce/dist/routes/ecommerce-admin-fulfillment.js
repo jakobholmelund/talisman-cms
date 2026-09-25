@@ -1,8 +1,8 @@
 import {
   fulfillCommerceOrder,
   listCommerceOrdersAdmin
-} from "../chunk-AGAY2N6E.js";
-import "../chunk-6RT3KMIV.js";
+} from "../chunk-YXNRHYNN.js";
+import "../chunk-CLEUXV3O.js";
 
 // src/routes/ecommerce-admin-fulfillment.ts
 import { authorizeCmsRequest } from "talisman-cms/auth/guard";

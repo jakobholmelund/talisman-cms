@@ -9,12 +9,13 @@ import {
   CART_MAX_LINE_QUANTITY,
   bindCommerceApi,
   reconcileCommerce
-} from "./chunk-GXIIVRLB.js";
-import "./chunk-K2FMPEG6.js";
-import "./chunk-5JBBAHBQ.js";
-import "./chunk-AGAY2N6E.js";
-import "./chunk-4DBNSZO2.js";
-import "./chunk-6RT3KMIV.js";
+} from "./chunk-V63N6CZ5.js";
+import "./chunk-QMKGVIUH.js";
+import "./chunk-LDDVV7H7.js";
+import "./chunk-NTGZYO6Q.js";
+import "./chunk-YXNRHYNN.js";
+import "./chunk-4AHWGSV4.js";
+import "./chunk-CLEUXV3O.js";
 
 // src/index.ts
 import { fileURLToPath } from "url";
@@ -367,7 +368,7 @@ var ecommercePlugin = (config) => {
         collections.push({
           name: "Shopper Accounts",
           slug: "_ecommerce_customer_accounts",
-          description: "Shopper accounts from email sign-in or a confirmed payment. A verified shopper shares the CMS user for that email, shown in Users with the customer role.",
+          description: "Shopper accounts from a used email sign-in link or a confirmed payment. A verified shopper shares the CMS user for that email, shown in Users with the customer role.",
           adminSection: "commerce",
           readOnly: true,
           fields: [

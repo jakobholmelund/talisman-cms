@@ -6,16 +6,20 @@ import {
   saveDraftEntry,
   toEditableEntry,
   triggerPublishingWorkflow
-} from "./chunk-QLZSBNTN.js";
+} from "./chunk-4QKJECEV.js";
 import {
   collections,
   entries,
   globals,
+  media,
   schema_exports
-} from "./chunk-DJKMKP5C.js";
+} from "./chunk-NSKY6EIU.js";
 import {
   canAccessCollection
 } from "./chunk-7VUPBVR5.js";
+import {
+  deleteStoredMedia
+} from "./chunk-LWGYD5KW.js";
 import {
   buildZodSchemaForFields,
   decodeGlobalData,
@@ -25,16 +29,17 @@ import {
   isInlineComponentValue,
   isPolymorphicRelationField,
   isRelationReference,
-  prepareNativeWritePayload
-} from "./chunk-JZDNEAP6.js";
+  nextNativeUpdatedAt
+} from "./chunk-JBF4ODXW.js";
 
 // src/db/client.ts
 import { drizzle } from "drizzle-orm/d1";
-import { eq, and, gte, lte, count } from "drizzle-orm";
+import { eq, and, gte, lte, count, getTableColumns, getTableName } from "drizzle-orm";
 var _nativeSchemas = null;
 var _nativeSchemaConfig = null;
 var _configGlobals = null;
 var _configCollections = null;
+var _publishingWorkflowBinding = null;
 async function getNativeSchemaModule() {
   if (_nativeSchemas && _nativeSchemaConfig) {
     return {
@@ -67,6 +72,16 @@ async function getConfiguredGlobals() {
   }
   return _configGlobals;
 }
+async function getPublishingWorkflowBinding() {
+  if (_publishingWorkflowBinding !== null) return _publishingWorkflowBinding;
+  try {
+    const mod = await import("virtual:talisman-cms/config");
+    _publishingWorkflowBinding = mod.publishing?.workflowBinding || DEFAULT_PUBLISHING_WORKFLOW_BINDING;
+  } catch {
+    _publishingWorkflowBinding = DEFAULT_PUBLISHING_WORKFLOW_BINDING;
+  }
+  return _publishingWorkflowBinding;
+}
 async function getConfiguredCollections() {
   if (_configCollections !== null) return _configCollections;
   try {
@@ -98,6 +113,21 @@ async function ensureCollection(db, slug) {
   });
   if (!collection) throw new Error(`Collection ${slug} could not be initialized`);
   return collection;
+}
+function prepareNativeClientWrite(nativeTable, nativeIdCol, data, stored) {
+  const payload = { ...data };
+  const columns = getTableColumns(nativeTable);
+  const fillable = (key) => columns[key]?.dataType === "date" && (payload[key] === void 0 || payload[key] === null || payload[key] === "");
+  if (stored) {
+    delete payload[nativeIdCol];
+    if (fillable("updatedAt")) payload.updatedAt = nextNativeUpdatedAt(stored.updatedAt);
+    return payload;
+  }
+  const now = /* @__PURE__ */ new Date();
+  for (const key of ["createdAt", "updatedAt"]) {
+    if (fillable(key) && !columns[key].hasDefault) payload[key] = now;
+  }
+  return payload;
 }
 function getNativeIdColumn(collectionSlug, nativeSchemaConfig) {
   return nativeSchemaConfig?.[collectionSlug]?.idColumn || "id";
@@ -524,6 +554,9 @@ function getClient(env, ctx) {
         if (existing) {
           throw new Error("A global with this slug already exists");
         }
+        if (input.data != null && !isGlobalData(input.data)) {
+          throw new TypeError("Global data must be a JSON object");
+        }
         const now = /* @__PURE__ */ new Date();
         const created = {
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -542,6 +575,9 @@ function getClient(env, ctx) {
         return created;
       },
       async update(slug, data) {
+        if (!isGlobalData(data)) {
+          throw new TypeError("Global data must be a JSON object");
+        }
         const { globalConfig, globalRecord: existing } = await resolveGlobalContext(db, slug);
         if (globalConfig?.fields?.length) {
           const parsed = buildZodSchemaForFields(globalConfig.fields).safeParse(data);
@@ -718,7 +754,7 @@ function getClient(env, ctx) {
         const nativeIdCol = getNativeIdColumn(collectionSlug, nativeSchemaConfig);
         let created;
         if (nativeTable) {
-          const insertPayload = prepareNativeWritePayload(collection, data || {}, "create");
+          const insertPayload = prepareNativeClientWrite(nativeTable, nativeIdCol, data || {});
           const insertedRows = await db.insert(nativeTable).values(insertPayload).returning();
           const insertedRow = insertedRows[0];
           if (insertedRow) {
@@ -736,7 +772,7 @@ function getClient(env, ctx) {
               collectionSlug,
               entryId: created.id,
               action: opts.status === "archived" ? "archive" : "publish"
-            }, DEFAULT_PUBLISHING_WORKFLOW_BINDING);
+            }, await getPublishingWorkflowBinding());
           }
           created = toEditableEntry(created);
         }
@@ -756,8 +792,10 @@ function getClient(env, ctx) {
           const rows = await db.select().from(nativeTable).where(eq(nativeTable[nativeIdCol], id));
           if (rows.length === 0) throw new Error(`Entry ${id} not found in collection ${collectionSlug}`);
           if (data !== void 0 && data !== null && typeof data === "object" && Object.keys(data).length > 0) {
-            const updatePayload = prepareNativeWritePayload(collection, data, "update");
-            await db.update(nativeTable).set(updatePayload).where(eq(nativeTable[nativeIdCol], id));
+            const updatePayload = prepareNativeClientWrite(nativeTable, nativeIdCol, data, rows[0]);
+            if (Object.keys(updatePayload).length > 0) {
+              await db.update(nativeTable).set(updatePayload).where(eq(nativeTable[nativeIdCol], id));
+            }
             data = updatePayload;
           }
           const r = { ...rows[0], ...data };
@@ -769,7 +807,7 @@ function getClient(env, ctx) {
               collectionSlug,
               entryId: id,
               action: opts.status === "archived" ? "archive" : "publish"
-            }, DEFAULT_PUBLISHING_WORKFLOW_BINDING);
+            }, await getPublishingWorkflowBinding());
           }
           updated = toEditableEntry(updated);
         }
@@ -782,6 +820,9 @@ function getClient(env, ctx) {
         const nativeTable = nativeSchemas?.[collectionSlug];
         const nativeIdCol = getNativeIdColumn(collectionSlug, nativeSchemaConfig);
         if (nativeTable) {
+          if (getTableName(nativeTable) === getTableName(media)) {
+            await deleteStoredMedia(env, id);
+          }
           await db.delete(nativeTable).where(eq(nativeTable[nativeIdCol], id));
         } else {
           await db.delete(entries).where(

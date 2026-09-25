@@ -6,67 +6,52 @@ import {
 // src/index.ts
 import { fileURLToPath } from "url";
 
-// src/renderers/sanitize.ts
-var SAFE_URL_SCHEMES = /* @__PURE__ */ new Set(["http", "https", "mailto", "tel"]);
-var CSS_LENGTH = /^(?:0|(?:\d+|\d*\.\d+)(?:px|rem|em|%|vh|vw|vmin|vmax|ch|ex)|auto)$/i;
-function safeHref(value, fallback = "#") {
-  if (typeof value !== "string") return fallback;
-  const trimmed = value.trim();
-  if (!trimmed) return fallback;
-  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(trimmed.replace(/[\u0000- \u007f-\u009f]/g, ""));
-  if (!scheme) return trimmed;
-  return SAFE_URL_SCHEMES.has(scheme[1].toLowerCase()) ? trimmed : fallback;
-}
-function cssUrl(value) {
-  const href = safeHref(value, "");
-  if (!href) return "";
-  const escaped = href.replace(/[\\"'()<>\u0000-\u001f\u007f]/g, (char) => `\\${char.charCodeAt(0).toString(16)} `);
-  return `url("${escaped}")`;
-}
-function safeCssLength(value, fallback) {
-  const text = typeof value === "number" ? String(value) : typeof value === "string" ? value.trim() : "";
-  return CSS_LENGTH.test(text) ? text : fallback;
-}
-function clampInteger(value, min, max, fallback) {
-  const number = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
-  if (!Number.isFinite(number)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(number)));
-}
-
 // src/components/theme-css.ts
-var DAISYUI_THEME_COLOR_KEYS = [
-  "primary",
-  "primary-content",
-  "secondary",
-  "secondary-content",
-  "accent",
-  "accent-content",
-  "neutral",
-  "neutral-content",
-  "base-100",
-  "base-200",
-  "base-300",
-  "base-content",
-  "info",
-  "info-content",
-  "success",
-  "success-content",
-  "warning",
-  "warning-content",
-  "error",
-  "error-content"
+var DAISYUI_THEME_COLORS = [
+  { key: "primary", label: "Primary" },
+  { key: "primary-content", label: "Primary Content" },
+  { key: "secondary", label: "Secondary" },
+  { key: "secondary-content", label: "Secondary Content" },
+  { key: "accent", label: "Accent" },
+  { key: "accent-content", label: "Accent Content" },
+  { key: "neutral", label: "Neutral" },
+  { key: "neutral-content", label: "Neutral Content" },
+  { key: "base-100", label: "Base 100" },
+  { key: "base-200", label: "Base 200" },
+  { key: "base-300", label: "Base 300" },
+  { key: "base-content", label: "Base Content" },
+  { key: "info", label: "Info" },
+  { key: "info-content", label: "Info Content" },
+  { key: "success", label: "Success" },
+  { key: "success-content", label: "Success Content" },
+  { key: "warning", label: "Warning" },
+  { key: "warning-content", label: "Warning Content" },
+  { key: "error", label: "Error" },
+  { key: "error-content", label: "Error Content" }
 ];
-var DAISYUI_THEME_ADVANCED_VARS = {
-  "rounded-box": "--radius-box",
-  "rounded-btn": "--radius-field",
-  "rounded-badge": "--radius-selector",
-  "animation-btn": "--animation-btn",
-  "animation-input": "--animation-input",
-  "btn-focus-scale": "--btn-focus-scale",
-  "border-btn": "--border",
-  "tab-border": "--tab-border",
-  "tab-radius": "--tab-radius"
-};
+var DAISYUI_THEME_COLOR_KEYS = DAISYUI_THEME_COLORS.map((field) => field.key);
+var DAISYUI_THEME_ADVANCED = [
+  { key: "radius-box", label: "Radius: boxes (cards, modals, alerts)" },
+  { key: "radius-field", label: "Radius: fields (buttons, inputs, selects, tabs)" },
+  { key: "radius-selector", label: "Radius: selectors (checkboxes, toggles, badges)" },
+  { key: "size-field", label: "Size: fields (buttons, inputs, selects, tabs)" },
+  { key: "size-selector", label: "Size: selectors (checkboxes, toggles, badges)" },
+  { key: "border", label: "Border width" },
+  { key: "depth", label: "Depth effect (0 or 1)" },
+  { key: "noise", label: "Noise effect (0 or 1)" }
+];
+var DAISYUI_THEME_ADVANCED_KEYS = DAISYUI_THEME_ADVANCED.map((field) => field.key);
+var LEGACY_ADVANCED_KEYS = [
+  "rounded-box",
+  "rounded-btn",
+  "rounded-badge",
+  "border-btn",
+  "animation-btn",
+  "animation-input",
+  "btn-focus-scale",
+  "tab-border",
+  "tab-radius"
+];
 var MAX_VALUE_LENGTH = 100;
 var THEME_NAME = /^[a-z0-9_-]{1,64}$/i;
 var HEX_COLOR = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
@@ -115,7 +100,7 @@ function sanitizeThemeSettings(input) {
   const settings = {};
   if (!isRecord(input)) return { settings, rejected: isEmpty(input) ? rejected : ["(root)"] };
   const isColorKey = (key) => DAISYUI_THEME_COLOR_KEYS.includes(key);
-  const isAdvancedKey = (key) => Object.prototype.hasOwnProperty.call(DAISYUI_THEME_ADVANCED_VARS, key);
+  const isAdvancedKey = (key) => DAISYUI_THEME_ADVANCED_KEYS.includes(key);
   for (const [key, value] of Object.entries(input)) {
     if (key === "lightTheme" || key === "darkTheme") {
       if (isEmpty(value)) continue;
@@ -125,7 +110,8 @@ function sanitizeThemeSettings(input) {
       const colors = sanitizeGroup(value, key, isColorKey, isSafeThemeColor, rejected);
       if (colors) settings[key] = colors;
     } else if (key === "advanced") {
-      const advanced = sanitizeGroup(value, key, isAdvancedKey, isSafeThemeNumber, rejected);
+      const current = isRecord(value) ? Object.fromEntries(Object.entries(value).filter(([name]) => !LEGACY_ADVANCED_KEYS.includes(name))) : value;
+      const advanced = sanitizeGroup(current, key, isAdvancedKey, isSafeThemeNumber, rejected);
       if (advanced) settings.advanced = advanced;
     } else {
       rejected.push(key);
@@ -137,21 +123,1365 @@ function buildThemeCss(input) {
   const { settings } = sanitizeThemeSettings(input);
   const lightTheme = settings.lightTheme || "light";
   const darkTheme = settings.darkTheme || "dark";
-  const colorVars = (colors = {}) => Object.entries(colors).map(([key, value]) => `--color-${key}: ${value};`).join(" ");
-  const advanced = settings.advanced || {};
-  const advancedVars = Object.keys(advanced).map((key) => `${DAISYUI_THEME_ADVANCED_VARS[key]}: ${advanced[key]};`).join(" ");
-  const css = `
-  :root { ${advancedVars} }
-  [data-theme="${lightTheme}"] { ${colorVars(settings.lightColors)} }
-  [data-theme="${darkTheme}"] { ${colorVars(settings.darkColors)} }
-`;
+  const advancedVars = Object.entries(settings.advanced || {}).map(([key, value]) => `--${key}: ${value};`);
+  const themeRule = (theme, colors = {}) => {
+    const declarations = [
+      ...Object.entries(colors).map(([key, value]) => `--color-${key}: ${value};`),
+      ...advancedVars
+    ];
+    return declarations.length > 0 ? `[data-theme="${theme}"][data-theme] { ${declarations.join(" ")} }` : "";
+  };
+  const css = [themeRule(lightTheme, settings.lightColors), themeRule(darkTheme, settings.darkColors)].filter(Boolean).join("\n");
   return { css: css.replace(/</g, "\\3c "), lightTheme, darkTheme };
+}
+
+// src/renderers/sanitize.ts
+var SAFE_URL_SCHEMES = /* @__PURE__ */ new Set(["http", "https", "mailto", "tel"]);
+var CSS_LENGTH = /^(?:0|(?:\d+|\d*\.\d+)(?:px|rem|em|%|vh|vw|vmin|vmax|ch|ex)|auto)$/i;
+function safeHref(value, fallback = "#") {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(trimmed.replace(/[\u0000- \u007f-\u009f]/g, ""));
+  if (!scheme) return trimmed;
+  return SAFE_URL_SCHEMES.has(scheme[1].toLowerCase()) ? trimmed : fallback;
+}
+function cssUrl(value) {
+  const href = safeHref(value, "");
+  if (!href) return "";
+  const escaped = href.replace(/[\\"'()<>\u0000-\u001f\u007f]/g, (char) => `\\${char.charCodeAt(0).toString(16)} `);
+  return `url("${escaped}")`;
+}
+function safeCssLength(value, fallback) {
+  const text = typeof value === "number" ? String(value) : typeof value === "string" ? value.trim() : "";
+  return CSS_LENGTH.test(text) ? text : fallback;
+}
+function clampInteger(value, min, max, fallback) {
+  const number = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(number)));
+}
+
+// src/admin/themeDefaults.ts
+var DAISYUI_THEME_DEFAULTS_VERSION = "5.7.42";
+var DAISYUI_THEME_DEFAULTS = {
+  "light": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(100% 0 0)",
+      "base-200": "oklch(98% 0 0)",
+      "base-300": "oklch(95% 0 0)",
+      "base-content": "oklch(21% 0.006 285.885)",
+      "primary": "oklch(45% 0.24 277.023)",
+      "primary-content": "oklch(93% 0.034 272.788)",
+      "secondary": "oklch(65% 0.241 354.308)",
+      "secondary-content": "oklch(94% 0.028 342.258)",
+      "accent": "oklch(77% 0.152 181.912)",
+      "accent-content": "oklch(38% 0.063 188.416)",
+      "neutral": "oklch(14% 0.005 285.823)",
+      "neutral-content": "oklch(92% 0.004 286.32)",
+      "info": "oklch(74% 0.16 232.661)",
+      "info-content": "oklch(29% 0.066 243.157)",
+      "success": "oklch(76% 0.177 163.223)",
+      "success-content": "oklch(37% 0.077 168.94)",
+      "warning": "oklch(82% 0.189 84.429)",
+      "warning-content": "oklch(41% 0.112 45.904)",
+      "error": "oklch(71% 0.194 13.428)",
+      "error-content": "oklch(27% 0.105 12.094)"
+    },
+    vars: {
+      "radius-selector": "0.5rem",
+      "radius-field": "0.25rem",
+      "radius-box": "0.5rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "1",
+      "noise": "0"
+    }
+  },
+  "dark": {
+    colorScheme: "dark",
+    colors: {
+      "base-100": "oklch(25.33% 0.016 252.42)",
+      "base-200": "oklch(23.26% 0.014 253.1)",
+      "base-300": "oklch(21.15% 0.012 254.09)",
+      "base-content": "oklch(97.807% 0.029 256.847)",
+      "primary": "oklch(58% 0.233 277.117)",
+      "primary-content": "oklch(96% 0.018 272.314)",
+      "secondary": "oklch(65% 0.241 354.308)",
+      "secondary-content": "oklch(94% 0.028 342.258)",
+      "accent": "oklch(77% 0.152 181.912)",
+      "accent-content": "oklch(38% 0.063 188.416)",
+      "neutral": "oklch(14% 0.005 285.823)",
+      "neutral-content": "oklch(92% 0.004 286.32)",
+      "info": "oklch(74% 0.16 232.661)",
+      "info-content": "oklch(29% 0.066 243.157)",
+      "success": "oklch(76% 0.177 163.223)",
+      "success-content": "oklch(37% 0.077 168.94)",
+      "warning": "oklch(82% 0.189 84.429)",
+      "warning-content": "oklch(41% 0.112 45.904)",
+      "error": "oklch(71% 0.194 13.428)",
+      "error-content": "oklch(27% 0.105 12.094)"
+    },
+    vars: {
+      "radius-selector": "0.5rem",
+      "radius-field": "0.25rem",
+      "radius-box": "0.5rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "1",
+      "noise": "0"
+    }
+  },
+  "cupcake": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(97.788% 0.004 56.375)",
+      "base-200": "oklch(93.982% 0.007 61.449)",
+      "base-300": "oklch(91.586% 0.006 53.44)",
+      "base-content": "oklch(23.574% 0.066 313.189)",
+      "primary": "oklch(85% 0.138 181.071)",
+      "primary-content": "oklch(43% 0.078 188.216)",
+      "secondary": "oklch(89% 0.061 343.231)",
+      "secondary-content": "oklch(45% 0.187 3.815)",
+      "accent": "oklch(90% 0.076 70.697)",
+      "accent-content": "oklch(47% 0.157 37.304)",
+      "neutral": "oklch(27% 0.006 286.033)",
+      "neutral-content": "oklch(92% 0.004 286.32)",
+      "info": "oklch(68% 0.169 237.323)",
+      "info-content": "oklch(29% 0.066 243.157)",
+      "success": "oklch(69% 0.17 162.48)",
+      "success-content": "oklch(26% 0.051 172.552)",
+      "warning": "oklch(79% 0.184 86.047)",
+      "warning-content": "oklch(28% 0.066 53.813)",
+      "error": "oklch(64% 0.246 16.439)",
+      "error-content": "oklch(27% 0.105 12.094)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "2rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "2px",
+      "depth": "1",
+      "noise": "0"
+    }
+  },
+  "bumblebee": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(100% 0 0)",
+      "base-200": "oklch(97% 0 0)",
+      "base-300": "oklch(92% 0 0)",
+      "base-content": "oklch(20% 0 0)",
+      "primary": "oklch(85% 0.199 91.936)",
+      "primary-content": "oklch(42% 0.095 57.708)",
+      "secondary": "oklch(75% 0.183 55.934)",
+      "secondary-content": "oklch(40% 0.123 38.172)",
+      "accent": "oklch(0% 0 0)",
+      "accent-content": "oklch(100% 0 0)",
+      "neutral": "oklch(37% 0.01 67.558)",
+      "neutral-content": "oklch(92% 0.003 48.717)",
+      "info": "oklch(74% 0.16 232.661)",
+      "info-content": "oklch(39% 0.09 240.876)",
+      "success": "oklch(76% 0.177 163.223)",
+      "success-content": "oklch(37% 0.077 168.94)",
+      "warning": "oklch(82% 0.189 84.429)",
+      "warning-content": "oklch(41% 0.112 45.904)",
+      "error": "oklch(70% 0.191 22.216)",
+      "error-content": "oklch(39% 0.141 25.723)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "1",
+      "noise": "0"
+    }
+  },
+  "emerald": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(100% 0 0)",
+      "base-200": "oklch(93% 0 0)",
+      "base-300": "oklch(86% 0 0)",
+      "base-content": "oklch(35.519% 0.032 262.988)",
+      "primary": "oklch(76.662% 0.135 153.45)",
+      "primary-content": "oklch(33.387% 0.04 162.24)",
+      "secondary": "oklch(61.302% 0.202 261.294)",
+      "secondary-content": "oklch(100% 0 0)",
+      "accent": "oklch(72.772% 0.149 33.2)",
+      "accent-content": "oklch(0% 0 0)",
+      "neutral": "oklch(35.519% 0.032 262.988)",
+      "neutral-content": "oklch(98.462% 0.001 247.838)",
+      "info": "oklch(72.06% 0.191 231.6)",
+      "info-content": "oklch(0% 0 0)",
+      "success": "oklch(64.8% 0.15 160)",
+      "success-content": "oklch(0% 0 0)",
+      "warning": "oklch(84.71% 0.199 83.87)",
+      "warning-content": "oklch(0% 0 0)",
+      "error": "oklch(71.76% 0.221 22.18)",
+      "error-content": "oklch(0% 0 0)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "corporate": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(100% 0 0)",
+      "base-200": "oklch(93% 0 0)",
+      "base-300": "oklch(86% 0 0)",
+      "base-content": "oklch(22.389% 0.031 278.072)",
+      "primary": "oklch(58% 0.158 241.966)",
+      "primary-content": "oklch(100% 0 0)",
+      "secondary": "oklch(55% 0.046 257.417)",
+      "secondary-content": "oklch(100% 0 0)",
+      "accent": "oklch(60% 0.118 184.704)",
+      "accent-content": "oklch(100% 0 0)",
+      "neutral": "oklch(0% 0 0)",
+      "neutral-content": "oklch(100% 0 0)",
+      "info": "oklch(60% 0.126 221.723)",
+      "info-content": "oklch(100% 0 0)",
+      "success": "oklch(62% 0.194 149.214)",
+      "success-content": "oklch(100% 0 0)",
+      "warning": "oklch(85% 0.199 91.936)",
+      "warning-content": "oklch(0% 0 0)",
+      "error": "oklch(70% 0.191 22.216)",
+      "error-content": "oklch(0% 0 0)"
+    },
+    vars: {
+      "radius-selector": "0.25rem",
+      "radius-field": "0.25rem",
+      "radius-box": "0.25rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "synthwave": {
+    colorScheme: "dark",
+    colors: {
+      "base-100": "oklch(15% 0.09 281.288)",
+      "base-200": "oklch(20% 0.09 281.288)",
+      "base-300": "oklch(25% 0.09 281.288)",
+      "base-content": "oklch(78% 0.115 274.713)",
+      "primary": "oklch(71% 0.202 349.761)",
+      "primary-content": "oklch(28% 0.109 3.907)",
+      "secondary": "oklch(82% 0.111 230.318)",
+      "secondary-content": "oklch(29% 0.066 243.157)",
+      "accent": "oklch(75% 0.183 55.934)",
+      "accent-content": "oklch(26% 0.079 36.259)",
+      "neutral": "oklch(45% 0.24 277.023)",
+      "neutral-content": "oklch(87% 0.065 274.039)",
+      "info": "oklch(74% 0.16 232.661)",
+      "info-content": "oklch(29% 0.066 243.157)",
+      "success": "oklch(77% 0.152 181.912)",
+      "success-content": "oklch(27% 0.046 192.524)",
+      "warning": "oklch(90% 0.182 98.111)",
+      "warning-content": "oklch(42% 0.095 57.708)",
+      "error": "oklch(73.7% 0.121 32.639)",
+      "error-content": "oklch(23.501% 0.096 290.329)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "retro": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(91.637% 0.034 90.515)",
+      "base-200": "oklch(88.272% 0.049 91.774)",
+      "base-300": "oklch(84.133% 0.065 90.856)",
+      "base-content": "oklch(41% 0.112 45.904)",
+      "primary": "oklch(80% 0.114 19.571)",
+      "primary-content": "oklch(39% 0.141 25.723)",
+      "secondary": "oklch(92% 0.084 155.995)",
+      "secondary-content": "oklch(44% 0.119 151.328)",
+      "accent": "oklch(68% 0.162 75.834)",
+      "accent-content": "oklch(41% 0.112 45.904)",
+      "neutral": "oklch(44% 0.011 73.639)",
+      "neutral-content": "oklch(86% 0.005 56.366)",
+      "info": "oklch(58% 0.158 241.966)",
+      "info-content": "oklch(96% 0.059 95.617)",
+      "success": "oklch(51% 0.096 186.391)",
+      "success-content": "oklch(96% 0.059 95.617)",
+      "warning": "oklch(64% 0.222 41.116)",
+      "warning-content": "oklch(96% 0.059 95.617)",
+      "error": "oklch(70% 0.191 22.216)",
+      "error-content": "oklch(40% 0.123 38.172)"
+    },
+    vars: {
+      "radius-selector": "0.25rem",
+      "radius-field": "0.25rem",
+      "radius-box": "0.5rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "cyberpunk": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(94.51% 0.179 104.32)",
+      "base-200": "oklch(91.51% 0.179 104.32)",
+      "base-300": "oklch(85.51% 0.179 104.32)",
+      "base-content": "oklch(0% 0 0)",
+      "primary": "oklch(74.22% 0.209 6.35)",
+      "primary-content": "oklch(14.844% 0.041 6.35)",
+      "secondary": "oklch(83.33% 0.184 204.72)",
+      "secondary-content": "oklch(16.666% 0.036 204.72)",
+      "accent": "oklch(71.86% 0.217 310.43)",
+      "accent-content": "oklch(14.372% 0.043 310.43)",
+      "neutral": "oklch(23.04% 0.065 269.31)",
+      "neutral-content": "oklch(94.51% 0.179 104.32)",
+      "info": "oklch(72.06% 0.191 231.6)",
+      "info-content": "oklch(0% 0 0)",
+      "success": "oklch(64.8% 0.15 160)",
+      "success-content": "oklch(0% 0 0)",
+      "warning": "oklch(84.71% 0.199 83.87)",
+      "warning-content": "oklch(0% 0 0)",
+      "error": "oklch(71.76% 0.221 22.18)",
+      "error-content": "oklch(0% 0 0)"
+    },
+    vars: {
+      "radius-selector": "0rem",
+      "radius-field": "0rem",
+      "radius-box": "0rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "valentine": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(97% 0.014 343.198)",
+      "base-200": "oklch(94% 0.028 342.258)",
+      "base-300": "oklch(89% 0.061 343.231)",
+      "base-content": "oklch(52% 0.223 3.958)",
+      "primary": "oklch(65% 0.241 354.308)",
+      "primary-content": "oklch(100% 0 0)",
+      "secondary": "oklch(62% 0.265 303.9)",
+      "secondary-content": "oklch(97% 0.014 308.299)",
+      "accent": "oklch(82% 0.111 230.318)",
+      "accent-content": "oklch(39% 0.09 240.876)",
+      "neutral": "oklch(40% 0.153 2.432)",
+      "neutral-content": "oklch(89% 0.061 343.231)",
+      "info": "oklch(86% 0.127 207.078)",
+      "info-content": "oklch(44% 0.11 240.79)",
+      "success": "oklch(84% 0.143 164.978)",
+      "success-content": "oklch(43% 0.095 166.913)",
+      "warning": "oklch(75% 0.183 55.934)",
+      "warning-content": "oklch(26% 0.079 36.259)",
+      "error": "oklch(63% 0.237 25.331)",
+      "error-content": "oklch(97% 0.013 17.38)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "2rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "halloween": {
+    colorScheme: "dark",
+    colors: {
+      "base-100": "oklch(21% 0.006 56.043)",
+      "base-200": "oklch(14% 0.004 49.25)",
+      "base-300": "oklch(0% 0 0)",
+      "base-content": "oklch(84.955% 0 0)",
+      "primary": "oklch(77.48% 0.204 60.62)",
+      "primary-content": "oklch(19.693% 0.004 196.779)",
+      "secondary": "oklch(45.98% 0.248 305.03)",
+      "secondary-content": "oklch(89.196% 0.049 305.03)",
+      "accent": "oklch(64.8% 0.223 136.073)",
+      "accent-content": "oklch(0% 0 0)",
+      "neutral": "oklch(24.371% 0.046 65.681)",
+      "neutral-content": "oklch(84.874% 0.009 65.681)",
+      "info": "oklch(54.615% 0.215 262.88)",
+      "info-content": "oklch(90.923% 0.043 262.88)",
+      "success": "oklch(62.705% 0.169 149.213)",
+      "success-content": "oklch(12.541% 0.033 149.213)",
+      "warning": "oklch(66.584% 0.157 58.318)",
+      "warning-content": "oklch(13.316% 0.031 58.318)",
+      "error": "oklch(65.72% 0.199 27.33)",
+      "error-content": "oklch(13.144% 0.039 27.33)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "1",
+      "noise": "0"
+    }
+  },
+  "garden": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(92.951% 0.002 17.197)",
+      "base-200": "oklch(86.445% 0.002 17.197)",
+      "base-300": "oklch(79.938% 0.001 17.197)",
+      "base-content": "oklch(16.961% 0.001 17.32)",
+      "primary": "oklch(62.45% 0.278 3.836)",
+      "primary-content": "oklch(100% 0 0)",
+      "secondary": "oklch(48.495% 0.11 355.095)",
+      "secondary-content": "oklch(89.699% 0.022 355.095)",
+      "accent": "oklch(56.273% 0.054 154.39)",
+      "accent-content": "oklch(100% 0 0)",
+      "neutral": "oklch(24.155% 0.049 89.07)",
+      "neutral-content": "oklch(92.951% 0.002 17.197)",
+      "info": "oklch(72.06% 0.191 231.6)",
+      "info-content": "oklch(0% 0 0)",
+      "success": "oklch(64.8% 0.15 160)",
+      "success-content": "oklch(0% 0 0)",
+      "warning": "oklch(84.71% 0.199 83.87)",
+      "warning-content": "oklch(0% 0 0)",
+      "error": "oklch(71.76% 0.221 22.18)",
+      "error-content": "oklch(0% 0 0)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "forest": {
+    colorScheme: "dark",
+    colors: {
+      "base-100": "oklch(20.84% 0.008 17.911)",
+      "base-200": "oklch(18.522% 0.007 17.911)",
+      "base-300": "oklch(16.203% 0.007 17.911)",
+      "base-content": "oklch(83.768% 0.001 17.911)",
+      "primary": "oklch(68.628% 0.185 148.958)",
+      "primary-content": "oklch(0% 0 0)",
+      "secondary": "oklch(69.776% 0.135 168.327)",
+      "secondary-content": "oklch(13.955% 0.027 168.327)",
+      "accent": "oklch(70.628% 0.119 185.713)",
+      "accent-content": "oklch(14.125% 0.023 185.713)",
+      "neutral": "oklch(30.698% 0.039 171.364)",
+      "neutral-content": "oklch(86.139% 0.007 171.364)",
+      "info": "oklch(72.06% 0.191 231.6)",
+      "info-content": "oklch(0% 0 0)",
+      "success": "oklch(64.8% 0.15 160)",
+      "success-content": "oklch(0% 0 0)",
+      "warning": "oklch(84.71% 0.199 83.87)",
+      "warning-content": "oklch(0% 0 0)",
+      "error": "oklch(71.76% 0.221 22.18)",
+      "error-content": "oklch(0% 0 0)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "2rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "aqua": {
+    colorScheme: "dark",
+    colors: {
+      "base-100": "oklch(37% 0.146 265.522)",
+      "base-200": "oklch(28% 0.091 267.935)",
+      "base-300": "oklch(22% 0.091 267.935)",
+      "base-content": "oklch(90% 0.058 230.902)",
+      "primary": "oklch(85.661% 0.144 198.645)",
+      "primary-content": "oklch(40.124% 0.068 197.603)",
+      "secondary": "oklch(60.682% 0.108 309.782)",
+      "secondary-content": "oklch(96% 0.016 293.756)",
+      "accent": "oklch(93.426% 0.102 94.555)",
+      "accent-content": "oklch(18.685% 0.02 94.555)",
+      "neutral": "oklch(27% 0.146 265.522)",
+      "neutral-content": "oklch(80% 0.146 265.522)",
+      "info": "oklch(54.615% 0.215 262.88)",
+      "info-content": "oklch(90.923% 0.043 262.88)",
+      "success": "oklch(62.705% 0.169 149.213)",
+      "success-content": "oklch(12.541% 0.033 149.213)",
+      "warning": "oklch(66.584% 0.157 58.318)",
+      "warning-content": "oklch(27% 0.077 45.635)",
+      "error": "oklch(73.95% 0.19 27.33)",
+      "error-content": "oklch(14.79% 0.038 27.33)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "1",
+      "noise": "0"
+    }
+  },
+  "lofi": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(100% 0 0)",
+      "base-200": "oklch(97% 0 0)",
+      "base-300": "oklch(94% 0 0)",
+      "base-content": "oklch(0% 0 0)",
+      "primary": "oklch(15.906% 0 0)",
+      "primary-content": "oklch(100% 0 0)",
+      "secondary": "oklch(21.455% 0.001 17.278)",
+      "secondary-content": "oklch(100% 0 0)",
+      "accent": "oklch(26.861% 0 0)",
+      "accent-content": "oklch(100% 0 0)",
+      "neutral": "oklch(0% 0 0)",
+      "neutral-content": "oklch(100% 0 0)",
+      "info": "oklch(79.54% 0.103 205.9)",
+      "info-content": "oklch(15.908% 0.02 205.9)",
+      "success": "oklch(90.13% 0.153 164.14)",
+      "success-content": "oklch(18.026% 0.03 164.14)",
+      "warning": "oklch(88.37% 0.135 79.94)",
+      "warning-content": "oklch(17.674% 0.027 79.94)",
+      "error": "oklch(78.66% 0.15 28.47)",
+      "error-content": "oklch(15.732% 0.03 28.47)"
+    },
+    vars: {
+      "radius-selector": "2rem",
+      "radius-field": "0.25rem",
+      "radius-box": "0.5rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "pastel": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(100% 0 0)",
+      "base-200": "oklch(98.462% 0.001 247.838)",
+      "base-300": "oklch(92.462% 0.001 247.838)",
+      "base-content": "oklch(20% 0 0)",
+      "primary": "oklch(90% 0.063 306.703)",
+      "primary-content": "oklch(49% 0.265 301.924)",
+      "secondary": "oklch(89% 0.058 10.001)",
+      "secondary-content": "oklch(51% 0.222 16.935)",
+      "accent": "oklch(90% 0.093 164.15)",
+      "accent-content": "oklch(50% 0.118 165.612)",
+      "neutral": "oklch(55% 0.046 257.417)",
+      "neutral-content": "oklch(92% 0.013 255.508)",
+      "info": "oklch(86% 0.127 207.078)",
+      "info-content": "oklch(52% 0.105 223.128)",
+      "success": "oklch(87% 0.15 154.449)",
+      "success-content": "oklch(52% 0.154 150.069)",
+      "warning": "oklch(83% 0.128 66.29)",
+      "warning-content": "oklch(55% 0.195 38.402)",
+      "error": "oklch(80% 0.114 19.571)",
+      "error-content": "oklch(50% 0.213 27.518)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "2rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "2px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "fantasy": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(100% 0 0)",
+      "base-200": "oklch(93% 0 0)",
+      "base-300": "oklch(86% 0 0)",
+      "base-content": "oklch(27.807% 0.029 256.847)",
+      "primary": "oklch(37.45% 0.189 325.02)",
+      "primary-content": "oklch(87.49% 0.037 325.02)",
+      "secondary": "oklch(53.92% 0.162 241.36)",
+      "secondary-content": "oklch(90.784% 0.032 241.36)",
+      "accent": "oklch(75.98% 0.204 56.72)",
+      "accent-content": "oklch(15.196% 0.04 56.72)",
+      "neutral": "oklch(27.807% 0.029 256.847)",
+      "neutral-content": "oklch(85.561% 0.005 256.847)",
+      "info": "oklch(72.06% 0.191 231.6)",
+      "info-content": "oklch(0% 0 0)",
+      "success": "oklch(64.8% 0.15 160)",
+      "success-content": "oklch(0% 0 0)",
+      "warning": "oklch(84.71% 0.199 83.87)",
+      "warning-content": "oklch(0% 0 0)",
+      "error": "oklch(71.76% 0.221 22.18)",
+      "error-content": "oklch(0% 0 0)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "1",
+      "noise": "0"
+    }
+  },
+  "wireframe": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(100% 0 0)",
+      "base-200": "oklch(97% 0 0)",
+      "base-300": "oklch(94% 0 0)",
+      "base-content": "oklch(20% 0 0)",
+      "primary": "oklch(87% 0 0)",
+      "primary-content": "oklch(26% 0 0)",
+      "secondary": "oklch(87% 0 0)",
+      "secondary-content": "oklch(26% 0 0)",
+      "accent": "oklch(87% 0 0)",
+      "accent-content": "oklch(26% 0 0)",
+      "neutral": "oklch(87% 0 0)",
+      "neutral-content": "oklch(26% 0 0)",
+      "info": "oklch(44% 0.11 240.79)",
+      "info-content": "oklch(90% 0.058 230.902)",
+      "success": "oklch(43% 0.095 166.913)",
+      "success-content": "oklch(90% 0.093 164.15)",
+      "warning": "oklch(47% 0.137 46.201)",
+      "warning-content": "oklch(92% 0.12 95.746)",
+      "error": "oklch(44% 0.177 26.899)",
+      "error-content": "oklch(88% 0.062 18.334)"
+    },
+    vars: {
+      "radius-selector": "0rem",
+      "radius-field": "0.25rem",
+      "radius-box": "0.25rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "black": {
+    colorScheme: "dark",
+    colors: {
+      "base-100": "oklch(0% 0 0)",
+      "base-200": "oklch(19% 0 0)",
+      "base-300": "oklch(22% 0 0)",
+      "base-content": "oklch(87.609% 0 0)",
+      "primary": "oklch(35% 0 0)",
+      "primary-content": "oklch(100% 0 0)",
+      "secondary": "oklch(35% 0 0)",
+      "secondary-content": "oklch(100% 0 0)",
+      "accent": "oklch(35% 0 0)",
+      "accent-content": "oklch(100% 0 0)",
+      "neutral": "oklch(35% 0 0)",
+      "neutral-content": "oklch(100% 0 0)",
+      "info": "oklch(45.201% 0.313 264.052)",
+      "info-content": "oklch(89.04% 0.062 264.052)",
+      "success": "oklch(51.975% 0.176 142.495)",
+      "success-content": "oklch(90.395% 0.035 142.495)",
+      "warning": "oklch(96.798% 0.211 109.769)",
+      "warning-content": "oklch(19.359% 0.042 109.769)",
+      "error": "oklch(62.795% 0.257 29.233)",
+      "error-content": "oklch(12.559% 0.051 29.233)"
+    },
+    vars: {
+      "radius-selector": "0rem",
+      "radius-field": "0rem",
+      "radius-box": "0rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "luxury": {
+    colorScheme: "dark",
+    colors: {
+      "base-100": "oklch(14.076% 0.004 285.822)",
+      "base-200": "oklch(20.219% 0.004 308.229)",
+      "base-300": "oklch(23.219% 0.004 308.229)",
+      "base-content": "oklch(75.687% 0.123 76.89)",
+      "primary": "oklch(100% 0 0)",
+      "primary-content": "oklch(20% 0 0)",
+      "secondary": "oklch(27.581% 0.064 261.069)",
+      "secondary-content": "oklch(85.516% 0.012 261.069)",
+      "accent": "oklch(36.674% 0.051 338.825)",
+      "accent-content": "oklch(87.334% 0.01 338.825)",
+      "neutral": "oklch(24.27% 0.057 59.825)",
+      "neutral-content": "oklch(93.203% 0.089 90.861)",
+      "info": "oklch(79.061% 0.121 237.133)",
+      "info-content": "oklch(15.812% 0.024 237.133)",
+      "success": "oklch(78.119% 0.192 132.154)",
+      "success-content": "oklch(15.623% 0.038 132.154)",
+      "warning": "oklch(86.127% 0.136 102.891)",
+      "warning-content": "oklch(17.225% 0.027 102.891)",
+      "error": "oklch(71.753% 0.176 22.568)",
+      "error-content": "oklch(14.35% 0.035 22.568)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "1",
+      "noise": "0"
+    }
+  },
+  "dracula": {
+    colorScheme: "dark",
+    colors: {
+      "base-100": "oklch(28.822% 0.022 277.508)",
+      "base-200": "oklch(26.805% 0.02 277.508)",
+      "base-300": "oklch(24.787% 0.019 277.508)",
+      "base-content": "oklch(97.747% 0.007 106.545)",
+      "primary": "oklch(75.461% 0.183 346.812)",
+      "primary-content": "oklch(15.092% 0.036 346.812)",
+      "secondary": "oklch(74.202% 0.148 301.883)",
+      "secondary-content": "oklch(14.84% 0.029 301.883)",
+      "accent": "oklch(83.392% 0.124 66.558)",
+      "accent-content": "oklch(16.678% 0.024 66.558)",
+      "neutral": "oklch(39.445% 0.032 275.524)",
+      "neutral-content": "oklch(87.889% 0.006 275.524)",
+      "info": "oklch(88.263% 0.093 212.846)",
+      "info-content": "oklch(17.652% 0.018 212.846)",
+      "success": "oklch(87.099% 0.219 148.024)",
+      "success-content": "oklch(17.419% 0.043 148.024)",
+      "warning": "oklch(95.533% 0.134 112.757)",
+      "warning-content": "oklch(19.106% 0.026 112.757)",
+      "error": "oklch(68.22% 0.206 24.43)",
+      "error-content": "oklch(13.644% 0.041 24.43)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "cmyk": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(100% 0 0)",
+      "base-200": "oklch(95% 0 0)",
+      "base-300": "oklch(90% 0 0)",
+      "base-content": "oklch(20% 0 0)",
+      "primary": "oklch(71.772% 0.133 239.443)",
+      "primary-content": "oklch(14.354% 0.026 239.443)",
+      "secondary": "oklch(64.476% 0.202 359.339)",
+      "secondary-content": "oklch(12.895% 0.04 359.339)",
+      "accent": "oklch(94.228% 0.189 105.306)",
+      "accent-content": "oklch(18.845% 0.037 105.306)",
+      "neutral": "oklch(21.778% 0 0)",
+      "neutral-content": "oklch(84.355% 0 0)",
+      "info": "oklch(68.475% 0.094 217.284)",
+      "info-content": "oklch(13.695% 0.018 217.284)",
+      "success": "oklch(46.949% 0.162 321.406)",
+      "success-content": "oklch(89.389% 0.032 321.406)",
+      "warning": "oklch(71.236% 0.159 52.023)",
+      "warning-content": "oklch(14.247% 0.031 52.023)",
+      "error": "oklch(62.013% 0.208 28.717)",
+      "error-content": "oklch(12.402% 0.041 28.717)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "autumn": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(95.814% 0 0)",
+      "base-200": "oklch(89.107% 0 0)",
+      "base-300": "oklch(82.4% 0 0)",
+      "base-content": "oklch(19.162% 0 0)",
+      "primary": "oklch(40.723% 0.161 17.53)",
+      "primary-content": "oklch(88.144% 0.032 17.53)",
+      "secondary": "oklch(61.676% 0.169 23.865)",
+      "secondary-content": "oklch(12.335% 0.033 23.865)",
+      "accent": "oklch(73.425% 0.094 60.729)",
+      "accent-content": "oklch(14.685% 0.018 60.729)",
+      "neutral": "oklch(54.367% 0.037 51.902)",
+      "neutral-content": "oklch(90.873% 0.007 51.902)",
+      "info": "oklch(69.224% 0.097 207.284)",
+      "info-content": "oklch(13.844% 0.019 207.284)",
+      "success": "oklch(60.995% 0.08 174.616)",
+      "success-content": "oklch(12.199% 0.016 174.616)",
+      "warning": "oklch(70.081% 0.164 56.844)",
+      "warning-content": "oklch(14.016% 0.032 56.844)",
+      "error": "oklch(53.07% 0.241 24.16)",
+      "error-content": "oklch(90.614% 0.048 24.16)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "1",
+      "noise": "0"
+    }
+  },
+  "business": {
+    colorScheme: "dark",
+    colors: {
+      "base-100": "oklch(24.353% 0 0)",
+      "base-200": "oklch(22.648% 0 0)",
+      "base-300": "oklch(20.944% 0 0)",
+      "base-content": "oklch(84.87% 0 0)",
+      "primary": "oklch(41.703% 0.099 251.473)",
+      "primary-content": "oklch(88.34% 0.019 251.473)",
+      "secondary": "oklch(64.092% 0.027 229.389)",
+      "secondary-content": "oklch(12.818% 0.005 229.389)",
+      "accent": "oklch(67.271% 0.167 35.791)",
+      "accent-content": "oklch(13.454% 0.033 35.791)",
+      "neutral": "oklch(27.441% 0.013 253.041)",
+      "neutral-content": "oklch(85.488% 0.002 253.041)",
+      "info": "oklch(62.616% 0.143 240.033)",
+      "info-content": "oklch(12.523% 0.028 240.033)",
+      "success": "oklch(70.226% 0.094 156.596)",
+      "success-content": "oklch(14.045% 0.018 156.596)",
+      "warning": "oklch(77.482% 0.115 81.519)",
+      "warning-content": "oklch(15.496% 0.023 81.519)",
+      "error": "oklch(51.61% 0.146 29.674)",
+      "error-content": "oklch(90.322% 0.029 29.674)"
+    },
+    vars: {
+      "radius-selector": "0rem",
+      "radius-field": "0.25rem",
+      "radius-box": "0.25rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "acid": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(98% 0 0)",
+      "base-200": "oklch(95% 0 0)",
+      "base-300": "oklch(91% 0 0)",
+      "base-content": "oklch(0% 0 0)",
+      "primary": "oklch(71.9% 0.357 330.759)",
+      "primary-content": "oklch(14.38% 0.071 330.759)",
+      "secondary": "oklch(73.37% 0.224 48.25)",
+      "secondary-content": "oklch(14.674% 0.044 48.25)",
+      "accent": "oklch(92.78% 0.264 122.962)",
+      "accent-content": "oklch(18.556% 0.052 122.962)",
+      "neutral": "oklch(21.31% 0.128 278.68)",
+      "neutral-content": "oklch(84.262% 0.025 278.68)",
+      "info": "oklch(60.72% 0.227 252.05)",
+      "info-content": "oklch(12.144% 0.045 252.05)",
+      "success": "oklch(85.72% 0.266 158.53)",
+      "success-content": "oklch(17.144% 0.053 158.53)",
+      "warning": "oklch(91.01% 0.212 100.5)",
+      "warning-content": "oklch(18.202% 0.042 100.5)",
+      "error": "oklch(64.84% 0.293 29.349)",
+      "error-content": "oklch(12.968% 0.058 29.349)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "1rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "1",
+      "noise": "0"
+    }
+  },
+  "lemonade": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(98.71% 0.02 123.72)",
+      "base-200": "oklch(91.8% 0.018 123.72)",
+      "base-300": "oklch(84.89% 0.017 123.72)",
+      "base-content": "oklch(19.742% 0.004 123.72)",
+      "primary": "oklch(58.92% 0.199 134.6)",
+      "primary-content": "oklch(11.784% 0.039 134.6)",
+      "secondary": "oklch(77.75% 0.196 111.09)",
+      "secondary-content": "oklch(15.55% 0.039 111.09)",
+      "accent": "oklch(85.39% 0.201 100.73)",
+      "accent-content": "oklch(17.078% 0.04 100.73)",
+      "neutral": "oklch(30.98% 0.075 108.6)",
+      "neutral-content": "oklch(86.196% 0.015 108.6)",
+      "info": "oklch(86.19% 0.047 224.14)",
+      "info-content": "oklch(17.238% 0.009 224.14)",
+      "success": "oklch(86.19% 0.047 157.85)",
+      "success-content": "oklch(17.238% 0.009 157.85)",
+      "warning": "oklch(86.19% 0.047 102.15)",
+      "warning-content": "oklch(17.238% 0.009 102.15)",
+      "error": "oklch(86.19% 0.047 25.85)",
+      "error-content": "oklch(17.238% 0.009 25.85)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "night": {
+    colorScheme: "dark",
+    colors: {
+      "base-100": "oklch(20.768% 0.039 265.754)",
+      "base-200": "oklch(19.314% 0.037 265.754)",
+      "base-300": "oklch(17.86% 0.034 265.754)",
+      "base-content": "oklch(84.153% 0.007 265.754)",
+      "primary": "oklch(75.351% 0.138 232.661)",
+      "primary-content": "oklch(15.07% 0.027 232.661)",
+      "secondary": "oklch(68.011% 0.158 276.934)",
+      "secondary-content": "oklch(13.602% 0.031 276.934)",
+      "accent": "oklch(72.36% 0.176 350.048)",
+      "accent-content": "oklch(14.472% 0.035 350.048)",
+      "neutral": "oklch(27.949% 0.036 260.03)",
+      "neutral-content": "oklch(85.589% 0.007 260.03)",
+      "info": "oklch(68.455% 0.148 237.251)",
+      "info-content": "oklch(0% 0 0)",
+      "success": "oklch(78.452% 0.132 181.911)",
+      "success-content": "oklch(15.69% 0.026 181.911)",
+      "warning": "oklch(83.242% 0.139 82.95)",
+      "warning-content": "oklch(16.648% 0.027 82.95)",
+      "error": "oklch(71.785% 0.17 13.118)",
+      "error-content": "oklch(14.357% 0.034 13.118)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "coffee": {
+    colorScheme: "dark",
+    colors: {
+      "base-100": "oklch(24% 0.023 329.708)",
+      "base-200": "oklch(21% 0.021 329.708)",
+      "base-300": "oklch(16% 0.019 329.708)",
+      "base-content": "oklch(72.354% 0.092 79.129)",
+      "primary": "oklch(71.996% 0.123 62.756)",
+      "primary-content": "oklch(14.399% 0.024 62.756)",
+      "secondary": "oklch(34.465% 0.029 199.194)",
+      "secondary-content": "oklch(86.893% 0.005 199.194)",
+      "accent": "oklch(42.621% 0.074 224.389)",
+      "accent-content": "oklch(88.524% 0.014 224.389)",
+      "neutral": "oklch(16.51% 0.015 326.261)",
+      "neutral-content": "oklch(83.302% 0.003 326.261)",
+      "info": "oklch(79.49% 0.063 184.558)",
+      "info-content": "oklch(15.898% 0.012 184.558)",
+      "success": "oklch(74.722% 0.072 131.116)",
+      "success-content": "oklch(14.944% 0.014 131.116)",
+      "warning": "oklch(88.15% 0.14 87.722)",
+      "warning-content": "oklch(17.63% 0.028 87.722)",
+      "error": "oklch(77.318% 0.128 31.871)",
+      "error-content": "oklch(15.463% 0.025 31.871)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "winter": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(100% 0 0)",
+      "base-200": "oklch(97.466% 0.011 259.822)",
+      "base-300": "oklch(93.268% 0.016 262.751)",
+      "base-content": "oklch(41.886% 0.053 255.824)",
+      "primary": "oklch(56.86% 0.255 257.57)",
+      "primary-content": "oklch(91.372% 0.051 257.57)",
+      "secondary": "oklch(42.551% 0.161 282.339)",
+      "secondary-content": "oklch(88.51% 0.032 282.339)",
+      "accent": "oklch(59.939% 0.191 335.171)",
+      "accent-content": "oklch(11.988% 0.038 335.171)",
+      "neutral": "oklch(19.616% 0.063 257.651)",
+      "neutral-content": "oklch(83.923% 0.012 257.651)",
+      "info": "oklch(88.127% 0.085 214.515)",
+      "info-content": "oklch(17.625% 0.017 214.515)",
+      "success": "oklch(80.494% 0.077 197.823)",
+      "success-content": "oklch(16.098% 0.015 197.823)",
+      "warning": "oklch(89.172% 0.045 71.47)",
+      "warning-content": "oklch(17.834% 0.009 71.47)",
+      "error": "oklch(73.092% 0.11 20.076)",
+      "error-content": "oklch(14.618% 0.022 20.076)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "dim": {
+    colorScheme: "dark",
+    colors: {
+      "base-100": "oklch(30.857% 0.023 264.149)",
+      "base-200": "oklch(28.036% 0.019 264.182)",
+      "base-300": "oklch(26.346% 0.018 262.177)",
+      "base-content": "oklch(82.901% 0.031 222.959)",
+      "primary": "oklch(86.133% 0.141 139.549)",
+      "primary-content": "oklch(17.226% 0.028 139.549)",
+      "secondary": "oklch(73.375% 0.165 35.353)",
+      "secondary-content": "oklch(14.675% 0.033 35.353)",
+      "accent": "oklch(74.229% 0.133 311.379)",
+      "accent-content": "oklch(14.845% 0.026 311.379)",
+      "neutral": "oklch(24.731% 0.02 264.094)",
+      "neutral-content": "oklch(82.901% 0.031 222.959)",
+      "info": "oklch(86.078% 0.142 206.182)",
+      "info-content": "oklch(17.215% 0.028 206.182)",
+      "success": "oklch(86.171% 0.142 166.534)",
+      "success-content": "oklch(17.234% 0.028 166.534)",
+      "warning": "oklch(86.163% 0.142 94.818)",
+      "warning-content": "oklch(17.232% 0.028 94.818)",
+      "error": "oklch(82.418% 0.099 33.756)",
+      "error-content": "oklch(16.483% 0.019 33.756)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "nord": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(95.127% 0.007 260.731)",
+      "base-200": "oklch(93.299% 0.01 261.788)",
+      "base-300": "oklch(89.925% 0.016 262.749)",
+      "base-content": "oklch(32.437% 0.022 264.182)",
+      "primary": "oklch(59.435% 0.077 254.027)",
+      "primary-content": "oklch(11.887% 0.015 254.027)",
+      "secondary": "oklch(69.651% 0.059 248.687)",
+      "secondary-content": "oklch(13.93% 0.011 248.687)",
+      "accent": "oklch(77.464% 0.062 217.469)",
+      "accent-content": "oklch(15.492% 0.012 217.469)",
+      "neutral": "oklch(45.229% 0.035 264.131)",
+      "neutral-content": "oklch(89.925% 0.016 262.749)",
+      "info": "oklch(69.207% 0.062 332.664)",
+      "info-content": "oklch(13.841% 0.012 332.664)",
+      "success": "oklch(76.827% 0.074 131.063)",
+      "success-content": "oklch(15.365% 0.014 131.063)",
+      "warning": "oklch(85.486% 0.089 84.093)",
+      "warning-content": "oklch(17.097% 0.017 84.093)",
+      "error": "oklch(60.61% 0.12 15.341)",
+      "error-content": "oklch(12.122% 0.024 15.341)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.25rem",
+      "radius-box": "0.5rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "sunset": {
+    colorScheme: "dark",
+    colors: {
+      "base-100": "oklch(22% 0.019 237.69)",
+      "base-200": "oklch(20% 0.019 237.69)",
+      "base-300": "oklch(18% 0.019 237.69)",
+      "base-content": "oklch(77.383% 0.043 245.096)",
+      "primary": "oklch(74.703% 0.158 39.947)",
+      "primary-content": "oklch(14.94% 0.031 39.947)",
+      "secondary": "oklch(72.537% 0.177 2.72)",
+      "secondary-content": "oklch(14.507% 0.035 2.72)",
+      "accent": "oklch(71.294% 0.166 299.844)",
+      "accent-content": "oklch(14.258% 0.033 299.844)",
+      "neutral": "oklch(26% 0.019 237.69)",
+      "neutral-content": "oklch(70% 0.019 237.69)",
+      "info": "oklch(85.559% 0.085 206.015)",
+      "info-content": "oklch(17.111% 0.017 206.015)",
+      "success": "oklch(85.56% 0.085 144.778)",
+      "success-content": "oklch(17.112% 0.017 144.778)",
+      "warning": "oklch(85.569% 0.084 74.427)",
+      "warning-content": "oklch(17.113% 0.016 74.427)",
+      "error": "oklch(85.511% 0.078 16.886)",
+      "error-content": "oklch(17.102% 0.015 16.886)"
+    },
+    vars: {
+      "radius-selector": "1rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "0",
+      "noise": "0"
+    }
+  },
+  "caramellatte": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(98% 0.016 73.684)",
+      "base-200": "oklch(95% 0.038 75.164)",
+      "base-300": "oklch(90% 0.076 70.697)",
+      "base-content": "oklch(40% 0.123 38.172)",
+      "primary": "oklch(0% 0 0)",
+      "primary-content": "oklch(100% 0 0)",
+      "secondary": "oklch(22.45% 0.075 37.85)",
+      "secondary-content": "oklch(90% 0.076 70.697)",
+      "accent": "oklch(46.44% 0.111 37.85)",
+      "accent-content": "oklch(90% 0.076 70.697)",
+      "neutral": "oklch(55% 0.195 38.402)",
+      "neutral-content": "oklch(98% 0.016 73.684)",
+      "info": "oklch(42% 0.199 265.638)",
+      "info-content": "oklch(90% 0.076 70.697)",
+      "success": "oklch(43% 0.095 166.913)",
+      "success-content": "oklch(90% 0.076 70.697)",
+      "warning": "oklch(82% 0.189 84.429)",
+      "warning-content": "oklch(41% 0.112 45.904)",
+      "error": "oklch(70% 0.191 22.216)",
+      "error-content": "oklch(39% 0.141 25.723)"
+    },
+    vars: {
+      "radius-selector": "2rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "2px",
+      "depth": "1",
+      "noise": "1"
+    }
+  },
+  "abyss": {
+    colorScheme: "dark",
+    colors: {
+      "base-100": "oklch(20% 0.08 209)",
+      "base-200": "oklch(15% 0.08 209)",
+      "base-300": "oklch(10% 0.08 209)",
+      "base-content": "oklch(90% 0.076 70.697)",
+      "primary": "oklch(92% 0.2653 125)",
+      "primary-content": "oklch(50% 0.2653 125)",
+      "secondary": "oklch(83.27% 0.0764 298.3)",
+      "secondary-content": "oklch(43.27% 0.0764 298.3)",
+      "accent": "oklch(43% 0 0)",
+      "accent-content": "oklch(98% 0 0)",
+      "neutral": "oklch(30% 0.08 209)",
+      "neutral-content": "oklch(90% 0.076 70.697)",
+      "info": "oklch(74% 0.16 232.661)",
+      "info-content": "oklch(29% 0.066 243.157)",
+      "success": "oklch(79% 0.209 151.711)",
+      "success-content": "oklch(26% 0.065 152.934)",
+      "warning": "oklch(84.8% 0.1962 84.62)",
+      "warning-content": "oklch(44.8% 0.1962 84.62)",
+      "error": "oklch(65% 0.1985 24.22)",
+      "error-content": "oklch(27% 0.1985 24.22)"
+    },
+    vars: {
+      "radius-selector": "2rem",
+      "radius-field": "0.25rem",
+      "radius-box": "0.5rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "1px",
+      "depth": "1",
+      "noise": "0"
+    }
+  },
+  "silk": {
+    colorScheme: "light",
+    colors: {
+      "base-100": "oklch(97% 0.0035 67.78)",
+      "base-200": "oklch(95% 0.0081 61.42)",
+      "base-300": "oklch(90% 0.0081 61.42)",
+      "base-content": "oklch(40% 0.0081 61.42)",
+      "primary": "oklch(23.27% 0.0249 284.3)",
+      "primary-content": "oklch(94.22% 0.2505 117.44)",
+      "secondary": "oklch(23.27% 0.0249 284.3)",
+      "secondary-content": "oklch(73.92% 0.2135 50.94)",
+      "accent": "oklch(23.27% 0.0249 284.3)",
+      "accent-content": "oklch(88.92% 0.2061 189.9)",
+      "neutral": "oklch(20% 0 0)",
+      "neutral-content": "oklch(80% 0.0081 61.42)",
+      "info": "oklch(80.39% 0.1148 241.68)",
+      "info-content": "oklch(30.39% 0.1148 241.68)",
+      "success": "oklch(83.92% 0.0901 136.87)",
+      "success-content": "oklch(23.92% 0.0901 136.87)",
+      "warning": "oklch(83.92% 0.1085 80)",
+      "warning-content": "oklch(43.92% 0.1085 80)",
+      "error": "oklch(75.1% 0.1814 22.37)",
+      "error-content": "oklch(35.1% 0.1814 22.37)"
+    },
+    vars: {
+      "radius-selector": "2rem",
+      "radius-field": "0.5rem",
+      "radius-box": "1rem",
+      "size-selector": "0.25rem",
+      "size-field": "0.25rem",
+      "border": "2px",
+      "depth": "1",
+      "noise": "0"
+    }
+  }
+};
+
+// src/admin/theme-editor.ts
+var hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+function createThemeEditorState(saved) {
+  const { settings } = sanitizeThemeSettings(saved);
+  return {
+    lightTheme: settings.lightTheme || "light",
+    darkTheme: settings.darkTheme || "dark",
+    lightColors: settings.lightColors || {},
+    darkColors: settings.darkColors || {},
+    advanced: settings.advanced || {}
+  };
+}
+function themeDefaultValue(themeName, key) {
+  if (!hasOwn(DAISYUI_THEME_DEFAULTS, themeName)) return void 0;
+  const { colors, vars } = DAISYUI_THEME_DEFAULTS[themeName];
+  if (hasOwn(colors, key)) return colors[key];
+  return hasOwn(vars, key) ? vars[key] : void 0;
+}
+function normalizeColorInput(value) {
+  const text = value.trim();
+  return /^(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(text) ? `#${text}` : text;
+}
+function compact(values, normalize) {
+  const output = {};
+  for (const [key, value] of Object.entries(values)) {
+    const text = normalize(value);
+    if (text) output[key] = text;
+  }
+  return output;
+}
+function themeEditorPayload(state) {
+  return {
+    lightTheme: state.lightTheme,
+    darkTheme: state.darkTheme,
+    lightColors: compact(state.lightColors, normalizeColorInput),
+    darkColors: compact(state.darkColors, normalizeColorInput),
+    advanced: compact(state.advanced, (value) => value.trim())
+  };
+}
+var clamp01 = (value) => Math.min(1, Math.max(0, value));
+var toHex = (channels) => `#${channels.map((channel) => Math.round(clamp01(channel) * 255).toString(16).padStart(2, "0")).join("")}`;
+function parseNumber(text, percentScale) {
+  if (text === "none") return 0;
+  if (!text) return null;
+  const match = /^(-?(?:\d+|\d*\.\d+))(%|deg)?$/i.exec(text);
+  if (!match) return null;
+  const number = Number(match[1]);
+  return match[2] === "%" ? number / 100 * percentScale : number;
+}
+function oklchToSrgb(lightness, chroma, hue) {
+  const radians = hue * Math.PI / 180;
+  const a = chroma * Math.cos(radians);
+  const b = chroma * Math.sin(radians);
+  const l = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (lightness - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  const linear = [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s
+  ];
+  return linear.map((channel) => channel <= 31308e-7 ? 12.92 * channel : 1.055 * channel ** (1 / 2.4) - 0.055);
+}
+function colorToHex(value) {
+  const text = value.trim().toLowerCase();
+  const hex = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/.exec(text);
+  if (hex) {
+    const digits = hex[1].length <= 4 ? [...hex[1]].map((digit) => digit + digit).join("") : hex[1];
+    return `#${digits.slice(0, 6)}`;
+  }
+  const fn = /^(rgba?|oklch)\(([^()]*)\)$/.exec(text);
+  if (!fn) return null;
+  const args = fn[2].split("/")[0].trim().split(/[\s,]+/);
+  if (args.length !== 3) return null;
+  if (fn[1] === "oklch") {
+    const [lightness, chroma, hue] = [parseNumber(args[0], 1), parseNumber(args[1], 0.4), parseNumber(args[2], 0)];
+    if (lightness === null || chroma === null || hue === null) return null;
+    return toHex(oklchToSrgb(lightness, chroma, hue));
+  }
+  const channels = args.map((arg) => parseNumber(arg, 255));
+  if (channels.some((channel) => channel === null)) return null;
+  return toHex(channels.map((channel) => channel / 255));
 }
 
 // src/index.ts
 function routeEntrypoint(file) {
   return fileURLToPath(new URL(`../src/routes/${file}`, import.meta.url));
 }
+var colorFields = () => DAISYUI_THEME_COLORS.map(({ key, label }) => ({ name: key, label, type: "color" }));
+var advancedFields = () => DAISYUI_THEME_ADVANCED.map(({ key, label }) => ({ name: key, label, type: "text" }));
 function daisyUiPlugin2() {
   const base = daisyUiPlugin();
   return {
@@ -165,43 +1495,9 @@ function daisyUiPlugin2() {
         fields: [
           { name: "lightTheme", label: "Base Light Theme", type: "text", defaultValue: "light" },
           { name: "darkTheme", label: "Base Dark Theme", type: "text", defaultValue: "dark" },
-          { name: "lightColors", label: "Light Mode Overrides", type: "group", fields: [
-            { name: "primary", label: "Primary", type: "color" },
-            { name: "secondary", label: "Secondary", type: "color" },
-            { name: "accent", label: "Accent", type: "color" },
-            { name: "neutral", label: "Neutral", type: "color" },
-            { name: "base-100", label: "Base 100", type: "color" },
-            { name: "base-200", label: "Base 200", type: "color" },
-            { name: "base-300", label: "Base 300", type: "color" },
-            { name: "info", label: "Info", type: "color" },
-            { name: "success", label: "Success", type: "color" },
-            { name: "warning", label: "Warning", type: "color" },
-            { name: "error", label: "Error", type: "color" }
-          ] },
-          { name: "darkColors", label: "Dark Mode Overrides", type: "group", fields: [
-            { name: "primary", label: "Primary", type: "color" },
-            { name: "secondary", label: "Secondary", type: "color" },
-            { name: "accent", label: "Accent", type: "color" },
-            { name: "neutral", label: "Neutral", type: "color" },
-            { name: "base-100", label: "Base 100", type: "color" },
-            { name: "base-200", label: "Base 200", type: "color" },
-            { name: "base-300", label: "Base 300", type: "color" },
-            { name: "info", label: "Info", type: "color" },
-            { name: "success", label: "Success", type: "color" },
-            { name: "warning", label: "Warning", type: "color" },
-            { name: "error", label: "Error", type: "color" }
-          ] },
-          { name: "advanced", label: "Advanced", type: "group", fields: [
-            { name: "rounded-box", label: "Border Radius (Cards & Modals)", type: "text", defaultValue: "1rem" },
-            { name: "rounded-btn", label: "Border Radius (Buttons)", type: "text", defaultValue: "0.5rem" },
-            { name: "rounded-badge", label: "Border Radius (Badges)", type: "text", defaultValue: "1.9rem" },
-            { name: "animation-btn", label: "Animation Duration (Buttons)", type: "text", defaultValue: "0.25s" },
-            { name: "animation-input", label: "Animation Duration (Inputs)", type: "text", defaultValue: "0.2s" },
-            { name: "btn-focus-scale", label: "Button Focus Scale", type: "text", defaultValue: "0.95" },
-            { name: "border-btn", label: "Button Border Width", type: "text", defaultValue: "1px" },
-            { name: "tab-border", label: "Tab Border Width", type: "text", defaultValue: "1px" },
-            { name: "tab-radius", label: "Tab Border Radius", type: "text", defaultValue: "0.5rem" }
-          ] }
+          { name: "lightColors", label: "Light Mode Overrides", type: "group", fields: colorFields() },
+          { name: "darkColors", label: "Dark Mode Overrides", type: "group", fields: colorFields() },
+          { name: "advanced", label: "Radius, Size and Effect Overrides", type: "group", fields: advancedFields() }
         ]
       };
       updatedConfig.globals = [...updatedConfig.globals || [], themeGlobal];
@@ -234,12 +1530,18 @@ function daisyUiPlugin2() {
   };
 }
 export {
+  DAISYUI_THEME_DEFAULTS,
+  DAISYUI_THEME_DEFAULTS_VERSION,
   buildThemeCss,
   clampInteger,
+  colorToHex,
+  createThemeEditorState,
   cssUrl,
   daisyUiLibrary,
   daisyUiPlugin2 as daisyUiPlugin,
   safeCssLength,
   safeHref,
-  sanitizeThemeSettings
+  sanitizeThemeSettings,
+  themeDefaultValue,
+  themeEditorPayload
 };

@@ -39,6 +39,9 @@ function readCustomerSignInToken(loc = typeof window === "undefined" ? void 0 : 
   hist?.replaceState(hist.state, "", `${loc.pathname}${search ? `?${search}` : ""}${fragment ? `#${fragment}` : ""}`);
   return token;
 }
+function previewCustomerSignIn(token) {
+  return commerceRequest("/api/ecommerce/account", "POST", { token, preview: true });
+}
 function verifyCustomerEmailSignIn(token) {
   return commerceRequest("/api/ecommerce/account", "POST", { token });
 }
@@ -84,6 +87,7 @@ export {
   getCustomerAccount,
   getOrderStatus,
   installTalismanEcommerceBrowserHelpers,
+  previewCustomerSignIn,
   readCustomerSignInToken,
   requestCustomerEmailSignIn,
   signOutCustomerAccount,

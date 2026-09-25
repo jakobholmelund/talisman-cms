@@ -35,6 +35,14 @@ type SignInHistory = Pick<History, 'replaceState' | 'state'>;
  * server. `?token=` links sent before that change are still read. Returns null without a token.
  */
 declare function readCustomerSignInToken(loc?: SignInLocation | undefined, hist?: SignInHistory | undefined): string | null;
+/**
+ * The address a sign-in link belongs to, masked as `{ email: 'j•••@example.com' }`, so the verify page
+ * can show which account the shopper is about to open. The link stays usable and no session is
+ * created. Rejects with "This sign-in link is invalid or has expired." for a used or expired link.
+ */
+declare function previewCustomerSignIn(token: string): Promise<{
+    email: string;
+}>;
 declare function verifyCustomerEmailSignIn(token: string): Promise<{
     account: CustomerAccountSummary;
 }>;
@@ -95,4 +103,4 @@ declare function cancelCheckout(orderId: string): Promise<{
 }>;
 declare function installTalismanEcommerceBrowserHelpers(target?: Window): TalismanEcommerceBrowserHelpers;
 
-export { CART_UPDATED_EVENT, type CartUpdatedDetail, type CustomerAccountSummary, type TalismanEcommerceBrowserHelpers, activateNewCustomerAccount, cancelCheckout, chooseCustomerBasket, dispatchCartUpdated, getCustomerAccount, getOrderStatus, installTalismanEcommerceBrowserHelpers, readCustomerSignInToken, requestCustomerEmailSignIn, signOutCustomerAccount, startAdminTestCheckout, startCheckout, verifyCustomerEmailSignIn };
+export { CART_UPDATED_EVENT, type CartUpdatedDetail, type CustomerAccountSummary, type TalismanEcommerceBrowserHelpers, activateNewCustomerAccount, cancelCheckout, chooseCustomerBasket, dispatchCartUpdated, getCustomerAccount, getOrderStatus, installTalismanEcommerceBrowserHelpers, previewCustomerSignIn, readCustomerSignInToken, requestCustomerEmailSignIn, signOutCustomerAccount, startAdminTestCheckout, startCheckout, verifyCustomerEmailSignIn };

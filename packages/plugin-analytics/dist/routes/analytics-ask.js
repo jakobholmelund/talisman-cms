@@ -1,11 +1,12 @@
 import {
   createAskReport
-} from "../chunk-FA66NJWT.js";
-import "../chunk-AADP2ZAZ.js";
+} from "../chunk-W2RZEGYV.js";
+import "../chunk-FESX4VX6.js";
 import "../chunk-MS4TVUJ4.js";
 
 // src/routes/analytics-ask.ts
 import { authorizeCmsRequest } from "talisman-cms/auth/guard";
+import { readSetting } from "talisman-cms/env";
 import { collections } from "virtual:talisman-cms/config";
 var POST = async ({ request }) => {
   const authorization = await authorizeCmsRequest(request, "admin");
@@ -32,7 +33,16 @@ var POST = async ({ request }) => {
     const productCollection = collections.find(
       (collection) => collection.nativeSchemaMapping?.schemaPath === "@talisman-cms/plugin-ecommerce/schema" && collection.nativeSchemaMapping?.exportName === "products"
     );
-    const report = await createAskReport(body.question, bindings.AI, bindings.DB, env, adminBase, productCollection?.slug || "products");
+    const stripeMode = readSetting(env, "COMMERCE_STRIPE_MODE") === "live" ? "live" : "test";
+    const report = await createAskReport(
+      body.question,
+      bindings.AI,
+      bindings.DB,
+      env,
+      adminBase,
+      productCollection?.slug || "products",
+      stripeMode
+    );
     return Response.json(report, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not create the report.";

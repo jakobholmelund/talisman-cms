@@ -166,10 +166,15 @@ interface Plugin {
         entrypoint: string;
         public?: boolean;
     }[];
+    /**
+     * Pages under the admin path need a CMS session unless `public` is true; pages elsewhere are
+     * always public. An admin-path page that needs a session cannot be prerendered.
+     */
     routes?: {
         path: string;
         entrypoint: string;
         prerender?: boolean;
+        public?: boolean;
     }[];
     adminUi?: {
         path: string;

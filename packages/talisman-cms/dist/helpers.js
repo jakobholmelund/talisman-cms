@@ -1,3 +1,6 @@
+import {
+  MEDIA_IMAGE_WIDTHS
+} from "./chunk-LWGYD5KW.js";
 import "./chunk-MLKGABMK.js";
 
 // src/helpers.ts
@@ -8,7 +11,6 @@ function edit(collectionSlug, entryId, fieldPath) {
     ...fieldPath ? { "data-talisman-path": fieldPath } : {}
   };
 }
-var MEDIA_IMAGE_WIDTHS = [320, 640, 960, 1280, 1920];
 function getMediaImageSrcSet(src, widths = MEDIA_IMAGE_WIDTHS) {
   if (!src.startsWith("/api/media/")) return void 0;
   const url = new URL(src, "https://talisman.invalid");

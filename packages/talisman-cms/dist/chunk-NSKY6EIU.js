@@ -11,6 +11,7 @@ __export(schema_exports, {
   globals: () => globals,
   media: () => media
 });
+import { sql } from "drizzle-orm";
 import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 var collections = sqliteTable("galaxy_collections", {
   id: text("id").primaryKey(),
@@ -39,7 +40,9 @@ var entries = sqliteTable("galaxy_entries", {
   archivedAt: integer("archived_at", { mode: "timestamp" })
 }, (table) => [
   index("galaxy_entries_collection_status_created_idx").on(table.collectionId, table.status, table.createdAt),
-  index("galaxy_entries_collection_status_slug_idx").on(table.collectionId, table.status, table.slug, table.createdAt)
+  index("galaxy_entries_collection_status_slug_idx").on(table.collectionId, table.status, table.slug, table.createdAt),
+  // Migration 0023: one published entry per live slug in a collection.
+  uniqueIndex("galaxy_entries_published_slug_unique").on(table.collectionId, table.slug).where(sql`status = 'published'`)
 ]);
 var entryRevisions = sqliteTable("galaxy_entry_revisions", {
   id: text("id").primaryKey(),

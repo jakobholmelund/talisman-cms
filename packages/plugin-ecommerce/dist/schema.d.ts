@@ -2872,6 +2872,164 @@ declare const customerSessions: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     };
     dialect: "sqlite";
 }>;
+/** One-time sign-in links. The account for the address is created or linked only when a link is used. */
+declare const signInTokens: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
+    name: "_ecommerce_sign_in_tokens";
+    schema: undefined;
+    columns: {
+        tokenHash: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "token_hash";
+            tableName: "_ecommerce_sign_in_tokens";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: true;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        emailNormalized: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "email_normalized";
+            tableName: "_ecommerce_sign_in_tokens";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        expiresAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "expires_at";
+            tableName: "_ecommerce_sign_in_tokens";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        createdAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "created_at";
+            tableName: "_ecommerce_sign_in_tokens";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        revokedAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "revoked_at";
+            tableName: "_ecommerce_sign_in_tokens";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+    };
+    dialect: "sqlite";
+}>;
+/** Fixed-window counters for shopper requests, in seconds. Kept apart from better-auth's table, which prunes by its own clock. */
+declare const rateLimits: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
+    name: "_ecommerce_rate_limits";
+    schema: undefined;
+    columns: {
+        key: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "key";
+            tableName: "_ecommerce_rate_limits";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: true;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        count: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "count";
+            tableName: "_ecommerce_rate_limits";
+            dataType: "number";
+            columnType: "SQLiteInteger";
+            data: number;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        windowStart: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "window_start";
+            tableName: "_ecommerce_rate_limits";
+            dataType: "number";
+            columnType: "SQLiteInteger";
+            data: number;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+    };
+    dialect: "sqlite";
+}>;
 declare const fulfillments: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     name: "_ecommerce_fulfillments";
     schema: undefined;
@@ -3925,7 +4083,7 @@ declare const discountRedemptions: drizzle_orm_sqlite_core.SQLiteTableWithColumn
             tableName: "_ecommerce_discount_redemptions";
             dataType: "string";
             columnType: "SQLiteText";
-            data: "reserved" | "confirmed" | "cancelled" | "refunded";
+            data: "refunded" | "reserved" | "confirmed" | "cancelled";
             driverParam: string;
             notNull: true;
             hasDefault: true;
@@ -3938,7 +4096,7 @@ declare const discountRedemptions: drizzle_orm_sqlite_core.SQLiteTableWithColumn
             generated: undefined;
         }, {}, {
             length: number | undefined;
-            $type: "reserved" | "confirmed" | "cancelled" | "refunded";
+            $type: "refunded" | "reserved" | "confirmed" | "cancelled";
         }>;
         createdAt: drizzle_orm_sqlite_core.SQLiteColumn<{
             name: "created_at";
@@ -4061,7 +4219,7 @@ declare const giftCardPurchases: drizzle_orm_sqlite_core.SQLiteTableWithColumns<
             tableName: "_ecommerce_gift_card_purchases";
             dataType: "string";
             columnType: "SQLiteText";
-            data: "cancelled" | "refunded" | "pending" | "paid" | "partially_refunded" | "review";
+            data: "paid" | "partially_refunded" | "refunded" | "cancelled" | "pending" | "review";
             driverParam: string;
             notNull: true;
             hasDefault: true;
@@ -4074,7 +4232,7 @@ declare const giftCardPurchases: drizzle_orm_sqlite_core.SQLiteTableWithColumns<
             generated: undefined;
         }, {}, {
             length: number | undefined;
-            $type: "cancelled" | "refunded" | "pending" | "paid" | "partially_refunded" | "review";
+            $type: "paid" | "partially_refunded" | "refunded" | "cancelled" | "pending" | "review";
         }>;
         providerSessionId: drizzle_orm_sqlite_core.SQLiteColumn<{
             name: "provider_session_id";
@@ -4675,7 +4833,7 @@ declare const giftCardRedemptions: drizzle_orm_sqlite_core.SQLiteTableWithColumn
             tableName: "_ecommerce_gift_card_redemptions";
             dataType: "string";
             columnType: "SQLiteText";
-            data: "reserved" | "confirmed" | "cancelled" | "refunded";
+            data: "refunded" | "reserved" | "confirmed" | "cancelled";
             driverParam: string;
             notNull: true;
             hasDefault: true;
@@ -4688,7 +4846,7 @@ declare const giftCardRedemptions: drizzle_orm_sqlite_core.SQLiteTableWithColumn
             generated: undefined;
         }, {}, {
             length: number | undefined;
-            $type: "reserved" | "confirmed" | "cancelled" | "refunded";
+            $type: "refunded" | "reserved" | "confirmed" | "cancelled";
         }>;
         createdAt: drizzle_orm_sqlite_core.SQLiteColumn<{
             name: "created_at";
@@ -4991,4 +5149,4 @@ declare const productCategoriesRelations: drizzle_orm.Relations<"_ecommerce_prod
     category: drizzle_orm.One<"_ecommerce_categories", true>;
 }>;
 
-export { carts, cartsRelations, categories, categoriesRelations, componentReservations, components, creditLedger, customerAccounts, customerSessions, customers, discountCodes, discountRedemptions, fulfillments, giftCardLedger, giftCardOrderRefunds, giftCardPurchases, giftCardRedemptions, giftCardRefunds, giftCards, inventoryReservations, orders, ordersRelations, payments, paymentsRelations, productCategories, productCategoriesRelations, productTags, productTagsRelations, productVariantValues, productVariantValuesRelations, productVariants, productVariantsRelations, products, productsRelations, referralCodes, referralSettings, referrals, stocks, stocksRelations, tags, tagsRelations, variantComponents, variants, variantsRelations };
+export { carts, cartsRelations, categories, categoriesRelations, componentReservations, components, creditLedger, customerAccounts, customerSessions, customers, discountCodes, discountRedemptions, fulfillments, giftCardLedger, giftCardOrderRefunds, giftCardPurchases, giftCardRedemptions, giftCardRefunds, giftCards, inventoryReservations, orders, ordersRelations, payments, paymentsRelations, productCategories, productCategoriesRelations, productTags, productTagsRelations, productVariantValues, productVariantValuesRelations, productVariants, productVariantsRelations, products, productsRelations, rateLimits, referralCodes, referralSettings, referrals, signInTokens, stocks, stocksRelations, tags, tagsRelations, variantComponents, variants, variantsRelations };
