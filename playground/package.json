@@ -1,5 +1,6 @@
 {
   "name": "playground",
+  "private": true,
   "type": "module",
   "version": "0.0.1",
   "engines": {
@@ -14,11 +15,15 @@
   "dependencies": {
     "@astrojs/cloudflare": "^14.3.2",
     "@talisman-cms/plugin-analytics": "workspace:*",
-    "@talisman-cms/plugin-stripe": "workspace:*",
     "@talisman-cms/plugin-ecommerce": "workspace:*",
+    "@talisman-cms/plugin-stripe": "workspace:*",
     "@talisman-cms/plugin-ui-daisyui": "workspace:*",
     "@talisman-cms/plugin-ui-starwind": "workspace:*",
+    "@tanstack/react-router": "^1.170.38",
     "astro": "^7.3.3",
+    "drizzle-orm": "^0.45.3",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "talisman-cms": "link:../packages/talisman-cms"
   },
   "devDependencies": {

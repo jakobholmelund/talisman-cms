@@ -4,6 +4,29 @@
   "license": "Apache-2.0",
   "publishConfig": { "access": "public" },
   "description": "daisyUI page-builder plugin for Talisman CMS",
+  "keywords": [
+    "talisman-cms",
+    "talisman-cms-plugin",
+    "astro",
+    "cloudflare",
+    "cms",
+    "daisyui",
+    "tailwindcss",
+    "page-builder"
+  ],
+  "homepage": "https://github.com/jakobholmelund/talisman-cms/tree/main/packages/plugin-ui-daisyui#readme",
+  "bugs": {
+    "url": "https://github.com/jakobholmelund/talisman-cms/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jakobholmelund/talisman-cms.git",
+    "directory": "packages/plugin-ui-daisyui"
+  },
+  "author": "Jakob Holmelund",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -26,22 +49,31 @@
     "src/renderers",
     "src/admin",
     "src/routes",
-    "src/components"
+    "src/components",
+    "catalog.manifest.json",
+    "catalog.upstream.json",
+    "NOTICE"
   ],
   "scripts": {
     "generate": "node ./scripts/catalog.mjs generate",
     "coverage": "node ./scripts/catalog.mjs coverage",
     "coverage:json": "node ./scripts/catalog.mjs coverage --json",
     "import-catalog": "node ./scripts/catalog.mjs import-catalog",
-    "build": "pnpm run generate && tsup src/index.ts src/generator.ts src/generated.ts --format esm,cjs --dts",
-    "dev": "pnpm run generate && tsup src/index.ts src/generator.ts src/generated.ts --format esm,cjs --dts --watch",
-    "test": "pnpm run build && node --test ./test/*.test.mjs"
+    "build": "pnpm run generate && tsup src/index.ts src/generator.ts src/generated.ts --format esm --dts --clean",
+    "dev": "pnpm run generate && tsup src/index.ts src/generator.ts src/generated.ts --format esm --dts --watch",
+    "test": "pnpm run build && node --test ./test/*.test.mjs",
+    "prepublishOnly": "node -e \"if (!/^pnpm\\//.test(process.env.npm_config_user_agent || '')) { console.error('Publish with pnpm (pnpm release:publish) so workspace: ranges are rewritten and LICENSE.md is packed.'); process.exit(1); }\""
   },
-  "dependencies": {
-    "talisman-cms": "workspace:*"
+  "peerDependencies": {
+    "astro": "^7.0.0",
+    "react": "^19.0.0",
+    "talisman-cms": "workspace:^"
   },
   "devDependencies": {
+    "@types/react": "^19.3.0",
     "astro": "^7.3.3",
+    "react": "^19.3.0",
+    "talisman-cms": "workspace:*",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "vite": "^8.3.0"

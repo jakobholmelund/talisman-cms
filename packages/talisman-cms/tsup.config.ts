@@ -12,6 +12,8 @@ export default defineConfig({
     'astro/toolbar',
     'react',
     'react-dom',
+    // Peer dependency: bundling it would ship a second ORM copy next to the app's own.
+    'drizzle-orm',
     '@tailwindcss/vite',
     'tailwindcss',
     '@tanstack/router-vite-plugin',

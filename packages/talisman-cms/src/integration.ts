@@ -436,8 +436,9 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
           vite: {
             resolve: {
               // Linked plugins can have their own React installation in a workspace.
-              // Hooks must use the same instance as the CMS admin renderer.
-              dedupe: ['react', '@tanstack/react-router'],
+              // Hooks must use the same instance as the CMS admin renderer, and
+              // react-dom must match the app's react version (React error #527).
+              dedupe: ['react', 'react-dom', '@tanstack/react-router'],
             },
             plugins: [
               ...userVitePlugins,
@@ -593,8 +594,27 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
               }
             ],
             optimizeDeps: {
-              // Ensure Vite pre-bundles these when the user runs `astro dev`
-              include: ['talisman-cms', 'talisman-cms/client', 'react', 'react-dom'],
+              // Pre-bundle the admin SPA's browser deps for `astro dev`. The SPA and plugin
+              // admin pages are served from node_modules, where Vite does not discover bare
+              // imports, so CommonJS deps such as react/jsx-runtime would reach the browser
+              // as-is. react/react-dom are app peers; `talisman-cms > x` resolves unhoisted deps.
+              include: [
+                'react',
+                'react/jsx-runtime',
+                'react/jsx-dev-runtime',
+                'react-dom',
+                'react-dom/client',
+                'talisman-cms > @tanstack/react-router',
+                'talisman-cms > @tanstack/react-form',
+                'talisman-cms > @tiptap/react',
+                'talisman-cms > @tiptap/starter-kit',
+                'talisman-cms > @radix-ui/react-dropdown-menu',
+                'talisman-cms > @radix-ui/react-slot',
+                'talisman-cms > lucide-react',
+                'talisman-cms > clsx',
+                'talisman-cms > tailwind-merge',
+                'talisman-cms > zod'
+              ],
               // Native node modules cannot be bundled by esbuild
               exclude: [
                 '@tailwindcss/vite',
