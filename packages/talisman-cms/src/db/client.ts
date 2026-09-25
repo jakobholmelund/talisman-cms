@@ -1,10 +1,12 @@
 import { drizzle } from 'drizzle-orm/d1';
-import { eq, desc, inArray, and, gte, lte, type SQL } from 'drizzle-orm';
+import { eq, desc, inArray, and, gte, lte, count, type SQL } from 'drizzle-orm';
 import * as schema from './schema';
 import {
   buildZodSchemaForFields,
+  decodeGlobalData,
   generateFieldsFromDrizzle,
   getRelationTargets,
+  isGlobalData,
   isInlineComponentValue,
   isPolymorphicRelationField,
   isPresetReference,
@@ -138,7 +140,7 @@ async function syncConfiguredGlobals(db: TalismanDb) {
         name: globalConfig.name,
         slug: globalConfig.slug,
         description: globalConfig.description || null,
-        data: '{}',
+        data: {},
         createdAt: now,
         updatedAt: now,
       });
@@ -175,7 +177,7 @@ async function resolveGlobalContext(db: TalismanDb, slug: string) {
       name: globalConfig.name,
       slug: globalConfig.slug,
       description: globalConfig.description || null,
-      data: '{}',
+      data: {},
       createdAt: now,
       updatedAt: now,
     });
@@ -284,13 +286,27 @@ async function writeCache(
 // (e.g. millisecond values in a seconds column) that would otherwise drop every cache fill.
 const CONCURRENT_WRITE_WINDOW_MS = 5 * 60_000;
 
-function rowsUpdatedSince(db: TalismanDb, table: typeof schema.entries | typeof schema.globals, since: Date, where?: SQL) {
+function rowsUpdatedSince(
+  db: TalismanDb,
+  table: typeof schema.entries | typeof schema.globals,
+  since: Date,
+  where?: SQL,
+  stillPresent?: { where?: SQL; count: number }
+) {
   return async () => {
     const latest = new Date(Date.now() + CONCURRENT_WRITE_WINDOW_MS);
     const rows = await db.select({ id: table.id }).from(table)
       .where(and(gte(table.updatedAt, since), lte(table.updatedAt, latest), where)).limit(1);
-    return rows.length > 0;
+    if (rows.length > 0) return true;
+    if (!stillPresent) return false;
+    // A hard delete leaves no updated row behind, so a read whose rows are no longer all there is stale too.
+    const [present] = await db.select({ total: count() }).from(table).where(stillPresent.where);
+    return (present?.total ?? 0) !== stillPresent.count;
   };
+}
+
+function withDecodedGlobalData<T extends { data?: unknown } | null | undefined>(record: T): T {
+  return record ? { ...record, data: decodeGlobalData(record.data) } : record;
 }
 
 function isRelationshipFieldType(type: string | undefined) {
@@ -614,12 +630,14 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
         const cacheKey = `talisman:globals:${slug}`;
         
         if (opts?.cache !== false && env.KV) {
+          // A value cached before globals were stored as objects can still hold encoded data.
           const cached = await readCache<any>(env.KV, cacheKey);
-          if (cached) return cached;
+          if (cached) return withDecodedGlobalData(cached);
         }
 
         const readStartedAt = new Date();
-        const { globalRecord: data } = await resolveGlobalContext(db, slug);
+        const { globalRecord } = await resolveGlobalContext(db, slug);
+        const data = withDecodedGlobalData(globalRecord);
         
         if (opts?.cache !== false && env.KV && data) {
           await writeCache(env.KV, cacheKey, data, ctx,
@@ -649,7 +667,7 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
           name: input.name?.trim() || slug,
           slug,
           description: input.description?.trim() || null,
-          data: JSON.stringify(input.data && typeof input.data === 'object' ? input.data : {}),
+          data: isGlobalData(input.data) ? input.data : {},
           createdAt: now,
           updatedAt: now,
         };
@@ -683,7 +701,7 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
           name: globalConfig?.name || existing?.name || slug,
           slug,
           description: globalConfig?.description || existing?.description || null,
-          data: JSON.stringify(data),
+          data,
           createdAt: existing?.createdAt || now,
           updatedAt: now,
         }).onConflictDoUpdate({
@@ -691,7 +709,7 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
           set: {
             name: globalConfig?.name || existing?.name || slug,
             description: globalConfig?.description || existing?.description || null,
-            data: JSON.stringify(data),
+            data,
             updatedAt: now
           }
         });
@@ -701,10 +719,10 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
           await env.KV.delete(`talisman:globals:${slug}`);
         }
 
-        return await db.query.globals.findFirst({
+        return withDecodedGlobalData(await db.query.globals.findFirst({
           // @ts-ignore
           where: (g, { eq }) => eq(g.slug, slug)
-        });
+        }));
       }
     },
     entries: {
@@ -755,8 +773,12 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
         data = await resolveRelationships(data, collection, db, opts?.depth ?? 1, versionMode);
         
         if (useCache && env.KV) {
+          const inCollection = eq(schema.entries.collectionId, collection.id);
           await writeCache(env.KV, cacheKey, data, ctx,
-            nativeTable ? undefined : rowsUpdatedSince(db, schema.entries, readStartedAt, eq(schema.entries.collectionId, collection.id)));
+            nativeTable ? undefined : rowsUpdatedSince(db, schema.entries, readStartedAt, inCollection, {
+              where: versionMode === 'published' ? and(inCollection, eq(schema.entries.status, 'published')) : inCollection,
+              count: data.length,
+            }));
         }
         
         return data;
@@ -837,7 +859,8 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
         
         if (useCache && env.KV && data) {
           await writeCache(env.KV, cacheKey, data, ctx,
-            nativeTable ? undefined : rowsUpdatedSince(db, schema.entries, readStartedAt, eq(schema.entries.id, id)));
+            nativeTable ? undefined : rowsUpdatedSince(db, schema.entries, readStartedAt, eq(schema.entries.id, id),
+              { where: eq(schema.entries.id, id), count: 1 }));
         }
         
         return data;

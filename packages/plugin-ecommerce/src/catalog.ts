@@ -48,8 +48,9 @@ function insert(table: string, values: Record<string, string>): string {
 }
 
 /**
- * Generate an idempotent first-run D1/SQLite catalog import. Every row uses
- * INSERT OR IGNORE, so editors own subsequent changes in Commerce.
+ * Generate an idempotent first-run D1/SQLite catalog import. Every row is inserted
+ * only when missing, so editors own subsequent changes in Commerce. Content entries
+ * start with a published baseline revision, like entries created in the editor.
  * Apply Talisman CMS migrations before running the generated SQL.
  */
 export function createCommerceCatalogSeedSql(seed: CommerceCatalogSeed): string {
@@ -119,9 +120,14 @@ export function createCommerceCatalogSeedSql(seed: CommerceCatalogSeed): string 
     const slug = quote(group.collection.slug);
     sql.push(`INSERT INTO galaxy_collections (id, name, slug, description, fields, created_at) SELECT ${quote(`commerce-content:${group.collection.slug}`)}, ${quote(group.collection.name)}, ${slug}, ${quote(group.collection.description)}, '[]', ${now} WHERE NOT EXISTS (SELECT 1 FROM galaxy_collections WHERE slug = ${slug});`);
     for (const entry of group.entries) {
+      const entryId = quote(entry.id);
       const entrySlug = quote(entry.slug);
       const data = json(entry.data);
-      sql.push(`INSERT INTO galaxy_entries (id, collection_id, slug, status, data, published_data, created_at, updated_at, published_at) SELECT ${quote(entry.id)}, id, ${entrySlug}, 'published', ${data}, ${data}, ${now}, ${now}, ${now} FROM galaxy_collections WHERE slug = ${slug} AND NOT EXISTS (SELECT 1 FROM galaxy_entries WHERE collection_id = galaxy_collections.id AND slug = ${entrySlug});`);
+      const revisionId = quote(`baseline_rev_${entry.id}`);
+      sql.push(`INSERT INTO galaxy_entries (id, collection_id, slug, status, data, published_data, created_at, updated_at, published_at) SELECT ${entryId}, id, ${entrySlug}, 'published', ${data}, ${data}, ${now}, ${now}, ${now} FROM galaxy_collections WHERE slug = ${slug} AND NOT EXISTS (SELECT 1 FROM galaxy_entries WHERE collection_id = galaxy_collections.id AND slug = ${entrySlug});`);
+      // The editor saves against the latest revision, so an imported entry starts with its published one.
+      sql.push(`INSERT INTO galaxy_entry_revisions (id, entry_id, collection_id, revision_number, type, status, data, created_at) SELECT ${revisionId}, id, collection_id, 1, 'publish', 'published', COALESCE(published_data, data), updated_at FROM galaxy_entries WHERE id = ${entryId} AND status = 'published' AND NOT EXISTS (SELECT 1 FROM galaxy_entry_revisions WHERE entry_id = ${entryId});`);
+      sql.push(`UPDATE galaxy_entries SET published_revision_id = ${revisionId} WHERE id = ${entryId} AND published_revision_id IS NULL AND EXISTS (SELECT 1 FROM galaxy_entry_revisions WHERE id = ${revisionId});`);
     }
   }
   return `${sql.join('\n')}\n`;

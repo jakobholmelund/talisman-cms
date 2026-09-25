@@ -141,6 +141,13 @@
       "when": 1789600000012,
       "tag": "0019_shared_customer_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1789600000013,
+      "tag": "0020_revision_baseline_and_globals",
+      "breakpoints": true
     }
   ]
 }

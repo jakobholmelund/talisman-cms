@@ -159,3 +159,56 @@ test('rows stamped far in the future do not make every cache fill look stale', a
     sqlite.close();
   }
 });
+
+test('a cache fill that lands after a hard delete is dropped', async () => {
+  const { sqlite, DB } = database();
+  try {
+    const entryKey = 'talisman:entries:pages:about:published';
+    const KV = kvStore({
+      put: async (key) => {
+        // An editor deletes the entry after this read hit D1 but before its put reached KV.
+        if (sqlite.prepare(`SELECT 1 FROM galaxy_entries WHERE id = 'about'`).get()) {
+          sqlite.prepare(`DELETE FROM galaxy_entries WHERE id = 'about'`).run();
+        }
+        KV.store.delete(key);
+      },
+    });
+    const client = getClient({ DB, KV });
+
+    assert.equal((await client.entries.find('pages', 'about', { depth: 0 })).data.title, 'About');
+    assert.equal(KV.store.has(entryKey), false);
+    assert.equal(await client.entries.find('pages', 'about', { depth: 0 }), undefined);
+
+    sqlite.prepare(`INSERT INTO galaxy_entries (id, collection_id, slug, status, data, published_data, created_at, updated_at)
+      VALUES ('about', 'pages-id', 'about', 'published', '{"title":"About"}', '{"title":"About"}', ?, ?)`).run(hourAgo, hourAgo);
+    assert.deepEqual(titles(await client.entries.findMany('pages', { depth: 0 })), ['About']);
+    assert.equal(KV.store.has(pagesKey), false);
+    assert.deepEqual(titles(await client.entries.findMany('pages', { depth: 0 })), []);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('globals are stored once as JSON objects and double-encoded rows read as objects', async () => {
+  const { sqlite, DB } = database();
+  try {
+    sqlite.prepare(`INSERT INTO galaxy_globals (id, name, slug, data, created_at, updated_at) VALUES ('legacy', 'Legacy', 'legacy', ?, ?, ?)`)
+      .run(JSON.stringify(JSON.stringify({ siteName: 'Talisman' })), hourAgo, hourAgo);
+    const client = getClient({ DB });
+
+    assert.deepEqual((await client.globals.find('legacy', { cache: false })).data, { siteName: 'Talisman' });
+
+    const updated = await client.globals.update('legacy', { siteName: 'Talisman Vision' });
+    assert.deepEqual(updated.data, { siteName: 'Talisman Vision' });
+    await client.globals.create({ slug: 'fresh', data: { tagline: 'Lenses' } });
+    const stored = Object.fromEntries(sqlite.prepare('SELECT slug, data FROM galaxy_globals').all().map((row) => [row.slug, row.data]));
+    assert.deepEqual(stored, { legacy: '{"siteName":"Talisman Vision"}', fresh: '{"tagline":"Lenses"}' });
+
+    // A value cached before the fix still reaches readers as an object.
+    const KV = kvStore();
+    KV.store.set('talisman:globals:legacy', JSON.stringify({ slug: 'legacy', data: '{"siteName":"Cached"}' }));
+    assert.deepEqual((await getClient({ DB, KV }).globals.find('legacy')).data, { siteName: 'Cached' });
+  } finally {
+    sqlite.close();
+  }
+});

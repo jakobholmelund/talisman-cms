@@ -13,7 +13,8 @@ test('catalog import exposes content in Commerce and preserves later edits', () 
   db.exec(`
     CREATE TABLE _ecommerce_products (id TEXT PRIMARY KEY, name TEXT, slug TEXT, sku TEXT, description TEXT, images TEXT, category_ids TEXT, tag_ids TEXT, base_price INTEGER, inventory_quantity INTEGER, is_physical INTEGER, type TEXT, status TEXT, created_at INTEGER, updated_at INTEGER);
     CREATE TABLE galaxy_collections (id TEXT PRIMARY KEY, name TEXT, slug TEXT UNIQUE, description TEXT, fields TEXT, created_at INTEGER);
-    CREATE TABLE galaxy_entries (id TEXT PRIMARY KEY, collection_id TEXT, slug TEXT, status TEXT, data TEXT, published_data TEXT, created_at INTEGER, updated_at INTEGER, published_at INTEGER);
+    CREATE TABLE galaxy_entries (id TEXT PRIMARY KEY, collection_id TEXT, slug TEXT, status TEXT, data TEXT, published_data TEXT, published_revision_id TEXT, created_at INTEGER, updated_at INTEGER, published_at INTEGER);
+    CREATE TABLE galaxy_entry_revisions (id TEXT PRIMARY KEY, entry_id TEXT, collection_id TEXT, revision_number INTEGER, type TEXT, status TEXT, data TEXT, created_at INTEGER, UNIQUE (entry_id, revision_number));
   `);
   const sql = createCommerceCatalogSeedSql({
     products: [{ id: 'frame-01', name: "Maker's frame", slug: 'frame-01', images: ['/frame.jpg'] }],
@@ -25,12 +26,23 @@ test('catalog import exposes content in Commerce and preserves later edits', () 
   db.exec(sql);
   assert.equal(db.prepare('SELECT name FROM _ecommerce_products').get().name, "Maker's frame");
   assert.equal(JSON.parse(db.prepare('SELECT data FROM galaxy_entries').get().data).story, "Maker's story");
+  // The editor saves against the latest revision, so each imported entry gets its published one.
+  const revision = db.prepare('SELECT * FROM galaxy_entry_revisions').get();
+  assert.deepEqual([revision.id, revision.entry_id, revision.revision_number, revision.type, revision.status],
+    ['baseline_rev_story-01', 'story-01', 1, 'publish', 'published']);
+  assert.equal(JSON.parse(revision.data).story, "Maker's story");
+  assert.equal(db.prepare('SELECT published_revision_id FROM galaxy_entries').get().published_revision_id, revision.id);
+  // Each statement stays on one line: the storefront's apply script sends them line by line.
+  assert.ok(sql.trim().split('\n').every((line) => /^(INSERT|UPDATE) /.test(line)));
 
   db.exec("UPDATE _ecommerce_products SET name = 'Edited in admin'");
   db.exec("UPDATE galaxy_entries SET data = '{\"slug\":\"frame-01\",\"story\":\"Edited in admin\"}'");
+  db.exec("INSERT INTO galaxy_entry_revisions (id, entry_id, collection_id, revision_number, type, status, data, created_at) SELECT 'rev-2', id, collection_id, 2, 'draft_save', 'published', data, 1 FROM galaxy_entries");
   db.exec(sql);
   assert.equal(db.prepare('SELECT name FROM _ecommerce_products').get().name, 'Edited in admin');
   assert.equal(JSON.parse(db.prepare('SELECT data FROM galaxy_entries').get().data).story, 'Edited in admin');
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM galaxy_entries').get().count, 1);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM galaxy_entry_revisions').get().count, 2);
+  assert.equal(db.prepare('SELECT published_revision_id FROM galaxy_entries').get().published_revision_id, 'baseline_rev_story-01');
   db.close();
 });

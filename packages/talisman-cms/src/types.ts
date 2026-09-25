@@ -725,6 +725,82 @@ function extendBlockSchemaWithComponentSlots(block: BlockDefinition, baseSchema:
   return Object.keys(slotShape).length === 0 ? baseSchema : baseSchema.extend(slotShape);
 }
 
+// Structural TipTap nodes: they count as content only through the text or media they contain.
+const RICH_TEXT_WRAPPER_NODES = new Set([
+  'doc', 'paragraph', 'heading', 'blockquote', 'bulletList', 'orderedList', 'listItem', 'codeBlock', 'hardBreak', 'text',
+]);
+
+/** True for a rich text value with nothing to show: a blank string or a TipTap document without text or media. */
+export function isEmptyRichText(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (typeof value === 'string') return value.replace(/<[^>]*>/g, '').replace(/&nbsp;/gi, ' ').trim() === '';
+  if (typeof value !== 'object' || Array.isArray(value) || (value as { type?: unknown }).type !== 'doc') return false;
+
+  const hasContent = (node: any): boolean => {
+    if (!node || typeof node !== 'object') return false;
+    if (typeof node.text === 'string' && node.text.trim()) return true;
+    if (typeof node.type === 'string' && !RICH_TEXT_WRAPPER_NODES.has(node.type)) return true;
+    return Array.isArray(node.content) && node.content.some(hasContent);
+  };
+  return !hasContent(value);
+}
+
+const REQUIRED_MESSAGE = 'Required';
+const isBlankString = (value: unknown) => typeof value === 'string' && value.trim() === '';
+
+/** A required scalar also rejects blank text; missing and null values already fail its type check. */
+function requireValue(field: FieldDefinition, schema: z.ZodTypeAny): z.ZodTypeAny {
+  if (field.type === 'richtext') {
+    return schema.refine((value) => !isEmptyRichText(value), { message: REQUIRED_MESSAGE });
+  }
+
+  if (['group', 'array', 'blocks', 'number', 'boolean'].includes(field.type) ||
+      (isRelationshipFieldType(field.type) && (field.hasMany || isPolymorphicRelationField(field)))) {
+    return schema;
+  }
+
+  return schema.refine((value) => !isBlankString(value), { message: REQUIRED_MESSAGE });
+}
+
+function isRelationshipFieldType(type: FieldType) {
+  return type === 'relationship' || type === 'relation';
+}
+
+export interface FieldValidationIssue {
+  path: PropertyKey[];
+  message: string;
+  code?: string;
+  received?: unknown;
+}
+
+/**
+ * The 400 body for invalid entry or global data: a summary plus messages keyed by field name
+ * (a dotted path for nested fields), next to the raw `issues`.
+ */
+export function formatValidationIssues(issues: FieldValidationIssue[]) {
+  const fieldErrors: Record<string, string[]> = {};
+
+  for (const issue of issues) {
+    const path = issue.path.map(String).join('.');
+    if (!path) continue;
+    // Zod reports a null required value as a type mismatch; editors see both as a missing value.
+    const message = issue.code === 'invalid_type' && (issue.received === 'undefined' || issue.received === 'null')
+      ? REQUIRED_MESSAGE
+      : issue.message;
+    const messages = fieldErrors[path] ??= [];
+    if (!messages.includes(message)) messages.push(message);
+  }
+
+  const names = Object.keys(fieldErrors);
+  return {
+    error: names.length > 0
+      ? `Some fields are invalid: ${names.join(', ')}`
+      : issues[0]?.message || 'Validation failed',
+    fieldErrors,
+    issues,
+  };
+}
+
 export function buildZodSchemaForFields(fields: FieldDefinition[]): z.ZodObject<any> {
   const shape: Record<string, z.ZodTypeAny> = {};
 
@@ -792,14 +868,35 @@ export function buildZodSchemaForFields(fields: FieldDefinition[]): z.ZodObject<
         break;
     }
 
-    if (!field.required) {
-      fieldSchema = fieldSchema.optional().nullable();
-    }
+    fieldSchema = field.required
+      ? requireValue(field, fieldSchema)
+      : fieldSchema.optional().nullable();
 
     shape[field.name] = fieldSchema;
   }
 
   return z.object(shape).passthrough();
+}
+
+/** Global data is a JSON object (not an array or scalar). */
+export function isGlobalData(value: unknown): value is Record<string, any> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Global data is stored as one JSON object. Older rows hold that JSON as text inside a JSON
+ * string (it was encoded twice), so string values are decoded until the object appears.
+ */
+export function decodeGlobalData(value: unknown): Record<string, any> {
+  let data = value;
+  for (let depth = 0; typeof data === 'string' && depth < 3; depth += 1) {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      return {};
+    }
+  }
+  return isGlobalData(data) ? data : {};
 }
 
 export function buildZodSchemaForCollection(collectionConfig: CollectionConfig) {
@@ -841,7 +938,8 @@ export function generateFieldsFromDrizzle(table: any): FieldDefinition[] {
       name: colName,
       label: key.charAt(0).toUpperCase() + key.slice(1),
       type,
-      required: (column as any).notNull === true,
+      // A NOT NULL column with a database default can be left out; the default fills it.
+      required: (column as any).notNull === true && (column as any).hasDefault !== true,
     });
   }
 

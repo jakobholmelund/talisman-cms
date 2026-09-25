@@ -7,9 +7,18 @@ import { collections as configCollections, globals as configGlobals, publishing 
 import { uiLibraries as configuredUiLibraries } from 'virtual:talisman-cms/ui-libraries';
 import { nativeSchemas } from 'virtual:talisman-cms/native-schemas';
 import { collectionHooks } from 'virtual:talisman-cms/collection-hooks';
-import { buildZodSchemaForCollection, buildZodSchemaForFields, generateFieldsFromDrizzle, prepareNativeWritePayload } from '../types';
+import {
+  buildZodSchemaForCollection,
+  buildZodSchemaForFields,
+  decodeGlobalData,
+  formatValidationIssues,
+  generateFieldsFromDrizzle,
+  isGlobalData,
+  prepareNativeWritePayload,
+  type FieldValidationIssue
+} from '../types';
 import { validatePresetPayload } from '../presets';
-import { eq, inArray, desc, and, count } from 'drizzle-orm';
+import { eq, inArray, desc, and, count, isNull } from 'drizzle-orm';
 import {
   createDraftEntry,
   getLatestRevision,
@@ -33,6 +42,34 @@ function mapNativeEntry(row: any, collectionId: string, nativeIdCol: string) {
     createdAt: row?.createdAt || new Date(),
     updatedAt: row?.updatedAt || new Date()
   };
+}
+
+const NATIVE_RECORD_CONFLICT_MESSAGE = 'This record changed since it was opened. Reload it before saving.';
+
+function validationErrorResponse(issues: FieldValidationIssue[], extra?: Record<string, unknown>) {
+  return Response.json({ ...formatValidationIssues(issues), ...extra }, { status: 400 });
+}
+
+function withDecodedGlobalData<T extends { data?: unknown }>(record: T) {
+  return { ...record, data: decodeGlobalData(record.data) };
+}
+
+/** Compares an updatedAt read from D1 with the JSON value an editor loaded (an ISO string for dates). */
+function timestampKey(value: unknown) {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'string' && value.trim() && !Number.isNaN(Date.parse(value))) return Date.parse(value);
+  return value ?? null;
+}
+
+/**
+ * An entry with revisions must name the latest one it was loaded with; without one the result is
+ * undefined (answer 428). An entry loaded without revisions (seeded straight into D1) may send null
+ * or nothing: its first versioned write records a baseline revision.
+ */
+async function resolveExpectedRevisionId(db: ReturnType<typeof createDbClient>, entryId: string, value: unknown) {
+  if (typeof value === 'string' && value) return value;
+  if (value === null) return null;
+  return await getLatestRevision(db as any, entryId) ? undefined : null;
 }
 
 function validateCollectionPayload(slug: string, data: Record<string, any>) {
@@ -118,7 +155,7 @@ async function syncConfiguredGlobals(db: ReturnType<typeof createDbClient>) {
         name: globalConfig.name,
         slug: globalConfig.slug,
         description: globalConfig.description || null,
-        data: '{}',
+        data: {},
         createdAt: now,
         updatedAt: now,
       });
@@ -152,7 +189,7 @@ async function resolveGlobalContext(db: ReturnType<typeof createDbClient>, slug:
       name: globalConfig.name,
       slug: globalConfig.slug,
       description: globalConfig.description || null,
-      data: '{}',
+      data: {},
       createdAt: now,
       updatedAt: now,
     });
@@ -335,7 +372,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         } else {
           const { globalRecord: globalObj } = await resolveGlobalContext(db, slug);
           if (!globalObj) return new Response(JSON.stringify({ error: 'Global not found' }), { status: 404 });
-          return new Response(JSON.stringify(globalObj), { status: 200, headers: { 'Content-Type': 'application/json' } });
+          return new Response(JSON.stringify(withDecodedGlobalData(globalObj)), { status: 200, headers: { 'Content-Type': 'application/json' } });
         }
       } 
       
@@ -365,7 +402,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
             name: requestedName || requestedSlug,
             slug: requestedSlug,
             description: typeof body.description === 'string' && body.description.trim().length > 0 ? body.description.trim() : null,
-            data: JSON.stringify(body.data && typeof body.data === 'object' ? body.data : {}),
+            data: isGlobalData(body.data) ? body.data : {},
             createdAt: now,
             updatedAt: now,
           };
@@ -382,15 +419,15 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         
         const bodyStr = await request.text();
         let data = bodyStr ? JSON.parse(bodyStr) : {};
+        if (!isGlobalData(data)) {
+          return Response.json({ error: 'Global data must be a JSON object', fieldErrors: {} }, { status: 400 });
+        }
         const { globalConfig, globalRecord: existing } = await resolveGlobalContext(db, slug);
 
         if (globalConfig?.fields?.length) {
           const parsed = buildZodSchemaForFields(globalConfig.fields).safeParse(data);
           if (!parsed.success) {
-            return new Response(JSON.stringify({
-              error: 'Validation failed',
-              details: parsed.error.flatten()
-            }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+            return validationErrorResponse(parsed.error.issues, { details: parsed.error.flatten() });
           }
 
           data = parsed.data;
@@ -404,7 +441,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
           name: globalConfig?.name || existing?.name || slug,
           slug,
           description: globalConfig?.description || existing?.description || null,
-          data: JSON.stringify(data),
+          data,
           createdAt: existing?.createdAt || now,
           updatedAt: now,
         }).onConflictDoUpdate({
@@ -412,7 +449,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
           set: {
             name: globalConfig?.name || existing?.name || slug,
             description: globalConfig?.description || existing?.description || null,
-            data: JSON.stringify(data),
+            data,
             updatedAt: now
           }
         });
@@ -427,7 +464,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
           await env.KV.delete(`talisman:globals:${slug}`);
         }
 
-        return new Response(JSON.stringify(updated), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify(updated && withDecodedGlobalData(updated)), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
     } catch (e: any) {
       return new Response(JSON.stringify({ status: 'error', message: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
@@ -485,7 +522,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
       const { env } = await import('cloudflare:workers') as unknown as { env: TalismanEnv };
       // @ts-ignore
       const db = createDbClient(env as any);
-      const { collectionConfig, nativeTable } = await resolveCollectionContext(db, slug);
+      const { collection, collectionConfig, activeFields, nativeTable } = await resolveCollectionContext(db, slug);
 
       if (!canAccessCollection(collectionConfig, user, 'update') || collectionConfig.readOnly) {
         return Response.json({ error: 'Collection access denied' }, { status: 403 });
@@ -500,15 +537,29 @@ export const ALL: APIRoute = async ({ request, locals }) => {
       }
 
       const body = await request.json().catch(() => ({})) as { expectedRevisionId?: unknown };
-      if (typeof body.expectedRevisionId !== 'string' || !body.expectedRevisionId) {
+      const entry = await db.query.entries.findFirst({
+        // @ts-ignore
+        where: (e: any, { eq, and }: any) => and(eq(e.collectionId, collection!.id), eq(e.id, entryId))
+      });
+      if (!entry) return Response.json({ error: 'Entry not found' }, { status: 404 });
+
+      const expectedRevisionId = await resolveExpectedRevisionId(db, entryId, body.expectedRevisionId);
+      if (expectedRevisionId === undefined) {
         return Response.json({ error: 'expectedRevisionId is required' }, { status: 428 });
+      }
+
+      if (action === 'publish') {
+        // Drafts may be incomplete, but required fields must be filled before they go live.
+        const draftData = typeof entry.data === 'string' ? JSON.parse(entry.data) : entry.data;
+        const parsed = buildZodSchemaForCollection({ ...collectionConfig, fields: activeFields }).safeParse(draftData ?? {});
+        if (!parsed.success) return validationErrorResponse(parsed.error.issues);
       }
 
       const updated = await triggerPublishingWorkflow(env, {
         collectionSlug: slug,
         entryId,
         action,
-        expectedRevisionId: body.expectedRevisionId,
+        expectedRevisionId,
       }, publishing.workflowBinding);
 
       await invalidateEntryCache(env, slug, entryId);
@@ -601,17 +652,11 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         const dynamicSchema = buildZodSchemaForCollection({ ...collectionConfig, fields: activeFields });
         const parsedDataResult = dynamicSchema.safeParse(data);
         if (!parsedDataResult.success) {
-           return new Response(JSON.stringify({ 
-             error: 'Validation Error', 
-             issues: parsedDataResult.error.issues 
-           }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+           return validationErrorResponse(parsedDataResult.error.issues);
         }
         const validatedPayload = validateCollectionPayload(slug, parsedDataResult.data);
         if (!validatedPayload.success) {
-          return new Response(JSON.stringify({
-            error: 'Validation Error',
-            issues: validatedPayload.issues,
-          }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+          return validationErrorResponse(validatedPayload.issues);
         }
         let validatedData = validatedPayload.data;
 
@@ -683,16 +728,18 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         const bodyStr = await request.text();
         const payload = bodyStr ? JSON.parse(bodyStr) : {};
         let { data, slug: entrySlug } = payload;
-        const expectedRevisionId = payload.expectedRevisionId;
-        if (!nativeTable && (typeof expectedRevisionId !== 'string' || !expectedRevisionId)) {
-          return Response.json({ error: 'expectedRevisionId is required' }, { status: 428 });
-        }
         
         if (nativeTable) {
            // Update native table
            const rows = await db.select().from(nativeTable).where(eq(nativeTable[nativeIdCol], entryId) as any);
            if (rows.length === 0) return new Response(JSON.stringify({ error: 'Entry not found' }), { status: 404 });
            const originalDoc = mapNativeEntry(rows[0], collection!.id, nativeIdCol);
+
+           // Native records have no revisions: an editor sends the updatedAt it loaded instead.
+           const checksUpdatedAt = payload.expectedUpdatedAt !== undefined && Boolean(nativeTable.updatedAt);
+           if (checksUpdatedAt && timestampKey(rows[0].updatedAt) !== timestampKey(payload.expectedUpdatedAt)) {
+             return Response.json({ error: NATIVE_RECORD_CONFLICT_MESSAGE }, { status: 409 });
+           }
            
            if (data !== undefined && collectionConfig.hooks?.beforeValidate) {
              for (const hook of collectionConfig.hooks.beforeValidate) {
@@ -704,15 +751,17 @@ export const ALL: APIRoute = async ({ request, locals }) => {
            let updatePayload = {};
            if (data !== undefined) {
              const rawDataToValidate = typeof data === 'string' ? JSON.parse(data) : data;
-             const dynamicSchema = buildZodSchemaForCollection({ ...collectionConfig, fields: activeFields });
+             // A native update writes only the columns it sends (an editor leaves out stock it did not
+             // change), so an omitted required column keeps its stored value.
+             const dynamicSchema = buildZodSchemaForCollection({ ...collectionConfig, fields: activeFields }).partial();
              const parsedDataResult = dynamicSchema.safeParse(rawDataToValidate);
              
              if (!parsedDataResult.success) {
-               return new Response(JSON.stringify({ error: 'Validation Error', issues: parsedDataResult.error.issues }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+               return validationErrorResponse(parsedDataResult.error.issues);
              }
              const validatedPayload = validateCollectionPayload(slug, parsedDataResult.data);
              if (!validatedPayload.success) {
-               return new Response(JSON.stringify({ error: 'Validation Error', issues: validatedPayload.issues }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+               return validationErrorResponse(validatedPayload.issues);
              }
              let validatedData = validatedPayload.data;
              if (collectionConfig.hooks?.beforeChange) {
@@ -725,14 +774,25 @@ export const ALL: APIRoute = async ({ request, locals }) => {
              updatePayload = prepareNativeWritePayload(collectionConfig, validatedData, 'update');
            }
            
+           let storedRow = rows[0];
            if (Object.keys(updatePayload).length > 0) {
-              await db.update(nativeTable).set(updatePayload).where(eq(nativeTable[nativeIdCol], entryId) as any);
+              // Re-check updatedAt in the write itself, so a save that lands after the check still loses.
+              const unchanged = !checksUpdatedAt ? undefined
+                : rows[0].updatedAt == null ? isNull(nativeTable.updatedAt) : eq(nativeTable.updatedAt, rows[0].updatedAt);
+              const updatedRows: any[] = await db.update(nativeTable).set(updatePayload)
+                .where(and(eq(nativeTable[nativeIdCol], entryId), unchanged) as any).returning() as any[];
+              const updatedRow = updatedRows[0];
+              if (!updatedRow && checksUpdatedAt) {
+                return Response.json({ error: NATIVE_RECORD_CONFLICT_MESSAGE }, { status: 409 });
+              }
+              // The stored row carries updatedAt at the column's precision, ready for the next stale check.
+              storedRow = updatedRow ?? { ...rows[0], ...updatePayload };
            }
            
            await invalidateEntryCache(env, slug, entryId);
            
            const doc = {
-              ...mapNativeEntry({ ...rows[0], ...updatePayload }, collection!.id, nativeIdCol),
+              ...mapNativeEntry(storedRow, collection!.id, nativeIdCol),
               slug: entrySlug || rows[0].slug || entryId,
            };
 
@@ -751,6 +811,11 @@ export const ALL: APIRoute = async ({ request, locals }) => {
            if (!origRow) return new Response(JSON.stringify({ error: 'Entry not found' }), { status: 404 });
            const originalDoc = origRow;
 
+           const expectedRevisionId = await resolveExpectedRevisionId(db, entryId, payload.expectedRevisionId);
+           if (expectedRevisionId === undefined) {
+             return Response.json({ error: 'expectedRevisionId is required' }, { status: 428 });
+           }
+
            if (data !== undefined && collectionConfig.hooks?.beforeValidate) {
              for (const hook of collectionConfig.hooks.beforeValidate) {
                const hData = await hook({ data, req: request, operation: 'update', originalDoc });
@@ -764,18 +829,12 @@ export const ALL: APIRoute = async ({ request, locals }) => {
              const parsedDataResult = dynamicSchema.safeParse(rawDataToValidate);
              
              if (!parsedDataResult.success) {
-               return new Response(JSON.stringify({ 
-                 error: 'Validation Error', 
-                 issues: parsedDataResult.error.issues 
-               }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+               return validationErrorResponse(parsedDataResult.error.issues);
              }
 
              const validatedPayload = validateCollectionPayload(slug, parsedDataResult.data);
              if (!validatedPayload.success) {
-               return new Response(JSON.stringify({
-                 error: 'Validation Error',
-                 issues: validatedPayload.issues
-               }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+               return validationErrorResponse(validatedPayload.issues);
              }
              
              let validatedData = validatedPayload.data;

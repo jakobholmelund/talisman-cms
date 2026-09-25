@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from './db/schema';
 import type { TalismanEnv } from './db/client';
@@ -14,7 +14,8 @@ export interface PublishWorkflowPayload {
   collectionSlug: string;
   entryId: string;
   action: PublishWorkflowAction;
-  expectedRevisionId?: string;
+  /** The latest revision the editor loaded, or null for an entry loaded without revisions. */
+  expectedRevisionId?: string | null;
 }
 
 const REVISION_CONFLICT_MESSAGE = 'This entry changed since it was opened. Reload it before saving.';
@@ -108,16 +109,54 @@ export async function getLatestRevision(
   return row ?? null;
 }
 
-async function getNextRevisionNumber(
-  db: ReturnType<typeof createVersioningDb>,
-  entryId: string,
-  expectedRevisionId?: string
+/**
+ * `expectedRevisionId` is the latest revision the editor loaded; any other latest revision is a
+ * conflict. `null` means the editor loaded an entry without revisions (one seeded straight into
+ * D1, for example), which is accepted only while it still has none. Leave it undefined for
+ * trusted server-side writes that skip the check.
+ */
+function assertExpectedRevision(
+  latest: Awaited<ReturnType<typeof getLatestRevision>>,
+  expectedRevisionId: string | null | undefined
 ) {
-  const latest = await getLatestRevision(db, entryId);
-  if (expectedRevisionId !== undefined && latest?.id !== expectedRevisionId) {
+  if (expectedRevisionId !== undefined && (latest?.id ?? null) !== expectedRevisionId) {
     throw new RevisionConflictError();
   }
-  return (latest?.revisionNumber ?? 0) + 1;
+}
+
+function revisionTypeForStatus(status: EntryStatus): RevisionType {
+  if (status === 'published') return 'publish';
+  if (status === 'archived') return 'archive';
+  return 'draft_save';
+}
+
+/**
+ * The first versioned write to an entry without revisions records its stored state as revision 1
+ * in the same batch (as migrations 0003 and 0020 do), so that state can be restored. A published
+ * entry also gets its published snapshot pinned, so the draft change does not go live.
+ */
+function buildBaselineRevision(db: ReturnType<typeof createVersioningDb>, entry: EntryRecord) {
+  const id = createId('rev');
+  const status = entry.status as EntryStatus;
+  const publishedData = entry.publishedData ?? entry.data;
+  const queries: any[] = [db.insert(schema.entryRevisions).values({
+    id,
+    entryId: entry.id,
+    collectionId: entry.collectionId,
+    revisionNumber: 1,
+    type: revisionTypeForStatus(status),
+    status,
+    data: status === 'published' ? publishedData : entry.data,
+    createdAt: entry.updatedAt ?? new Date(),
+  })];
+
+  if (status === 'published' && !entry.publishedRevisionId) {
+    queries.push(db.update(schema.entries)
+      .set({ publishedData, publishedRevisionId: id })
+      .where(and(eq(schema.entries.id, entry.id), isNull(schema.entries.publishedRevisionId))));
+  }
+
+  return queries;
 }
 
 async function writeRevisionBatch(db: ReturnType<typeof createVersioningDb>, queries: any[]) {
@@ -138,10 +177,15 @@ async function buildRevisionInsert(
     snapshotData: any;
     status: EntryStatus;
     type: RevisionType;
-    expectedRevisionId?: string;
+    expectedRevisionId?: string | null;
+    /** The stored entry, when it already exists: a baseline is recorded if it has no revisions. */
+    existing?: EntryRecord;
   }
 ) {
-  const revisionNumber = await getNextRevisionNumber(db, params.entry.id, params.expectedRevisionId);
+  const latest = await getLatestRevision(db, params.entry.id);
+  assertExpectedRevision(latest, params.expectedRevisionId);
+  const baseline = !latest && params.existing ? buildBaselineRevision(db, params.existing) : [];
+  const revisionNumber = latest ? latest.revisionNumber + 1 : baseline.length > 0 ? 2 : 1;
   const revisionId = createId('rev');
 
   const query = db.insert(schema.entryRevisions).values({
@@ -155,7 +199,7 @@ async function buildRevisionInsert(
     createdAt: new Date(),
   });
 
-  return { id: revisionId, query };
+  return { id: revisionId, queries: [...baseline, query] };
 }
 
 export async function createDraftEntry(
@@ -184,7 +228,7 @@ export async function createDraftEntry(
     status: 'draft',
     type: 'draft_save'
   });
-  await writeRevisionBatch(db, [entryInsert, revision.query]);
+  await writeRevisionBatch(db, [entryInsert, ...revision.queries]);
 
   return getVersionedEntry(db, collection.id, id);
 }
@@ -193,7 +237,7 @@ export async function saveDraftEntry(
   db: ReturnType<typeof createVersioningDb>,
   collection: CollectionRecord,
   entryId: string,
-  params: { data?: any; slug?: string; expectedRevisionId?: string }
+  params: { data?: any; slug?: string; expectedRevisionId?: string | null }
 ) {
   const existing = await getVersionedEntry(db, collection.id, entryId);
   const updates: Partial<typeof schema.entries.$inferInsert> & { updatedAt: Date } = {
@@ -208,11 +252,12 @@ export async function saveDraftEntry(
     snapshotData: params.data !== undefined ? params.data : existing.data,
     status: existing.status as EntryStatus,
     type: 'draft_save',
-    expectedRevisionId: params.expectedRevisionId
+    expectedRevisionId: params.expectedRevisionId,
+    existing
   });
   await writeRevisionBatch(db, [db.update(schema.entries)
     .set(updates)
-    .where(and(eq(schema.entries.collectionId, collection.id), eq(schema.entries.id, entryId))), revision.query]);
+    .where(and(eq(schema.entries.collectionId, collection.id), eq(schema.entries.id, entryId))), ...revision.queries]);
 
   return getVersionedEntry(db, collection.id, entryId);
 }
@@ -221,7 +266,7 @@ export async function publishEntry(
   db: ReturnType<typeof createVersioningDb>,
   collection: CollectionRecord,
   entryId: string,
-  expectedRevisionId?: string
+  expectedRevisionId?: string | null
 ) {
   const entry = await getVersionedEntry(db, collection.id, entryId);
 
@@ -230,11 +275,12 @@ export async function publishEntry(
     snapshotData: entry.data,
     status: 'published',
     type: 'publish',
-    expectedRevisionId
+    expectedRevisionId,
+    existing: entry
   });
 
   const now = new Date();
-  await writeRevisionBatch(db, [revision.query, db.update(schema.entries)
+  await writeRevisionBatch(db, [...revision.queries, db.update(schema.entries)
     .set({
       status: 'published',
       publishedData: entry.data,
@@ -252,7 +298,7 @@ export async function archiveEntry(
   db: ReturnType<typeof createVersioningDb>,
   collection: CollectionRecord,
   entryId: string,
-  expectedRevisionId?: string
+  expectedRevisionId?: string | null
 ) {
   const entry = await getVersionedEntry(db, collection.id, entryId);
   const archiveSnapshot = entry.publishedData ?? entry.data;
@@ -262,11 +308,12 @@ export async function archiveEntry(
     snapshotData: archiveSnapshot,
     status: 'archived',
     type: 'archive',
-    expectedRevisionId
+    expectedRevisionId,
+    existing: entry
   });
 
   const now = new Date();
-  await writeRevisionBatch(db, [revision.query, db.update(schema.entries)
+  await writeRevisionBatch(db, [...revision.queries, db.update(schema.entries)
     .set({
       status: 'archived',
       archivedAt: now,
@@ -282,7 +329,7 @@ export async function restoreEntryRevision(
   collection: CollectionRecord,
   entryId: string,
   revisionId: string,
-  expectedRevisionId?: string
+  expectedRevisionId?: string | null
 ) {
   const entry = await getVersionedEntry(db, collection.id, entryId);
   const revision = await db.query.entryRevisions.findFirst({
@@ -300,7 +347,8 @@ export async function restoreEntryRevision(
     snapshotData: revision.data,
     status: entry.status === 'archived' ? 'draft' : entry.status as EntryStatus,
     type: 'restore',
-    expectedRevisionId
+    expectedRevisionId,
+    existing: entry
   });
   await writeRevisionBatch(db, [db.update(schema.entries)
     .set({
@@ -309,7 +357,7 @@ export async function restoreEntryRevision(
       status: entry.status === 'archived' ? 'draft' : entry.status,
       archivedAt: entry.status === 'archived' ? null : entry.archivedAt,
     })
-    .where(and(eq(schema.entries.collectionId, collection.id), eq(schema.entries.id, entryId))), restoredRevision.query]);
+    .where(and(eq(schema.entries.collectionId, collection.id), eq(schema.entries.id, entryId))), ...restoredRevision.queries]);
 
   return getVersionedEntry(db, collection.id, entryId);
 }
