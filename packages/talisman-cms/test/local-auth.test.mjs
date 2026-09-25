@@ -367,3 +367,155 @@ test('hybrid admin actions keep SSO accounts in Access and promote shoppers only
     assert.equal((await cmsUser(adapter, cookieOf(editorSignIn)))?.role, 'editor');
   } finally { sqlite.close(); }
 });
+
+test('role changes end the target sessions, and a revocation failure after the change is a warning', async () => {
+  const sqlite = setup();
+  try {
+    const adapter = HybridAuthAdapter('/admin');
+    const adminCookie = cookieOf(await sso(await accessToken()));
+    for (const [id, email] of [['editor-1', 'editor@example.test'], ['editor-2', 'second@example.test'], ['editor-3', 'third@example.test']]) {
+      await addUser(sqlite, { id, email, role: 'editor', password: EDITOR_PASSWORD });
+    }
+    const editorCookie = cookieOf(await signIn(adapter, 'editor@example.test', EDITOR_PASSWORD));
+    const secondCookie = cookieOf(await signIn(adapter, 'second@example.test', EDITOR_PASSWORD));
+    await signIn(adapter, 'third@example.test', EDITOR_PASSWORD);
+
+    const revoked = await adminAction(adapter, adminCookie, 'admin/set-role', { userId: 'editor-1', role: 'customer' });
+    assert.equal(revoked.status, 200);
+    const revokedBody = await revoked.json();
+    assert.deepEqual([revokedBody.user.id, revokedBody.user.role, revokedBody.warning], ['editor-1', 'customer', undefined]);
+    assert.equal(sessionsOf(sqlite, 'editor-1').length, 0);
+    assert.equal(await cmsUser(adapter, editorCookie), null);
+
+    // The role and password changes commit before sessions are deleted; a failed delete must not report the change as failed.
+    sqlite.exec(`CREATE TRIGGER keep_sessions BEFORE DELETE ON galaxy_auth_session WHEN OLD.user_id IN ('editor-2', 'editor-3')
+      BEGIN SELECT RAISE(ABORT, 'unavailable'); END`);
+    const partial = await adminAction(adapter, adminCookie, 'admin/set-role', { userId: 'editor-2', role: 'customer' });
+    assert.equal(partial.status, 200);
+    const partialBody = await partial.json();
+    assert.equal(partialBody.user.role, 'customer');
+    assert.match(partialBody.warning, /could not be ended/);
+    assert.equal(sqlite.prepare(`SELECT role FROM galaxy_auth_user WHERE id = 'editor-2'`).get().role, 'customer');
+    assert.equal(sessionsOf(sqlite, 'editor-2').length, 1);
+    assert.equal(await cmsUser(adapter, secondCookie), null, 'a leftover session carries no CMS access once the role changed');
+
+    const newPassword = 'replacement-password-123';
+    const reset = await adminAction(adapter, adminCookie, 'admin/set-user-password', { userId: 'editor-3', newPassword });
+    assert.equal(reset.status, 200);
+    assert.match((await reset.json()).warning, /could not be ended/);
+    assert.equal((await signIn(adapter, 'third@example.test', newPassword)).status, 200);
+
+    // Repeating the action once revocation works again ends the leftover sessions.
+    sqlite.exec('DROP TRIGGER keep_sessions');
+    const repeated = await adminAction(adapter, adminCookie, 'admin/set-role', { userId: 'editor-2', role: 'customer' });
+    assert.equal(repeated.status, 200);
+    assert.equal((await repeated.json()).warning, undefined);
+    assert.equal(sessionsOf(sqlite, 'editor-2').length, 0);
+
+    // Local mode changes roles between admin and editor through the same path.
+    const local = LocalAuthAdapter('/admin', { requireAccess: false });
+    await addUser(sqlite, { id: 'local-admin', email: 'local@example.test', role: 'admin', password: 'local-admin-password' });
+    await addUser(sqlite, { id: 'editor-4', email: 'fourth@example.test', role: 'editor', password: EDITOR_PASSWORD });
+    const localAdminCookie = cookieOf(await signIn(local, 'local@example.test', 'local-admin-password'));
+    const fourthCookie = cookieOf(await signIn(local, 'fourth@example.test', EDITOR_PASSWORD));
+    const promoted = await adminAction(local, localAdminCookie, 'admin/set-role', { userId: 'editor-4', role: 'admin' });
+    assert.equal(promoted.status, 200);
+    assert.equal((await promoted.json()).user.role, 'admin');
+    assert.equal(await cmsUser(local, fourthCookie), null);
+    assert.equal(sessionsOf(sqlite, 'editor-4').length, 0);
+  } finally { sqlite.close(); }
+});
+
+test('disabling an account ends its CMS access even when its sessions cannot be deleted', async () => {
+  const sqlite = setup();
+  try {
+    const adapter = HybridAuthAdapter('/admin');
+    const adminCookie = cookieOf(await sso(await accessToken()));
+    await addUser(sqlite, { id: 'editor-1', email: 'editor@example.test', role: 'editor', password: EDITOR_PASSWORD });
+    const editorCookie = cookieOf(await signIn(adapter, 'editor@example.test', EDITOR_PASSWORD));
+    assert.equal((await cmsUser(adapter, editorCookie))?.id, 'editor-1');
+
+    // Better Auth saves the ban and then deletes sessions; a failed delete leaves a session that must carry no access.
+    sqlite.exec(`CREATE TRIGGER keep_sessions BEFORE DELETE ON galaxy_auth_session WHEN OLD.user_id = 'editor-1'
+      BEGIN SELECT RAISE(ABORT, 'unavailable'); END`);
+    const disabled = await adminAction(adapter, adminCookie, 'admin/ban-user', { userId: 'editor-1' });
+    assert.equal(disabled.status, 200);
+    const disabledBody = await disabled.json();
+    assert.deepEqual([disabledBody.user.id, disabledBody.user.banned], ['editor-1', true]);
+    assert.match(disabledBody.warning, /could not be ended/);
+    assert.equal(sqlite.prepare(`SELECT banned FROM galaxy_auth_user WHERE id = 'editor-1'`).get().banned, 1);
+    assert.equal(sessionsOf(sqlite, 'editor-1').length, 1);
+    assert.equal(await cmsUser(adapter, editorCookie), null);
+    assert.equal((await adminAction(adapter, editorCookie, 'change-password',
+      { currentPassword: EDITOR_PASSWORD, newPassword: 'another-password-123' })).status, 401);
+    assert.equal((await signIn(adapter, 'editor@example.test', EDITOR_PASSWORD)).status, 403);
+
+    // Repeating the action once deletion works again ends the leftover session.
+    sqlite.exec('DROP TRIGGER keep_sessions');
+    const repeated = await adminAction(adapter, adminCookie, 'admin/ban-user', { userId: 'editor-1' });
+    assert.equal(repeated.status, 200);
+    assert.equal((await repeated.json()).warning, undefined);
+    assert.equal(sessionsOf(sqlite, 'editor-1').length, 0);
+  } finally { sqlite.close(); }
+});
+
+test('a disabled editor whose CMS access was revoked can be re-enabled without regaining CMS access', async () => {
+  const sqlite = setup();
+  try {
+    const adapter = HybridAuthAdapter('/admin');
+    const adminCookie = cookieOf(await sso(await accessToken()));
+    await addUser(sqlite, { id: 'editor-1', email: 'editor@example.test', role: 'editor', password: EDITOR_PASSWORD });
+    assert.equal((await adminAction(adapter, adminCookie, 'admin/ban-user', { userId: 'editor-1' })).status, 200);
+    assert.equal((await adminAction(adapter, adminCookie, 'admin/set-role', { userId: 'editor-1', role: 'customer' })).status, 200);
+
+    const password = 'returning-editor-password';
+    const addEditor = () => adminAction(adapter, adminCookie, 'admin/create-user',
+      { email: 'editor@example.test', name: 'Editor', password, role: 'editor' });
+    const blocked = await addEditor();
+    assert.equal(blocked.status, 409);
+    assert.match((await blocked.json()).error, /disabled.*Enable it/);
+
+    const enabled = await adminAction(adapter, adminCookie, 'admin/unban-user', { userId: 'editor-1' });
+    assert.equal(enabled.status, 200);
+    const { user } = await enabled.json();
+    assert.deepEqual([user.role, user.banned], ['customer', false]);
+    // Enabling restores the shopper identity only; the old CMS password still opens no session.
+    assert.equal((await signIn(adapter, 'editor@example.test', EDITOR_PASSWORD)).status, 401);
+    assert.equal(sessionsOf(sqlite, 'editor-1').length, 0);
+
+    assert.equal((await addEditor()).status, 200);
+    const signedIn = await signIn(adapter, 'editor@example.test', password);
+    assert.equal(signedIn.status, 200);
+    assert.equal((await cmsUser(adapter, cookieOf(signedIn)))?.role, 'editor');
+  } finally { sqlite.close(); }
+});
+
+test('CMS sessions end seven days after sign-in even while they are in use', async () => {
+  const sqlite = setup();
+  try {
+    const adapter = HybridAuthAdapter('/admin');
+    const adminCookie = cookieOf(await sso(await accessToken()));
+    const admin = await cmsUser(adapter, adminCookie);
+    await addUser(sqlite, { id: 'editor-1', email: 'editor@example.test', role: 'editor', password: EDITOR_PASSWORD });
+    const editorCookie = cookieOf(await signIn(adapter, 'editor@example.test', EDITOR_PASSWORD));
+    // Simulate a session created some days ago whose expiry kept sliding forward with use.
+    const signedInDaysAgo = (userId, days) => {
+      const now = Math.floor(Date.now() / 1000);
+      sqlite.prepare(`UPDATE galaxy_auth_session SET created_at = ?, expires_at = ? WHERE user_id = ?`)
+        .run(now - Math.round(days * 86400), now + 12 * 3600, userId);
+    };
+
+    signedInDaysAgo('editor-1', 6.9);
+    assert.equal((await cmsUser(adapter, editorCookie))?.id, 'editor-1');
+    signedInDaysAgo('editor-1', 7.01);
+    signedInDaysAgo(admin.id, 7.01);
+    assert.equal(await cmsUser(adapter, editorCookie), null);
+    assert.equal(await cmsUser(adapter, adminCookie), null);
+    assert.equal(sessionsOf(sqlite, 'editor-1').length, 0, 'an expired session is deleted');
+    assert.equal(sessionsOf(sqlite, admin.id).length, 0);
+
+    const again = await signIn(adapter, 'editor@example.test', EDITOR_PASSWORD);
+    assert.equal((await cmsUser(adapter, cookieOf(again)))?.id, 'editor-1');
+    assert.equal((await cmsUser(adapter, cookieOf(await sso(await accessToken()))))?.id, admin.id);
+  } finally { sqlite.close(); }
+});

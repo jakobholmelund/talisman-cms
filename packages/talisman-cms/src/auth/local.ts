@@ -20,6 +20,9 @@ type LocalEnv = TalismanEnv & {
   TALISMAN_ACCESS_ADMIN_EMAILS?: string;
 };
 
+/** Sessions slide with use (12 hours idle), but none outlives this age; the user must sign in again. */
+const MAX_SESSION_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
 export async function getLocalAuthEnv(): Promise<LocalEnv> {
   try {
     const worker = await import('cloudflare:workers');
@@ -166,6 +169,23 @@ function sameOrigin(request: Request): boolean {
   return !origin || origin === new URL(request.url).origin;
 }
 
+const SESSIONS_NOT_ENDED = 'The change was saved, but existing sessions for this account could not be ended. Repeat the action to end them.';
+
+/**
+ * End a user's sessions after an account change has been saved. A failure is returned as a warning,
+ * since reporting an error would hide the committed change. getUser re-reads the role and ban on every
+ * request, so leftover sessions lose CMS access at once after a role change or ban, but not after a password reset.
+ */
+async function revokeSessionsAfterChange(auth: ReturnType<typeof createLocalAuth>, userId: string, headers: Headers): Promise<string | undefined> {
+  try {
+    await auth.api.revokeUserSessions({ body: { userId }, headers });
+    return undefined;
+  } catch (error) {
+    console.error('[talisman-cms] Could not end CMS sessions after an account change', error);
+    return SESSIONS_NOT_ENDED;
+  }
+}
+
 export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?: boolean; editorOnly?: boolean } = {}): TalismanAuthAdapter {
   const normalizedPath = adminPath === '/' ? '/' : `/${adminPath.replace(/^\/+|\/+$/g, '')}`;
   const adapter: TalismanAuthAdapter = {
@@ -177,7 +197,15 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
       const auth = createLocalAuth(request, env, normalizedPath);
       const result = await auth.api.getSession({ headers: request.headers });
       const rawUser = result?.user;
-      if (!rawUser || (rawUser.role !== 'admin' && rawUser.role !== 'editor')) return null;
+      if (!result || !rawUser) return null;
+      // Better Auth keeps extending a session in use, so cap its total age here, where every CMS request is checked.
+      if (!(Date.now() - new Date(result.session.createdAt).getTime() <= MAX_SESSION_AGE_MS)) {
+        await drizzle(env.DB, { schema }).delete(schema.session).where(eq(schema.session.id, result.session.id));
+        return null;
+      }
+      // Better Auth only checks bans when a session is created; a disabled account's other sessions end here.
+      if (rawUser.banned && !(rawUser.banExpires && new Date(rawUser.banExpires).getTime() < Date.now())) return null;
+      if (rawUser.role !== 'admin' && rawUser.role !== 'editor') return null;
       if (options.editorOnly && rawUser.role === 'admin') {
         const admins = (readSetting(env, 'ACCESS_ADMIN_EMAILS') || '').split(',').map(value => value.trim().toLowerCase());
         if (!admins.includes(rawUser.email.toLowerCase()) || !result?.session?.id) return null;
@@ -256,8 +284,12 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
         const normalizedEmail = body.email.trim().toLowerCase();
         const existing = await db.query.user.findFirst({ where: sql`lower(${schema.user.email}) = ${normalizedEmail}` });
         if (existing) {
-          if (existing.role !== 'customer' || existing.banned) {
+          if (existing.role !== 'customer') {
             return Response.json({ error: 'This email already has a CMS account' }, { status: 409 });
+          }
+          if (existing.banned) {
+            // A disabled account keeps its ban after losing CMS access; re-enabling it is a separate, explicit step.
+            return Response.json({ error: 'This account is disabled. Enable it in the user list before granting CMS access.' }, { status: 409 });
           }
           const auth = createLocalAuth(request, env, normalizedPath);
           if (existing.email !== normalizedEmail) {
@@ -266,11 +298,15 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
           await auth.api.setUserPassword({ body: { userId: existing.id, newPassword: body.password }, headers: request.headers });
           // Better Auth's public type only lists its built-in roles; this installation uses editor/customer too.
           await auth.api.setRole({ body: { userId: existing.id, role: body.role as 'admin' }, headers: request.headers });
-          await auth.api.revokeUserSessions({ body: { userId: existing.id }, headers: request.headers });
-          return Response.json({ user: { id: existing.id, email: existing.email, role: body.role } },
+          const warning = await revokeSessionsAfterChange(auth, existing.id, request.headers);
+          return Response.json({ user: { id: existing.id, email: existing.email, role: body.role }, ...(warning ? { warning } : {}) },
             { headers: { 'Cache-Control': 'no-store' } });
         }
       }
+      // Better Auth's handler consumes the request body, so the validated target is kept here for the
+      // session revocation that follows a password or role change.
+      let revokeUserId: string | undefined;
+      let banUserId: string | undefined;
       const resetBody = action === 'admin/set-user-password'
         ? await request.clone().json().catch(() => null) as { userId?: unknown } | null
         : null;
@@ -279,6 +315,7 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
         if (typeof resetBody?.userId !== 'string' || !resetBody.userId) {
           return Response.json({ error: 'Choose a valid user' }, { status: 400 });
         }
+        revokeUserId = resetBody.userId;
         const db = drizzle(env.DB, { schema });
         const target = await db.query.user.findFirst({ where: eq(schema.user.id, resetBody.userId) });
         if (target?.role === 'admin' && options.editorOnly) {
@@ -317,6 +354,8 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
             return Response.json({ error: 'At least one active admin account is required' }, { status: 400 });
           }
         }
+        if (action === 'admin/set-role') revokeUserId = body.userId;
+        if (action === 'admin/ban-user') banUserId = body.userId;
       }
       const auth = createLocalAuth(request, env, normalizedPath);
       const response = await auth.handler(request);
@@ -339,13 +378,24 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
         headers.delete('content-length');
         return Response.json({ ok: true }, { status: response.status, headers });
       }
-      if (action === 'admin/set-user-password' && response.ok) {
-        if (typeof resetBody?.userId !== 'string') throw new Error('Password reset target missing');
-        await auth.api.revokeUserSessions({ body: { userId: resetBody.userId }, headers: request.headers });
+      if (revokeUserId && response.ok) {
+        const warning = await revokeSessionsAfterChange(auth, revokeUserId, request.headers);
+        if (warning) {
+          const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+          headers.delete('content-length');
+          return Response.json({ ...payload, warning }, { status: response.status, headers });
+        }
       }
-      if (action === 'admin/set-role' && response.ok) {
-        const body = await request.clone().json() as { userId: string };
-        await auth.api.revokeUserSessions({ body: { userId: body.userId }, headers: request.headers });
+      if (banUserId && response.status >= 500) {
+        // Better Auth saves the ban before deleting the user's sessions. If only the deletion failed, the ban
+        // is in force (getUser rejects banned users), so report it as saved rather than as an error.
+        const target = await drizzle(env.DB, { schema }).query.user.findFirst({ where: eq(schema.user.id, banUserId) });
+        if (target?.banned) {
+          console.error('[talisman-cms] Could not end CMS sessions after disabling an account');
+          headers.delete('content-length');
+          headers.set('Content-Type', 'application/json');
+          return Response.json({ user: target, warning: SESSIONS_NOT_ENDED }, { status: 200, headers });
+        }
       }
       return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
     },
