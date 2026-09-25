@@ -18,6 +18,11 @@ declare module 'virtual:talisman-cms/config' {
   };
 }
 
+declare module 'virtual:talisman-cms/email' {
+  import type { EmailProviderFactory } from './email/types';
+  export const emailProviderFactory: EmailProviderFactory | null;
+}
+
 declare module 'virtual:talisman-cms/native-schemas' {
   export const nativeSchemas: Record<string, any>;
   export const nativeSchemaConfig: Record<string, { idColumn: string }>;

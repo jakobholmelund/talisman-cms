@@ -79,6 +79,7 @@ binding = "IMAGES"
 - `IMAGES` (optional): responsive WebP variants; see [Public site performance](#public-site-performance).
 - `QUEUE` (optional Queue producer): used only by `getClient(env).tasks.enqueueImageProcessing()`. The CMS does not include a queue consumer.
 - `TALISMAN_PUBLISH_WORKFLOW` (optional Workflow binding): runs publish and archive transitions. Change the name with the integration's `publishing.workflowBinding` option. Without it, transitions run in the request.
+- `EMAIL` (optional `[[send_email]]` binding): sends transactional email, such as the ecommerce plugin's shopper sign-in links. See [Email](#email).
 
 The Worker must use the `nodejs_compat` flag with a compatibility date of at least `2024-09-23`.
 
@@ -87,6 +88,72 @@ The Worker must use the `nodejs_compat` flag with a compatibility date of at lea
 Talisman settings and the default Workflow binding use the `TALISMAN_` prefix. Pre-release deployments used `GALAXY_` for the same names, for example `GALAXY_AUTH_SECRET`. A `GALAXY_` name is still read when its `TALISMAN_` name is missing or blank, and the Worker logs one deprecation warning. To migrate, rename each key and keep its value; for example, keep the same auth secret so sessions stay valid. Plugins can read settings the same way with `readSetting(env, 'AUTH_SECRET')` and `readBinding(env, 'PUBLISH_WORKFLOW')` from `talisman-cms/env`.
 
 The `galaxy_` prefix on CMS database tables, such as `galaxy_entries` and `galaxy_auth_user`, is internal and permanent. Migrations keep these names; do not rename the tables.
+
+### Email
+
+The CMS sends no email itself. Plugins send transactional email through `talisman-cms/email/runtime`, which picks the provider with the `TALISMAN_EMAIL_PROVIDER` setting:
+
+- `cloudflare`: [Cloudflare Email Service](https://developers.cloudflare.com/email-service/) through a `[[send_email]]` binding named `EMAIL`, or the name in `TALISMAN_EMAIL_BINDING`. It must be a `send_email` binding; `DB`, `KV`, `QUEUE` and the other CMS binding names are refused. Email Sending needs the Workers Paid plan and a sending domain on Cloudflare DNS.
+- `custom`: the provider registered with the integration's `email` option (below).
+- `console`: prints each message, links included, to the Worker log instead of sending it. It runs only when `TALISMAN_PUBLIC_ORIGIN` is a `localhost` origin.
+- `none`: email is off.
+
+When the setting is unset, a registered custom provider is used, then a binding named `EMAIL`. An unknown value turns email off and logs one error. Set it explicitly in production.
+
+```toml
+[vars]
+TALISMAN_EMAIL_PROVIDER = "cloudflare"
+TALISMAN_EMAIL_FROM = "My Shop <no-reply@example.com>"
+TALISMAN_EMAIL_REPLY_TO = "hello@example.com"
+TALISMAN_PUBLIC_ORIGIN = "https://example.com"
+
+[[send_email]]
+name = "EMAIL"
+allowed_sender_addresses = ["no-reply@example.com"]
+```
+
+`TALISMAN_EMAIL_FROM` is the default sender and `TALISMAN_EMAIL_REPLY_TO` the optional Reply-To. `TALISMAN_PUBLIC_ORIGIN` is the site's public origin; plugins build links from it rather than from the request's Host header. Every message has a plain-text part and an `Auto-Submitted: auto-generated` header; custom headers must be `X-` headers, and line breaks in the subject, headers or addresses are rejected. A failed send throws `EmailDeliveryError` with a `code` such as `not_configured`, `recipient_suppressed`, `rate_limited` or `quota_exceeded`, plus the provider's own code. Its message never contains addresses or content, so it can be logged. `wrangler dev` and `astro dev` with the Cloudflare adapter simulate the binding and send nothing; with `remote = true` on the binding, local development sends real mail, so never commit that.
+
+To use another email service, write a provider module in the site and register it. The export is called once in the Worker with `args`, and must return a function that builds the provider from the Worker env for each request, or returns null when the service is not configured. Arguments are written into the build, so pass the names of Worker secrets, never their values:
+
+```ts
+// src/email/postmark.ts
+import { EmailDeliveryError } from 'talisman-cms/email';
+import type { EmailProviderFactory } from 'talisman-cms/email';
+
+export const postmarkEmail = ({ tokenVar = 'POSTMARK_TOKEN' } = {}): EmailProviderFactory => (env) => {
+  const token = env[tokenVar];
+  if (typeof token !== 'string' || !token) return null;
+  return {
+    id: 'postmark',
+    async send(message) {
+      const response = await fetch('https://api.postmarkapp.com/email', {
+        method: 'POST',
+        headers: { 'X-Postmark-Server-Token': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ /* map message.from, to, replyTo, subject, text, html and headers */ }),
+      });
+      if (!response.ok) throw new EmailDeliveryError(response.status === 429 ? 'rate_limited' : 'unknown', `Postmark returned ${response.status}`, 'postmark', String(response.status));
+      return { provider: 'postmark' };
+    },
+  };
+};
+```
+
+```ts
+// astro.config.mjs
+import { fileURLToPath } from 'node:url';
+import { customEmail } from 'talisman-cms/email';
+
+talismanCms({
+  email: customEmail({
+    moduleId: fileURLToPath(new URL('./src/email/postmark.ts', import.meta.url)),
+    exportName: 'postmarkEmail',
+    args: [{ tokenVar: 'POSTMARK_TOKEN' }],
+  }),
+});
+```
+
+`moduleId` must be a package name or an absolute path. Plugins can set the same option from `onInit`. Resend is not built in; register it the same way if you use it.
 
 ### Database migrations
 

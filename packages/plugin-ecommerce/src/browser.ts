@@ -54,6 +54,31 @@ export function requestCustomerEmailSignIn(email: string) {
   return commerceRequest<{ accepted: true }>('/api/ecommerce/account', 'POST', { email });
 }
 
+type SignInLocation = Pick<Location, 'pathname' | 'search' | 'hash'>;
+type SignInHistory = Pick<History, 'replaceState' | 'state'>;
+
+/**
+ * Reads the one-time token on the page a sign-in link opens, then removes it from the address bar.
+ * Links carry it in the fragment (`/account/verify#token=...`), which browsers never send to the
+ * server. `?token=` links sent before that change are still read. Returns null without a token.
+ */
+export function readCustomerSignInToken(
+  loc: SignInLocation | undefined = typeof window === 'undefined' ? undefined : window.location,
+  hist: SignInHistory | undefined = typeof window === 'undefined' ? undefined : window.history,
+) {
+  if (!loc) return null;
+  const hash = new URLSearchParams(loc.hash.replace(/^#/, ''));
+  const query = new URLSearchParams(loc.search);
+  const token = hash.get('token') || query.get('token');
+  if (!token) return null;
+  hash.delete('token');
+  query.delete('token');
+  const search = query.toString();
+  const fragment = hash.toString();
+  hist?.replaceState(hist.state, '', `${loc.pathname}${search ? `?${search}` : ''}${fragment ? `#${fragment}` : ''}`);
+  return token;
+}
+
 export function verifyCustomerEmailSignIn(token: string) {
   return commerceRequest<{ account: CustomerAccountSummary }>('/api/ecommerce/account', 'POST', { token });
 }

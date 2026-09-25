@@ -51,6 +51,14 @@
       "types": "./dist/env.d.ts",
       "import": "./dist/env.js"
     },
+    "./email": {
+      "types": "./dist/email/index.d.ts",
+      "import": "./dist/email/index.js"
+    },
+    "./email/runtime": {
+      "types": "./dist/email/runtime.d.ts",
+      "import": "./dist/email/runtime.js"
+    },
     "./seo": {
       "types": "./dist/seo.d.ts",
       "import": "./dist/seo.js"
@@ -110,6 +118,7 @@
     "db:migrate:list:local": "pnpm exec wrangler d1 migrations list DB --local --config ../../playground/wrangler.toml",
     "db:migrate:local": "pnpm exec wrangler d1 migrations apply DB --local --config ../../playground/wrangler.toml",
     "db:seed:ecommerce:local": "pnpm exec wrangler d1 execute DB --local --config ../../playground/wrangler.toml --file ./seeds/ecommerce-demo.sql",
+    "prepack": "pnpm run build",
     "prepublishOnly": "node -e \"if (!/^pnpm\\//.test(process.env.npm_config_user_agent || '')) { console.error('Publish with pnpm (pnpm release:publish) so workspace: ranges are rewritten and LICENSE.md is packed.'); process.exit(1); }\""
   },
   "peerDependencies": {

@@ -4,6 +4,8 @@ import { existsSync } from 'fs';
 import tailwindcss from '@tailwindcss/vite';
 import { TanStackRouterVite } from '@tanstack/router-vite-plugin';
 import type { TalismanAuthAdapter } from './auth/types';
+import { buildEmailVirtualModule } from './email/index';
+import type { EmailRuntimeDescriptor } from './email/types';
 import { registerAuthAdapter } from './runtime-config';
 import type {
   CollectionConfig,
@@ -35,6 +37,7 @@ export type {
   UiLibraryDefinition,
 } from './types';
 export type { TalismanAuthAdapter } from './auth/types';
+export type { EmailRuntimeDescriptor } from './email/types';
 
 export interface TalismanCmsOptions {
   /**
@@ -63,6 +66,13 @@ export interface TalismanCmsOptions {
    * Plugins to extend Talisman CMS functionality
    */
   plugins?: Plugin[];
+
+  /**
+   * A custom email provider, loaded in the Worker from `customEmail({ moduleId, exportName, args })`
+   * (`talisman-cms/email`). It is used when `TALISMAN_EMAIL_PROVIDER` is unset or `custom`.
+   * Without it, email goes through the `[[send_email]]` binding named `EMAIL`.
+   */
+  email?: EmailRuntimeDescriptor;
 
   /**
    * Optional Cloudflare Workflow binding used for publish/archive transitions.
@@ -268,6 +278,8 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
   if (finalOptions.auth && !finalOptions.auth.__talismanAuthRuntime) {
     throw new Error('[talisman-cms] Auth adapters must provide __talismanAuthRuntime so the Worker can load them.');
   }
+  // Built now so an invalid email descriptor fails the config instead of the Worker.
+  const emailVirtualModule = buildEmailVirtualModule(finalOptions.email);
   finalOptions.collections = ensureSystemCollections(finalOptions.collections || []);
   for (const collection of finalOptions.collections) {
     if ('hooks' in collection && collection.hooks) {
@@ -456,6 +468,15 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
                   if (id === '\0virtual:talisman-cms/auth') {
                     return buildAuthVirtualModule(finalOptions?.auth, authAdapterKey, runtimeConfigPath);
                   }
+                }
+              },
+              {
+                name: 'vite-plugin-talisman-cms-email',
+                resolveId(id) {
+                  if (id === 'virtual:talisman-cms/email') return '\0virtual:talisman-cms/email';
+                },
+                load(id) {
+                  if (id === '\0virtual:talisman-cms/email') return emailVirtualModule;
                 }
               },
               {

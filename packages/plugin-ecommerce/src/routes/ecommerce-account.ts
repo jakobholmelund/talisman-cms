@@ -1,11 +1,22 @@
 import type { APIRoute } from 'astro';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { readSetting } from 'talisman-cms/env';
+import { isEmailDeliveryError, parseAddress, sendEmail } from 'talisman-cms/email';
+import { getEmailProvider } from 'talisman-cms/email/runtime';
 import { bindCommerceApi } from '../api';
 import { CUSTOMER_SESSION_COOKIE, CUSTOMER_SESSION_MAX_AGE,
   consumeCustomerEmailSignIn, findCustomerSession, requestCustomerEmailSignIn,
   revokeCustomerSession } from '../accounts';
 import { CART_SESSION_COOKIE, LEGACY_CART_SESSION_COOKIE, readCartSessionToken } from '../cookies';
+import { shopperSignInEmail } from '../emails';
+
+function originOf(value: string | undefined) {
+  try {
+    return value ? new URL(value).origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export const ALL: APIRoute = async ({ request, cookies }) => {
   const { env } = await import('cloudflare:workers');
@@ -36,29 +47,48 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
   const basketToken = readCartSessionToken(cookies);
   if (typeof body?.email === 'string') {
     const settings = runtimeEnv as TalismanEnv & Record<string, unknown>;
-    const apiKey = settings.RESEND_API_KEY;
-    const from = readSetting(settings, 'COMMERCE_EMAIL_FROM');
-    const publicOrigin = readSetting(settings, 'COMMERCE_PUBLIC_ORIGIN');
-    if (typeof apiKey !== 'string' || !apiKey || typeof from !== 'string' || !from ||
-      typeof publicOrigin !== 'string' || publicOrigin !== new URL(request.url).origin) {
+    const provider = getEmailProvider(settings);
+    const from = readSetting(settings, 'COMMERCE_EMAIL_FROM') ?? readSetting(settings, 'EMAIL_FROM');
+    const publicOrigin = originOf(readSetting(settings, 'COMMERCE_PUBLIC_ORIGIN') ?? readSetting(settings, 'PUBLIC_ORIGIN'));
+    // Links use the configured origin, never the Host header, and only on that origin.
+    if (!provider || !from || publicOrigin !== new URL(request.url).origin) {
+      console.error('[commerce] Email sign-in is not configured', {
+        provider: provider?.id ?? null, from: Boolean(from),
+        publicOrigin: !publicOrigin ? 'missing' : publicOrigin === new URL(request.url).origin ? 'ok' : 'mismatch',
+      });
       return Response.json({ error: 'Email sign-in is unavailable' }, { status: 503, headers });
     }
+    const siteName = parseAddress(from)?.name ?? new URL(publicOrigin).host;
     try {
       await requestCustomerEmailSignIn(runtimeEnv, body.email,
-        token => `${publicOrigin}/account/verify?token=${encodeURIComponent(token)}`,
+        // The token travels in the fragment, so it never reaches the server or its request logs.
+        token => `${publicOrigin}/account/verify#token=${encodeURIComponent(token)}`,
         async (to, link) => {
-          const response = await fetch('https://api.resend.com/emails', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ from, to: [to], subject: 'Sign in to your account',
-              html: `<p>Use this one-time link to sign in. It expires in 15 minutes.</p><p><a href="${link}">Sign in</a></p>` })
-          });
-          if (!response.ok) throw new Error('Email delivery failed');
+          await sendEmail(settings, { to, from, ...shopperSignInEmail({ link, siteName }) }, provider);
         }, request.headers.get('cf-connecting-ip'));
       return Response.json({ accepted: true }, { headers });
     } catch (error) {
-      return Response.json({ error: error instanceof Error && error.message === 'Valid email required'
-        ? error.message : 'Could not send sign-in email' }, { status: 400, headers });
+      if (error instanceof Error && error.message === 'Valid email required') {
+        return Response.json({ error: error.message }, { status: 400, headers });
+      }
+      if (error instanceof Error && error.name === 'CustomerEmailLimitError') {
+        console.warn('[commerce] Daily sign-in email limit reached');
+        return Response.json({ error: 'Too many sign-in emails were requested today. Please try again later.' },
+          { status: 503, headers });
+      }
+      // Logs carry codes only: never the address, the link or the token.
+      if (isEmailDeliveryError(error)) {
+        const details = { provider: error.provider, code: error.code, providerCode: error.providerCode ?? null };
+        // A suppressed address gets the same answer as any other, so suppression status does not leak.
+        if (error.code === 'recipient_suppressed') {
+          console.warn('[commerce] Sign-in email suppressed', details);
+          return Response.json({ accepted: true }, { headers });
+        }
+        console.error('[commerce] Sign-in email failed', details);
+      } else {
+        console.error('[commerce] Sign-in email failed', { name: error instanceof Error ? error.name : typeof error });
+      }
+      return Response.json({ error: 'The sign-in email could not be sent. Please try again later.' }, { status: 503, headers });
     }
   }
   if (typeof body?.token === 'string') {
