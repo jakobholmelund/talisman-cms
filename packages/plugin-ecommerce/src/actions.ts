@@ -4,17 +4,12 @@ import { bindCommerceApi } from './api';
 import { runtimePaymentAdapters } from './runtime';
 import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from './accounts';
 import { REFERRAL_COOKIE } from './referrals';
+import { ensureCartSession } from './cookies';
 import type { TalismanEnv } from 'talisman-cms/client';
 
 function getOrCreateCartSession(context: any): string {
-  let sessionToken = context.cookies?.get?.('talisman-cart')?.value;
-  if (!sessionToken) {
-    sessionToken = `anon_${crypto.randomUUID()}`;
-    context.cookies?.set?.('talisman-cart', sessionToken, {
-      path: '/', httpOnly: true, sameSite: 'lax', secure: context.url?.protocol === 'https:', maxAge: 60 * 60 * 24 * 30
-    });
-  }
-  return sessionToken;
+  if (!context.cookies) return `anon_${crypto.randomUUID()}`;
+  return ensureCartSession(context.cookies, context.url?.protocol === 'https:');
 }
 
 export const ecommerceActions = {

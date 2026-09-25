@@ -1,7 +1,7 @@
 ---
 import { env as cfEnv } from 'cloudflare:workers';
-import { bindCommerceApi } from '../api';
-import { CART_UPDATED_EVENT } from '../browser';
+import { CART_UPDATED_EVENT } from '@talisman-cms/plugin-ecommerce/browser';
+import { readCartItemCount } from './cart-count';
 
 const {
   href = '/cart',
@@ -16,14 +16,17 @@ const {
 
 const currentPath = Astro.url.pathname;
 const isActive = activePaths.some((path) => currentPath.startsWith(path));
-const sessionToken = Astro.cookies.get('talisman-cart')?.value;
+
+// The count is personal. This applies when the badge renders as a server island (server:defer);
+// rendered inline after the page has started streaming, the page's own headers stand.
+Astro.response.headers.set('Cache-Control', 'private, no-store');
 
 let itemCount = 0;
 
-if (sessionToken) {
-  const api = bindCommerceApi({ env: cfEnv as any });
-  const cart = await api.carts.getOrCreate(sessionToken);
-  itemCount = cart.items.reduce((total, item) => total + Number(item.quantity || 0), 0);
+try {
+  itemCount = await readCartItemCount(cfEnv as any, Astro.cookies);
+} catch {
+  // A failed lookup must not break the page; the badge corrects itself on the next cart update.
 }
 ---
 

@@ -1,5 +1,6 @@
 ---
 import CartItemCard from './CartItemCard.astro';
+import { serializeJsonForScript } from './json-script';
 
 function formatMoney(cents, currency = 'usd') {
   return new Intl.NumberFormat('en-US', {
@@ -17,7 +18,8 @@ const {
   subtotal = 0,
 } = Astro.props;
 
-const serializedState = JSON.stringify({
+// Product names are catalog data; escape them so a value cannot close the script tag.
+const serializedState = serializeJsonForScript({
   items,
   locked,
 });

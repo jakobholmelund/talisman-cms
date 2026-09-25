@@ -4,6 +4,7 @@ import { bindCommerceApi } from '../api';
 import { CUSTOMER_SESSION_COOKIE, CUSTOMER_SESSION_MAX_AGE,
   consumeCustomerEmailSignIn, findCustomerSession, requestCustomerEmailSignIn,
   revokeCustomerSession } from '../accounts';
+import { CART_SESSION_COOKIE, LEGACY_CART_SESSION_COOKIE, readCartSessionToken } from '../cookies';
 
 export const ALL: APIRoute = async ({ request, cookies }) => {
   const { env } = await import('cloudflare:workers');
@@ -22,7 +23,8 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
   if (request.method === 'DELETE') {
     await revokeCustomerSession(runtimeEnv, sessionToken);
     cookies.delete(CUSTOMER_SESSION_COOKIE, { path: '/' });
-    cookies.delete('talisman-cart', { path: '/' });
+    cookies.delete(CART_SESSION_COOKIE, { path: '/' });
+    cookies.delete(LEGACY_CART_SESSION_COOKIE, { path: '/' });
     return Response.json({ account: null }, { headers });
   }
   if (request.method !== 'POST') return Response.json({ error: 'Method not allowed' }, { status: 405, headers });
@@ -30,7 +32,7 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
   const body = await request.json().catch(() => null) as {
     basketChoice?: unknown; orderId?: unknown; email?: unknown; token?: unknown
   } | null;
-  const basketToken = cookies.get('talisman-cart')?.value;
+  const basketToken = readCartSessionToken(cookies);
   if (typeof body?.email === 'string') {
     const settings = runtimeEnv as TalismanEnv & Record<string, unknown>;
     const apiKey = settings.RESEND_API_KEY;

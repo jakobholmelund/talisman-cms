@@ -5,6 +5,7 @@ import { bindCommerceApi } from '../api';
 import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from '../accounts';
 import { evaluateDiscountCode } from '../promotions';
 import { evaluateGiftCard } from '../gift-cards';
+import { readCartSessionToken } from '../cookies';
 
 const previewSchema = z.object({ code: z.string().trim().max(32).optional(),
   giftCardCode: z.string().trim().max(37).optional(),
@@ -19,7 +20,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   if (!parsed.success || !(parsed.data.code || parsed.data.giftCardCode)) {
     return Response.json({ error: 'Enter a discount or gift card code' }, { status: 400, headers });
   }
-  const token = cookies.get('talisman-cart')?.value;
+  const token = readCartSessionToken(cookies);
   if (!token) return Response.json({ error: 'Basket not found' }, { status: 404, headers });
   try {
     const { env } = await import('cloudflare:workers');

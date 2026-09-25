@@ -5,12 +5,13 @@ import { runtimePaymentAdapters } from '../runtime';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { checkoutSchema } from '../checkout-input';
 import { REFERRAL_COOKIE } from '../referrals';
+import { readCartSessionToken } from '../cookies';
 
 export const POST: APIRoute = async ({ request, cookies }) => {
   if (request.headers.get('origin') !== new URL(request.url).origin) {
     return Response.json({ error: 'Same-origin request required' }, { status: 403 });
   }
-  const sessionToken = cookies.get('talisman-cart')?.value;
+  const sessionToken = readCartSessionToken(cookies);
   if (!sessionToken) {
     return new Response(JSON.stringify({ error: 'No cart session found' }), {
       status: 400,

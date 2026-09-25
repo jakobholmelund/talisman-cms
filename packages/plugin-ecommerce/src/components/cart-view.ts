@@ -1,4 +1,4 @@
-import { dispatchCartUpdated } from '../browser';
+import { dispatchCartUpdated } from '@talisman-cms/plugin-ecommerce/browser';
 
 interface CartItem {
   key: string;

@@ -4,6 +4,7 @@ import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
 import { bindCommerceApi } from '../api';
 import { checkoutSchema } from '../checkout-input';
 import { runtimePaymentAdapters } from '../runtime';
+import { readCartSessionToken } from '../cookies';
 
 export const ALL: APIRoute = async ({ request, cookies }) => {
   const authorization = await authorizeCmsRequest(request, 'admin');
@@ -16,7 +17,7 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
   }
 
   try {
-    const sessionToken = cookies.get('talisman-cart')?.value;
+    const sessionToken = readCartSessionToken(cookies);
     const { env } = await import('cloudflare:workers');
     const api = bindCommerceApi({
       env: env as unknown as TalismanEnv,

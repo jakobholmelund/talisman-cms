@@ -3,9 +3,10 @@ import type { TalismanEnv } from 'talisman-cms/client';
 import { bindCommerceApi } from '../api';
 import { runtimePaymentAdapters } from '../runtime';
 import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from '../accounts';
+import { readCartSessionToken } from '../cookies';
 
 export const ALL: APIRoute = async ({ request, cookies }) => {
-  const sessionToken = cookies.get('talisman-cart')?.value;
+  const sessionToken = readCartSessionToken(cookies);
   if (request.method !== 'GET' && request.method !== 'POST') {
     return Response.json({ error: 'Method not allowed' }, { status: 405 });
   }

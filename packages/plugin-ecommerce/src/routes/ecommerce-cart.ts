@@ -1,18 +1,12 @@
 import type { APIRoute } from 'astro';
 import { bindCommerceApi } from '../api';
 import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from '../accounts';
+import { ensureCartSession } from '../cookies';
 import type { TalismanEnv } from 'talisman-cms/client';
 
 export const ALL: APIRoute = async ({ request, cookies }) => {
-  // Try to parse the session from a generic cookie
-  let sessionToken = cookies.get('talisman-cart')?.value;
-  
-  if (!sessionToken) {
-    sessionToken = `anon_${crypto.randomUUID()}`;
-    cookies.set('talisman-cart', sessionToken, {
-      path: '/', httpOnly: true, sameSite: 'lax', secure: new URL(request.url).protocol === 'https:', maxAge: 60 * 60 * 24 * 30
-    });
-  }
+  // Reuse the basket cookie, adopting one set under the legacy name, or mint a new one
+  const sessionToken = ensureCartSession(cookies, new URL(request.url).protocol === 'https:');
 
   try {
     const { env } = await import('cloudflare:workers');

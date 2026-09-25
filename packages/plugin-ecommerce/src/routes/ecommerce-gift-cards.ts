@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { runtimePaymentAdapters } from '../runtime';
 import { getGiftCardBalance, startGiftCardPurchase } from '../gift-cards';
+import { giftCardAccessCookie } from '../cookies';
 
 export const POST: APIRoute = async ({ request, cookies }) => {
   const headers = { 'Cache-Control': 'no-store' };
@@ -26,7 +27,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       successUrl: `${origin}/gift-cards/success?purchase={PURCHASE_ID}`,
       cancelUrl: `${origin}/gift-cards?cancelled=1`,
     });
-    cookies.set(`talisman-gift-${purchase.id}`, purchase.accessToken, {
+    cookies.set(giftCardAccessCookie(purchase.id), purchase.accessToken, {
       httpOnly: true, sameSite: 'lax', secure: new URL(request.url).protocol === 'https:',
       path: '/gift-cards', maxAge: 7 * 24 * 60 * 60,
     });
