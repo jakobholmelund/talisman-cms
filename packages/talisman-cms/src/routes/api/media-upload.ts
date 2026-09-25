@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { createDbClient, type TalismanEnv } from '../../client';
 import { media } from '../../db/schema';
 import { authorizeCmsRequest } from '../../auth/guard';
-import { MAX_MEDIA_BYTES, rasterImageType } from '../../db/media-policy';
+import { MAX_MEDIA_BYTES, mediaPath, rasterImageType } from '../../db/media-policy';
 
 export const POST: APIRoute = async ({ request }) => {
   const authorization = await authorizeCmsRequest(request);
@@ -43,19 +43,27 @@ export const POST: APIRoute = async ({ request }) => {
     await env.STORAGE.put(fileId, arrayBuffer, {
       httpMetadata: { contentType: mimeType }
     });
-    const mediaUrl = `/api/media/${fileId}`;
+    const mediaUrl = mediaPath(fileId);
 
     const now = new Date();
 
-    await db.insert(media).values({
-      id: fileId,
-      filename: file.name,
-      url: mediaUrl,
-      mimeType,
-      sizeBytes,
-      createdAt: now,
-      updatedAt: now
-    });
+    try {
+      await db.insert(media).values({
+        id: fileId,
+        filename: file.name,
+        url: mediaUrl,
+        mimeType,
+        sizeBytes,
+        createdAt: now,
+        updatedAt: now
+      });
+    } catch (error) {
+      // Without its record the file is not in the library, but media-serve would still serve it.
+      await env.STORAGE.delete(fileId).catch((cleanupError) => {
+        console.error(`Could not delete ${fileId} after its media record failed to save:`, cleanupError);
+      });
+      throw error;
+    }
 
     const insertedRecord = await db.select().from(media).where(eq(media.id, fileId)).get();
 
@@ -65,8 +73,9 @@ export const POST: APIRoute = async ({ request }) => {
     });
 
   } catch (error: any) {
+    // Database errors carry the statement and its values, so the details stay in the logs.
     console.error('Media upload error:', error);
-    return new Response(JSON.stringify({ error: error.message || 'Internal Server Error' }), {
+    return new Response(JSON.stringify({ error: 'The upload could not be saved. Check the server logs for details.' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
     });

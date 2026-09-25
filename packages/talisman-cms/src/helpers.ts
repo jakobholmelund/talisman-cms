@@ -1,4 +1,5 @@
 import type { BlockDefinition, RelationReference } from './types';
+import { MEDIA_IMAGE_WIDTHS } from './db/media-policy';
 
 export interface CollectionRepeaterBlockOptions {
   slug: string;
@@ -52,8 +53,6 @@ export function edit(collectionSlug: string, entryId: string, fieldPath?: string
     ...(fieldPath ? { 'data-talisman-path': fieldPath } : {})
   };
 }
-
-const MEDIA_IMAGE_WIDTHS = [320, 640, 960, 1280, 1920] as const;
 
 /** Responsive variants are generated when the Worker has an IMAGES binding. */
 export function getMediaImageSrcSet(src: string, widths: readonly number[] = MEDIA_IMAGE_WIDTHS): string | undefined {

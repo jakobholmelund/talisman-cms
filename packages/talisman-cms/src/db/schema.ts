@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { sqliteTable, text, integer, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const collections = sqliteTable('galaxy_collections', {
@@ -25,6 +26,8 @@ export const entries = sqliteTable('galaxy_entries', {
 }, (table) => [
   index('galaxy_entries_collection_status_created_idx').on(table.collectionId, table.status, table.createdAt),
   index('galaxy_entries_collection_status_slug_idx').on(table.collectionId, table.status, table.slug, table.createdAt),
+  // Migration 0023: one published entry per live slug in a collection.
+  uniqueIndex('galaxy_entries_published_slug_unique').on(table.collectionId, table.slug).where(sql`status = 'published'`),
 ]);
 
 export const entryRevisions = sqliteTable('galaxy_entry_revisions', {

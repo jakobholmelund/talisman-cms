@@ -59,6 +59,15 @@ export function isEntryNotFound(error: unknown) {
     (error instanceof Error && /^(Entry|Revision) .+ not found/.test(error.message));
 }
 
+/**
+ * A publish or archive that fails this way fails again on retry: a stale revision, a slug another
+ * entry serves, or an entry, collection or action that does not exist.
+ */
+export function isPermanentPublishError(error: unknown) {
+  return isRevisionConflict(error) || isSlugConflict(error) || isEntryNotFound(error) ||
+    (error instanceof Error && /^(Collection .+ not found|Unsupported publish workflow action)/.test(error.message));
+}
+
 type CollectionRecord = typeof schema.collections.$inferSelect;
 type EntryRecord = typeof schema.entries.$inferSelect;
 type RevisionRecord = typeof schema.entryRevisions.$inferSelect;
@@ -294,12 +303,26 @@ function buildBaselineRevision(db: ReturnType<typeof createVersioningDb>, entry:
   return queries;
 }
 
+/** The messages of an error and its causes, where D1 and Drizzle put the SQLite error. */
+function errorMessages(error: unknown) {
+  const messages: string[] = [];
+  for (let current: any = error, depth = 0; current && depth < 5; current = current.cause, depth += 1) {
+    if (typeof current.message === 'string') messages.push(current.message);
+  }
+  return messages.join('\n');
+}
+
 async function writeRevisionBatch(db: ReturnType<typeof createVersioningDb>, queries: any[]) {
   try {
     await db.batch(queries as any);
   } catch (error) {
-    if (error instanceof Error && /UNIQUE constraint failed.*(entry_id|revision_number)|galaxy_entry_revisions_entry_number_unique/i.test(error.message)) {
+    const messages = errorMessages(error);
+    if (/UNIQUE constraint failed.*(entry_id|revision_number)|galaxy_entry_revisions_entry_number_unique/i.test(messages)) {
       throw new RevisionConflictError();
+    }
+    // Migration 0023's index on the live slugs of published entries: two publishes of one slug raced.
+    if (/UNIQUE constraint failed: galaxy_entries\.collection_id, galaxy_entries\.slug|galaxy_entries_published_slug_unique/i.test(messages)) {
+      throw new SlugConflictError();
     }
     throw error;
   }
@@ -527,24 +550,67 @@ export async function runPublishingTransition(
   throw new Error(`Unsupported publish workflow action: ${payload.action}`);
 }
 
-export async function waitForWorkflowCompletion(instance: WorkflowInstance, timeoutMs = 5000) {
-  const startedAt = Date.now();
+/**
+ * What TalismanPublishWorkflow returns. A transition that cannot succeed (see isPermanentPublishError)
+ * ends the instance as complete with `ok: false` and the error, which the waiting request rethrows.
+ */
+export type PublishWorkflowResult =
+  | { ok: true; entryId: string; status: string }
+  | { ok: false; error: { name: string; message: string } };
 
-  while (Date.now() - startedAt < timeoutMs) {
+/** A publish or archive Workflow instance that was still running when the request stopped waiting. */
+export interface PendingPublishWorkflow {
+  status: 'pending';
+  instanceId: string;
+}
+
+export class PublishWorkflowPendingError extends Error {
+  instanceId: string;
+
+  constructor(instanceId: string, timeoutMs: number) {
+    super(`Workflow ${instanceId} did not complete within ${timeoutMs}ms`);
+    this.name = 'PublishWorkflowPendingError';
+    this.instanceId = instanceId;
+  }
+}
+
+/** An instance's failure arrives as a message; known ones become the errors an inline transition throws. */
+function workflowFailure(message: string) {
+  if (isRevisionConflict(new Error(message))) return new RevisionConflictError();
+  if (isSlugConflict(new Error(message))) return new SlugConflictError();
+  if (isEntryNotFound(new Error(message))) return new EntryNotFoundError(message);
+  return new Error(message);
+}
+
+/**
+ * Polls the instance until it completes, resolving to its status, or fails, throwing its error (also
+ * when it completes with a failed transition). An instance still running after `timeoutMs` throws
+ * PublishWorkflowPendingError and keeps running on its own.
+ */
+export async function waitForWorkflowCompletion(instance: WorkflowInstance, timeoutMs = 10_000) {
+  const startedAt = Date.now();
+  // Short waits first, since most instances finish quickly, without spending many subrequests.
+  for (let delay = 100; ; delay = Math.min(delay * 2, 1000)) {
     const status = await instance.status();
 
     if (status.status === 'complete') {
+      const output = status.output as Partial<Extract<PublishWorkflowResult, { ok: false }>> | undefined;
+      if (output?.ok === false) {
+        throw workflowFailure(output.error?.message || `Workflow ${instance.id} could not apply the transition`);
+      }
       return status;
     }
 
     if (status.status === 'errored' || status.status === 'terminated') {
-      throw new Error(status.error?.message || `Workflow ${instance.id} ended with status ${status.status}`);
+      throw workflowFailure(status.error?.message || `Workflow ${instance.id} ended with status ${status.status}`);
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    const remaining = timeoutMs - (Date.now() - startedAt);
+    if (remaining <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(delay, remaining)));
   }
 
-  throw new Error(`Workflow ${instance.id} did not complete within ${timeoutMs}ms`);
+  throw new PublishWorkflowPendingError(instance.id, timeoutMs);
 }
 
 /** Instance ids allow letters, digits, "-" and "_" (at most 100), while entry ids may also hold ":" or ".". */
@@ -553,11 +619,17 @@ function workflowInstanceId(payload: PublishWorkflowPayload) {
   return `talisman-${payload.action}-${target}-${Date.now()}`;
 }
 
+/**
+ * Runs a publish or archive, through the Workflow binding when there is one. The result is the entry
+ * after the transition. When the Workflow instance is still running after the wait, it is the entry as
+ * stored before the transition, with `workflow: { status: 'pending', instanceId }`; the instance
+ * finishes on its own and clears the cache. Failures throw the same errors in both modes.
+ */
 export async function triggerPublishingWorkflow(
   env: TalismanEnv,
   payload: PublishWorkflowPayload,
   bindingName = DEFAULT_PUBLISHING_WORKFLOW_BINDING
-) {
+): Promise<EntryRecord & { workflow?: PendingPublishWorkflow }> {
   // The default binding also accepts its pre-rename GALAXY_PUBLISH_WORKFLOW name.
   const workflow = (bindingName === DEFAULT_PUBLISHING_WORKFLOW_BINDING
     ? readBinding(env, 'PUBLISH_WORKFLOW')
@@ -567,14 +639,23 @@ export async function triggerPublishingWorkflow(
     return runPublishingTransition(env, payload);
   }
 
+  const db = createVersioningDb(env);
+  const collection = await getCollectionBySlug(db, payload.collectionSlug);
+  const entry = await getVersionedEntry(db, collection.id, payload.entryId);
+  // A Workflow reports a failure only once its instance ends, so a slug conflict is caught here first.
+  if (payload.action === 'publish') await assertPublishableSlug(db, entry);
+
   const instance = await workflow.create({
     id: workflowInstanceId(payload),
     params: payload,
   });
 
-  await waitForWorkflowCompletion(instance);
-  const db = createVersioningDb(env);
-  const collection = await getCollectionBySlug(db, payload.collectionSlug);
+  try {
+    await waitForWorkflowCompletion(instance);
+  } catch (error) {
+    if (!(error instanceof PublishWorkflowPendingError)) throw error;
+    return { ...await getVersionedEntry(db, collection.id, payload.entryId), workflow: { status: 'pending', instanceId: instance.id } };
+  }
   return getVersionedEntry(db, collection.id, payload.entryId);
 }
 

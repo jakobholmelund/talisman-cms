@@ -26,14 +26,13 @@ test('readSetting prefers TALISMAN_*, falls back to GALAXY_*, and trims', (t) =>
   assert.equal(readSetting(null, 'AUTH_SECRET'), undefined);
 });
 
-test('readSetting treats blank and non-string values as unset', (t) => {
+test('readSetting treats blank values as unset', (t) => {
   t.mock.method(console, 'warn', () => {});
   assert.equal(readSetting({ TALISMAN_COMMERCE_CHECKOUT_ENABLED: '', GALAXY_COMMERCE_CHECKOUT_ENABLED: 'true' },
     'COMMERCE_CHECKOUT_ENABLED'), 'true');
   assert.equal(readSetting({ TALISMAN_COMMERCE_CHECKOUT_ENABLED: '   ', GALAXY_COMMERCE_CHECKOUT_ENABLED: ' ' },
     'COMMERCE_CHECKOUT_ENABLED'), undefined);
-  assert.equal(readSetting({ TALISMAN_COMMERCE_CHECKOUT_ENABLED: true }, 'COMMERCE_CHECKOUT_ENABLED'), undefined);
-  assert.equal(readSetting({ TALISMAN_COMMERCE_CHECKOUT_ENABLED: true, GALAXY_COMMERCE_CHECKOUT_ENABLED: 'true' },
+  assert.equal(readSetting({ TALISMAN_COMMERCE_CHECKOUT_ENABLED: null, GALAXY_COMMERCE_CHECKOUT_ENABLED: 'true' },
     'COMMERCE_CHECKOUT_ENABLED'), 'true');
   // process.env is a valid source outside Workers.
   const previous = process.env.TALISMAN_TEST_ONLY_SETTING;
@@ -44,6 +43,27 @@ test('readSetting treats blank and non-string values as unset', (t) => {
     if (previous === undefined) delete process.env.TALISMAN_TEST_ONLY_SETTING;
     else process.env.TALISMAN_TEST_ONLY_SETTING = previous;
   }
+});
+
+test('readSetting reads TOML numbers and booleans as text, and ignores other types with one warning per name', (t) => {
+  const warn = t.mock.method(console, 'warn', () => {});
+  // wrangler.toml `[vars]` keeps a TOML number or boolean as that type.
+  assert.equal(readSetting({ TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT: 500 }, 'COMMERCE_EMAIL_DAILY_LIMIT'), '500');
+  assert.equal(readSetting({ TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT: 0 }, 'COMMERCE_EMAIL_DAILY_LIMIT'), '0');
+  assert.equal(readSetting({ TALISMAN_COMMERCE_CHECKOUT_ENABLED: true }, 'COMMERCE_CHECKOUT_ENABLED'), 'true');
+  assert.equal(readSetting({ TALISMAN_COMMERCE_CHECKOUT_ENABLED: false, GALAXY_COMMERCE_CHECKOUT_ENABLED: 'true' },
+    'COMMERCE_CHECKOUT_ENABLED'), 'false');
+  assert.equal(warn.mock.callCount(), 0);
+
+  for (const value of [Number.NaN, Number.POSITIVE_INFINITY, ['owner@example.test'], { limit: 500 }]) {
+    assert.equal(readSetting({ TALISMAN_ACCESS_ADMIN_EMAILS: value }, 'ACCESS_ADMIN_EMAILS'), undefined);
+  }
+  assert.equal(readSetting({ TALISMAN_ACCESS_ADMIN_EMAILS: ['x'], GALAXY_ACCESS_ADMIN_EMAILS: 'owner@example.test' },
+    'ACCESS_ADMIN_EMAILS'), 'owner@example.test');
+  const ignored = warn.mock.calls.map((call) => String(call.arguments[0])).filter((message) => /is not text/.test(message));
+  assert.equal(ignored.length, 1);
+  assert.match(ignored[0], /TALISMAN_ACCESS_ADMIN_EMAILS/);
+  assert.doesNotMatch(ignored[0], /owner@example\.test/);
 });
 
 test('readBinding prefers TALISMAN_*, falls back to GALAXY_*, and returns the binding itself', (t) => {

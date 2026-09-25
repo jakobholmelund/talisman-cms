@@ -204,7 +204,11 @@ export interface Plugin {
   /** Task-oriented links shown in the matching admin workspace. */
   adminLinks?: { section: AdminSection; label: string; description: string; href: string }[];
   endpoints?: { path: string; entrypoint: string; public?: boolean }[];
-  routes?: { path: string; entrypoint: string; prerender?: boolean }[];
+  /**
+   * Pages under the admin path need a CMS session unless `public` is true; pages elsewhere are
+   * always public. An admin-path page that needs a session cannot be prerendered.
+   */
+  routes?: { path: string; entrypoint: string; prerender?: boolean; public?: boolean }[];
   adminUi?: { path: string; label: string; componentPath: string; section?: AdminSection }[];
   blocks?: BlockDefinition[];
   components?: ComponentDefinition[];
@@ -675,6 +679,37 @@ export function findUnwritableNativeColumns(
   });
 }
 
+const FREE_TEXT_FIELD_TYPES = new Set<FieldType>(['text', 'textarea', 'color']);
+
+/**
+ * The admin form sends '' for an optional field left blank; in a native table that means "no value".
+ * A nullable column is set to NULL, so a blank number is not a type error and a blank value in a
+ * UNIQUE or foreign-key column cannot collide with another row. A NOT NULL column keeps '' for free
+ * text (a valid value there) and is otherwise left out, so it keeps its database default on create
+ * and its stored value on update. Required and server-managed fields are left to validation.
+ */
+export function normalizeBlankNativeValues(
+  collectionConfig: Pick<CollectionConfig, 'nativeSchemaMapping'>,
+  fields: Pick<FieldDefinition, 'name' | 'type' | 'required'>[],
+  table: Record<string, any> | null | undefined,
+  data: Record<string, any>
+) {
+  const normalized: Record<string, any> = { ...data };
+  for (const [key, value] of Object.entries(data)) {
+    const column = table?.[key];
+    if (value !== '' || !column || typeof column !== 'object' || !('dataType' in column)) continue;
+    const field = fields.find((candidate) => candidate.name === key || candidate.name === column.name);
+    if (!field || field.required || isSystemManagedNativeField(key, collectionConfig)) continue;
+
+    if (!column.notNull) {
+      normalized[key] = null;
+    } else if (!FREE_TEXT_FIELD_TYPES.has(field.type)) {
+      delete normalized[key];
+    }
+  }
+  return normalized;
+}
+
 const ENTRY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/;
 const ENTRY_SLUG_SEGMENT_PATTERN = /^[\p{L}\p{N}_.~:-]+$/u;
 // `new` is the admin's create route and `all` the key of cached entry lists.
@@ -706,6 +741,18 @@ export function describeInvalidEntrySlug(value: unknown): string | null {
     return 'Slug may only use letters, numbers, "-", "_", ".", "~" and ":", with single "/" between path segments';
   }
   return null;
+}
+
+/**
+ * The updatedAt a native update stores: now, or one second past the stored value when that is not
+ * earlier. Native timestamps hold whole seconds, and an editor's save is checked against the
+ * updatedAt it loaded, so each write must change the value even within the same second. A stored
+ * value far in the future (a seed that wrote milliseconds, for example) is replaced by now.
+ */
+export function nextNativeUpdatedAt(stored: unknown, now = new Date()) {
+  if (!(stored instanceof Date) || Number.isNaN(stored.getTime())) return now;
+  const next = stored.getTime() + 1000;
+  return next > now.getTime() && next - now.getTime() <= 5 * 60_000 ? new Date(next) : now;
 }
 
 export function prepareNativeWritePayload(
@@ -878,6 +925,12 @@ export function formatValidationIssues(issues: FieldValidationIssue[]) {
   };
 }
 
+/**
+ * A number or a select with options cannot hold '', which the admin form sends for a field left
+ * blank, so it counts as no value: null for an optional field, "Required" for a required one.
+ */
+const blankAsNull = (schema: z.ZodTypeAny) => z.preprocess((value) => (value === '' ? null : value), schema);
+
 export function buildZodSchemaForFields(fields: FieldDefinition[]): z.ZodObject<any> {
   const shape: Record<string, z.ZodTypeAny> = {};
 
@@ -885,10 +938,12 @@ export function buildZodSchemaForFields(fields: FieldDefinition[]): z.ZodObject<
 
   for (const field of fields) {
     let fieldSchema: z.ZodTypeAny;
+    let blankIsEmpty = false;
 
     switch (field.type) {
       case 'number':
         fieldSchema = z.number();
+        blankIsEmpty = true;
         break;
       case 'boolean':
         fieldSchema = z.boolean();
@@ -913,6 +968,7 @@ export function buildZodSchemaForFields(fields: FieldDefinition[]): z.ZodObject<
         fieldSchema = field.options && field.options.length > 0
           ? z.enum(field.options as [string, ...string[]])
           : z.string();
+        blankIsEmpty = Boolean(field.options?.length) && !field.options!.includes('');
         break;
       case 'group':
         fieldSchema = field.fields ? buildZodSchemaForFields(field.fields) : z.any();
@@ -949,7 +1005,7 @@ export function buildZodSchemaForFields(fields: FieldDefinition[]): z.ZodObject<
       ? requireValue(field, fieldSchema)
       : fieldSchema.optional().nullable();
 
-    shape[field.name] = fieldSchema;
+    shape[field.name] = blankIsEmpty ? blankAsNull(fieldSchema) : fieldSchema;
   }
 
   return z.object(shape).passthrough();

@@ -408,6 +408,13 @@ test('a database with data from earlier releases upgrades cleanly', () => {
     // Later migrations apply on top, and the result matches a fresh install.
     if (BASELINE !== tags.at(-1)) migrate(db, { from: tags[tags.indexOf(BASELINE) + 1] });
     assertIntegrity(db);
+    // 0022: globals that are not a JSON object keep their value under "value".
+    assert.deepEqual(rows(db, 'SELECT id, data FROM galaxy_globals ORDER BY id'), [
+      { id: 'g-invalid', data: '{"value":"not json"}' },
+      { id: 'g-object', data: '{"title":"Site"}' },
+      { id: 'g-wrapped', data: '{"mode":"dark"}' },
+      { id: 'g-wrapped-array', data: '{"value":[1,2]}' },
+    ]);
     migrate(empty);
     assert.deepEqual(fullSchema(db), fullSchema(empty));
   } finally {
@@ -441,6 +448,89 @@ test('the README pre-upgrade checks find the rows that stop 0018 and 0019, which
     db.exec(`DELETE FROM galaxy_auth_user WHERE id = 'u-2'`);
     applyMigration(db, '0019_shared_customer_identity');
     assert.equal(row(db, `SELECT email FROM galaxy_auth_user WHERE id = 'u-1'`).email, 'jakob@example.com');
+  } finally {
+    db.close();
+  }
+});
+
+test('0022 keeps globals that are not a JSON object under "value" and leaves ones that read as objects', () => {
+  const db = openDatabase();
+  try {
+    migrate(db, { to: '0021_entry_draft_slug' });
+    const globals = {
+      object: `'{"a":1}'`,
+      'encoded-object': `json_quote('{"a":1}')`,
+      'twice-encoded-object': `json_quote(json_quote('{"a":1}'))`,
+      array: `'[1,2]'`,
+      'encoded-array': `json_quote('[1,2]')`,
+      'twice-encoded-array': `json_quote(json_quote('[1,2]'))`,
+      number: `'42'`,
+      'encoded-number': `json_quote('42')`,
+      'null': `'null'`,
+      'true': `'true'`,
+      text: `json_quote('hello')`,
+      'encoded-text': `json_quote(json_quote('hello'))`,
+      invalid: `'{broken'`,
+    };
+    for (const [slug, value] of Object.entries(globals)) {
+      db.exec(`INSERT INTO galaxy_globals (id, name, slug, data, created_at, updated_at) VALUES ('${slug}', '${slug}', '${slug}', ${value}, ${T}, ${T})`);
+    }
+    const before = Object.fromEntries(rows(db, 'SELECT slug, data FROM galaxy_globals').map(({ slug, data }) => [slug, data]));
+    // The review query from the migration lists every row that is not stored as an object.
+    const reviewed = rows(db, `SELECT slug FROM galaxy_globals WHERE CASE WHEN json_valid(data) THEN json_type(data) <> 'object' ELSE 1 END ORDER BY slug`);
+    assert.deepEqual(reviewed.map(({ slug }) => slug), Object.keys(globals).filter((slug) => slug !== 'object').sort());
+
+    applyMigration(db, '0022_wrap_non_object_globals');
+    const after = () => Object.fromEntries(rows(db, 'SELECT slug, data FROM galaxy_globals').map(({ slug, data }) => [slug, data]));
+    const migrated = after();
+    // Rows that the runtime already reads as an object stay as they are.
+    for (const slug of ['object', 'encoded-object', 'twice-encoded-object']) assert.equal(migrated[slug], before[slug], slug);
+    assert.deepEqual(Object.fromEntries(Object.entries(migrated).filter(([slug]) => !slug.includes('object'))
+      .map(([slug, data]) => [slug, JSON.parse(data)])), {
+      array: { value: [1, 2] },
+      'encoded-array': { value: [1, 2] },
+      'twice-encoded-array': { value: [1, 2] },
+      number: { value: 42 },
+      'encoded-number': { value: 42 },
+      'null': { value: null },
+      'true': { value: true },
+      text: { value: 'hello' },
+      'encoded-text': { value: 'hello' },
+      invalid: { value: '{broken' },
+    });
+
+    applyMigration(db, '0022_wrap_non_object_globals');
+    assert.deepEqual(after(), migrated);
+  } finally {
+    db.close();
+  }
+});
+
+// The check to run before 0023; it must return no rows.
+const duplicatePublishedSlugsCheck = `SELECT collection_id, slug, COUNT(*) AS copies FROM galaxy_entries
+  WHERE status = 'published' GROUP BY collection_id, slug HAVING COUNT(*) > 1`;
+
+test('0023 lets one published entry per collection serve a slug, and its check finds the rows that stop it', () => {
+  const db = openDatabase();
+  try {
+    migrate(db, { to: '0022_wrap_non_object_globals', after: { '0002_flowery_midnight': seeds['0002_flowery_midnight'] } });
+    db.exec(`INSERT INTO galaxy_collections (id, name, slug, fields, created_at) VALUES ('col-pages', 'Pages', 'pages', '[]', ${T});
+      INSERT INTO galaxy_entries (id, collection_id, slug, status, data, created_at, updated_at) VALUES
+        ('hello-copy', 'col-posts', 'hello', 'published', '{}', ${T}, ${T}),
+        ('hello-draft', 'col-posts', 'hello', 'draft', '{}', ${T}, ${T}),
+        ('hello-page', 'col-pages', 'hello', 'published', '{}', ${T}, ${T});`);
+    assert.deepEqual(rows(db, duplicatePublishedSlugsCheck), [{ collection_id: 'col-posts', slug: 'hello', copies: 2 }]);
+    assert.throws(() => applyMigration(db, '0023_published_slug_unique'),
+      /0023_published_slug_unique: UNIQUE constraint failed: galaxy_entries\.collection_id, galaxy_entries\.slug/);
+
+    db.exec(`UPDATE galaxy_entries SET slug = 'hello-2' WHERE id = 'hello-copy'`);
+    assert.deepEqual(rows(db, duplicatePublishedSlugsCheck), []);
+    applyMigration(db, '0023_published_slug_unique');
+    // Drafts, archived entries and other collections may still share the slug; a second live copy may not.
+    db.exec(`UPDATE galaxy_entries SET status = 'archived' WHERE id = 'post-published'`);
+    db.exec(`UPDATE galaxy_entries SET slug = 'hello', status = 'published' WHERE id = 'hello-copy'`);
+    assert.throws(() => db.exec(`UPDATE galaxy_entries SET status = 'published' WHERE id = 'hello-draft'`),
+      /UNIQUE constraint failed: galaxy_entries\.collection_id, galaxy_entries\.slug/);
   } finally {
     db.close();
   }

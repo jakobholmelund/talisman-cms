@@ -7,20 +7,22 @@ import * as schema from '../dist/db/schema.js';
 import {
   createDraftEntry, saveDraftEntry, publishEntry, archiveEntry, restoreEntryRevision, getLatestRevision, listEntryRevisions,
   getEntryRevision, normalizeEntryDataForRead, toEditableEntry, RevisionConflictError, SlugConflictError, EntryNotFoundError,
-  triggerPublishingWorkflow
+  triggerPublishingWorkflow, waitForWorkflowCompletion, PublishWorkflowPendingError, isPermanentPublishError
 } from '../dist/versioning.js';
 
 function database() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
   for (const migration of ['0000_skinny_odin', '0001_abandoned_shotgun', '0002_flowery_midnight',
-    '0003_content_versioning', '0018_entry_revision_integrity', '0021_entry_draft_slug']) {
+    '0003_content_versioning', '0018_entry_revision_integrity', '0021_entry_draft_slug', '0023_published_slug_unique']) {
     const sql = readFileSync(new URL(`../drizzle/${migration}.sql`, import.meta.url), 'utf8');
     sqlite.exec(sql.replaceAll('--> statement-breakpoint', ''));
   }
   sqlite.prepare('INSERT INTO galaxy_collections (id, name, slug, fields, created_at) VALUES (?, ?, ?, ?, ?)')
     .run('posts-id', 'Posts', 'posts', '[]', Math.floor(Date.now() / 1000));
   let failBatchAt = 0;
+  // D1 runs one batch at a time; concurrent writes in a test queue here instead of nesting transactions.
+  let batchQueue = Promise.resolve();
   const DB = {
     prepare(sql) {
       const statement = sqlite.prepare(sql);
@@ -36,22 +38,26 @@ function database() {
         async run() { return { meta: statement.run(...values) }; },
       };
     },
-    async batch(statements) {
-      sqlite.exec('BEGIN');
-      try {
-        const results = [];
-        for (const [index, statement] of statements.entries()) {
-          if (failBatchAt === index + 1) throw new Error('simulated batch failure');
-          results.push(await statement.all());
+    batch(statements) {
+      const run = batchQueue.then(async () => {
+        sqlite.exec('BEGIN');
+        try {
+          const results = [];
+          for (const [index, statement] of statements.entries()) {
+            if (failBatchAt === index + 1) throw new Error('simulated batch failure');
+            results.push(await statement.all());
+          }
+          sqlite.exec('COMMIT');
+          return results;
+        } catch (error) {
+          sqlite.exec('ROLLBACK');
+          throw error;
+        } finally {
+          failBatchAt = 0;
         }
-        sqlite.exec('COMMIT');
-        return results;
-      } catch (error) {
-        sqlite.exec('ROLLBACK');
-        throw error;
-      } finally {
-        failBatchAt = 0;
-      }
+      });
+      batchQueue = run.catch(() => {});
+      return run;
     },
   };
   return { sqlite, DB, db: drizzle(DB, { schema }), failNextBatchAt: (index) => { failBatchAt = index; } };
@@ -331,6 +337,85 @@ test('workflow instance ids stay within the characters Workflows accept when an 
       { collectionSlug: 'posts', entryId: 'talisman-lens:amber', action: 'publish' });
     assert.match(ids[0], /^talisman-publish-posts-talisman-lens-amber-\d+$/);
     assert.ok(ids[0].length <= 100);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('two publishes of one slug at the same moment put only one entry live', async () => {
+  const { sqlite, db } = database();
+  try {
+    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    // Drafts that share a slug, as an import can write them; both pass the check before either writes.
+    for (const id of ['launch-a', 'launch-b']) {
+      insertSeededEntry(sqlite, { id, status: 'draft', data: { title: id } });
+      sqlite.prepare(`UPDATE galaxy_entries SET slug = 'launch' WHERE id = ?`).run(id);
+    }
+    const results = await Promise.allSettled([
+      publishEntry(db, collection, 'launch-a', null),
+      publishEntry(db, collection, 'launch-b', null),
+    ]);
+    assert.deepEqual(results.map((result) => result.status).sort(), ['fulfilled', 'rejected']);
+    assert.ok(results.find((result) => result.status === 'rejected').reason instanceof SlugConflictError);
+    assert.equal(sqlite.prepare(`SELECT COUNT(*) AS total FROM galaxy_entries WHERE slug = 'launch' AND status = 'published'`).get().total, 1);
+
+    // The refused publish wrote nothing, so the entry can take another slug and go live.
+    const loser = results[0].status === 'rejected' ? 'launch-a' : 'launch-b';
+    assert.equal((await listEntryRevisions(db, collection.id, loser)).length, 0);
+    await saveDraftEntry(db, collection, loser, { slug: 'launch-2', expectedRevisionId: null });
+    assert.equal((await publishEntry(db, collection, loser)).status, 'published');
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('waiting for a Workflow maps its failures to the inline errors and reports one still running', async (t) => {
+  const instance = (...statuses) => ({
+    id: 'talisman-publish-posts-a-1',
+    async status() { return statuses.length > 1 ? statuses.shift() : statuses[0]; },
+  });
+  const failed = (message) => instance({ status: 'running' }, { status: 'errored', error: { name: 'NonRetryableError', message } });
+
+  assert.equal((await waitForWorkflowCompletion(instance({ status: 'queued' }, { status: 'complete' }))).status, 'complete');
+  await assert.rejects(waitForWorkflowCompletion(failed(new RevisionConflictError().message)), RevisionConflictError);
+  await assert.rejects(waitForWorkflowCompletion(failed(new SlugConflictError().message)), SlugConflictError);
+  await assert.rejects(waitForWorkflowCompletion(failed('Entry post-9 not found')), EntryNotFoundError);
+  await assert.rejects(waitForWorkflowCompletion(failed('D1 is unavailable')), { name: 'Error', message: 'D1 is unavailable' });
+  await assert.rejects(waitForWorkflowCompletion(instance({ status: 'terminated' })), /ended with status terminated/);
+  // TalismanPublishWorkflow completes with `ok: false` for a transition that cannot succeed.
+  const completedWith = (error) => instance({ status: 'running' }, { status: 'complete', output: { ok: false, error } });
+  await assert.rejects(waitForWorkflowCompletion(completedWith({ name: 'SlugConflictError', message: new SlugConflictError().message })), SlugConflictError);
+  await assert.rejects(waitForWorkflowCompletion(completedWith({ name: 'RevisionConflictError', message: new RevisionConflictError().message })), RevisionConflictError);
+  assert.equal((await waitForWorkflowCompletion(instance({ status: 'complete', output: { ok: true, entryId: 'a', status: 'published' } }))).status, 'complete');
+
+  // A short wait polls a few times, then reports the instance as still running.
+  let polls = 0;
+  const started = Date.now();
+  await assert.rejects(waitForWorkflowCompletion({ id: 'slow', async status() { polls += 1; return { status: 'running' }; } }, 300),
+    (error) => error instanceof PublishWorkflowPendingError && error.instanceId === 'slow');
+  assert.ok(polls >= 2 && polls <= 5, `${polls} polls`);
+  assert.ok(Date.now() - started < 2000);
+
+  for (const error of [new RevisionConflictError(), new SlugConflictError(), new EntryNotFoundError('Entry x not found'),
+    new Error('Collection posts not found'), new Error('Unsupported publish workflow action: delete')]) {
+    assert.equal(isPermanentPublishError(error), true, error.message);
+  }
+  assert.equal(isPermanentPublishError(new Error('D1_ERROR: network connection lost')), false);
+});
+
+test('a publish Workflow still running after the wait returns the stored entry marked pending', async (t) => {
+  const { sqlite, DB, db } = database();
+  try {
+    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    await createDraftEntry(db, collection, { title: 'Slow' }, { id: 'slow-post', slug: 'slow' });
+    const workflow = { async create({ id }) { return { id, async status() { return { status: 'running' }; } }; } };
+    let clock = Date.now();
+    t.mock.method(Date, 'now', () => (clock += 3000));
+    const result = await triggerPublishingWorkflow({ DB, TALISMAN_PUBLISH_WORKFLOW: workflow },
+      { collectionSlug: 'posts', entryId: 'slow-post', action: 'publish' });
+    assert.equal(result.status, 'draft');
+    assert.equal(result.workflow.status, 'pending');
+    assert.match(result.workflow.instanceId, /^talisman-publish-posts-slow-post-\d+$/);
   } finally {
     sqlite.close();
   }

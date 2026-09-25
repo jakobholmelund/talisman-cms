@@ -1,6 +1,7 @@
 import { drizzle } from 'drizzle-orm/d1';
-import { eq, desc, inArray, and, gte, lte, count, type SQL } from 'drizzle-orm';
+import { eq, desc, inArray, and, gte, lte, count, getTableColumns, getTableName, type SQL } from 'drizzle-orm';
 import * as schema from './schema';
+import { deleteStoredMedia } from './media-policy';
 import { canAccessCollection } from '../auth/collection-access';
 import {
   buildZodSchemaForFields,
@@ -12,7 +13,7 @@ import {
   isPolymorphicRelationField,
   isPresetReference,
   isRelationReference,
-  prepareNativeWritePayload
+  nextNativeUpdatedAt
 } from '../types';
 import {
   DEFAULT_PUBLISHING_WORKFLOW_BINDING,
@@ -28,6 +29,7 @@ let _nativeSchemas: Record<string, any> | null = null;
 let _nativeSchemaConfig: Record<string, { idColumn: string }> | null = null;
 let _configGlobals: any[] | null = null;
 let _configCollections: any[] | null = null;
+let _publishingWorkflowBinding: string | null = null;
 type TalismanDb = ReturnType<typeof createDbClient>;
 
 async function getNativeSchemaModule() {
@@ -68,6 +70,18 @@ async function getConfiguredGlobals() {
   return _configGlobals;
 }
 
+/** The Workflow binding named by the integration's `publishing.workflowBinding` option. */
+async function getPublishingWorkflowBinding() {
+  if (_publishingWorkflowBinding !== null) return _publishingWorkflowBinding;
+  try {
+    const mod = await import('virtual:talisman-cms/config');
+    _publishingWorkflowBinding = mod.publishing?.workflowBinding || DEFAULT_PUBLISHING_WORKFLOW_BINDING;
+  } catch {
+    _publishingWorkflowBinding = DEFAULT_PUBLISHING_WORKFLOW_BINDING;
+  }
+  return _publishingWorkflowBinding;
+}
+
 async function getConfiguredCollections() {
   if (_configCollections !== null) return _configCollections;
   try {
@@ -103,6 +117,38 @@ async function ensureCollection(db: TalismanDb, slug: string) {
   });
   if (!collection) throw new Error(`Collection ${slug} could not be initialized`);
   return collection;
+}
+
+/**
+ * A native row as getClient writes it: the caller's data as given, so the table's own defaults still
+ * apply (an AUTOINCREMENT or `$defaultFn` id, `DEFAULT CURRENT_TIMESTAMP` text timestamps). The only
+ * values added are integer timestamps (Drizzle `mode: 'timestamp'` or `'timestamp_ms'`) the caller
+ * leaves out: on create a `createdAt`/`updatedAt` column without a default of its own gets the
+ * current time, and an update moves `updatedAt` forward like the admin API does (see
+ * nextNativeUpdatedAt). An update keeps the row's id: the id column is not written.
+ */
+function prepareNativeClientWrite(
+  nativeTable: any,
+  nativeIdCol: string,
+  data: Record<string, any>,
+  stored?: Record<string, any>
+) {
+  const payload: Record<string, any> = { ...data };
+  const columns = getTableColumns(nativeTable) as Record<string, any>;
+  const fillable = (key: string) =>
+    columns[key]?.dataType === 'date' && (payload[key] === undefined || payload[key] === null || payload[key] === '');
+
+  if (stored) {
+    delete payload[nativeIdCol];
+    if (fillable('updatedAt')) payload.updatedAt = nextNativeUpdatedAt(stored.updatedAt);
+    return payload;
+  }
+
+  const now = new Date();
+  for (const key of ['createdAt', 'updatedAt']) {
+    if (fillable(key) && !columns[key].hasDefault) payload[key] = now;
+  }
+  return payload;
 }
 
 function getNativeIdColumn(
@@ -698,6 +744,11 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
           throw new Error('A global with this slug already exists');
         }
 
+        // Like the admin API: global data is a JSON object, and leaving it out starts with {}.
+        if (input.data != null && !isGlobalData(input.data)) {
+          throw new TypeError('Global data must be a JSON object');
+        }
+
         const now = new Date();
         const created = {
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -718,7 +769,11 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
 
         return created;
       },
-      async update(slug: string, data: any) {
+      async update(slug: string, data: Record<string, any>) {
+        // Every read decodes global data as an object, so any other value would read back as {}.
+        if (!isGlobalData(data)) {
+          throw new TypeError('Global data must be a JSON object');
+        }
         const { globalConfig, globalRecord: existing } = await resolveGlobalContext(db, slug);
 
         if (globalConfig?.fields?.length) {
@@ -916,7 +971,7 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
         
         let created;
         if (nativeTable) {
-           const insertPayload = prepareNativeWritePayload(collection as any, data || {}, 'create');
+           const insertPayload = prepareNativeClientWrite(nativeTable, nativeIdCol, data || {});
            const insertedRows = await (db.insert(nativeTable).values(insertPayload).returning() as Promise<any[]>);
            const insertedRow = insertedRows[0];
 
@@ -936,7 +991,7 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
               collectionSlug,
               entryId: created.id,
               action: opts.status === 'archived' ? 'archive' : 'publish'
-            }, DEFAULT_PUBLISHING_WORKFLOW_BINDING);
+            }, await getPublishingWorkflowBinding());
           }
           created = toEditableEntry(created);
         }
@@ -962,8 +1017,10 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
            if (rows.length === 0) throw new Error(`Entry ${id} not found in collection ${collectionSlug}`);
            
            if (data !== undefined && data !== null && typeof data === 'object' && Object.keys(data).length > 0) {
-              const updatePayload = prepareNativeWritePayload(collection as any, data, 'update');
-              await db.update(nativeTable).set(updatePayload).where(eq(nativeTable[nativeIdCol], id) as any);
+              const updatePayload = prepareNativeClientWrite(nativeTable, nativeIdCol, data, rows[0]);
+              if (Object.keys(updatePayload).length > 0) {
+                await db.update(nativeTable).set(updatePayload).where(eq(nativeTable[nativeIdCol], id) as any);
+              }
               data = updatePayload;
            }
            
@@ -973,11 +1030,12 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
           updated = await saveDraftEntry(db as any, collection as any, id, { data, slug: opts?.slug });
 
           if (opts?.status === 'published' || opts?.status === 'archived') {
+            // A publish still running in its Workflow returns the saved draft with `workflow.status: 'pending'`.
             updated = await triggerPublishingWorkflow(env, {
               collectionSlug,
               entryId: id,
               action: opts.status === 'archived' ? 'archive' : 'publish'
-            }, DEFAULT_PUBLISHING_WORKFLOW_BINDING);
+            }, await getPublishingWorkflowBinding());
           }
           // Like the admin API: `slug` is the one just saved, and `publishedSlug` the live one.
           updated = toEditableEntry(updated);
@@ -995,6 +1053,10 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
         const nativeIdCol = getNativeIdColumn(collectionSlug, nativeSchemaConfig);
         
         if (nativeTable) {
+           if (getTableName(nativeTable) === getTableName(schema.media)) {
+             // media-serve reads R2 directly, so the file goes with its record.
+             await deleteStoredMedia(env, id);
+           }
            await db.delete(nativeTable).where(eq(nativeTable[nativeIdCol], id) as any);
         } else {
           // @ts-ignore

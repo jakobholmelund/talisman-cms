@@ -312,6 +312,42 @@ test('hybrid sign-in answers identically whether or not an email has an account'
   } finally { sqlite.close(); }
 });
 
+test('a disabled account answers a sign-in with its right password exactly like a wrong password', async () => {
+  const describe = async (response) => ({
+    status: response.status,
+    statusText: response.statusText,
+    contentType: response.headers.get('content-type'),
+    cacheControl: response.headers.get('cache-control'),
+    cookies: response.headers.getSetCookie(),
+    body: await response.text(),
+  });
+  for (const [mode, createAdapter] of [
+    ['local', () => LocalAuthAdapter('/admin', { requireAccess: false })],
+    ['hybrid', () => HybridAuthAdapter('/admin')],
+  ]) {
+    const sqlite = setup();
+    try {
+      const adapter = createAdapter();
+      await addUser(sqlite, { id: 'editor-1', email: 'editor@example.test', role: 'editor', password: EDITOR_PASSWORD });
+      sqlite.prepare(`UPDATE galaxy_auth_user SET banned = 1 WHERE id = 'editor-1'`).run();
+
+      const unknown = await describe(await signIn(adapter, 'nobody@example.test', 'wrong-password-123'));
+      assert.equal(unknown.status, 401, mode);
+      assert.deepEqual(await describe(await signIn(adapter, 'editor@example.test', 'wrong-password-123')), unknown, mode);
+      assert.deepEqual(await describe(await signIn(adapter, 'editor@example.test', EDITOR_PASSWORD)), unknown, mode);
+      assert.equal(sessionsOf(sqlite, 'editor-1').length, 0, mode);
+
+      // The rate limit still answers 429 with its retry hint.
+      let limited;
+      for (let attempt = 0; attempt < 10 && limited?.status !== 429; attempt++) {
+        limited = await signIn(adapter, 'editor@example.test', EDITOR_PASSWORD);
+      }
+      assert.equal(limited.status, 429, mode);
+      assert.ok(Number(limited.headers.get('x-retry-after')) > 0, mode);
+    } finally { sqlite.close(); }
+  }
+});
+
 test('admin actions reject non-string user ids and roles before their guards', async () => {
   const sqlite = setup();
   try {
@@ -448,7 +484,8 @@ test('disabling an account ends its CMS access even when its sessions cannot be 
     assert.equal(await cmsUser(adapter, editorCookie), null);
     assert.equal((await adminAction(adapter, editorCookie, 'change-password',
       { currentPassword: EDITOR_PASSWORD, newPassword: 'another-password-123' })).status, 401);
-    assert.equal((await signIn(adapter, 'editor@example.test', EDITOR_PASSWORD)).status, 403);
+    // The right password for a disabled account is refused like a wrong one.
+    assert.equal((await signIn(adapter, 'editor@example.test', EDITOR_PASSWORD)).status, 401);
 
     // Repeating the action once deletion works again ends the leftover session.
     sqlite.exec('DROP TRIGGER keep_sessions');

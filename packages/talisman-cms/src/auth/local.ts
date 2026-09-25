@@ -390,6 +390,12 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
       const response = await auth.handler(request);
       const headers = new Headers(response.headers);
       headers.set('Cache-Control', 'no-store');
+      if (action === 'sign-in/email' && response.status >= 400 && response.status < 500 && response.status !== 429) {
+        // Better Auth rejects a disabled account only after checking its password (403 BANNED_USER), which
+        // would confirm the password. Every refusal but the rate limit, which keeps its X-Retry-After, looks
+        // like a wrong password.
+        return invalidCredentials();
+      }
       if (action === 'sign-in/email' && response.ok) {
         const signedIn = await response.clone().json().catch(() => null) as { token?: unknown } | null;
         const db = drizzle(env.DB, { schema });

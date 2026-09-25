@@ -155,6 +155,27 @@
       "when": 1789600000014,
       "tag": "0021_entry_draft_slug",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1789600000015,
+      "tag": "0022_wrap_non_object_globals",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1789600000016,
+      "tag": "0023_published_slug_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1789600000017,
+      "tag": "0024_shopper_sign_in_tokens",
+      "breakpoints": true
     }
   ]
 }

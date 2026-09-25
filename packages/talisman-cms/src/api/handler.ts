@@ -18,15 +18,17 @@ import {
   generateFieldsFromDrizzle,
   getNativeIdColumn,
   isGlobalData,
+  nextNativeUpdatedAt,
+  normalizeBlankNativeValues,
   pickConfiguredNativeFields,
   prepareNativeWritePayload,
   type CollectionHooks,
   type FieldValidationIssue
 } from '../types';
 import { validatePresetPayload } from '../presets';
+import { deleteStoredMedia } from '../db/media-policy';
 import { eq, desc, and, or, lt, count, isNull, sql, getTableColumns } from 'drizzle-orm';
 import {
-  assertPublishableSlug,
   createDraftEntry,
   getEntryRevision,
   getLatestRevision,
@@ -672,6 +674,9 @@ export const ALL: APIRoute = async ({ request, locals }) => {
           if (!requestedSlug) {
             return new Response(JSON.stringify({ error: 'Slug is required' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
           }
+          if (body.data != null && !isGlobalData(body.data)) {
+            return Response.json({ error: 'Global data must be a JSON object', fieldErrors: {} }, { status: 400 });
+          }
 
           const existing = await db.query.globals.findFirst({
             // @ts-ignore
@@ -854,8 +859,6 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         const draftData = typeof entry.data === 'string' ? JSON.parse(entry.data) : entry.data;
         const parsed = buildZodSchemaForCollection({ ...collectionConfig, fields: activeFields }).safeParse(draftData ?? {});
         if (!parsed.success) return validationErrorResponse(parsed.error.issues);
-        // Checked here too so a publish run by a Workflow fails fast with 409.
-        await assertPublishableSlug(db as any, entry);
       }
 
       const updated = await triggerPublishingWorkflow(env, {
@@ -866,6 +869,14 @@ export const ALL: APIRoute = async ({ request, locals }) => {
       }, publishing.workflowBinding);
 
       await invalidateEntryCache(env, slug, entryId);
+      if (updated.workflow?.status === 'pending') {
+        // A Workflow instance that outlives the wait keeps running and clears the cache when it
+        // finishes. The entry is returned as it is stored now, before the transition.
+        return Response.json({
+          ...toEditableEntry(updated),
+          message: `The ${action} is still running. Reload the entry in a moment to see the result.`,
+        }, { status: 202 });
+      }
       return new Response(JSON.stringify(toEditableEntry(updated)), { status: 200, headers: { 'Content-Type': 'application/json' } });
     } catch (e: any) {
       return errorResponse(e, `Error in the ${action} API`);
@@ -987,7 +998,8 @@ export const ALL: APIRoute = async ({ request, locals }) => {
             ignore: nativeSystemColumns(collectionConfig)
           });
           if (unwritable.length > 0) return unwritableColumnsResponse(unwritable);
-          data = pickConfiguredNativeFields(activeFields, nativeTable, data);
+          data = normalizeBlankNativeValues(collectionConfig, activeFields, nativeTable,
+            pickConfiguredNativeFields(activeFields, nativeTable, data));
           for (const [value, path] of [[userProvidedId, []], [data[nativeIdCol], [nativeIdCol]]] as const) {
             const problem = describeInvalidNativeId(value);
             if (problem) return invalidInput(problem, [...path]);
@@ -1114,7 +1126,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
                }
                for (const field of UPLOAD_MANAGED_MEDIA_FIELDS) delete submitted[field];
              }
-             data = submitted;
+             data = normalizeBlankNativeValues(collectionConfig, activeFields, nativeTable, submitted);
            }
            
            if (data !== undefined && collectionConfig.hooks?.beforeValidate) {
@@ -1147,7 +1159,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
                 }
              }
 
-             updatePayload = prepareNativeWritePayload(collectionConfig, validatedData, 'update');
+             updatePayload = prepareNativeWritePayload(collectionConfig, validatedData, 'update', nextNativeUpdatedAt(rows[0].updatedAt));
            }
            
            let storedRow = rows[0];
@@ -1283,6 +1295,12 @@ export const ALL: APIRoute = async ({ request, locals }) => {
           for (const hook of collectionConfig.hooks.beforeDelete) {
              await hook({ req: request, operation: 'delete', originalDoc });
           }
+        }
+
+        if (nativeTable && isSystemMediaCollection(collectionConfig)) {
+          // The file goes first: media-serve reads R2 without checking the record, and if the record
+          // delete then fails, the record is still there to delete again.
+          await deleteStoredMedia(env, entryId, url.origin);
         }
 
         if (nativeTable) {

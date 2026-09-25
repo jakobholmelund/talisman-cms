@@ -16,23 +16,48 @@ function warnLegacyName(name: string) {
     + 'Other GALAXY_* settings and bindings are still read until they are renamed too.');
 }
 
-function read(env: EnvSource, name: string, accept: (value: unknown) => unknown) {
+function read(env: EnvSource, name: string, accept: (value: unknown, key: string) => unknown) {
   if (!env) return undefined;
   const values = env as Record<string, unknown>;
-  const current = accept(values[`TALISMAN_${name}`]);
+  const current = accept(values[`TALISMAN_${name}`], `TALISMAN_${name}`);
   if (current !== undefined) return current;
-  const legacy = accept(values[`GALAXY_${name}`]);
+  const legacy = accept(values[`GALAXY_${name}`], `GALAXY_${name}`);
   if (legacy !== undefined) warnLegacyName(name);
   return legacy;
 }
 
-const settingValue = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : undefined);
+const IGNORED_WARNING_KEY = '__TALISMAN_CMS_IGNORED_SETTINGS_WARNED__';
+
+/** Warns once per setting name (never with its value) about a value readSetting cannot use. */
+function warnIgnoredSetting(name: string) {
+  const runtime = globalThis as typeof globalThis & { [IGNORED_WARNING_KEY]?: Set<string> };
+  const warned = runtime[IGNORED_WARNING_KEY] ??= new Set();
+  if (warned.has(name)) return;
+  warned.add(name);
+  console.warn(`[Talisman CMS] The ${name} setting is not text, a number or true/false, so it is ignored. `
+    + 'Set it as a string in wrangler.toml [vars] or the dashboard.');
+}
+
+/**
+ * Wrangler passes a TOML number or boolean in [vars] through as that type, so `LIMIT = 500` and
+ * `ENABLED = true` read as "500" and "true". Other non-string values (objects, lists) are ignored.
+ */
+function settingValue(value: unknown, name: string) {
+  if (typeof value === 'string') return value.trim() || undefined;
+  if ((typeof value === 'number' && Number.isFinite(value)) || typeof value === 'boolean') return String(value);
+  if (value !== undefined && value !== null) warnIgnoredSetting(name);
+  return undefined;
+}
+
 const bindingValue = (value: unknown) =>
   value === undefined || value === null || (typeof value === 'string' && !value.trim()) ? undefined : value;
 
-/** The trimmed `TALISMAN_<name>` Worker setting, else `GALAXY_<name>`. Blank and non-string values count as unset. */
+/**
+ * The trimmed `TALISMAN_<name>` Worker setting, else `GALAXY_<name>`, as a string. Numbers and
+ * booleans are converted (`500` reads as "500"); blank values and other types count as unset.
+ */
 export function readSetting(env: EnvSource, name: string): string | undefined {
-  return read(env, name, settingValue) as string | undefined;
+  return read(env, name, (value, key) => settingValue(value, key)) as string | undefined;
 }
 
 /** The `TALISMAN_<name>` Worker binding, else `GALAXY_<name>`. Missing, null and blank values count as unset. */

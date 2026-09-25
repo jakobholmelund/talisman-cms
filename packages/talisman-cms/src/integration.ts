@@ -156,7 +156,7 @@ function collectProtectedPluginRoutes(plugins: Plugin[], adminPath: string, admi
     for (const route of plugin.routes || []) {
       const key = routePatternKey(route.path);
       const underAdminPath = adminPath === '/' || key === adminPath || key.startsWith(`${adminPath}/`);
-      if (!underAdminPath || (route as { public?: boolean }).public === true) continue;
+      if (!underAdminPath || route.public === true) continue;
       if (route.prerender) {
         throw new Error(`[talisman-cms] ${plugin.name}: ${route.path} is under the admin path, so it needs a CMS session and cannot be prerendered. Set prerender: false, or public: true if anyone may see it.`);
       }

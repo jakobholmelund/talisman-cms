@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
+import { sql } from 'drizzle-orm';
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 // The API handler ships as source and imports Astro virtual modules, so this file loads it with
@@ -21,7 +22,8 @@ const runtime = globalThis.__talismanHandlerTest = {
 const stubs = {
   'cloudflare:workers': 'export const env = new Proxy({}, { get: (_, key) => globalThis.__talismanHandlerTest.env[key] });',
   'virtual:talisman-cms/auth': 'export const authConfigured = true; export const authAdapter = { async getUser() { return globalThis.__talismanHandlerTest.user; } };',
-  'virtual:talisman-cms/config': 'const t = globalThis.__talismanHandlerTest; export const adminPath = "/admin"; export const collections = t.collections; export const globals = t.globals; export const uiLibraries = []; export const publishing = { workflowBinding: "TALISMAN_PUBLISH_WORKFLOW" };',
+  // A custom Workflow binding name, which both the admin API and getClient must use.
+  'virtual:talisman-cms/config': 'const t = globalThis.__talismanHandlerTest; export const adminPath = "/admin"; export const collections = t.collections; export const globals = t.globals; export const uiLibraries = []; export const publishing = { workflowBinding: "SITE_PUBLISH_WORKFLOW" };',
   'virtual:talisman-cms/ui-libraries': 'export const uiLibraries = [];',
   'virtual:talisman-cms/native-schemas': 'export const nativeSchemas = globalThis.__talismanHandlerTest.nativeSchemas; export const nativeSchemaConfig = {};',
   'virtual:talisman-cms/collection-hooks': 'export const collectionHooks = globalThis.__talismanHandlerTest.collectionHooks;',
@@ -32,6 +34,8 @@ let ALL;
 let types;
 let getClient;
 let schema;
+let versioning;
+let publicClient;
 if (canLoadSource) {
   registerHooks({
     resolve(specifier, context, nextResolve) {
@@ -48,6 +52,8 @@ if (canLoadSource) {
   types = await import('../src/types.ts');
   ({ getClient } = await import('../src/db/client.ts'));
   schema = await import('../src/db/schema.ts');
+  versioning = await import('../src/versioning.ts');
+  publicClient = await import('../src/client.ts');
 }
 
 const parts = sqliteTable('test_parts', {
@@ -103,7 +109,7 @@ function database() {
   sqlite.exec('PRAGMA foreign_keys = ON');
   for (const migration of ['0000_skinny_odin', '0001_abandoned_shotgun', '0002_flowery_midnight',
     '0003_content_versioning', '0006_media_metadata', '0018_entry_revision_integrity', '0020_revision_baseline_and_globals',
-    '0021_entry_draft_slug']) {
+    '0021_entry_draft_slug', '0022_wrap_non_object_globals', '0023_published_slug_unique']) {
     const sql = readFileSync(new URL(`../drizzle/${migration}.sql`, import.meta.url), 'utf8');
     for (const statement of sql.split('--> statement-breakpoint')) {
       if (statement.trim()) sqlite.exec(statement);
@@ -779,4 +785,386 @@ test('relations resolve in chunks, within the target collection, and skip collec
   } finally {
     sqlite.close();
   }
+});
+
+function kvStub() {
+  const deleted = [];
+  return { deleted, async get() { return null; }, async put() {}, async delete(key) { deleted.push(key); } };
+}
+
+test('a blank optional field is stored as no value on native and entry writes', { skip }, async () => {
+  const sqlite = database();
+  sqlite.exec(`CREATE TABLE test_lenses (id text PRIMARY KEY NOT NULL, name text NOT NULL, sku text UNIQUE,
+    price_override integer, part_id text REFERENCES test_parts(id), stock integer DEFAULT 0 NOT NULL,
+    finish text DEFAULT 'matte' NOT NULL, note text DEFAULT 'none' NOT NULL, created_at integer NOT NULL, updated_at integer NOT NULL)`);
+  runtime.nativeSchemas.lenses = sqliteTable('test_lenses', {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    sku: text('sku').unique(),
+    priceOverride: integer('price_override'),
+    partId: text('part_id'),
+    stock: integer('stock').notNull().default(0),
+    finish: text('finish').notNull().default('matte'),
+    note: text('note').notNull().default('none'),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  });
+  const lenses = {
+    name: 'Lenses',
+    slug: 'lenses',
+    fields: [
+      { name: 'id', label: 'ID', type: 'text', required: true },
+      { name: 'name', label: 'Name', type: 'text', required: true },
+      { name: 'sku', label: 'SKU', type: 'text' },
+      { name: 'priceOverride', label: 'Price override', type: 'number' },
+      { name: 'partId', label: 'Part', type: 'relation', relationTo: 'parts' },
+      { name: 'stock', label: 'Stock', type: 'number' },
+      { name: 'finish', label: 'Finish', type: 'select', options: ['matte', 'gloss'] },
+      { name: 'note', label: 'Note', type: 'text' },
+    ],
+    nativeSchemaMapping: { schemaPath: 'test', exportName: 'lenses', idColumn: 'id' },
+  };
+  const events = {
+    name: 'Events',
+    slug: 'events',
+    fields: [
+      { name: 'title', label: 'Title', type: 'text', required: true },
+      { name: 'seats', label: 'Seats', type: 'number' },
+      { name: 'capacity', label: 'Capacity', type: 'number', required: true },
+      { name: 'kind', label: 'Kind', type: 'select', options: ['talk', 'workshop'] },
+      { name: 'summary', label: 'Summary', type: 'text' },
+    ],
+  };
+  runtime.collections.push(lenses, events);
+  try {
+    const row = (id) => ({ ...sqlite.prepare(`SELECT sku, price_override, part_id, stock, finish, note FROM test_lenses WHERE id = ?`).get(id) });
+    // What the admin's new-record form sends for fields left blank.
+    const blank = { sku: '', priceOverride: '', partId: '', stock: '', finish: '', note: '' };
+    const first = await call('POST', '/collections/lenses/entries', { data: { id: 'a', name: 'A', ...blank } });
+    assert.equal(first.status, 201);
+    // NULL for nullable columns, the default for NOT NULL ones, and '' kept for NOT NULL free text.
+    assert.deepEqual(row('a'), { sku: null, price_override: null, part_id: null, stock: 0, finish: 'matte', note: '' });
+    // A second blank SKU does not collide with the first in the UNIQUE column.
+    assert.equal((await call('POST', '/collections/lenses/entries', { data: { id: 'b', name: 'B', ...blank } })).status, 201);
+
+    await call('POST', '/collections/parts/entries', { data: { id: 'frame', name: 'Frame', quantity: 1 } });
+    assert.equal((await call('PUT', '/collections/lenses/entries/a', {
+      data: { sku: 'SKU-A', priceOverride: 900, partId: 'frame', stock: 4, finish: 'gloss' },
+    })).status, 200);
+    // Clearing a field removes the value; a NOT NULL number keeps the stored one.
+    const cleared = await call('PUT', '/collections/lenses/entries/a', { data: { sku: '', priceOverride: '', partId: '', stock: '', finish: '' } });
+    assert.equal(cleared.status, 200);
+    assert.deepEqual(row('a'), { sku: null, price_override: null, part_id: null, stock: 4, finish: 'gloss', note: '' });
+
+    // Required fields still need a value.
+    const required = await call('PUT', '/collections/lenses/entries/a', { data: { name: '' } });
+    assert.deepEqual(required.body.fieldErrors, { name: ['Required'] });
+
+    // Entries store an optional blank number or select as null; a required number reports Required.
+    const event = await call('POST', '/collections/events/entries', { data: { title: 'Launch', seats: '', capacity: 20, kind: '', summary: '' } });
+    assert.equal(event.status, 201);
+    assert.deepEqual(event.body.data, { title: 'Launch', seats: null, capacity: 20, kind: null, summary: '' });
+    const missing = await call('POST', '/collections/events/entries', { data: { title: 'Launch', capacity: '' } });
+    assert.deepEqual(missing.body.fieldErrors, { capacity: ['Required'] });
+    assert.deepEqual((await call('POST', '/collections/events/entries', { data: { title: 'T', capacity: 1, kind: 'panel' } })).body.fieldErrors.kind.length, 1);
+  } finally {
+    runtime.collections.splice(runtime.collections.indexOf(lenses), 1);
+    runtime.collections.splice(runtime.collections.indexOf(events), 1);
+    delete runtime.nativeSchemas.lenses;
+    sqlite.close();
+  }
+});
+
+test('deleting a media record deletes its file and evicts its cached copies', { skip }, async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const sqlite = database();
+  const removed = [];
+  const evicted = [];
+  runtime.env.STORAGE = { async delete(key) { removed.push(key); } };
+  globalThis.caches = { default: { async delete(key) { evicted.push(key); return true; } } };
+  try {
+    const insert = sqlite.prepare(`INSERT INTO galaxy_media (id, filename, mime_type, size_bytes, url, created_at, updated_at)
+      VALUES (?, 'a.png', 'image/png', 10, ?, ?, ?)`);
+    insert.run('media_abc', '/api/media/media_abc', hourAgo, hourAgo);
+    const stored = (id) => sqlite.prepare('SELECT COUNT(*) AS total FROM galaxy_media WHERE id = ?').get(id).total;
+
+    assert.equal((await as(editor, () => call('DELETE', '/collections/media/entries/media_abc'))).status, 403);
+    assert.deepEqual(removed, []);
+
+    const deleted = await call('DELETE', '/collections/media/entries/media_abc');
+    assert.equal(deleted.status, 200);
+    assert.equal(stored('media_abc'), 0);
+    assert.deepEqual(removed, ['media_abc']);
+    assert.deepEqual(evicted, [
+      'https://cms.test/api/media/media_abc?v=2',
+      ...[320, 640, 960, 1280, 1920].map((width) => `https://cms.test/api/media/media_abc?v=2&w=${width}`),
+    ]);
+
+    // When the file cannot be deleted the record stays, so the delete can be repeated.
+    insert.run('media_def', '/api/media/media_def', hourAgo, hourAgo);
+    runtime.env.STORAGE = { async delete() { throw new Error('R2 unavailable'); } };
+    assert.equal((await call('DELETE', '/collections/media/entries/media_def')).status, 500);
+    assert.equal(stored('media_def'), 1);
+
+    // getClient deletes the file too.
+    removed.length = 0;
+    runtime.env.STORAGE = { async delete(key) { removed.push(key); } };
+    await getClient(runtime.env).entries.delete('media', 'media_def');
+    assert.deepEqual(removed, ['media_def']);
+    assert.equal(stored('media_def'), 0);
+  } finally {
+    delete globalThis.caches;
+    sqlite.close();
+  }
+});
+
+test('publishing through a Workflow answers 202 while it runs, maps its failures, and checks the slug first', { skip }, async (t) => {
+  const sqlite = database();
+  const kv = kvStub();
+  runtime.env.KV = kv;
+  const running = (instances) => ({
+    async create({ id, params }) { instances.push(params); return { id, async status() { return { status: 'running' }; } }; },
+  });
+  // Each Date.now call moves the clock 3 seconds, so the wait for a Workflow ends after a few polls.
+  const fastClock = () => {
+    let clock = Date.now();
+    return t.mock.method(Date, 'now', () => (clock += 3000));
+  };
+  try {
+    await call('POST', '/collections/posts/entries', { id: 'wf', slug: 'workflow', data: { title: 'W', body: doc('B') } });
+    const latest = async (id) => (await call('GET', `/collections/posts/entries/${id}`)).body.latestRevisionId;
+
+    const instances = [];
+    runtime.env.SITE_PUBLISH_WORKFLOW = running(instances);
+    const expected = await latest('wf');
+    const clock = fastClock();
+    const pending = await call('POST', '/collections/posts/entries/wf/publish', { expectedRevisionId: expected });
+    clock.mock.restore();
+    assert.equal(pending.status, 202);
+    assert.equal(pending.body.status, 'draft');
+    assert.equal(pending.body.workflow.status, 'pending');
+    assert.match(pending.body.workflow.instanceId, /^talisman-publish-posts-wf-\d+$/);
+    assert.match(pending.body.message, /still running/);
+    assert.deepEqual(instances.map((params) => params.entryId), ['wf']);
+    assert.ok(kv.deleted.includes('talisman:entries:posts:wf:published'));
+
+    // A failure the instance reports keeps its status code.
+    runtime.env.SITE_PUBLISH_WORKFLOW = { async create({ id }) {
+      return { id, async status() {
+        return { status: 'errored', error: { name: 'RevisionConflictError', message: 'This entry changed since it was opened. Reload it before saving.' } };
+      } };
+    } };
+    const stale = await call('POST', '/collections/posts/entries/wf/publish', { expectedRevisionId: await latest('wf') });
+    assert.equal(stale.status, 409);
+    assert.equal(stale.body.error, 'This entry changed since it was opened. Reload it before saving.');
+    // TalismanPublishWorkflow itself completes with the error as its output.
+    runtime.env.SITE_PUBLISH_WORKFLOW = { async create({ id, params }) {
+      const failed = { status: 'complete', output: { ok: false, error: { name: 'RevisionConflictError', message: stale.body.error } } };
+      return { id, async status() { return failed; } };
+    } };
+    assert.equal((await call('POST', '/collections/posts/entries/wf/publish', { expectedRevisionId: 'rev-old' })).status, 409);
+
+    // A finished instance returns the published entry.
+    runtime.env.SITE_PUBLISH_WORKFLOW = { async create({ id, params }) {
+      await versioning.runPublishingTransition(runtime.env, params);
+      return { id, async status() { return { status: 'complete' }; } };
+    } };
+    const done = await call('POST', '/collections/posts/entries/wf/publish', { expectedRevisionId: await latest('wf') });
+    assert.equal(done.status, 200);
+    assert.equal(done.body.status, 'published');
+
+    // A slug another published entry serves is refused before any instance starts, in the API and in getClient.
+    const { id: collectionId } = sqlite.prepare(`SELECT id FROM galaxy_collections WHERE slug = 'posts'`).get();
+    const insert = sqlite.prepare(`INSERT INTO galaxy_entries (id, collection_id, slug, status, data, created_at, updated_at)
+      VALUES (?, ?, 'taken', ?, ?, ?, ?)`);
+    insert.run('taken-live', collectionId, 'published', JSON.stringify({ title: 'Live', body: doc('A') }), hourAgo, hourAgo);
+    insert.run('taken-copy', collectionId, 'draft', JSON.stringify({ title: 'Copy', body: doc('B') }), hourAgo, hourAgo);
+    let started = 0;
+    runtime.env.SITE_PUBLISH_WORKFLOW = { async create() { started += 1; throw new Error('not reached'); } };
+    const blocked = await call('POST', '/collections/posts/entries/taken-copy/publish', { expectedRevisionId: null });
+    assert.equal(blocked.status, 409);
+    const client = getClient(runtime.env);
+    await assert.rejects(client.entries.update('posts', 'taken-copy', undefined, { status: 'published' }), publicClient.SlugConflictError);
+    assert.equal(started, 0);
+
+    // getClient uses the configured binding too, and reports a publish that is still running.
+    await call('POST', '/collections/posts/entries', { id: 'wf-sdk', slug: 'workflow-sdk', data: { title: 'S', body: doc('B') } });
+    runtime.env.SITE_PUBLISH_WORKFLOW = running(instances);
+    const sdkClock = fastClock();
+    const viaClient = await client.entries.update('posts', 'wf-sdk', { title: 'S2', body: doc('B') }, { status: 'published' });
+    sdkClock.mock.restore();
+    assert.equal(viaClient.workflow.status, 'pending');
+    assert.equal(viaClient.status, 'draft');
+    assert.deepEqual(instances.map((params) => params.entryId), ['wf', 'wf-sdk']);
+  } finally {
+    delete runtime.env.SITE_PUBLISH_WORKFLOW;
+    sqlite.close();
+  }
+});
+
+test('every native save moves updatedAt forward, so a save in the same second is still detected', { skip }, async () => {
+  const sqlite = database();
+  try {
+    // A stamp in the current second behaves like one a moment ahead: the next save must still change it.
+    const ahead = Math.floor(Date.now() / 1000) + 60;
+    sqlite.prepare('INSERT INTO test_parts (id, name, quantity, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+      .run('lens', 'Lens', 5, hourAgo, ahead);
+    const stamp = () => sqlite.prepare(`SELECT updated_at FROM test_parts WHERE id = 'lens'`).get().updated_at;
+    const put = (data, expectedUpdatedAt) => call('PUT', '/collections/parts/entries/lens', { data, expectedUpdatedAt });
+
+    const loaded = (await call('GET', '/collections/parts/entries/lens')).body.updatedAt;
+    const first = await put({ name: 'Lens 2' }, loaded);
+    assert.equal(first.status, 200);
+    assert.equal(stamp(), ahead + 1);
+
+    // Two tabs hold the same stamp; the first save changes it, so the second tab is refused.
+    const tabA = (await call('GET', '/collections/parts/entries/lens')).body.updatedAt;
+    const tabB = tabA;
+    assert.equal((await put({ name: 'Tab A' }, tabA)).status, 200);
+    assert.equal(stamp(), ahead + 2);
+    assert.equal((await put({ name: 'Tab B' }, tabB)).status, 409);
+
+    // getClient stamps native rows the same way, and fills the timestamps of a new one.
+    const client = getClient(runtime.env);
+    await client.entries.update('parts', 'lens', { quantity: 6 });
+    assert.equal(stamp(), ahead + 3);
+    const created = await client.entries.create('parts', { id: 'filter', name: 'Filter', quantity: 1 });
+    assert.equal(created.id, 'filter');
+    assert.ok(Math.abs(sqlite.prepare(`SELECT created_at FROM test_parts WHERE id = 'filter'`).get().created_at - Math.floor(Date.now() / 1000)) <= 2);
+    // Server code importing rows keeps the times it passes.
+    const imported = new Date(1_600_000_000_000);
+    await client.entries.create('parts', { id: 'imported', name: 'Imported', quantity: 1, createdAt: imported, updatedAt: imported });
+    assert.deepEqual({ ...sqlite.prepare(`SELECT created_at, updated_at FROM test_parts WHERE id = 'imported'`).get() },
+      { created_at: 1_600_000_000, updated_at: 1_600_000_000 });
+
+    // A stamp far ahead (a seed that wrote milliseconds) is replaced with the current time.
+    sqlite.prepare(`UPDATE test_parts SET updated_at = ? WHERE id = 'lens'`).run(ahead * 1000);
+    assert.equal((await put({ name: 'Lens 3' })).status, 200);
+    assert.ok(Math.abs(stamp() - Math.floor(Date.now() / 1000)) <= 2);
+
+    assert.equal(types.nextNativeUpdatedAt(null, new Date(5000)).getTime(), 5000);
+    assert.equal(types.nextNativeUpdatedAt(new Date(1000), new Date(5000)).getTime(), 5000);
+    assert.equal(types.nextNativeUpdatedAt(new Date(5000), new Date(5400)).getTime(), 6000);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('getClient writes native rows as given, so table defaults and text timestamps still apply', { skip }, async () => {
+  const sqlite = database();
+  sqlite.exec(`CREATE TABLE test_counters (id integer PRIMARY KEY AUTOINCREMENT NOT NULL, label text NOT NULL,
+    created_at integer NOT NULL, updated_at integer NOT NULL)`);
+  sqlite.exec('CREATE TABLE test_orders (id text PRIMARY KEY NOT NULL, total integer NOT NULL)');
+  sqlite.exec(`CREATE TABLE test_notes (id text PRIMARY KEY NOT NULL, body text NOT NULL,
+    created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL, updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL)`);
+  let orderNumber = 0;
+  Object.assign(runtime.nativeSchemas, {
+    counters: sqliteTable('test_counters', {
+      id: integer('id').primaryKey({ autoIncrement: true }),
+      label: text('label').notNull(),
+      createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+      updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+    }),
+    orders: sqliteTable('test_orders', {
+      id: text('id').primaryKey().$defaultFn(() => `ord_${++orderNumber}`),
+      total: integer('total').notNull(),
+    }),
+    notes: sqliteTable('test_notes', {
+      id: text('id').primaryKey(),
+      body: text('body').notNull(),
+      createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+      updatedAt: text('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+    }),
+  });
+  const native = (name, slug, fields) => ({
+    name,
+    slug,
+    fields: fields.map(([field, type]) => ({ name: field, label: field, type })),
+    nativeSchemaMapping: { schemaPath: 'test', exportName: slug, idColumn: 'id' },
+  });
+  // The counters' fields leave the id out; the orders declare it as text, as generated fields do.
+  const added = [
+    native('Counters', 'counters', [['label', 'text']]),
+    native('Orders', 'orders', [['id', 'text'], ['total', 'number']]),
+    native('Notes', 'notes', [['id', 'text'], ['body', 'text']]),
+  ];
+  runtime.collections.push(...added);
+  try {
+    const client = getClient(runtime.env);
+    const counter = (id) => ({ ...sqlite.prepare('SELECT * FROM test_counters WHERE id = ?').get(id) });
+
+    // An INTEGER AUTOINCREMENT id is left to the table, and integer timestamps without a default are filled.
+    const first = await client.entries.create('counters', { label: 'First' });
+    assert.equal(first.id, 1);
+    assert.equal((await client.entries.create('counters', { label: 'Second' })).id, 2);
+    assert.ok(Math.abs(counter(1).created_at - Math.floor(Date.now() / 1000)) <= 2);
+    assert.equal(counter(1).updated_at, counter(1).created_at);
+
+    // An update moves updatedAt forward, even within the same second, and keeps the row's id.
+    const ahead = Math.floor(Date.now() / 1000) + 60;
+    sqlite.prepare('UPDATE test_counters SET updated_at = ? WHERE id = 1').run(ahead);
+    const renamed = await client.entries.update('counters', 1, { label: 'Renamed' });
+    assert.equal(renamed.id, 1);
+    assert.equal(renamed.data.label, 'Renamed');
+    assert.deepEqual({ label: counter(1).label, updated_at: counter(1).updated_at }, { label: 'Renamed', updated_at: ahead + 1 });
+    await client.entries.update('counters', 1, { ...first.data, id: 2, label: 'Round trip' });
+    assert.equal(counter(1).label, 'Round trip');
+    assert.equal(counter(2).label, 'Second');
+    // An updatedAt the caller passes is stored as given.
+    await client.entries.update('counters', 2, { updatedAt: new Date(1_600_000_000_000) });
+    assert.equal(counter(2).updated_at, 1_600_000_000);
+
+    // A text id with a $defaultFn comes from the table's function; an id the caller passes is kept.
+    const order = await client.entries.create('orders', { total: 1200 });
+    assert.equal(order.id, 'ord_1');
+    assert.equal((await client.entries.create('orders', { id: 'ord_custom', total: 5 })).id, 'ord_custom');
+    assert.equal((await client.entries.update('orders', 'ord_1', { total: 1500 })).data.total, 1500);
+    assert.deepEqual(sqlite.prepare('SELECT id, total FROM test_orders ORDER BY id').all().map((row) => ({ ...row })),
+      [{ id: 'ord_1', total: 1500 }, { id: 'ord_custom', total: 5 }]);
+
+    // Text timestamps keep their DEFAULT CURRENT_TIMESTAMP on create and are not stamped with a Date on update.
+    const sqlTimestamp = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+    const note = () => ({ ...sqlite.prepare(`SELECT body, created_at, updated_at FROM test_notes WHERE id = 'n1'`).get() });
+    const created = await client.entries.create('notes', { id: 'n1', body: 'Hello' });
+    assert.match(created.data.createdAt, sqlTimestamp);
+    assert.match(note().updated_at, sqlTimestamp);
+    const stored = note();
+    const edited = await client.entries.update('notes', 'n1', { body: 'Edited' });
+    assert.equal(edited.data.body, 'Edited');
+    assert.deepEqual(note(), { ...stored, body: 'Edited' });
+    await client.entries.update('notes', 'n1', { updatedAt: '2026-09-26 12:00:00' });
+    assert.equal(note().updated_at, '2026-09-26 12:00:00');
+  } finally {
+    for (const collection of added) runtime.collections.splice(runtime.collections.indexOf(collection), 1);
+    for (const slug of ['counters', 'orders', 'notes']) delete runtime.nativeSchemas[slug];
+    sqlite.close();
+  }
+});
+
+test('global data is a JSON object on every write path', { skip }, async () => {
+  const sqlite = database();
+  try {
+    const listed = await call('POST', '/globals', { slug: 'menu', name: 'Menu', data: [{ label: 'Home' }] });
+    assert.equal(listed.status, 400);
+    assert.equal(listed.body.error, 'Global data must be a JSON object');
+    assert.equal(sqlite.prepare(`SELECT COUNT(*) AS total FROM galaxy_globals WHERE slug = 'menu'`).get().total, 0);
+    assert.equal((await call('POST', '/globals', { slug: 'menu', name: 'Menu' })).status, 201);
+
+    const client = getClient(runtime.env);
+    for (const value of [[{ label: 'Home' }], 'Hello', 42, null]) {
+      await assert.rejects(client.globals.update('menu', value), { name: 'TypeError', message: 'Global data must be a JSON object' });
+    }
+    await assert.rejects(client.globals.create({ slug: 'banner', data: 'Hello' }), TypeError);
+    assert.deepEqual((await client.globals.update('menu', { items: [{ label: 'Home' }] })).data, { items: [{ label: 'Home' }] });
+    assert.deepEqual((await client.globals.create({ slug: 'banner' })).data, {});
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('getClient exports the errors its entry writes throw', { skip }, () => {
+  assert.equal(publicClient.SlugConflictError, versioning.SlugConflictError);
+  assert.equal(publicClient.RevisionConflictError, versioning.RevisionConflictError);
+  assert.equal(publicClient.EntryNotFoundError, versioning.EntryNotFoundError);
+  assert.equal(new publicClient.SlugConflictError().name, 'SlugConflictError');
 });
