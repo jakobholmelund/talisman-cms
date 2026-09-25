@@ -1,5 +1,5 @@
 import { drizzle } from 'drizzle-orm/d1';
-import { eq, desc, inArray, and } from 'drizzle-orm';
+import { eq, desc, inArray, and, gte, lte, type SQL } from 'drizzle-orm';
 import * as schema from './schema';
 import {
   buildZodSchemaForFields,
@@ -216,6 +216,81 @@ export function createDbClient(env: TalismanEnv) {
     throw new Error('Talisman CMS requires a D1 database bound to the "DB" environment variable.');
   }
   return drizzle(env.DB, { schema });
+}
+
+type CacheContext = Pick<ExecutionContext, 'waitUntil'>;
+
+const CACHE_TTL_SECONDS = 3600;
+let _workerCacheContext: Promise<CacheContext | null> | null = null;
+
+// Workers expose waitUntil on `cloudflare:workers`, so cache fills can finish after the
+// response even when the caller did not pass its execution context.
+function getWorkerCacheContext() {
+  _workerCacheContext ??= import('cloudflare:workers')
+    .then(({ waitUntil }) => typeof waitUntil === 'function'
+      ? { waitUntil: (promise: Promise<unknown>) => waitUntil(promise) }
+      : null)
+    .catch(() => null);
+  return _workerCacheContext;
+}
+
+/** KV is only a cache: a failed read is treated as a miss so the request falls through to D1. */
+async function readCache<T>(kv: KVNamespace, key: string): Promise<T | null> {
+  try {
+    return await kv.get<T>(key, 'json');
+  } catch (error) {
+    console.warn(`[Talisman] KV cache read failed for ${key}`, error);
+    return null;
+  }
+}
+
+/**
+ * Best-effort cache fill that never fails the read, deferred with waitUntil when available.
+ * A save or publish can delete the key while this read is in flight, and a put landing after
+ * that delete would serve the old value for the whole TTL. `changedSinceRead` re-checks D1 once
+ * the put settles and drops the key if the source rows changed after the read began.
+ */
+async function writeCache(
+  kv: KVNamespace,
+  key: string,
+  value: unknown,
+  ctx: CacheContext | undefined,
+  changedSinceRead?: () => Promise<boolean>
+) {
+  const write = (async () => {
+    try {
+      await kv.put(key, JSON.stringify(value), { expirationTtl: CACHE_TTL_SECONDS });
+      if (changedSinceRead && await changedSinceRead()) {
+        await kv.delete(key);
+      }
+    } catch (error) {
+      console.warn(`[Talisman] KV cache write failed for ${key}`, error);
+    }
+  })();
+
+  const context = ctx ?? await getWorkerCacheContext();
+  if (context) {
+    try {
+      context.waitUntil(write);
+      return;
+    } catch {
+      // No request to extend (e.g. prerendering): finish the write inline instead.
+    }
+  }
+  await write;
+}
+
+// A concurrent save stamps roughly "now", so the recheck ignores rows stamped further ahead
+// (e.g. millisecond values in a seconds column) that would otherwise drop every cache fill.
+const CONCURRENT_WRITE_WINDOW_MS = 5 * 60_000;
+
+function rowsUpdatedSince(db: TalismanDb, table: typeof schema.entries | typeof schema.globals, since: Date, where?: SQL) {
+  return async () => {
+    const latest = new Date(Date.now() + CONCURRENT_WRITE_WINDOW_MS);
+    const rows = await db.select({ id: table.id }).from(table)
+      .where(and(gte(table.updatedAt, since), lte(table.updatedAt, latest), where)).limit(1);
+    return rows.length > 0;
+  };
 }
 
 function isRelationshipFieldType(type: string | undefined) {
@@ -470,7 +545,11 @@ async function resolveRelationships(
   return resolvedEntries;
 }
 
-export function getClient(env: TalismanEnv) {
+/**
+ * Pass the request's execution context (Workers `ctx`, Astro `locals.cfContext`) so KV cache
+ * fills run after the response; inside Workers it is otherwise taken from `cloudflare:workers`.
+ */
+export function getClient(env: TalismanEnv, ctx?: CacheContext) {
   const db = createDbClient(env);
   
   return {
@@ -479,8 +558,8 @@ export function getClient(env: TalismanEnv) {
         const cacheKey = 'talisman:collections:all';
         
         if (opts?.cache !== false && env.KV) {
-          const cached = await env.KV.get(cacheKey, 'json');
-          if (cached) return cached as Array<any>;
+          const cached = await readCache<Array<any>>(env.KV, cacheKey);
+          if (cached) return cached;
         }
 
         for (const config of await getConfiguredCollections()) {
@@ -490,7 +569,7 @@ export function getClient(env: TalismanEnv) {
         
         if (opts?.cache !== false && env.KV) {
           // Cache for 1 hour by default
-          await env.KV.put(cacheKey, JSON.stringify(data), { expirationTtl: 3600 });
+          await writeCache(env.KV, cacheKey, data, ctx);
         }
         
         return data;
@@ -501,10 +580,11 @@ export function getClient(env: TalismanEnv) {
         const cacheKey = 'talisman:globals:all';
         
         if (opts?.cache !== false && env.KV) {
-          const cached = await env.KV.get(cacheKey, 'json');
-          if (cached) return cached as Array<any>;
+          const cached = await readCache<Array<any>>(env.KV, cacheKey);
+          if (cached) return cached;
         }
 
+        const readStartedAt = new Date();
         const configuredGlobals = await syncConfiguredGlobals(db);
         const allGlobals = await db.query.globals.findMany();
         const configuredOrder = new Map(configuredGlobals.map((globalConfig, index) => [globalConfig.slug, index]));
@@ -525,7 +605,7 @@ export function getClient(env: TalismanEnv) {
           });
         
         if (opts?.cache !== false && env.KV) {
-          await env.KV.put(cacheKey, JSON.stringify(data), { expirationTtl: 3600 });
+          await writeCache(env.KV, cacheKey, data, ctx, rowsUpdatedSince(db, schema.globals, readStartedAt));
         }
         
         return data;
@@ -534,14 +614,16 @@ export function getClient(env: TalismanEnv) {
         const cacheKey = `talisman:globals:${slug}`;
         
         if (opts?.cache !== false && env.KV) {
-          const cached = await env.KV.get(cacheKey, 'json');
-          if (cached) return cached as any;
+          const cached = await readCache<any>(env.KV, cacheKey);
+          if (cached) return cached;
         }
 
+        const readStartedAt = new Date();
         const { globalRecord: data } = await resolveGlobalContext(db, slug);
         
         if (opts?.cache !== false && env.KV && data) {
-          await env.KV.put(cacheKey, JSON.stringify(data), { expirationTtl: 3600 });
+          await writeCache(env.KV, cacheKey, data, ctx,
+            rowsUpdatedSince(db, schema.globals, readStartedAt, eq(schema.globals.slug, slug)));
         }
         
         return data;
@@ -636,10 +718,11 @@ export function getClient(env: TalismanEnv) {
         const useCache = opts?.cache !== false && limit === undefined && (opts?.depth ?? 1) === 0 && Boolean(env.KV);
         
         if (useCache && env.KV) {
-          const cached = await env.KV.get(cacheKey, 'json');
-          if (cached) return cached as Array<any>;
+          const cached = await readCache<Array<any>>(env.KV, cacheKey);
+          if (cached) return cached;
         }
 
+        const readStartedAt = new Date();
         const collection = await ensureCollection(db, collectionSlug);
         
         const { nativeSchemas, nativeSchemaConfig } = await getNativeSchemaModule();
@@ -672,7 +755,8 @@ export function getClient(env: TalismanEnv) {
         data = await resolveRelationships(data, collection, db, opts?.depth ?? 1, versionMode);
         
         if (useCache && env.KV) {
-          await env.KV.put(cacheKey, JSON.stringify(data), { expirationTtl: 3600 });
+          await writeCache(env.KV, cacheKey, data, ctx,
+            nativeTable ? undefined : rowsUpdatedSince(db, schema.entries, readStartedAt, eq(schema.entries.collectionId, collection.id)));
         }
         
         return data;
@@ -713,10 +797,11 @@ export function getClient(env: TalismanEnv) {
         const useCache = opts?.cache !== false && (opts?.depth ?? 1) === 0 && Boolean(env.KV);
         
         if (useCache && env.KV) {
-          const cached = await env.KV.get(cacheKey, 'json');
-          if (cached) return cached as any;
+          const cached = await readCache<any>(env.KV, cacheKey);
+          if (cached) return cached;
         }
 
+        const readStartedAt = new Date();
         const collection = await ensureCollection(db, collectionSlug);
 
         const { nativeSchemas, nativeSchemaConfig } = await getNativeSchemaModule();
@@ -751,7 +836,8 @@ export function getClient(env: TalismanEnv) {
         }
         
         if (useCache && env.KV && data) {
-          await env.KV.put(cacheKey, JSON.stringify(data), { expirationTtl: 3600 });
+          await writeCache(env.KV, cacheKey, data, ctx,
+            nativeTable ? undefined : rowsUpdatedSince(db, schema.entries, readStartedAt, eq(schema.entries.id, id)));
         }
         
         return data;
