@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  DAISYUI_THEME_DEFAULTS,
   buildThemeCss,
   clampInteger,
   cssUrl,
@@ -101,7 +102,7 @@ test('theme sanitising drops a <style> breakout and reports it', () => {
       'primary;}body{display:none': '#fff',
     },
     darkColors: { accent: 'oklch(73.95% 0.19 27.33)', neutral: 'rgb(0 0 0 / 50%)', info: 'url(https://evil.example/x)' },
-    advanced: { 'rounded-box': '1rem;}body{display:none', 'rounded-btn': '0.5rem', 'btn-focus-scale': '0.95' },
+    advanced: { 'radius-box': '1rem;}body{display:none', 'radius-field': '0.5rem', 'animation-btn': '0.25s' },
     extra: 'ignored',
   };
 
@@ -110,10 +111,10 @@ test('theme sanitising drops a <style> breakout and reports it', () => {
     darkTheme: 'dark',
     lightColors: { secondary: '#966fb3' },
     darkColors: { accent: 'oklch(73.95% 0.19 27.33)', neutral: 'rgb(0 0 0 / 50%)' },
-    advanced: { 'rounded-btn': '0.5rem', 'btn-focus-scale': '0.95' },
+    advanced: { 'radius-field': '0.5rem' },
   });
   assert.deepEqual(rejected.sort(), [
-    'advanced.rounded-box',
+    'advanced.radius-box',
     'darkColors.info',
     'extra',
     'lightColors.primary',
@@ -125,34 +126,23 @@ test('theme sanitising drops a <style> breakout and reports it', () => {
   assert.equal(lightTheme, 'light');
   assert.equal(darkTheme, 'dark');
   assert.doesNotMatch(css, /<|script|display:none|evil|url\(/i);
-  assert.match(css, /\[data-theme="light"\] \{ --color-secondary: #966fb3; \}/);
-  assert.match(css, /:root \{ --radius-field: 0\.5rem; --btn-focus-scale: 0\.95; \}/);
+  assert.match(css, /\[data-theme="light"\]\[data-theme\] \{ --color-secondary: #966fb3; --radius-field: 0\.5rem; \}/);
 });
 
 test('theme sanitising accepts every value the Theme Builder ships with', () => {
-  const colorKeys = new Set([
-    'primary', 'primary-content', 'secondary', 'secondary-content', 'accent', 'accent-content',
-    'neutral', 'neutral-content', 'base-100', 'base-200', 'base-300', 'base-content',
-    'info', 'info-content', 'success', 'success-content', 'warning', 'warning-content', 'error', 'error-content',
-  ]);
-  const defaults = readFileSync(path.join(packageRoot, 'src/admin/themeDefaults.ts'), 'utf8');
-  const colors = {};
   let count = 0;
-  for (const [, key, value] of defaults.matchAll(/"([a-z0-9-]+)": "([^"]*)"/g)) {
-    if (!colorKeys.has(key)) continue;
-    colors[key] = value;
-    const { rejected } = sanitizeThemeSettings({ lightTheme: 'aqua', lightColors: colors });
-    assert.deepEqual(rejected, [], `${key}: ${value}`);
-    count += 1;
+  for (const [name, theme] of Object.entries(DAISYUI_THEME_DEFAULTS)) {
+    const { rejected } = sanitizeThemeSettings({
+      lightTheme: name,
+      lightColors: theme.colors,
+      darkColors: theme.colors,
+      advanced: theme.vars,
+    });
+    assert.deepEqual(rejected, [], name);
+    count += Object.keys(theme.colors).length + Object.keys(theme.vars).length;
   }
-  assert.ok(count > 300, `expected the daisyUI palettes to be checked, saw ${count}`);
+  assert.ok(count > 900, `expected the daisyUI themes to be checked, saw ${count}`);
 
-  const advanced = {
-    'rounded-box': '1rem', 'rounded-btn': '0.5rem', 'rounded-badge': '1.9rem',
-    'animation-btn': '0.25s', 'animation-input': '0.2s', 'btn-focus-scale': '0.95',
-    'border-btn': '1px', 'tab-border': '1px', 'tab-radius': '0.5rem',
-  };
-  assert.deepEqual(sanitizeThemeSettings({ advanced }).rejected, []);
   assert.deepEqual(sanitizeThemeSettings({ lightColors: { primary: '', secondary: null } }), {
     settings: { lightColors: {} },
     rejected: [],

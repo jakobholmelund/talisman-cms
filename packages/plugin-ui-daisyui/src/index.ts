@@ -1,10 +1,19 @@
 import { fileURLToPath } from 'node:url';
 import { daisyUiPlugin as basePlugin } from './generated';
 import type { Plugin, GlobalConfig } from 'talisman-cms';
+import { DAISYUI_THEME_ADVANCED, DAISYUI_THEME_COLORS } from './components/theme-css';
 
 export { daisyUiLibrary } from './generated';
 export { safeHref, cssUrl, safeCssLength, clampInteger } from './renderers/sanitize';
 export { buildThemeCss, sanitizeThemeSettings, type DaisyUiThemeSettings } from './components/theme-css';
+export { DAISYUI_THEME_DEFAULTS, DAISYUI_THEME_DEFAULTS_VERSION, type DaisyUiThemeDefaults } from './admin/themeDefaults';
+export {
+  colorToHex,
+  createThemeEditorState,
+  themeDefaultValue,
+  themeEditorPayload,
+  type ThemeEditorState,
+} from './admin/theme-editor';
 
 // Inject routes by file path, as the other plugins do. Vite's SSR dep optimizer treats a bare
 // package specifier as a dependency, finds it after `astro dev` has started, and the reload
@@ -12,6 +21,11 @@ export { buildThemeCss, sanitizeThemeSettings, type DaisyUiThemeSettings } from 
 function routeEntrypoint(file: string) {
   return fileURLToPath(new URL(`../src/routes/${file}`, import.meta.url));
 }
+
+// The global holds overrides only, the same keys the Theme Builder edits. An empty field keeps the
+// base theme's value, so no field has a default.
+const colorFields = () => DAISYUI_THEME_COLORS.map(({ key, label }) => ({ name: key, label, type: 'color' as const }));
+const advancedFields = () => DAISYUI_THEME_ADVANCED.map(({ key, label }) => ({ name: key, label, type: 'text' as const }));
 
 export function daisyUiPlugin(): Plugin {
   const base = basePlugin();
@@ -30,43 +44,9 @@ export function daisyUiPlugin(): Plugin {
         fields: [
           { name: 'lightTheme', label: 'Base Light Theme', type: 'text', defaultValue: 'light' },
           { name: 'darkTheme', label: 'Base Dark Theme', type: 'text', defaultValue: 'dark' },
-          { name: 'lightColors', label: 'Light Mode Overrides', type: 'group', fields: [
-            { name: 'primary', label: 'Primary', type: 'color' },
-            { name: 'secondary', label: 'Secondary', type: 'color' },
-            { name: 'accent', label: 'Accent', type: 'color' },
-            { name: 'neutral', label: 'Neutral', type: 'color' },
-            { name: 'base-100', label: 'Base 100', type: 'color' },
-            { name: 'base-200', label: 'Base 200', type: 'color' },
-            { name: 'base-300', label: 'Base 300', type: 'color' },
-            { name: 'info', label: 'Info', type: 'color' },
-            { name: 'success', label: 'Success', type: 'color' },
-            { name: 'warning', label: 'Warning', type: 'color' },
-            { name: 'error', label: 'Error', type: 'color' }
-          ]},
-          { name: 'darkColors', label: 'Dark Mode Overrides', type: 'group', fields: [
-            { name: 'primary', label: 'Primary', type: 'color' },
-            { name: 'secondary', label: 'Secondary', type: 'color' },
-            { name: 'accent', label: 'Accent', type: 'color' },
-            { name: 'neutral', label: 'Neutral', type: 'color' },
-            { name: 'base-100', label: 'Base 100', type: 'color' },
-            { name: 'base-200', label: 'Base 200', type: 'color' },
-            { name: 'base-300', label: 'Base 300', type: 'color' },
-            { name: 'info', label: 'Info', type: 'color' },
-            { name: 'success', label: 'Success', type: 'color' },
-            { name: 'warning', label: 'Warning', type: 'color' },
-            { name: 'error', label: 'Error', type: 'color' }
-          ]},
-          { name: 'advanced', label: 'Advanced', type: 'group', fields: [
-            { name: 'rounded-box', label: 'Border Radius (Cards & Modals)', type: 'text', defaultValue: '1rem' },
-            { name: 'rounded-btn', label: 'Border Radius (Buttons)', type: 'text', defaultValue: '0.5rem' },
-            { name: 'rounded-badge', label: 'Border Radius (Badges)', type: 'text', defaultValue: '1.9rem' },
-            { name: 'animation-btn', label: 'Animation Duration (Buttons)', type: 'text', defaultValue: '0.25s' },
-            { name: 'animation-input', label: 'Animation Duration (Inputs)', type: 'text', defaultValue: '0.2s' },
-            { name: 'btn-focus-scale', label: 'Button Focus Scale', type: 'text', defaultValue: '0.95' },
-            { name: 'border-btn', label: 'Button Border Width', type: 'text', defaultValue: '1px' },
-            { name: 'tab-border', label: 'Tab Border Width', type: 'text', defaultValue: '1px' },
-            { name: 'tab-radius', label: 'Tab Border Radius', type: 'text', defaultValue: '0.5rem' }
-          ]}
+          { name: 'lightColors', label: 'Light Mode Overrides', type: 'group', fields: colorFields() },
+          { name: 'darkColors', label: 'Dark Mode Overrides', type: 'group', fields: colorFields() },
+          { name: 'advanced', label: 'Radius, Size and Effect Overrides', type: 'group', fields: advancedFields() }
         ]
       };
 

@@ -29,7 +29,7 @@ try {
 }
 ---
 
-{injectedCss.trim().length > 0 && <style is:inline set:html={injectedCss} />}
+{injectedCss.trim().length > 0 && <style is:inline data-daisyui-theme set:html={injectedCss} />}
 
 <script is:inline define:vars={{ lightThemeName, darkThemeName }}>
   window.talismanThemes = { light: lightThemeName, dark: darkThemeName };

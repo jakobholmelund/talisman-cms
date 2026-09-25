@@ -1,54 +1,57 @@
 import React, { useEffect, useState } from 'react';
 import { DAISYUI_THEME_DEFAULTS } from './themeDefaults';
+import {
+  DAISYUI_THEME_ADVANCED,
+  DAISYUI_THEME_COLORS,
+  isSafeThemeColor,
+  isSafeThemeNumber,
+} from '../components/theme-css';
+import {
+  colorToHex,
+  createThemeEditorState,
+  normalizeColorInput,
+  themeDefaultValue,
+  themeEditorPayload,
+  themeNamesFor,
+  type ThemeEditorState,
+  type ThemeMode,
+} from './theme-editor';
 
-const DAISYUI_COLORS = [
-  { id: 'primary', label: 'Primary', default: '#570df8' },
-  { id: 'primary-content', label: 'Primary Content', default: '#ffffff' },
-  { id: 'secondary', label: 'Secondary', default: '#f000b8' },
-  { id: 'secondary-content', label: 'Secondary Content', default: '#ffffff' },
-  { id: 'accent', label: 'Accent', default: '#1dcdbc' },
-  { id: 'accent-content', label: 'Accent Content', default: '#ffffff' },
-  { id: 'neutral', label: 'Neutral', default: '#2b3440' },
-  { id: 'neutral-content', label: 'Neutral Content', default: '#ffffff' },
-  { id: 'base-100', label: 'Base 100', default: '#ffffff' },
-  { id: 'base-200', label: 'Base 200', default: '#f2f2f2' },
-  { id: 'base-300', label: 'Base 300', default: '#e5e6e6' },
-  { id: 'base-content', label: 'Base Content', default: '#1f2937' },
-  { id: 'info', label: 'Info', default: '#3abff8' },
-  { id: 'info-content', label: 'Info Content', default: '#002b3d' },
-  { id: 'success', label: 'Success', default: '#36d399' },
-  { id: 'success-content', label: 'Success Content', default: '#003320' },
-  { id: 'warning', label: 'Warning', default: '#fbbd23' },
-  { id: 'warning-content', label: 'Warning Content', default: '#382800' },
-  { id: 'error', label: 'Error', default: '#f87272' },
-  { id: 'error-content', label: 'Error Content', default: '#470000' },
-];
+type Overrides = Record<string, string>;
 
-const DAISYUI_ADVANCED = [
-  { id: 'rounded-box', label: 'Border Radius (Cards & Modals)', default: '1rem' },
-  { id: 'rounded-btn', label: 'Border Radius (Buttons)', default: '0.5rem' },
-  { id: 'rounded-badge', label: 'Border Radius (Badges)', default: '1.9rem' },
-  { id: 'animation-btn', label: 'Animation Duration (Buttons)', default: '0.25s' },
-  { id: 'animation-input', label: 'Animation Duration (Inputs)', default: '0.2s' },
-  { id: 'btn-focus-scale', label: 'Button Focus Scale', default: '0.95' },
-  { id: 'border-btn', label: 'Button Border Width', default: '1px' },
-  { id: 'tab-border', label: 'Tab Border Width', default: '1px' },
-  { id: 'tab-radius', label: 'Tab Border Radius', default: '0.5rem' },
-];
+const withValue = (values: Overrides, key: string, value: string) => {
+  const next = { ...values };
+  // An empty field means "use the base theme", so it is not stored as an override.
+  if (value.trim() === '') delete next[key];
+  else next[key] = value;
+  return next;
+};
+
+const isInvalidColor = (value: string | undefined) => value !== undefined && !isSafeThemeColor(normalizeColorInput(value));
+const isInvalidNumber = (value: string | undefined) => value !== undefined && !isSafeThemeNumber(value);
 
 export default function ThemeBuilder() {
-  const [lightColors, setLightColors] = useState<Record<string, string>>({});
-  const [darkColors, setDarkColors] = useState<Record<string, string>>({});
+  const [lightColors, setLightColors] = useState<Overrides>({});
+  const [darkColors, setDarkColors] = useState<Overrides>({});
   const [lightTheme, setLightTheme] = useState('light');
   const [darkTheme, setDarkTheme] = useState('dark');
-  const [editMode, setEditMode] = useState<'light' | 'dark'>('light');
-  const [previewMode, setPreviewMode] = useState<'light' | 'dark'>('light');
-  const [advanced, setAdvanced] = useState<Record<string, string>>({});
+  const [editMode, setEditMode] = useState<ThemeMode>('light');
+  const [previewMode, setPreviewMode] = useState<ThemeMode>('light');
+  const [advanced, setAdvanced] = useState<Overrides>({});
   const [isSaving, setIsSaving] = useState(false);
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [layoutOptions, setLayoutOptions] = useState<string[]>([]);
   const [selectedLayout, setSelectedLayout] = useState<string>('');
+
+  const applyState = (state: ThemeEditorState) => {
+    setLightTheme(state.lightTheme);
+    setDarkTheme(state.darkTheme);
+    setLightColors(state.lightColors);
+    setDarkColors(state.darkColors);
+    setAdvanced(state.advanced);
+  };
 
   useEffect(() => {
     // Determine admin base path from URL pattern /admin/...
@@ -56,39 +59,24 @@ export default function ThemeBuilder() {
     const basePath = pathParts[1] === 'extensions' ? '' : `/${pathParts[1]}`;
     const apiPath = `${basePath}/api/daisyui/theme`;
     const layoutsApiPath = `${basePath}/api/daisyui/layouts`;
-    
+
     Promise.all([
-      fetch(apiPath).then((res) => res.json()).catch(() => ({})),
+      fetch(apiPath)
+        .then(async (res) => {
+          if (!res.ok) throw new Error(`the server answered ${res.status}`);
+          return res.json();
+        })
+        .catch((err) => {
+          // Saving now would replace the stored theme with an empty one, so saving stays off.
+          setLoadError(`Could not load the saved theme (${err instanceof Error ? err.message : 'network error'}). Reload the page to try again; saving is disabled so the saved theme is not overwritten.`);
+          return {};
+        }),
       fetch(layoutsApiPath).then((res) => res.json()).catch(() => ({ layouts: [] }))
     ])
       .then(([data, layoutsData]) => {
-        if (data) {
-          if (data.lightTheme) setLightTheme(data.lightTheme);
-          if (data.darkTheme) setDarkTheme(data.darkTheme);
-          
-          if (data.lightColors) setLightColors(data.lightColors);
-          else {
-            const defaults: Record<string, string> = {};
-            for (const color of DAISYUI_COLORS) defaults[color.id] = color.default;
-            setLightColors(defaults);
-          }
-
-          if (data.darkColors) setDarkColors(data.darkColors);
-          else {
-            const defaults: Record<string, string> = {};
-            for (const color of DAISYUI_COLORS) defaults[color.id] = color.default;
-            setDarkColors(defaults);
-          }
-        }
-        if (data && data.advanced) {
-          setAdvanced(data.advanced);
-        } else {
-          const advDefaults: Record<string, string> = {};
-          for (const item of DAISYUI_ADVANCED) {
-            advDefaults[item.id] = item.default;
-          }
-          setAdvanced(advDefaults);
-        }
+        // Only saved overrides are loaded. Everything else shows the base theme's daisyUI values and
+        // is not saved, so a first save keeps daisyUI's own light and dark palettes.
+        applyState(createThemeEditorState(data));
 
         if (layoutsData && layoutsData.layouts) {
           setLayoutOptions(layoutsData.layouts);
@@ -99,61 +87,73 @@ export default function ThemeBuilder() {
       .finally(() => setLoading(false));
   }, []);
 
-  const handleThemeChange = (mode: 'light' | 'dark', themeName: string) => {
-    const defaultVals = DAISYUI_THEME_DEFAULTS[themeName];
-    if (!defaultVals) return;
-
-    // Pick out just the colors
-    const colorsObj: Record<string, string> = {};
-    for (const color of DAISYUI_COLORS) {
-      if (defaultVals[color.id]) {
-        colorsObj[color.id] = defaultVals[color.id];
-      }
+  const handleThemeChange = (mode: ThemeMode, themeName: string) => {
+    const overrides = mode === 'light' ? lightColors : darkColors;
+    const count = Object.keys(overrides).length;
+    // Overrides were picked to go with the previous base theme, so a new base theme starts clean.
+    if (count > 0 && !window.confirm(
+      `Switching the ${mode} theme to "${themeName}" clears your ${count} ${mode} colour override${count === 1 ? '' : 's'}. Continue?`,
+    )) {
+      return;
     }
 
     if (mode === 'light') {
       setLightTheme(themeName);
-      setLightColors((prev) => ({ ...prev, ...colorsObj }));
+      setLightColors({});
     } else {
       setDarkTheme(themeName);
-      setDarkColors((prev) => ({ ...prev, ...colorsObj }));
+      setDarkColors({});
     }
   };
 
   const handleColorChange = (id: string, value: string) => {
     if (editMode === 'light') {
-      setLightColors((prev) => ({ ...prev, [id]: value }));
+      setLightColors((prev) => withValue(prev, id, value));
     } else {
-      setDarkColors((prev) => ({ ...prev, [id]: value }));
+      setDarkColors((prev) => withValue(prev, id, value));
     }
   };
-  const handleAdvancedChange = (id: string, value: string) => {
-    setAdvanced((prev) => ({ ...prev, [id]: value }));
+  const handleResetColors = () => {
+    if (editMode === 'light') setLightColors({});
+    else setDarkColors({});
   };
+  const handleAdvancedChange = (id: string, value: string) => {
+    setAdvanced((prev) => withValue(prev, id, value));
+  };
+
+  const payload = () => themeEditorPayload({ lightTheme, darkTheme, lightColors, darkColors, advanced });
+
+  const invalidFields = [
+    ...Object.keys(lightColors).filter((key) => isInvalidColor(lightColors[key])).map((key) => `light ${key}`),
+    ...Object.keys(darkColors).filter((key) => isInvalidColor(darkColors[key])).map((key) => `dark ${key}`),
+    ...Object.keys(advanced).filter((key) => isInvalidNumber(advanced[key])),
+  ];
 
   const handleSave = async () => {
     setIsSaving(true);
     setSuccess(false);
-    
+
     try {
       const pathParts = window.location.pathname.split('/');
       const basePath = pathParts[1] === 'extensions' ? '' : `/${pathParts[1]}`;
       const apiPath = `${basePath}/api/daisyui/theme`;
-      
+
       const res = await fetch(apiPath, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          lightTheme, darkTheme, lightColors, darkColors, advanced 
-        }),
+        body: JSON.stringify(payload()),
       });
-      
-      if (res.ok) {
-        setSuccess(true);
-        setTimeout(() => setSuccess(false), 3000);
-      } else {
-        throw new Error('Failed to save');
+      const body = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const fields = Array.isArray(body?.fields) ? body.fields.join(', ') : '';
+        alert(fields ? `Error saving theme: these values are not allowed: ${fields}` : 'Error saving theme');
+        return;
       }
+
+      applyState(createThemeEditorState(body));
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
       console.error(err);
       alert('Error saving theme');
@@ -166,67 +166,99 @@ export default function ThemeBuilder() {
     return <div className="p-8 text-zinc-400">Loading theme builder...</div>;
   }
 
-  const previewColors = previewMode === 'light' ? lightColors : darkColors;
+  const editTheme = editMode === 'light' ? lightTheme : darkTheme;
   const editColors = editMode === 'light' ? lightColors : darkColors;
+  const editOverrideCount = Object.keys(editColors).length;
+  const previewTheme = previewMode === 'light' ? lightTheme : darkTheme;
+  const previewColors = previewMode === 'light' ? lightColors : darkColors;
 
   const handleOpenPreview = () => {
-    const previewState = { lightTheme, darkTheme, lightColors, darkColors, advanced };
-    sessionStorage.setItem('daisyui-preview-state', JSON.stringify(previewState));
+    sessionStorage.setItem('daisyui-preview-state', JSON.stringify(payload()));
     const url = `/admin/daisyui-preview?mode=${previewMode}${selectedLayout ? `&layout=${encodeURIComponent(selectedLayout)}` : ''}`;
     window.open(url, '_blank');
   };
 
+  // What the mini preview shows: a valid override, else the base theme's value. Themes that daisyUI
+  // does not ship fall back to its plain light or dark theme.
+  const baseValue = (theme: string, mode: ThemeMode, key: string) =>
+    themeDefaultValue(theme, key) ?? themeDefaultValue(mode, key) ?? '';
+  const previewColor = (key: string) => {
+    const override = previewColors[key];
+    return override !== undefined && !isInvalidColor(override)
+      ? normalizeColorInput(override)
+      : baseValue(previewTheme, previewMode, key);
+  };
+  const previewVar = (key: string) => {
+    const override = advanced[key];
+    return override !== undefined && !isInvalidNumber(override) ? override.trim() : baseValue(previewTheme, previewMode, key);
+  };
+
   // Mini preview generated via style injected safely
   const previewStyles = {
-    '--preview-p': previewColors['primary'] || '#570df8',
-    '--preview-s': previewColors['secondary'] || '#f000b8',
-    '--preview-a': previewColors['accent'] || '#1dcdbc',
-    '--preview-n': previewColors['neutral'] || '#2b3440',
-    '--preview-b1': previewColors['base-100'] || '#ffffff',
-    '--preview-b2': previewColors['base-200'] || '#f2f2f2',
-    '--preview-b3': previewColors['base-300'] || '#e5e6e6',
-    '--preview-suc': previewColors['success'] || '#36d399',
-    '--preview-err': previewColors['error'] || '#f87272',
+    '--preview-p': previewColor('primary'),
+    '--preview-pc': previewColor('primary-content'),
+    '--preview-s': previewColor('secondary'),
+    '--preview-sc': previewColor('secondary-content'),
+    '--preview-a': previewColor('accent'),
+    '--preview-ac': previewColor('accent-content'),
+    '--preview-b1': previewColor('base-100'),
+    '--preview-b2': previewColor('base-200'),
+    '--preview-b3': previewColor('base-300'),
+    '--preview-bc': previewColor('base-content'),
+    '--preview-suc': previewColor('success'),
+    '--preview-succ': previewColor('success-content'),
+    '--preview-err': previewColor('error'),
+    '--preview-errc': previewColor('error-content'),
   } as React.CSSProperties;
+  const radiusBox = previewVar('radius-box');
+  const radiusField = previewVar('radius-field');
+  const radiusSelector = previewVar('radius-selector');
+  const borderWidth = previewVar('border');
 
-  const DAISYUI_THEMES = [
-    "light", "dark", "cupcake", "bumblebee", "emerald", "corporate", "synthwave", "retro", 
-    "cyberpunk", "valentine", "halloween", "garden", "forest", "aqua", "lofi", "pastel", 
-    "fantasy", "wireframe", "black", "luxury", "dracula", "cmyk", "autumn", "business", 
-    "acid", "lemonade", "night", "coffee", "winter", "dim", "nord", "sunset"
-  ];
+  const themeOptions = (mode: ThemeMode, current: string) => themeNamesFor(mode, current).map((name) => {
+    const scheme = DAISYUI_THEME_DEFAULTS[name]?.colorScheme;
+    const note = !scheme ? ' (not a built-in theme)' : scheme !== mode ? ` (${scheme} theme)` : '';
+    return <option key={name} value={name}>{name}{note}</option>;
+  });
+
+  const advancedPlaceholder = (key: string) => {
+    const light = baseValue(lightTheme, 'light', key);
+    const dark = baseValue(darkTheme, 'dark', key);
+    return light === dark ? light : `${light} light, ${dark} dark`;
+  };
 
   return (
     <div className="flex flex-col lg:flex-row gap-8 p-6" style={previewStyles}>
       <div className="flex-1 space-y-6">
+        {loadError && (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{loadError}</div>
+        )}
+
         <div>
           <h2 className="text-xl font-medium text-white mb-2">Base Themes</h2>
           <p className="text-sm text-zinc-400 mb-4">
-            Select the default DaisyUI background patterns and baseline colors for each mode.
+            Pick the daisyUI theme each mode starts from. Your site's daisyUI build must include both themes, for example{' '}
+            <code className="text-zinc-300">@plugin "daisyui" {'{'} themes: light --default, dark --prefersdark; {'}'}</code>.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">Light Theme</label>
-              <select 
+              <select
                 className="w-full bg-black/30 border border-white/10 text-zinc-200 text-sm focus:outline-none focus:ring-1 ring-indigo-500 rounded px-3 py-2"
                 value={lightTheme}
                 onChange={(e) => handleThemeChange('light', e.target.value)}
               >
-                {DAISYUI_THEMES
-                  .filter(t => DAISYUI_THEME_DEFAULTS[t]?.colorScheme === 'light')
-                  .map(t => <option key={t} value={t}>{t} (Light)</option>)}
+                {themeOptions('light', lightTheme)}
               </select>
             </div>
             <div>
               <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">Dark Theme</label>
-              <select 
+              <select
                 className="w-full bg-black/30 border border-white/10 text-zinc-200 text-sm focus:outline-none focus:ring-1 ring-indigo-500 rounded px-3 py-2"
                 value={darkTheme}
                 onChange={(e) => handleThemeChange('dark', e.target.value)}
               >
-                {DAISYUI_THEMES
-                  .filter(t => DAISYUI_THEME_DEFAULTS[t]?.colorScheme === 'dark')
-                  .map(t => <option key={t} value={t}>{t} (Dark)</option>)}
+                {themeOptions('dark', darkTheme)}
               </select>
             </div>
           </div>
@@ -237,17 +269,17 @@ export default function ThemeBuilder() {
             <div>
               <h2 className="text-xl font-medium text-white">Color Palette</h2>
               <p className="text-sm text-zinc-400">
-                Override specific colors for the selected mode.
+                Override colours of the {editMode} theme (<span className="text-zinc-300">{editTheme}</span>). Empty fields use the theme's own colour, shown in grey, and are not saved.
               </p>
             </div>
-            <div className="flex bg-black/30 p-1 rounded-lg border border-white/10">
-              <button 
+            <div className="flex bg-black/30 p-1 rounded-lg border border-white/10 shrink-0">
+              <button
                 onClick={() => setEditMode('light')}
                 className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${editMode === 'light' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
               >
                 Light Colors
               </button>
-              <button 
+              <button
                 onClick={() => setEditMode('dark')}
                 className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${editMode === 'dark' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
               >
@@ -255,62 +287,94 @@ export default function ThemeBuilder() {
               </button>
             </div>
           </div>
+          <button
+            type="button"
+            onClick={handleResetColors}
+            disabled={editOverrideCount === 0}
+            className="text-xs text-zinc-400 hover:text-zinc-200 disabled:opacity-40"
+          >
+            Reset all {editMode} colours to {editTheme}{editOverrideCount > 0 ? ` (${editOverrideCount} overridden)` : ''}
+          </button>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {DAISYUI_COLORS.map((color) => {
-            const val = editColors[color.id] || color.default;
+          {DAISYUI_THEME_COLORS.map((color) => {
+            const override = editColors[color.key];
+            const inherited = baseValue(editTheme, editMode, color.key);
+            const invalid = isInvalidColor(override);
+            const shown = override !== undefined && !invalid ? normalizeColorInput(override) : inherited;
+            const inputId = `daisyui-${editMode}-${color.key}`;
             return (
-              <div key={color.id} className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-lg p-3">
-                <div 
-                  className="w-10 h-10 rounded-full shadow-inner border border-white/20 shrink-0" 
-                  style={{ backgroundColor: val }}
-                />
-                <div className="flex-1">
-                  <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1">
-                    {color.label}
-                  </label>
-                  <div className="flex bg-black/30 rounded focus-within:ring-1 ring-indigo-500 overflow-hidden">
-                    <span className="text-zinc-500 text-xs px-2 py-1.5 font-mono select-none">#</span>
-                    <input
-                      type="text"
-                      className="bg-transparent border-none text-zinc-200 text-sm font-mono focus:outline-none w-full"
-                      value={val.replace(/^#/, '')}
-                      onChange={(e) => handleColorChange(color.id, '#' + e.target.value)}
-                    />
+              <div key={color.key} className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-lg p-3">
+                <label className="relative w-10 h-10 shrink-0 cursor-pointer" title={`Pick ${color.label}`}>
+                  <span
+                    className="block w-full h-full rounded-full shadow-inner border border-white/20"
+                    style={{ backgroundColor: shown }}
+                  />
+                  <input
+                    type="color"
+                    aria-label={`${color.label} colour picker`}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    value={colorToHex(shown) ?? '#000000'}
+                    onChange={(e) => handleColorChange(color.key, e.target.value)}
+                  />
+                </label>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between mb-1">
+                    <label htmlFor={inputId} className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider">
+                      {color.label}
+                    </label>
+                    {override !== undefined && (
+                      <button
+                        type="button"
+                        onClick={() => handleColorChange(color.key, '')}
+                        className="text-[11px] text-zinc-400 hover:text-zinc-200"
+                      >
+                        Reset
+                      </button>
+                    )}
                   </div>
+                  <input
+                    id={inputId}
+                    type="text"
+                    spellCheck={false}
+                    aria-invalid={invalid}
+                    className={`w-full bg-black/30 border rounded px-2 py-1.5 text-zinc-200 text-sm font-mono placeholder:text-zinc-500 focus:outline-none focus:ring-2 ${invalid ? 'border-red-500/50 focus:ring-red-500/50' : 'border-white/10 focus:ring-indigo-500/50'}`}
+                    value={override ?? ''}
+                    placeholder={inherited}
+                    onChange={(e) => handleColorChange(color.key, e.target.value)}
+                  />
                 </div>
-                <input
-                  type="color"
-                  className="w-10 h-10 opacity-0 cursor-pointer absolute right-5"
-                  value={val}
-                  onChange={(e) => handleColorChange(color.id, e.target.value)}
-                />
               </div>
             );
           })}
         </div>
-        
+
         <div className="pt-6 border-t border-white/10">
           <h2 className="text-xl font-medium text-white mb-2">Advanced Config</h2>
           <p className="text-sm text-zinc-400 mb-6">
-            Modify structural variables like border radiuses, animation durations, and padding values.
+            daisyUI's radius, size, border and effect variables, applied to both themes. Empty fields keep each theme's own value, shown in grey.
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {DAISYUI_ADVANCED.map((item) => {
-              const val = advanced[item.id] || item.default;
+            {DAISYUI_THEME_ADVANCED.map((item) => {
+              const override = advanced[item.key];
+              const invalid = isInvalidNumber(override);
               return (
-                <div key={item.id} className="flex flex-col bg-white/5 border border-white/10 rounded-lg p-3">
-                  <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">
+                <div key={item.key} className="flex flex-col bg-white/5 border border-white/10 rounded-lg p-3">
+                  <label htmlFor={`daisyui-advanced-${item.key}`} className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">
                     {item.label}
                   </label>
-                  <div className="flex bg-black/30 rounded focus-within:ring-1 ring-indigo-500 overflow-hidden">
+                  <div className={`flex bg-black/30 border rounded overflow-hidden focus-within:ring-2 ${invalid ? 'border-red-500/50 focus-within:ring-red-500/50' : 'border-white/10 focus-within:ring-indigo-500/50'}`}>
                     <input
+                      id={`daisyui-advanced-${item.key}`}
                       type="text"
-                      className="bg-transparent border-none text-zinc-200 text-sm focus:outline-none w-full px-3 py-1.5"
-                      value={val}
-                      onChange={(e) => handleAdvancedChange(item.id, e.target.value)}
+                      spellCheck={false}
+                      aria-invalid={invalid}
+                      className="bg-transparent border-none text-zinc-200 text-sm placeholder:text-zinc-500 focus:outline-none w-full px-3 py-1.5"
+                      value={override ?? ''}
+                      placeholder={advancedPlaceholder(item.key)}
+                      onChange={(e) => handleAdvancedChange(item.key, e.target.value)}
                     />
                   </div>
                 </div>
@@ -322,12 +386,15 @@ export default function ThemeBuilder() {
         <div className="pt-4 flex items-center gap-4 border-t border-white/10 mt-6">
           <button
             onClick={handleSave}
-            disabled={isSaving}
+            disabled={isSaving || !!loadError || invalidFields.length > 0}
             className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
           >
             {isSaving ? 'Saving...' : 'Save Theme'}
           </button>
           {success && <span className="text-sm text-emerald-400 font-medium">Theme saved successfully!</span>}
+          {invalidFields.length > 0 && (
+            <span className="text-sm text-red-300">Fix the highlighted values before saving ({invalidFields.join(', ')}).</span>
+          )}
         </div>
       </div>
 
@@ -335,13 +402,13 @@ export default function ThemeBuilder() {
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">Mini Preview</h3>
           <div className="flex bg-black/30 p-1 rounded border border-white/10">
-            <button 
+            <button
               onClick={() => setPreviewMode('light')}
               className={`px-2 py-1 text-[10px] font-bold uppercase rounded-sm transition-colors ${previewMode === 'light' ? 'bg-zinc-200 text-black' : 'text-zinc-500 hover:text-zinc-300'}`}
             >
               Light
             </button>
-            <button 
+            <button
               onClick={() => setPreviewMode('dark')}
               className={`px-2 py-1 text-[10px] font-bold uppercase rounded-sm transition-colors ${previewMode === 'dark' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
             >
@@ -349,63 +416,47 @@ export default function ThemeBuilder() {
             </button>
           </div>
         </div>
-        <div 
+        <div
           className="overflow-hidden shadow-2xl border border-white/10"
-          style={{ borderRadius: advanced['rounded-box'] || '1rem' }}
+          style={{ borderRadius: radiusBox }}
         >
           <div className="p-6 space-y-6 pb-8" style={{ backgroundColor: 'var(--preview-b1)' }}>
             <div className="space-y-2">
               <h4 style={{ color: 'var(--preview-p)' }} className="text-xl font-bold">Primary Heading</h4>
-              <p style={{ color: 'var(--preview-n)' }} className="text-sm font-medium opacity-80">This text uses the neutral color for contrast against base-100.</p>
+              <p style={{ color: 'var(--preview-bc)' }} className="text-sm font-medium opacity-80">This text uses the base content color on base-100.</p>
             </div>
-            
+
             <div className="flex gap-2">
-              <button 
-                className="px-4 py-2 text-sm font-bold border"
-                style={{ 
-                  backgroundColor: 'var(--preview-p)', 
-                  color: 'var(--preview-b1)',
-                  borderRadius: advanced['rounded-btn'] || '0.5rem',
-                  borderWidth: advanced['border-btn'] || '1px',
-                  borderColor: 'var(--preview-p)'
-                }}
-              >
-                Primary
-              </button>
-              <button 
-                className="px-4 py-2 text-sm font-bold border"
-                style={{ 
-                  backgroundColor: 'var(--preview-s)', 
-                  color: 'var(--preview-b1)',
-                  borderRadius: advanced['rounded-btn'] || '0.5rem',
-                  borderWidth: advanced['border-btn'] || '1px',
-                  borderColor: 'var(--preview-s)'
-                }}
-              >
-                Secondary
-              </button>
-              <button 
-                className="px-4 py-2 text-sm font-bold border"
-                style={{ 
-                  backgroundColor: 'var(--preview-a)', 
-                  color: 'var(--preview-b1)',
-                  borderRadius: advanced['rounded-btn'] || '0.5rem',
-                  borderWidth: advanced['border-btn'] || '1px',
-                  borderColor: 'var(--preview-a)'
-                }}
-              >
-                Accent
-              </button>
+              {[
+                ['Primary', 'p', 'pc'],
+                ['Secondary', 's', 'sc'],
+                ['Accent', 'a', 'ac'],
+              ].map(([label, background, content]) => (
+                <button
+                  key={label}
+                  className="px-4 py-2 text-sm font-bold border"
+                  style={{
+                    backgroundColor: `var(--preview-${background})`,
+                    color: `var(--preview-${content})`,
+                    borderRadius: radiusField,
+                    borderWidth,
+                    borderColor: `var(--preview-${background})`
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-            
+
             <div className="flex gap-4">
-               <div 
-                 className="w-full flex-1 p-4 font-medium text-sm flex items-center justify-center border" 
-                 style={{ 
-                   backgroundColor: 'var(--preview-b2)', 
-                   color: 'var(--preview-n)', 
+               <div
+                 className="w-full flex-1 p-4 font-medium text-sm flex items-center justify-center border"
+                 style={{
+                   backgroundColor: 'var(--preview-b2)',
+                   color: 'var(--preview-bc)',
                    borderColor: 'var(--preview-b3)',
-                   borderRadius: advanced['rounded-box'] || '1rem',
+                   borderWidth,
+                   borderRadius: radiusBox,
                  }}
                >
                  Base 200 Card
@@ -413,22 +464,22 @@ export default function ThemeBuilder() {
             </div>
 
             <div className="flex gap-2 text-xs">
-              <span 
-                className="px-2 py-1" 
-                style={{ 
-                  backgroundColor: 'var(--preview-suc)', 
-                  color: 'var(--preview-b1)',
-                  borderRadius: advanced['rounded-badge'] || '1.9rem',
+              <span
+                className="px-2 py-1"
+                style={{
+                  backgroundColor: 'var(--preview-suc)',
+                  color: 'var(--preview-succ)',
+                  borderRadius: radiusSelector,
                 }}
               >
                 Success
               </span>
-              <span 
-                className="px-2 py-1" 
-                style={{ 
-                  backgroundColor: 'var(--preview-err)', 
-                  color: 'var(--preview-b1)',
-                  borderRadius: advanced['rounded-badge'] || '1.9rem',
+              <span
+                className="px-2 py-1"
+                style={{
+                  backgroundColor: 'var(--preview-err)',
+                  color: 'var(--preview-errc)',
+                  borderRadius: radiusSelector,
                 }}
               >
                 Error
@@ -436,14 +487,14 @@ export default function ThemeBuilder() {
             </div>
           </div>
         </div>
-        
+
         <div className="mt-8 pt-6 border-t border-white/10">
           <p className="text-sm text-zinc-400 mb-4">Want to see the full component library styled with this theme?</p>
-          
+
           {layoutOptions.length > 0 && (
             <div className="mb-4">
               <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">Host Layout Override</label>
-              <select 
+              <select
                 className="w-full bg-black/30 border border-white/10 text-zinc-200 text-sm focus:outline-none focus:ring-1 ring-indigo-500 rounded px-3 py-2"
                 value={selectedLayout}
                 onChange={(e) => setSelectedLayout(e.target.value)}

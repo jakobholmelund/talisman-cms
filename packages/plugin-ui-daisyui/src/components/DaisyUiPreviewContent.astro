@@ -4,65 +4,31 @@ export interface Props {
 }
 const { showAdminButton = false } = Astro.props;
 ---
-<script is:inline>
-  (function() {
-    try {
-      const stateStr = sessionStorage.getItem('daisyui-preview-state');
-      if (!stateStr) return;
-      
-      const state = JSON.parse(stateStr);
-      
-      const urlParams = new URLSearchParams(window.location.search);
-      const mode = urlParams.get('mode') || 'light';
-      
-      const activeTheme = mode === 'light' ? state.lightTheme : state.darkTheme;
-      document.documentElement.setAttribute('data-theme', activeTheme);
-      
-      const colorMap = {
-        'primary': '--color-primary', 'secondary': '--color-secondary', 'accent': '--color-accent', 'neutral': '--color-neutral',
-        'base-100': '--color-base-100', 'base-200': '--color-base-200', 'base-300': '--color-base-300',
-        'info': '--color-info', 'success': '--color-success', 'warning': '--color-warning', 'error': '--color-error'
-      };
-      
-      const getVars = (colorsObj) => {
-        if (!colorsObj) return '';
-        return Object.entries(colorsObj)
-          .map(([key, val]) => `${colorMap[key] || `--color-${key}`}: ${val};`)
-          .join(' ');
-      };
-      
-      const lightVars = getVars(state.lightColors || {});
-      const darkVars = getVars(state.darkColors || {});
-      
-      const advancedMap = {
-        'rounded-box': '--radius-box', 'rounded-btn': '--radius-field', 'rounded-badge': '--radius-selector',
-        'animation-btn': '--animation-btn', 'animation-input': '--animation-input', 'btn-focus-scale': '--btn-focus-scale',
-        'border-btn': '--border', 'tab-border': '--tab-border', 'tab-radius': '--tab-radius'
-      };
-      
-      const adv = state.advanced || {};
-      const advancedVars = Object.keys(adv)
-        .filter(key => adv[key] && advancedMap[key])
-        .map(key => `${advancedMap[key]}: ${adv[key]};`)
-        .join(' ');
-        
-      const css = `
-        :root { ${advancedVars} }
-        [data-theme="${state.lightTheme}"] { ${lightVars} }
-        [data-theme="${state.darkTheme}"] { ${darkVars} }
-      `;
-      
+<script>
+  import { buildThemeCss } from './theme-css';
+
+  // Shows the unsaved Theme Builder state in place of the saved theme. It goes through the same
+  // allowlist and CSS as the saved theme; the injector's saved overrides are removed first, so a
+  // colour reset in the builder shows the base theme here too.
+  try {
+    const stateStr = sessionStorage.getItem('daisyui-preview-state');
+    if (stateStr) {
+      const theme = buildThemeCss(JSON.parse(stateStr));
+      const mode = new URLSearchParams(window.location.search).get('mode') === 'dark' ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', mode === 'dark' ? theme.darkTheme : theme.lightTheme);
+      document.querySelectorAll('style[data-daisyui-theme]').forEach((saved) => saved.remove());
+
       let style = document.getElementById('daisyui-preview-injection');
       if (!style) {
         style = document.createElement('style');
         style.id = 'daisyui-preview-injection';
         document.head.appendChild(style);
       }
-      style.textContent = css;
-    } catch (e) {
-      console.error('Failed to parse preview state', e);
+      style.textContent = theme.css;
     }
-  })();
+  } catch (e) {
+    console.error('Failed to parse preview state', e);
+  }
 </script>
 
 <div class="max-w-5xl mx-auto space-y-16">

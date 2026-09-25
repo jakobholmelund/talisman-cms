@@ -10,20 +10,60 @@ export interface DaisyUiThemeSettings {
   advanced?: Record<string, string>;
 }
 
-/** daisyUI colour tokens the Theme Builder edits; each becomes `--color-<key>`. */
-export const DAISYUI_THEME_COLOR_KEYS: readonly string[] = [
-  'primary', 'primary-content', 'secondary', 'secondary-content', 'accent', 'accent-content',
-  'neutral', 'neutral-content', 'base-100', 'base-200', 'base-300', 'base-content',
-  'info', 'info-content', 'success', 'success-content', 'warning', 'warning-content',
-  'error', 'error-content',
+export interface DaisyUiThemeField {
+  key: string;
+  label: string;
+}
+
+/** daisyUI 5 colour tokens the Theme Builder edits; each becomes `--color-<key>`. */
+export const DAISYUI_THEME_COLORS: readonly DaisyUiThemeField[] = [
+  { key: 'primary', label: 'Primary' },
+  { key: 'primary-content', label: 'Primary Content' },
+  { key: 'secondary', label: 'Secondary' },
+  { key: 'secondary-content', label: 'Secondary Content' },
+  { key: 'accent', label: 'Accent' },
+  { key: 'accent-content', label: 'Accent Content' },
+  { key: 'neutral', label: 'Neutral' },
+  { key: 'neutral-content', label: 'Neutral Content' },
+  { key: 'base-100', label: 'Base 100' },
+  { key: 'base-200', label: 'Base 200' },
+  { key: 'base-300', label: 'Base 300' },
+  { key: 'base-content', label: 'Base Content' },
+  { key: 'info', label: 'Info' },
+  { key: 'info-content', label: 'Info Content' },
+  { key: 'success', label: 'Success' },
+  { key: 'success-content', label: 'Success Content' },
+  { key: 'warning', label: 'Warning' },
+  { key: 'warning-content', label: 'Warning Content' },
+  { key: 'error', label: 'Error' },
+  { key: 'error-content', label: 'Error Content' },
 ];
 
-/** Theme Builder "advanced" settings and the daisyUI variables they set. */
-export const DAISYUI_THEME_ADVANCED_VARS: Readonly<Record<string, string>> = {
-  'rounded-box': '--radius-box', 'rounded-btn': '--radius-field', 'rounded-badge': '--radius-selector',
-  'animation-btn': '--animation-btn', 'animation-input': '--animation-input', 'btn-focus-scale': '--btn-focus-scale',
-  'border-btn': '--border', 'tab-border': '--tab-border', 'tab-radius': '--tab-radius',
-};
+export const DAISYUI_THEME_COLOR_KEYS: readonly string[] = DAISYUI_THEME_COLORS.map((field) => field.key);
+
+/**
+ * daisyUI 5 radius, size, border and effect variables the Theme Builder edits ("advanced"). Keys are
+ * the variable names without the leading `--`. daisyUI sets them in every theme.
+ */
+export const DAISYUI_THEME_ADVANCED: readonly DaisyUiThemeField[] = [
+  { key: 'radius-box', label: 'Radius: boxes (cards, modals, alerts)' },
+  { key: 'radius-field', label: 'Radius: fields (buttons, inputs, selects, tabs)' },
+  { key: 'radius-selector', label: 'Radius: selectors (checkboxes, toggles, badges)' },
+  { key: 'size-field', label: 'Size: fields (buttons, inputs, selects, tabs)' },
+  { key: 'size-selector', label: 'Size: selectors (checkboxes, toggles, badges)' },
+  { key: 'border', label: 'Border width' },
+  { key: 'depth', label: 'Depth effect (0 or 1)' },
+  { key: 'noise', label: 'Noise effect (0 or 1)' },
+];
+
+export const DAISYUI_THEME_ADVANCED_KEYS: readonly string[] = DAISYUI_THEME_ADVANCED.map((field) => field.key);
+
+// Advanced keys that earlier Theme Builder versions saved, named after daisyUI 4 variables. That
+// builder filled them with its own defaults on the first save, so they are dropped, not reported.
+const LEGACY_ADVANCED_KEYS: readonly string[] = [
+  'rounded-box', 'rounded-btn', 'rounded-badge', 'border-btn',
+  'animation-btn', 'animation-input', 'btn-focus-scale', 'tab-border', 'tab-radius',
+];
 
 const MAX_VALUE_LENGTH = 100;
 const THEME_NAME = /^[a-z0-9_-]{1,64}$/i;
@@ -94,7 +134,7 @@ export function sanitizeThemeSettings(input: unknown): { settings: DaisyUiThemeS
   if (!isRecord(input)) return { settings, rejected: isEmpty(input) ? rejected : ['(root)'] };
 
   const isColorKey = (key: string) => DAISYUI_THEME_COLOR_KEYS.includes(key);
-  const isAdvancedKey = (key: string) => Object.prototype.hasOwnProperty.call(DAISYUI_THEME_ADVANCED_VARS, key);
+  const isAdvancedKey = (key: string) => DAISYUI_THEME_ADVANCED_KEYS.includes(key);
 
   for (const [key, value] of Object.entries(input)) {
     if (key === 'lightTheme' || key === 'darkTheme') {
@@ -105,7 +145,10 @@ export function sanitizeThemeSettings(input: unknown): { settings: DaisyUiThemeS
       const colors = sanitizeGroup(value, key, isColorKey, isSafeThemeColor, rejected);
       if (colors) settings[key] = colors;
     } else if (key === 'advanced') {
-      const advanced = sanitizeGroup(value, key, isAdvancedKey, isSafeThemeNumber, rejected);
+      const current = isRecord(value)
+        ? Object.fromEntries(Object.entries(value).filter(([name]) => !LEGACY_ADVANCED_KEYS.includes(name)))
+        : value;
+      const advanced = sanitizeGroup(current, key, isAdvancedKey, isSafeThemeNumber, rejected);
       if (advanced) settings.advanced = advanced;
     } else {
       rejected.push(key);
@@ -115,25 +158,32 @@ export function sanitizeThemeSettings(input: unknown): { settings: DaisyUiThemeS
   return { settings, rejected };
 }
 
-/** Builds the theme override CSS from untrusted stored data. Invalid values are left out. */
+/**
+ * Builds the theme override CSS from untrusted stored data. Invalid values are left out, and the CSS
+ * is empty when nothing is overridden, so the base themes apply unchanged.
+ */
 export function buildThemeCss(input: unknown): { css: string; lightTheme: string; darkTheme: string } {
   const { settings } = sanitizeThemeSettings(input);
   const lightTheme = settings.lightTheme || 'light';
   const darkTheme = settings.darkTheme || 'dark';
 
-  const colorVars = (colors: Record<string, string> = {}) => Object.entries(colors)
-    .map(([key, value]) => `--color-${key}: ${value};`)
-    .join(' ');
-  const advanced = settings.advanced || {};
-  const advancedVars = Object.keys(advanced)
-    .map((key) => `${DAISYUI_THEME_ADVANCED_VARS[key]}: ${advanced[key]};`)
-    .join(' ');
+  // daisyUI 5 sets the radius, size and effect variables in each theme's own rule, so they go into
+  // both theme rules rather than on :root.
+  const advancedVars = Object.entries(settings.advanced || {}).map(([key, value]) => `--${key}: ${value};`);
+  const themeRule = (theme: string, colors: Record<string, string> = {}) => {
+    const declarations = [
+      ...Object.entries(colors).map(([key, value]) => `--color-${key}: ${value};`),
+      ...advancedVars,
+    ];
+    // Tailwind's @plugin "daisyui" puts the themes in @layer base, which these unlayered rules beat.
+    // daisyUI's standalone themes.css is unlayered and usually loads after this <style>; the repeated
+    // attribute selector outranks its [data-theme=name] rules too.
+    return declarations.length > 0 ? `[data-theme="${theme}"][data-theme] { ${declarations.join(' ')} }` : '';
+  };
 
-  const css = `
-  :root { ${advancedVars} }
-  [data-theme="${lightTheme}"] { ${colorVars(settings.lightColors)} }
-  [data-theme="${darkTheme}"] { ${colorVars(settings.darkColors)} }
-`;
+  const css = [themeRule(lightTheme, settings.lightColors), themeRule(darkTheme, settings.darkColors)]
+    .filter(Boolean)
+    .join('\n');
 
   // Validated values never contain "<"; escape it anyway so nothing can close the <style> element.
   return { css: css.replace(/</g, '\\3c '), lightTheme, darkTheme };

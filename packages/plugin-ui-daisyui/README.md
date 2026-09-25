@@ -9,7 +9,7 @@ Manifest-first daisyUI library adapters for Talisman CMS.
 | Kind | Name or path | Who can use it |
 | --- | --- | --- |
 | UI library | `daisyui` ("daisyUI"): 64 component adapters and the blocks `daisyHeroBanner` and `daisyFeatureGrid`, listed under [Mapping](#mapping) | Editors pick them in `blocks` fields that list them in `blocksFromPlugins`, or in component slots |
-| Global | `daisyui-theme` ("DaisyUI Theme Settings"): base light and dark theme names, colour overrides and radius, border and animation values | Any CMS user, in **Globals** or the Theme Builder |
+| Global | `daisyui-theme` ("DaisyUI Theme Settings"): base light and dark theme names, plus colour, radius, size, border and effect overrides | Any CMS user, in **Globals** or the Theme Builder |
 | Admin screen | **DaisyUI Theme** (the Theme Builder) at `/admin/extensions/daisyui-theme` | Any CMS user |
 | Endpoint | `GET /admin/api/daisyui/theme` returns the saved theme settings | Any CMS user; `401` without a session |
 | Endpoint | `POST /admin/api/daisyui/theme` saves them. It takes a JSON body only and rejects values outside the allowlist below with `400` | Any CMS user; `401` without a session |
@@ -31,14 +31,28 @@ import DaisyUiThemeInjector from '@talisman-cms/plugin-ui-daisyui/components/Dai
 </head>
 ```
 
-It reads the `daisyui-theme` global through the CMS client (the `DB` and optional `KV` bindings) on each render and outputs a `<style>` element with the theme's CSS variables, plus a short inline script that sets `data-theme` from the visitor's saved choice or the OS colour scheme.
+It reads the `daisyui-theme` global through the CMS client (the `DB` and optional `KV` bindings) on each render and outputs a `<style>` element with the saved overrides, plus a short inline script that sets `data-theme` from the visitor's saved choice or the OS colour scheme. The saved theme only affects layouts that render the injector.
 
-The injector treats the stored theme as untrusted, because any CMS user can write the global through the Theme Builder or the core globals API. The endpoint validates values on save, and the injector validates them again on render. Theme names must match `[a-z0-9_-]`. Colours must be hex values, named colours, or `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()` or `color()` with plain arguments. Radius, border, scale and animation values must be plain CSS numbers, optionally with a unit such as `px`, `rem` or `s`. Anything else is dropped, so a stored value cannot close the `<style>` element or inject other CSS. `buildThemeCss()` and `sanitizeThemeSettings()` are exported for sites that render the theme themselves.
+The injector treats the stored theme as untrusted, because any CMS user can write the global through the Theme Builder or the core globals API. The endpoint validates values on save, and the injector validates them again on render. Theme names must match `[a-z0-9_-]`. Colours must be hex values, named colours, or `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()` or `color()` with plain arguments. Radius, size, border, depth and noise values must be plain CSS numbers, optionally with a unit such as `px` or `rem`. Anything else is dropped, so a stored value cannot close the `<style>` element or inject other CSS. `buildThemeCss()` and `sanitizeThemeSettings()` are exported for sites that render the theme themselves.
+
+### Theme Builder
+
+The Theme Builder starts from two daisyUI themes, one for light mode and one for dark mode, and stores only the values you change on top of them. An empty field shows the base theme's own value in grey and is not saved, so saving without edits leaves both daisyUI themes as they are. **Reset** clears one override, and **Reset all** clears a mode's colours. Picking another base theme clears that mode's colour overrides, after a confirmation. **Open Full Preview** shows the unsaved values in place of the saved overrides.
+
+- Colours are the 20 daisyUI 5 colour tokens (`--color-primary`, `--color-base-100`, ...). Type any allowed colour, such as `#ff0000` or `oklch(58% 0.233 277.117)`, or use the colour picker.
+- Advanced values are daisyUI 5's `--radius-box`, `--radius-field`, `--radius-selector`, `--size-field`, `--size-selector`, `--border`, `--depth` and `--noise`. They apply to both base themes.
+- The site's daisyUI build must include both base themes, for example `@plugin "daisyui" { themes: light --default, dark --prefersdark; }`. The builder lists daisyUI's built-in themes; a theme saved under another name is kept and shown as not built in.
+- The injector writes the overrides into `[data-theme="<theme>"][data-theme]` rules, which beat daisyUI's own theme rules whether daisyUI comes from Tailwind's `@layer base` or from its standalone `themes.css`.
+- Advanced keys saved by earlier versions (`rounded-btn`, `animation-btn`, `tab-radius` and the like) name daisyUI 4 variables and are ignored. Colour overrides saved by earlier versions stay; clear them with **Reset all** if dark mode shows light colours.
+
+The base-theme values the builder shows are generated from daisyUI's own theme data into `src/admin/themeDefaults.ts`. After upgrading daisyUI in the workspace, run `pnpm run theme-defaults`; the test suite fails while the file is out of date.
 
 ### Other exports
 
 - `daisyUiLibrary()`: the UI library definition without the global, admin screen and routes.
 - `safeHref`, `cssUrl`, `safeCssLength`, `clampInteger`: the checks the renderers apply to block and component values.
+- `DAISYUI_THEME_DEFAULTS` and `DAISYUI_THEME_DEFAULTS_VERSION`: the colours and variables of daisyUI's built-in themes, as the Theme Builder shows them.
+- `createThemeEditorState`, `themeEditorPayload`, `themeDefaultValue`, `colorToHex`: the Theme Builder's state helpers.
 - `@talisman-cms/plugin-ui-daisyui/generator`: manifest types and paths for the catalog scripts.
 - Source paths for Astro and React: `renderers/*`, `components/*`, `admin/*` and `routes/*`.
 
@@ -179,7 +193,8 @@ pnpm run import-catalog
 pnpm run generate
 pnpm run coverage
 pnpm run coverage:json
+pnpm run theme-defaults
 pnpm run test
 ```
 
-`import-catalog` merges the checked-in upstream snapshot into the manifest while preserving handwritten adapter metadata. `generate` rewrites `src/generated.ts` and creates missing renderer stubs for supported entries. `coverage` is the CI gate.
+`import-catalog` merges the checked-in upstream snapshot into the manifest while preserving handwritten adapter metadata. `generate` rewrites `src/generated.ts` and creates missing renderer stubs for supported entries. `coverage` is the CI gate. `theme-defaults` regenerates `src/admin/themeDefaults.ts` from the daisyUI installed in the workspace (`--check` only compares).

@@ -59,6 +59,7 @@
     "coverage": "node ./scripts/catalog.mjs coverage",
     "coverage:json": "node ./scripts/catalog.mjs coverage --json",
     "import-catalog": "node ./scripts/catalog.mjs import-catalog",
+    "theme-defaults": "node ./scripts/theme-defaults.mjs",
     "build": "pnpm run generate && tsup src/index.ts src/generator.ts src/generated.ts --format esm --dts --clean",
     "dev": "pnpm run generate && tsup src/index.ts src/generator.ts src/generated.ts --format esm --dts --watch",
     "test": "pnpm run build && node --test ./test/*.test.mjs",
