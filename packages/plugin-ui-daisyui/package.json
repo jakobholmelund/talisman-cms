@@ -62,6 +62,7 @@
     "build": "pnpm run generate && tsup src/index.ts src/generator.ts src/generated.ts --format esm --dts --clean",
     "dev": "pnpm run generate && tsup src/index.ts src/generator.ts src/generated.ts --format esm --dts --watch",
     "test": "pnpm run build && node --test ./test/*.test.mjs",
+    "prepack": "pnpm run build",
     "prepublishOnly": "node -e \"if (!/^pnpm\\//.test(process.env.npm_config_user_agent || '')) { console.error('Publish with pnpm (pnpm release:publish) so workspace: ranges are rewritten and LICENSE.md is packed.'); process.exit(1); }\""
   },
   "peerDependencies": {

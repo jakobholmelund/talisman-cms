@@ -38,6 +38,7 @@
   "scripts": {
     "build": "tsup src/index.ts src/cloudflare.ts src/commerce.ts src/ask.ts src/routes/analytics-overview.ts src/routes/analytics-commerce.ts src/routes/analytics-ask.ts --format esm --dts --clean --external cloudflare:workers --external astro --external virtual:talisman-cms/config",
     "test": "pnpm build && node --experimental-sqlite --test test/*.test.mjs",
+    "prepack": "pnpm run build",
     "prepublishOnly": "node -e \"if (!/^pnpm\\//.test(process.env.npm_config_user_agent || '')) { console.error('Publish with pnpm (pnpm release:publish) so workspace: ranges are rewritten and LICENSE.md is packed.'); process.exit(1); }\""
   },
   "peerDependencies": {
