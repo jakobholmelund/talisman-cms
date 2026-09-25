@@ -1,4 +1,6 @@
 ---
+import { safeHref } from './sanitize';
+
 const { items = [], style = 'boxed' } = Astro.props;
 const tabListClass = ({
   boxed: 'tabs-box',
@@ -10,10 +12,11 @@ const tabListClass = ({
 <div role="tablist" class={`tabs ${tabListClass}`}>
   {items.map((item: any) => {
     const isDisabled = Boolean(item?.disabled);
+    const href = safeHref(item?.href, '');
     const tabClass = ['tab', item?.active ? 'tab-active' : ''].filter(Boolean).join(' ');
 
-    return item?.href && !isDisabled ? (
-      <a role="tab" href={item.href} class={tabClass}>{item.label}</a>
+    return href && !isDisabled ? (
+      <a role="tab" href={href} class={tabClass}>{item.label}</a>
     ) : (
       <span role="tab" aria-disabled={isDisabled ? 'true' : undefined} class={tabClass}>{item?.label}</span>
     );

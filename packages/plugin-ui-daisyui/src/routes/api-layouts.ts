@@ -1,8 +1,12 @@
 import type { APIRoute } from 'astro';
+import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
 
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async ({ request }: { request: Request }) => {
+  const authorization = await authorizeCmsRequest(request);
+  if (authorization.response) return authorization.response;
+
   try {
-    // import.meta.glob from a plugin brilliantly resolves to the Vite root of the host project
+    // Absolute glob paths resolve against the host project's Vite root, not this package.
     const layouts = import.meta.glob('/src/layouts/*.astro');
     const layoutPaths = Object.keys(layouts);
 

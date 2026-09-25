@@ -1,4 +1,6 @@
 ---
+import { safeHref } from './sanitize';
+
 const { label, href, tone = 'primary', position = 'bottom-end' } = Astro.props;
 const toneClass = ({
   primary: 'btn-primary',
@@ -14,6 +16,6 @@ const positionClass = ({
 } as Record<string, string>)[position as string] || 'fixed bottom-6 right-6';
 ---
 
-<a href={href || '#'} class={`btn btn-circle shadow-xl ${toneClass} ${positionClass}`} aria-label={label}>
+<a href={safeHref(href)} class={`btn btn-circle shadow-xl ${toneClass} ${positionClass}`} aria-label={label}>
   <span class="text-xl leading-none">+</span>
 </a>

@@ -1,4 +1,6 @@
 ---
+import { safeHref } from './sanitize';
+
 const { label, href, style = 'primary', size = 'md' } = Astro.props;
 const styleClass = ({
   primary: 'btn-primary',
@@ -14,4 +16,4 @@ const sizeClass = ({
 const buttonClass = ['btn', styleClass, sizeClass].join(' ');
 ---
 
-<a href={href || '#'} class={buttonClass}>{label || 'Action'}</a>
+<a href={safeHref(href)} class={buttonClass}>{label || 'Action'}</a>

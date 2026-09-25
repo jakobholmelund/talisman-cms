@@ -1,10 +1,12 @@
 ---
+import { safeHref } from './sanitize';
+
 const { items = [] } = Astro.props;
 ---
 
 <div class="dock rounded-box border border-base-300 bg-base-100">
   {items.map((item: any) => (
-    <a href={item?.href || '#'} class={item?.active ? 'dock-active' : undefined}>
+    <a href={safeHref(item?.href)} class={item?.active ? 'dock-active' : undefined}>
       <span class="dock-label">{item?.label}</span>
     </a>
   ))}

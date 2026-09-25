@@ -1,13 +1,18 @@
 ---
+import { safeHref } from './sanitize';
+
 const { items = [] } = Astro.props;
 ---
 
 <div class="text-sm breadcrumbs">
   <ul>
-    {items.map((item: any) => (
-      <li>
-        {item?.href ? <a href={item.href}>{item?.label}</a> : <span>{item?.label}</span>}
-      </li>
-    ))}
+    {items.map((item: any) => {
+      const href = safeHref(item?.href, '');
+      return (
+        <li>
+          {href ? <a href={href}>{item?.label}</a> : <span>{item?.label}</span>}
+        </li>
+      );
+    })}
   </ul>
 </div>

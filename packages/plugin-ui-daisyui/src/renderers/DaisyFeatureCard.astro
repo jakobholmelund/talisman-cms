@@ -1,5 +1,8 @@
 ---
+import { safeHref } from './sanitize';
+
 const { eyebrow, title, description, href, ctaLabel, tone = 'primary' } = Astro.props;
+const ctaHref = safeHref(href, '');
 const accentClass = ({
   primary: 'text-primary',
   secondary: 'text-secondary',
@@ -13,9 +16,9 @@ const accentClass = ({
     {eyebrow ? <p class={`text-xs font-semibold uppercase tracking-[0.3em] ${accentClass}`}>{eyebrow}</p> : null}
     <h3 class="card-title">{title}</h3>
     <p>{description}</p>
-    {href && ctaLabel ? (
+    {ctaHref && ctaLabel ? (
       <div class="card-actions justify-end">
-        <a href={href} class="btn btn-link px-0">{ctaLabel}</a>
+        <a href={ctaHref} class="btn btn-link px-0">{ctaLabel}</a>
       </div>
     ) : null}
   </div>

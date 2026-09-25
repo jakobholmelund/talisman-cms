@@ -1,17 +1,31 @@
 ---
 import { getClient } from 'talisman-cms/client';
+import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
+// @ts-ignore
+import { adminPath } from 'virtual:talisman-cms/config';
 // @ts-ignore
 import { env as cfEnv } from 'cloudflare:workers';
 import DaisyUiPreviewContent from '../components/DaisyUiPreviewContent.astro';
 import DaisyUiThemeInjector from '../components/DaisyUiThemeInjector.astro';
+import { sanitizeThemeSettings } from '../components/theme-css';
 
+// The preview renders stored theme data on the site origin, so it is only for signed-in CMS users.
+const authorization = await authorizeCmsRequest(Astro.request);
+if (authorization.response) {
+  return authorization.response.status === 401 ? Astro.redirect(adminPath) : authorization.response;
+}
+Astro.response.headers.set('Cache-Control', 'private, no-store');
+Astro.response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+
+// Render inside a host layout so the preview uses the site's own Tailwind/daisyUI build.
 const layouts = import.meta.glob('/src/layouts/*.astro', { eager: true });
-const selectedLayoutPath = Astro.url.searchParams.get('layout');
-const LayoutComponent = selectedLayoutPath && layouts[selectedLayoutPath] ? (layouts[selectedLayoutPath] as any).default : null;
+const requestedLayoutPath = Astro.url.searchParams.get('layout');
+const selectedLayoutPath = requestedLayoutPath && layouts[requestedLayoutPath] ? requestedLayoutPath : Object.keys(layouts)[0];
+const LayoutComponent = selectedLayoutPath ? (layouts[selectedLayoutPath] as any).default : null;
 
 // Determine current mode for the fallback preview layout
-const mode = Astro.url.searchParams.get('mode') || 'light';
-let activeTheme = mode;
+const mode = Astro.url.searchParams.get('mode') === 'dark' ? 'dark' : 'light';
+let activeTheme: string = mode;
 
 try {
   const env = { DB: (cfEnv as any).DB, KV: (cfEnv as any).KV };
@@ -22,11 +36,8 @@ try {
     try { data = JSON.parse(data); } catch (e) { data = {}; }
   }
 
-  if (mode === 'light') {
-    activeTheme = data.lightTheme || 'light';
-  } else {
-    activeTheme = data.darkTheme || 'dark';
-  }
+  const { settings } = sanitizeThemeSettings(data);
+  activeTheme = mode === 'light' ? settings.lightTheme || 'light' : settings.darkTheme || 'dark';
 } catch (e) {
   // DB not ready yet, keep defaults
 }
@@ -45,20 +56,12 @@ try {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width" />
+    <meta name="robots" content="noindex, nofollow" />
     <title>DaisyUI Theme Preview</title>
-    <!-- We use CDN for the preview so it works out-of-the-box regardless of host setup -->
-    <link href="https://cdn.jsdelivr.net/npm/daisyui@5.0.0-beta.8/daisyui.css" rel="stylesheet" type="text/css" />
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script is:inline set:html={`
-      tailwind.config = {
-        daisyui: {
-          themes: false,
-        }
-      }
-    `}></script>
     <DaisyUiThemeInjector />
   </head>
   <body class="bg-base-100 text-base-content min-h-screen p-8 transition-colors duration-200">
+    <p>No layout was found in <code>src/layouts</code>, so this preview has no site CSS. Add a layout that loads your Tailwind and daisyUI styles to see the theme applied.</p>
     <DaisyUiPreviewContent showAdminButton={true} />
   </body>
   </html>

@@ -1,4 +1,6 @@
 ---
+import { safeHref } from './sanitize';
+
 const { imageUrl, alt = 'Masked image', shape = 'squircle' } = Astro.props;
 const shapeClass = ({
   squircle: 'mask-squircle',
@@ -7,8 +9,9 @@ const shapeClass = ({
   circle: 'rounded-full',
 } as Record<string, string>)[shape as string] || 'mask-squircle';
 const isCircle = shape === 'circle';
+const imageSrc = safeHref(imageUrl, '');
 ---
 
-{imageUrl ? (
-  <img src={imageUrl} alt={alt} class={`${isCircle ? '' : 'mask'} ${shapeClass} h-40 w-40 object-cover`} />
+{imageSrc ? (
+  <img src={imageSrc} alt={alt} class={`${isCircle ? '' : 'mask'} ${shapeClass} h-40 w-40 object-cover`} />
 ) : null}

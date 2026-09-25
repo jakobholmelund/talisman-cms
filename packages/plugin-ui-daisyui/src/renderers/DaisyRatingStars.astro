@@ -1,4 +1,6 @@
 ---
+import { clampInteger } from './sanitize';
+
 const { value = 3, max = 5, tone = 'primary' } = Astro.props;
 const maskClass = ({
   primary: 'bg-primary',
@@ -6,10 +8,11 @@ const maskClass = ({
   accent: 'bg-accent',
   neutral: 'bg-neutral',
 } as Record<string, string>)[tone as string] || 'bg-primary';
+const starCount = clampInteger(max, 1, 10, 5);
 ---
 
 <div class="rating">
-  {Array.from({ length: max }).map((_: any, index: number) => (
+  {Array.from({ length: starCount }).map((_: any, index: number) => (
     <input
       type="radio"
       class={`mask mask-star-2 ${maskClass}`}

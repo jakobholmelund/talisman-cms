@@ -1,4 +1,6 @@
 ---
+import { safeHref } from './sanitize';
+
 const { items = [], tone = 'default' } = Astro.props;
 const toneClass = ({
   default: '',
@@ -10,6 +12,6 @@ const toneClass = ({
 
 <div class="join">
   {items.map((item: any) => (
-    <a href={item?.href || '#'} class={`join-item btn ${toneClass}`.trim()}>{item?.label}</a>
+    <a href={safeHref(item?.href)} class={`join-item btn ${toneClass}`.trim()}>{item?.label}</a>
   ))}
 </div>

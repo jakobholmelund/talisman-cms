@@ -1,8 +1,10 @@
 ---
 import ComponentSlotRenderer from 'talisman-cms/render/ComponentSlotRenderer.astro';
 import { getMediaImageSrcSet } from 'talisman-cms/helpers';
+import { safeHref } from './sanitize';
 
 const { eyebrow, title, description, mediaUrl, links, metrics, componentRenderers, presetsById } = Astro.props;
+const mediaSrc = safeHref(mediaUrl, '');
 ---
 
 <section class="overflow-hidden rounded-[2rem] bg-slate-950 px-8 py-10 text-white shadow-2xl lg:px-12 lg:py-14">
@@ -16,7 +18,7 @@ const { eyebrow, title, description, mediaUrl, links, metrics, componentRenderer
       </div>
     </div>
     <div class="space-y-6">
-      {mediaUrl ? <img src={mediaUrl} srcset={getMediaImageSrcSet(mediaUrl)} sizes="(min-width: 1024px) 40vw, 100vw" alt={title} width="800" height="600" loading="lazy" decoding="async" class="h-64 w-full rounded-[1.5rem] object-cover" /> : null}
+      {mediaSrc ? <img src={mediaSrc} srcset={getMediaImageSrcSet(mediaSrc)} sizes="(min-width: 1024px) 40vw, 100vw" alt={title} width="800" height="600" loading="lazy" decoding="async" class="h-64 w-full rounded-[1.5rem] object-cover" /> : null}
       <div class="grid gap-4 md:grid-cols-2">
         <ComponentSlotRenderer value={metrics} componentRenderers={componentRenderers} presetsById={presetsById} />
       </div>

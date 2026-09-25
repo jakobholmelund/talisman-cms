@@ -1,4 +1,6 @@
 ---
+import { safeHref } from './sanitize';
+
 const { imageUrl, alt = 'Avatar', fallback = '?', size = 'md', shape = 'circle' } = Astro.props;
 const sizeClass = ({
   sm: 'w-12',
@@ -10,13 +12,14 @@ const shapeClass = ({
   squircle: 'mask mask-squircle',
   rounded: 'rounded-xl',
 } as Record<string, string>)[shape as string] || 'rounded-full';
-const hasImage = typeof imageUrl === 'string' && imageUrl.trim() !== '';
+const imageSrc = safeHref(imageUrl, '');
+const hasImage = imageSrc !== '';
 ---
 
 <div class={`avatar ${hasImage ? '' : 'placeholder'}`}>
   <div class={`${sizeClass} bg-base-300 text-base-content ${shapeClass}`}>
     {hasImage ? (
-      <img src={imageUrl} alt={alt} />
+      <img src={imageSrc} alt={alt} />
     ) : (
       <span class="text-xl font-semibold uppercase">{fallback}</span>
     )}

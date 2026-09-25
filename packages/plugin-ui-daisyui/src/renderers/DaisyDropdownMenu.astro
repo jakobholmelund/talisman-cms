@@ -1,4 +1,6 @@
 ---
+import { safeHref } from './sanitize';
+
 const { label, tone = 'primary', items = [] } = Astro.props;
 const buttonClass = ({
   primary: 'btn-primary',
@@ -13,7 +15,7 @@ const buttonClass = ({
   <ul class="menu dropdown-content z-10 mt-2 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow">
     {items.map((item: any) => (
       <li>
-        <a href={item?.href || '#'}>{item?.label}</a>
+        <a href={safeHref(item?.href)}>{item?.label}</a>
       </li>
     ))}
   </ul>

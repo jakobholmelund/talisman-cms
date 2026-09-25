@@ -1,15 +1,18 @@
 ---
+import { safeHref } from './sanitize';
+
 const { items = [] } = Astro.props;
 ---
 
 <nav class="join" aria-label="Pagination">
   {items.map((item: any) => {
+    const href = safeHref(item?.href, '');
     const buttonClass = ['join-item', 'btn', item?.active ? 'btn-active' : '', item?.disabled ? 'btn-disabled' : '']
       .filter(Boolean)
       .join(' ');
 
-    return item?.href && !item?.disabled ? (
-      <a href={item.href} class={buttonClass} aria-current={item?.active ? 'page' : undefined}>
+    return href && !item?.disabled ? (
+      <a href={href} class={buttonClass} aria-current={item?.active ? 'page' : undefined}>
         {item?.label}
       </a>
     ) : (

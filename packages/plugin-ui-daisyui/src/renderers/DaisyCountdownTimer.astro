@@ -1,10 +1,13 @@
 ---
+import { clampInteger } from './sanitize';
+
 const { value = 12, label } = Astro.props;
+const countdownValue = clampInteger(value, 0, 999, 12);
 ---
 
 <div class="inline-flex flex-col items-center gap-2">
   <span class="countdown font-mono text-4xl">
-    <span style={`--value:${value};`} aria-live="polite" aria-label={String(value)}></span>
+    <span style={`--value:${countdownValue};`} aria-live="polite" aria-label={String(countdownValue)}></span>
   </span>
   {label ? <span class="text-xs uppercase tracking-[0.2em] text-base-content/60">{label}</span> : null}
 </div>

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -104,4 +104,16 @@ test('Daisy coverage validation flags missing upstream items and invalid complet
 test('generated Daisy source file exists and is checked in', () => {
   const generated = readFileSync(path.join(packageRoot, 'src/generated.ts'), 'utf8');
   assert.match(generated, /export function daisyUiLibrary/);
+});
+
+test('Daisy plugin injects its routes by file path', () => {
+  // Vite's SSR dep optimizer pre-bundles a bare package specifier after `astro dev` has started,
+  // and the reload that follows crashes a cold dev server.
+  const plugin = daisyUiPlugin();
+  const entrypoints = [...(plugin.routes || []), ...(plugin.endpoints || [])].map((entry) => entry.entrypoint);
+  assert.equal(entrypoints.length, 3);
+  for (const entrypoint of entrypoints) {
+    assert.equal(path.dirname(entrypoint), path.join(packageRoot, 'src', 'routes'));
+    assert.ok(existsSync(entrypoint), `${entrypoint} does not exist`);
+  }
 });

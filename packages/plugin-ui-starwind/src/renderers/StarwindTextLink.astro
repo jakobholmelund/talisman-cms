@@ -1,8 +1,10 @@
 ---
+import { safeHref } from './sanitize';
+
 const { label, href } = Astro.props;
 ---
 
-<a href={href || '#'} class="inline-flex items-center gap-2 text-sm font-medium text-cyan-300 transition-colors hover:text-cyan-200">
+<a href={safeHref(href)} class="inline-flex items-center gap-2 text-sm font-medium text-cyan-300 transition-colors hover:text-cyan-200">
   {label}
   <span aria-hidden="true">→</span>
 </a>

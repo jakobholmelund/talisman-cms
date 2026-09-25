@@ -1,4 +1,6 @@
 ---
+import { safeHref } from './sanitize';
+
 const { label, href, tone = 'primary', external = false } = Astro.props;
 const toneClass = ({
   primary: 'link-primary',
@@ -9,7 +11,7 @@ const toneClass = ({
 ---
 
 <a
-  href={href || '#'}
+  href={safeHref(href)}
   class={`link ${toneClass}`}
   target={external ? '_blank' : undefined}
   rel={external ? 'noreferrer noopener' : undefined}

@@ -1,4 +1,6 @@
 ---
+import { safeHref } from './sanitize';
+
 const { title, sections = [] } = Astro.props;
 ---
 
@@ -10,7 +12,7 @@ const { title, sections = [] } = Astro.props;
     <nav>
       <h6 class="footer-title">{section?.title}</h6>
       {(section?.links || []).map((link: any) => (
-        <a href={link?.href || '#'} class="link link-hover">{link?.label}</a>
+        <a href={safeHref(link?.href)} class="link link-hover">{link?.label}</a>
       ))}
     </nav>
   ))}

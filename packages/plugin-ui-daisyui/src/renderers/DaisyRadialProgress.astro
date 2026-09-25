@@ -1,10 +1,13 @@
 ---
+import { clampInteger } from './sanitize';
+
 const { value = 75, label } = Astro.props;
+const progress = clampInteger(value, 0, 100, 75);
 ---
 
 <div class="flex flex-col items-center gap-3">
-  <div class="radial-progress text-primary" style={`--value:${value};`} aria-valuenow={value} role="progressbar">
-    {value}%
+  <div class="radial-progress text-primary" style={`--value:${progress};`} aria-valuenow={progress} role="progressbar">
+    {progress}%
   </div>
   {label ? <span class="text-sm text-base-content/70">{label}</span> : null}
 </div>

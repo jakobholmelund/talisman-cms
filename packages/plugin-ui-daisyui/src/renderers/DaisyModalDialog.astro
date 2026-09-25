@@ -1,5 +1,8 @@
 ---
+import { safeHref } from './sanitize';
+
 const { title, content, actionLabel, actionHref, triggerLabel = 'Open dialog' } = Astro.props;
+const safeActionHref = safeHref(actionHref, '');
 const modalId = `daisy-modal-${Math.random().toString(36).slice(2, 10)}`;
 ---
 
@@ -10,9 +13,9 @@ const modalId = `daisy-modal-${Math.random().toString(36).slice(2, 10)}`;
     <div class="modal-box">
       <h3 class="text-lg font-bold">{title}</h3>
       <p class="py-4 text-sm text-base-content/70">{content}</p>
-      {actionLabel && actionHref ? (
+      {actionLabel && safeActionHref ? (
         <div class="modal-action justify-start">
-          <a href={actionHref} class="btn btn-primary">{actionLabel}</a>
+          <a href={safeActionHref} class="btn btn-primary">{actionLabel}</a>
         </div>
       ) : null}
     </div>

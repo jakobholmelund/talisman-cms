@@ -1,7 +1,17 @@
+import { fileURLToPath } from 'node:url';
 import { daisyUiPlugin as basePlugin } from './generated';
 import type { Plugin, GlobalConfig } from 'talisman-cms';
 
 export { daisyUiLibrary } from './generated';
+export { safeHref, cssUrl, safeCssLength, clampInteger } from './renderers/sanitize';
+export { buildThemeCss, sanitizeThemeSettings, type DaisyUiThemeSettings } from './components/theme-css';
+
+// Inject routes by file path, as the other plugins do. Vite's SSR dep optimizer treats a bare
+// package specifier as a dependency, finds it after `astro dev` has started, and the reload
+// that follows crashes a cold dev server. From dist/ and src/ alike this resolves to src/routes.
+function routeEntrypoint(file: string) {
+  return fileURLToPath(new URL(`../src/routes/${file}`, import.meta.url));
+}
 
 export function daisyUiPlugin(): Plugin {
   const base = basePlugin();
@@ -74,18 +84,18 @@ export function daisyUiPlugin(): Plugin {
     routes: [
       {
         path: '/admin/daisyui-preview',
-        entrypoint: '@talisman-cms/plugin-ui-daisyui/routes/preview.astro',
+        entrypoint: routeEntrypoint('preview.astro'),
         prerender: false
       }
     ],
     endpoints: [
       {
         path: '/daisyui/theme',
-        entrypoint: '@talisman-cms/plugin-ui-daisyui/routes/api-theme.ts'
+        entrypoint: routeEntrypoint('api-theme.ts')
       },
       {
         path: '/daisyui/layouts',
-        entrypoint: '@talisman-cms/plugin-ui-daisyui/routes/api-layouts.ts'
+        entrypoint: routeEntrypoint('api-layouts.ts')
       }
     ]
   };
