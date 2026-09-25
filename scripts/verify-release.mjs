@@ -19,6 +19,11 @@ const checks = [
   ['--filter', '@talisman-cms/plugin-ui-starwind', 'coverage'],
 ];
 
+// Installs the packed packages into consumer projects from the npm registry; set
+// TALISMAN_SMOKE=0 to skip it when offline.
+const skipSmoke = process.env.TALISMAN_SMOKE === '0';
+if (!skipSmoke) checks.push(['release:smoke']);
+
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 
 for (const args of checks) {
@@ -28,4 +33,5 @@ for (const args of checks) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
+if (skipSmoke) process.stdout.write('\nSkipped the packed consumer smoke test (TALISMAN_SMOKE=0).\n');
 process.stdout.write('\nRelease verification passed.\n');
