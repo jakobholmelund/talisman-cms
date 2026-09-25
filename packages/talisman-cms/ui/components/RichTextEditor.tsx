@@ -109,23 +109,31 @@ export function RichTextEditor({ value, onChange, className = '', hasError }: Ri
         class: 'prose prose-invert prose-sm sm:prose-base focus:outline-none min-h-[150px] p-4 max-w-none',
       },
     },
-    onUpdate: ({ editor }) => {
+    onUpdate: ({ editor, transaction }) => {
+      // Only report the user's own document changes. Plugins such as StarterKit's TrailingNode append
+      // doc-changing transactions to a mere click or focus, which would otherwise count as an edit.
+      if (!transaction.docChanged) return;
       // Export JSON content
       const json = editor.getJSON();
       onChange?.(json);
     },
   });
 
-  // Sync value if changed externally (e.g. form reset from raw JSON mode)
+  // Sync value if changed externally (e.g. form reset from raw JSON mode or loading the latest version).
+  // The sync never emits an update: Tiptap normalises the JSON it loads, and echoing that back through
+  // onChange would mark rich text the user did not touch as edited.
   useEffect(() => {
-    if (editor && value) {
-      const currentJson = editor.getJSON();
-      // A naive deep equality check for syncing
-      if (JSON.stringify(currentJson) !== JSON.stringify(value)) {
-        queueMicrotask(() => {
-          editor.commands.setContent(value);
-        });
-      }
+    if (!editor) return;
+    if (!value) {
+      if (!editor.isEmpty) queueMicrotask(() => editor.commands.clearContent(false));
+      return;
+    }
+    const currentJson = editor.getJSON();
+    // A naive deep equality check for syncing
+    if (JSON.stringify(currentJson) !== JSON.stringify(value)) {
+      queueMicrotask(() => {
+        editor.commands.setContent(value, { emitUpdate: false });
+      });
     }
   }, [value, editor]);
 

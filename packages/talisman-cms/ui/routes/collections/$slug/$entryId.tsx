@@ -2150,15 +2150,22 @@ export function CollectionEntryEditor({
   );
   const hasUnsavedChangesRef = useRef(hasUnsavedChanges);
   hasUnsavedChangesRef.current = hasUnsavedChanges;
+  // After a 409 and "Load latest version" the user's edits are only in the conflict panel until they are
+  // put back. They still count as unsaved for the badge and the leave guards, but not for "save a draft
+  // before publishing", which would only save the unchanged latest version again.
+  const conflictHoldsChanges = Boolean(conflict?.latestLoaded && (Object.keys(conflict.changes).length > 0 || conflict.slug != null));
+  const hasUnsavedWork = hasUnsavedChanges || conflictHoldsChanges;
+  const hasUnsavedWorkRef = useRef(hasUnsavedWork);
+  hasUnsavedWorkRef.current = hasUnsavedWork;
   // Set when the editor itself navigates away after a successful save (opening a newly created entry).
   const leavingEditorRef = useRef(false);
 
   const shouldBlockNavigation = useCallback(({ current, next }: { current: { pathname: string }; next: { pathname: string } }) => {
     // Same-page hash links (the product section nav) are not a navigation away.
-    if (leavingEditorRef.current || !hasUnsavedChangesRef.current || current.pathname === next.pathname) return false;
+    if (leavingEditorRef.current || !hasUnsavedWorkRef.current || current.pathname === next.pathname) return false;
     return !window.confirm('You have unsaved changes. Leave this page and discard them?');
   }, []);
-  const warnBeforeUnload = useCallback(() => !leavingEditorRef.current && hasUnsavedChangesRef.current, []);
+  const warnBeforeUnload = useCallback(() => !leavingEditorRef.current && hasUnsavedWorkRef.current, []);
   useBlocker({ shouldBlockFn: shouldBlockNavigation, enableBeforeUnload: warnBeforeUnload });
 
   useEffect(() => {
@@ -2300,15 +2307,18 @@ export function CollectionEntryEditor({
     void navigate({ to: sectionEntryRoute, params: { slug, entryId: createdEntryId }, replace: true });
   };
 
+  // Keep only what the user changed. Re-applying the whole form would write back fields that
+  // someone else (or a checkout, for stock) changed since the editor loaded.
+  const collectUserChanges = (values: Record<string, any>): Pick<EditConflict, 'changes' | 'slug'> => {
+    const baseline = JSON.parse(savedSnapshotRef.current.values);
+    const changes = Object.fromEntries(getChangedFieldNames(values, baseline).map((name) => [name, values[name]]));
+    const slugChanged = entrySlug !== savedSnapshotRef.current.slug;
+    return { changes, slug: slugChanged ? entrySlug : null };
+  };
+
   const handleRequestError = (error: unknown, action: EditorAction) => {
     if (error instanceof EditorRequestError && error.status === 409) {
-      // Keep only what the user changed. Re-applying the whole form would write back fields that
-      // someone else (or a checkout, for stock) changed since the editor loaded.
-      const values = form.state.values as Record<string, any>;
-      const baseline = JSON.parse(savedSnapshotRef.current.values);
-      const changes = Object.fromEntries(getChangedFieldNames(values, baseline).map((name) => [name, values[name]]));
-      const slugChanged = entrySlug !== savedSnapshotRef.current.slug;
-      setConflict({ action, changes, slug: slugChanged ? entrySlug : null, latestLoaded: false });
+      setConflict({ action, ...collectUserChanges(form.state.values as Record<string, any>), latestLoaded: false });
       setCopyState('idle');
       return;
     }
@@ -2330,6 +2340,7 @@ export function CollectionEntryEditor({
   };
 
   const runEntryAction = async (action: Exclude<EditorAction, 'restore'>) => {
+    if (!confirmDiscardConflictChanges(`The ${action} will not include them and they will be lost. Continue?`)) return;
     resetFeedback();
     setIsWorking(true);
     let createdEntryId: string | null = null;
@@ -2381,7 +2392,7 @@ export function CollectionEntryEditor({
 
   const handleRestoreRevision = async (revisionId: string) => {
     if (!currentEntry?.id) return;
-    if (hasUnsavedChangesRef.current && !window.confirm('Restoring this revision replaces your unsaved changes. Continue?')) return;
+    if (hasUnsavedWorkRef.current && !window.confirm('Restoring this revision replaces your unsaved changes. Continue?')) return;
 
     resetFeedback();
     setIsWorking(true);
@@ -2411,6 +2422,15 @@ export function CollectionEntryEditor({
     ? JSON.stringify(nativeCollection ? conflict.changes : { ...(conflict.slug != null ? { slug: conflict.slug } : {}), data: conflict.changes }, null, 2)
     : '';
 
+  // Edits that only the conflict panel holds are gone once it closes, so ask first.
+  const confirmDiscardConflictChanges = (outcome: string) =>
+    !conflictHoldsChanges || window.confirm(`Your changes to ${conflictChangeLabels} have not been put back into the form. ${outcome}`);
+
+  const dismissConflict = () => {
+    if (!confirmDiscardConflictChanges('Dismiss them? They will be lost.')) return;
+    setConflict(null);
+  };
+
   const copyConflictDraft = async () => {
     try {
       await navigator.clipboard.writeText(conflictDraftJson);
@@ -2422,12 +2442,21 @@ export function CollectionEntryEditor({
 
   const loadLatestAfterConflict = async () => {
     if (!conflict || !currentEntry?.id) return;
+    // The form still holds the user's edits, including any made after the 409: the panel keeps them
+    // once the latest version replaces the form.
+    let held: Pick<EditConflict, 'changes' | 'slug'>;
+    try {
+      held = collectUserChanges(supportsRawView && viewMode === 'raw' ? parseEditorValues() : form.state.values as Record<string, any>);
+    } catch (error) {
+      setGlobalError(describeRequestError(error));
+      return;
+    }
     setGlobalError('');
     setIsWorking(true);
 
     try {
       await refreshEntryState(currentEntry.id);
-      setConflict({ ...conflict, latestLoaded: true });
+      setConflict({ ...conflict, ...held, latestLoaded: true });
     } catch (error) {
       setGlobalError(describeRequestError(error));
     } finally {
@@ -2653,7 +2682,7 @@ export function CollectionEntryEditor({
                         </Button>
                       </div>
                     )}
-                    {hasUnsavedChanges && !isWorking && (
+                    {hasUnsavedWork && !isWorking && (
                       <p className="text-xs text-amber-300 mt-3 text-center">Unsaved changes</p>
                     )}
                     {globalError && <p role="alert" className="text-red-400 text-sm mt-3 text-center">{globalError}</p>}
@@ -2694,7 +2723,7 @@ export function CollectionEntryEditor({
                                   Put my changes back
                                 </Button>
                               )}
-                              <Button type="button" size="sm" variant="ghost" onClick={() => setConflict(null)}>
+                              <Button type="button" size="sm" variant="ghost" onClick={dismissConflict}>
                                 Dismiss
                               </Button>
                             </>
