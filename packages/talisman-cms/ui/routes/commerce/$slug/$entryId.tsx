@@ -21,8 +21,10 @@ function CommerceEntryEditorRoute() {
   const { slug, entryId } = Route.useParams();
   const routerContext = Route.useRouteContext();
 
+  // Keyed by entry so a different entry (including a new entry after its first save) starts from fresh state.
   return (
     <CollectionEntryEditor
+      key={`${slug}:${entryId}`}
       collection={collection}
       entry={entry}
       revisions={revisions}

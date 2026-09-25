@@ -34,6 +34,12 @@ function readMediaRecord(payload: any): MediaLibraryEntry | null {
   };
 }
 
+async function readErrorResponse(res: Response, fallback: string) {
+  const payload = await res.json().catch(() => null) as { error?: unknown; message?: unknown } | null;
+  const message = [payload?.error, payload?.message].find((candidate) => typeof candidate === 'string' && candidate.trim());
+  return typeof message === 'string' ? message : `${fallback} (HTTP ${res.status})`;
+}
+
 function formatBytes(bytes: number | null | undefined) {
   if (!bytes || Number.isNaN(bytes)) return null;
   if (bytes < 1024) return `${bytes} B`;
@@ -65,6 +71,9 @@ export function MediaFieldInput({
   const [isUploading, setIsUploading] = useState(false);
   const [libraryError, setLibraryError] = useState('');
   const [libraryItems, setLibraryItems] = useState<MediaLibraryEntry[]>([]);
+  // Opening Browse loads the library once; later loads come from Refresh or an upload, so an
+  // empty or failed response cannot trigger another request by itself.
+  const libraryRequestedRef = useRef(false);
 
   const refreshLibrary = async () => {
     setIsLoadingLibrary(true);
@@ -73,10 +82,12 @@ export function MediaFieldInput({
     try {
       const res = await fetch(`${adminBasePath}/api/collections/media/entries`);
       if (!res.ok) {
-        throw new Error('Failed to load media library');
+        throw new Error(await readErrorResponse(res, 'Failed to load media library'));
       }
 
-      const payload = await res.json();
+      const payload = await res.json().catch(() => {
+        throw new Error('Failed to load media library: the server did not return JSON');
+      });
       const nextItems = Array.isArray(payload)
         ? payload.map(readMediaRecord).filter((item): item is MediaLibraryEntry => Boolean(item?.id && item.url))
         : [];
@@ -90,9 +101,10 @@ export function MediaFieldInput({
   };
 
   useEffect(() => {
-    if (!isLibraryOpen || libraryItems.length > 0 || isLoadingLibrary) return;
+    if (!isLibraryOpen || libraryRequestedRef.current) return;
+    libraryRequestedRef.current = true;
     void refreshLibrary();
-  }, [isLibraryOpen, libraryItems.length, isLoadingLibrary]);
+  }, [isLibraryOpen]);
 
   const handleUpload = async (file: File | null) => {
     if (!file) return;
@@ -109,17 +121,17 @@ export function MediaFieldInput({
         body: formData,
       });
 
-      const payload = await res.json().catch(() => ({})) as { error?: string; message?: string; url?: string };
       if (!res.ok) {
-        throw new Error(payload.error || payload.message || 'Failed to upload media');
+        throw new Error(await readErrorResponse(res, 'Failed to upload media'));
       }
 
-      const uploaded = readMediaRecord(payload);
+      const uploaded = readMediaRecord(await res.json().catch(() => ({})));
       if (!uploaded?.url) {
         throw new Error('Upload completed without a usable media URL');
       }
 
       onChange(uploaded.url);
+      libraryRequestedRef.current = true;
       setIsLibraryOpen(true);
       await refreshLibrary();
     } catch (error: any) {

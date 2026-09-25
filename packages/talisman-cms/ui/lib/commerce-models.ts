@@ -32,6 +32,22 @@ export function getCommerceSupportSlugs(collectionSlug: string, relationTargets:
   return Array.from(slugs);
 }
 
+// Stock counts that checkout reserves and releases in place (quantity = quantity - n). An editor
+// save that re-sends the value loaded at page open would undo those changes.
+const INVENTORY_FIELDS_BY_EXPORT: Record<string, string[]> = {
+  products: ['inventoryQuantity'],
+  productVariants: ['inventoryQuantity'],
+  stocks: ['quantity'],
+  components: ['quantity'],
+};
+
+/** Inventory fields of a plugin-ecommerce native collection; the editor only sends them when changed. */
+export function getInventoryFieldNames(collection: { nativeSchemaMapping?: { schemaPath?: string; exportName?: string } } | null | undefined) {
+  const mapping = collection?.nativeSchemaMapping;
+  if (!mapping?.exportName || !String(mapping.schemaPath || '').includes('plugin-ecommerce')) return [];
+  return INVENTORY_FIELDS_BY_EXPORT[mapping.exportName] || [];
+}
+
 export function getEntryData(entry: CommerceEntry | null | undefined) {
   if (!entry?.data) return {};
   return typeof entry.data === 'string' ? JSON.parse(entry.data) : entry.data;

@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useStore } from '@tanstack/react-form';
 import {
   ArrowDown,
   ArrowUp,
@@ -39,6 +40,50 @@ type DragState = {
   listId: string;
   index: number;
 } | null;
+
+/**
+ * Field errors can be strings, Standard Schema issues ({ message }) or nested
+ * arrays of either. Returns readable, de-duplicated messages.
+ */
+export function formatFieldErrors(errors: unknown): string[] {
+  const messages: string[] = [];
+  const visit = (error: unknown) => {
+    if (error === null || error === undefined || error === false || error === '') return;
+    if (Array.isArray(error)) {
+      error.forEach(visit);
+      return;
+    }
+    if (typeof error === 'string') {
+      messages.push(error);
+      return;
+    }
+    if (typeof error === 'object') {
+      const message = (error as { message?: unknown }).message;
+      if (typeof message === 'string' && message) {
+        messages.push(message);
+        return;
+      }
+      Object.values(error as Record<string, unknown>).forEach(visit);
+      return;
+    }
+    messages.push(String(error));
+  };
+  visit(errors);
+  return [...new Set(messages)];
+}
+
+/** Server-side field errors keyed by form field path (for example `layout[0].title`). */
+export type ServerFieldErrors = Record<string, string[]>;
+
+export const ServerFieldErrorsContext = React.createContext<{
+  errors: ServerFieldErrors;
+  clearError: (fieldPath: string) => void;
+}>({ errors: {}, clearError: () => {} });
+
+function FieldErrorText({ messages, className }: { messages: string[]; className?: string }) {
+  if (messages.length === 0) return null;
+  return <p role="alert" className={cn('text-xs text-red-400', className)}>{messages.join(' ')}</p>;
+}
 
 type PageBuilderComposerProps = {
   field: any;
@@ -185,6 +230,19 @@ function BuilderPanel({
   const [slotPickerState, setSlotPickerState] = useState<Record<string, { open: boolean; insertIndex: number | null }>>({});
   const fieldCollapseStorageKey = getCollapsedCardsStorageKey(collapseStorageKey, fieldName);
   const [collapsedCards, setCollapsedCards] = useState<Record<string, boolean>>(() => readCollapsedCardsState(fieldCollapseStorageKey));
+  const { errors: serverErrors } = useContext(ServerFieldErrorsContext);
+  const blockPathPattern = new RegExp(`^${fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\[(\\d+)\\]`);
+  // Field inputs live in the inspector modal, so the outline flags blocks whose fields have errors.
+  const clientErrorPaths: string = useStore(form.store, (state: any) => JSON.stringify(
+    Object.entries(state.fieldMeta || {})
+      .filter(([path, meta]) => blockPathPattern.test(path) && formatFieldErrors((meta as any)?.errors).length > 0)
+      .map(([path]) => path)
+  ));
+  const getBlockErrorCount = (blockIndex: number) => {
+    const paths = new Set([...(JSON.parse(clientErrorPaths) as string[]), ...Object.keys(serverErrors)]);
+    return [...paths].filter((path) => blockPathPattern.exec(path)?.[1] === String(blockIndex)).length;
+  };
+  const listErrors = [...new Set([...formatFieldErrors(fieldApi.state.meta.errors), ...(serverErrors[fieldName] || [])])];
 
   const getCardKey = (listId: string, index: number) => `${listId}:${index}`;
   const isCardCollapsed = (listId: string, index: number) => collapsedCards[getCardKey(listId, index)] === true;
@@ -304,6 +362,7 @@ function BuilderPanel({
           </div>
 
           <div className="mt-4 space-y-4">
+            <FieldErrorText messages={listErrors} />
             <div className="flex flex-wrap items-center gap-2">
               {value.length > 0 ? (
                 <>
@@ -355,6 +414,7 @@ function BuilderPanel({
                   const blockSummary = getBlockPreviewSummary(blockDef, blockValue, relationSupportEntries);
                   const blockSelected = selectedNode?.kind === 'block' && selectedNode.blockIndex === blockIndex;
                   const blockCollapsed = isCardCollapsed(fieldName, blockIndex);
+                  const blockErrorCount = getBlockErrorCount(blockIndex);
 
                   return (
                     <div
@@ -420,6 +480,11 @@ function BuilderPanel({
                               {blockDef.source?.library ? (
                                 <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[10px] uppercase tracking-wider text-zinc-400">
                                   {blockDef.source.library}
+                                </span>
+                              ) : null}
+                              {blockErrorCount > 0 ? (
+                                <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] font-medium text-red-300">
+                                  {blockErrorCount === 1 ? '1 field needs attention' : `${blockErrorCount} fields need attention`}
                                 </span>
                               ) : null}
                             </div>
@@ -537,6 +602,11 @@ function BuilderPanel({
                                         </Button>
                                       </div>
                                     </div>
+
+                                    <FieldErrorText
+                                      className="mt-2"
+                                      messages={[...new Set([...formatFieldErrors(slotApi.state.meta.errors), ...(serverErrors[slotFieldName] || [])])]}
+                                    />
 
                                     <div className="mt-3">
                                       <ComponentSlotPicker

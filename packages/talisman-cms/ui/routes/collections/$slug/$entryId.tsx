@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { createFileRoute, Link, useNavigate, useRouter } from '@tanstack/react-router';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createFileRoute, Link, useBlocker, useNavigate, useRouter } from '@tanstack/react-router';
 import { uiLibraries as configuredUiLibraries } from 'virtual:talisman-cms/ui-libraries';
 import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
@@ -7,7 +7,12 @@ import { ArrowDown, ArrowLeft, ArrowUp, Archive, ChevronDown, ChevronRight, Cloc
 import { BlockLibraryPicker } from '../../../components/BlockLibraryPicker';
 import { ComponentSlotPicker } from '../../../components/ComponentSlotPicker';
 import { MediaFieldInput } from '../../../components/MediaFieldInput';
-import { PageBuilderComposer } from '../../../components/PageBuilderComposer';
+import {
+  formatFieldErrors,
+  PageBuilderComposer,
+  ServerFieldErrorsContext,
+  type ServerFieldErrors,
+} from '../../../components/PageBuilderComposer';
 import { RichTextEditor } from '../../../components/RichTextEditor';
 import { getSectionCollectionRoute, getSectionEntryRoute, type AdminSection } from '../../../lib/admin-sections';
 import {
@@ -16,6 +21,7 @@ import {
   getCommerceModelGuide,
   getCommerceSupportSlugs,
   getEntryData,
+  getInventoryFieldNames,
   getRelationOptionLabel,
   type CommerceSupportEntries,
 } from '../../../lib/commerce-models';
@@ -135,16 +141,20 @@ export async function loadEntryEditorData(basePath: string, slug: string, entryI
   let entry = null;
   let revisions: any[] = [];
   if (!isNew) {
+    // Native records have no revision history; asking for it only produces a 400.
     const [entryRes, revisionsRes] = await Promise.all([
       fetch(`${basePath}/api/collections/${slug}/entries/${entryId}`),
-      fetch(`${basePath}/api/collections/${slug}/entries/${entryId}/revisions`)
+      collection && !isNativeCollection(collection)
+        ? fetch(`${basePath}/api/collections/${slug}/entries/${entryId}/revisions`)
+        : Promise.resolve(null)
     ]);
 
-    if (entryRes.ok) {
-      entry = await entryRes.json();
+    if (!entryRes.ok) {
+      throw await toRequestError(entryRes, entryRes.status === 404 ? 'This entry no longer exists' : 'Failed to load this entry');
     }
+    entry = await entryRes.json();
 
-    if (revisionsRes.ok) {
+    if (revisionsRes?.ok) {
       revisions = await revisionsRes.json();
     }
   }
@@ -180,7 +190,155 @@ export async function loadEntryEditorData(basePath: string, slug: string, entryI
   return { collection, entry, revisions, isNew, relationOptions, relationSupportEntries };
 }
 
-import { useForm } from '@tanstack/react-form';
+import { useForm, useStore } from '@tanstack/react-form';
+const SESSION_EXPIRED_MESSAGE = 'Your session has expired. Sign in again in another tab, then try again. Your edits are still here.';
+
+class EditorRequestError extends Error {
+  status: number;
+  fieldErrors: ServerFieldErrors;
+
+  constructor(message: string, status: number, fieldErrors: ServerFieldErrors = {}) {
+    super(message);
+    this.name = 'EditorRequestError';
+    this.status = status;
+    this.fieldErrors = fieldErrors;
+  }
+}
+
+/** Converts an error path (`['layout', 0, 'title']` or `layout.0.title`) to the form's field name (`layout[0].title`). */
+function toFormFieldPath(path: unknown) {
+  const segments: unknown[] = Array.isArray(path) ? path : String(path ?? '').split(/[.[\]]+/);
+  let fieldPath = '';
+  for (const rawSegment of segments) {
+    const segment = rawSegment && typeof rawSegment === 'object' && 'key' in rawSegment
+      ? (rawSegment as { key: unknown }).key
+      : rawSegment;
+    if (segment === undefined || segment === null || segment === '') continue;
+    const text = String(segment);
+    fieldPath = /^\d+$/.test(text) ? `${fieldPath}[${text}]` : fieldPath ? `${fieldPath}.${text}` : text;
+  }
+  return fieldPath;
+}
+
+/** Reads `fieldErrors` ({ field: [messages] }) and legacy `issues` (Zod issues) from a 400 response body. */
+function readFieldErrors(payload: any): ServerFieldErrors {
+  const fieldErrors: ServerFieldErrors = {};
+  const add = (fieldPath: string, messages: unknown) => {
+    const next = formatFieldErrors(messages);
+    if (next.length > 0) fieldErrors[fieldPath] = [...new Set([...(fieldErrors[fieldPath] || []), ...next])];
+  };
+
+  for (const source of [payload?.fieldErrors, payload?.details?.fieldErrors]) {
+    if (source && typeof source === 'object' && !Array.isArray(source)) {
+      for (const [fieldPath, messages] of Object.entries(source)) add(toFormFieldPath(fieldPath), messages);
+    }
+  }
+  if (Array.isArray(payload?.issues)) {
+    for (const issue of payload.issues) add(toFormFieldPath(issue?.path), issue?.message);
+  }
+  return fieldErrors;
+}
+
+function readErrorMessage(payload: any) {
+  for (const candidate of [payload?.error, payload?.message]) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+    if (candidate && typeof candidate === 'object' && typeof candidate.message === 'string' && candidate.message.trim()) {
+      return candidate.message.trim();
+    }
+  }
+  return '';
+}
+
+async function toRequestError(res: Response, fallback: string) {
+  if (res.status === 401) return new EditorRequestError(SESSION_EXPIRED_MESSAGE, 401);
+  const payload = await res.json().catch(() => null);
+  return new EditorRequestError(readErrorMessage(payload) || `${fallback} (HTTP ${res.status})`, res.status, readFieldErrors(payload));
+}
+
+async function requestEditorApi(url: string, init: RequestInit, fallback: string): Promise<any> {
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch {
+    throw new EditorRequestError(`${fallback}: the server could not be reached. Your edits are still here.`, 0);
+  }
+
+  if (!res.ok) throw await toRequestError(res, fallback);
+  return res.json().catch(() => {
+    throw new EditorRequestError(`${fallback}: the server sent an unexpected response.`, res.status);
+  });
+}
+
+/** One-line message for places that cannot highlight individual fields. */
+function describeRequestError(error: unknown) {
+  if (!(error instanceof Error)) return String(error);
+  const fieldErrors = error instanceof EditorRequestError ? Object.entries(error.fieldErrors) : [];
+  if (fieldErrors.length === 0) return error.message;
+  return `${error.message}: ${fieldErrors.map(([fieldPath, messages]) => `${fieldPath || 'record'}: ${messages.join(', ')}`).join('; ')}`;
+}
+
+/** Human-readable label for a form field path such as `layout[0].title`. */
+function describeFieldPath(fieldPath: string, fields: any[], values: any) {
+  if (!fieldPath) return 'Entry';
+  const labels: string[] = [];
+  let scopeFields: any[] = fields || [];
+  let field: any = null;
+  let value: any = values;
+
+  for (const segment of fieldPath.split(/[.[\]]+/).filter(Boolean)) {
+    if (/^\d+$/.test(segment)) {
+      value = Array.isArray(value) ? value[Number(segment)] : undefined;
+      const item = field?.blocks?.find((block: any) => block.slug === value?.blockType)
+        || field?.components?.find((component: any) => component.slug === value?.componentType);
+      labels.push(`${item?.name || 'Item'} ${Number(segment) + 1}`);
+      scopeFields = item ? [...(item.fields || []), ...(item.componentSlots || [])] : field?.fields || [];
+      continue;
+    }
+
+    field = scopeFields.find((candidate: any) => candidate.name === segment) || null;
+    labels.push(field?.label || segment);
+    value = value?.[segment];
+    const component = value && !Array.isArray(value)
+      ? field?.components?.find((candidate: any) => candidate.slug === value.componentType)
+      : null;
+    scopeFields = component?.fields || field?.fields || [];
+  }
+
+  return labels.join(' › ');
+}
+
+/** The native row's updatedAt as loaded, sent back so the server can refuse stale writes. */
+function getLoadedUpdatedAt(entry: any) {
+  const updatedAt = getEntryData(entry)?.updatedAt;
+  return typeof updatedAt === 'string' || typeof updatedAt === 'number' ? updatedAt : null;
+}
+
+// A message that must survive the remount when a newly created entry opens at its own URL.
+function getEditorNoticeKey(slug: string, entryId: string) {
+  return `talisman-cms:editor-notice:${slug}:${entryId}`;
+}
+
+function stashEditorNotice(slug: string, entryId: string, message: string) {
+  try {
+    window.sessionStorage.setItem(getEditorNoticeKey(slug, entryId), message);
+  } catch {
+    // Storage can be unavailable; the entry still opens.
+  }
+}
+
+function takeEditorNotice(slug: string, entryId: string) {
+  try {
+    const key = getEditorNoticeKey(slug, entryId);
+    const message = window.sessionStorage.getItem(key);
+    if (message) window.sessionStorage.removeItem(key);
+    return message || '';
+  } catch {
+    return '';
+  }
+}
+
+const AdminBasePathContext = React.createContext('/admin');
+
 function getNativeIdColumn(collection: any) {
   return collection?.nativeSchemaMapping?.idColumn || 'id';
 }
@@ -591,6 +749,10 @@ type ProductVariantValueDraft = {
   priceOverride: string;
   stockId: string | null;
   stockQuantity: string;
+  // As loaded: stock is only written when the quantity changed, and writes carry updatedAt.
+  savedStockQuantity: string | null;
+  updatedAt: string | number | null;
+  stockUpdatedAt: string | number | null;
 };
 
 type ProductVariantGroupDraft = {
@@ -601,6 +763,8 @@ type ProductVariantGroupDraft = {
   sku: string;
   priceOverride: string;
   inventoryQuantity: string;
+  savedInventoryQuantity: string | null;
+  updatedAt: string | number | null;
   values: ProductVariantValueDraft[];
 };
 
@@ -653,6 +817,9 @@ function buildProductVariantDrafts(productId: string, relationSupportEntries: Co
       priceOverride: valueData.priceOverride === undefined || valueData.priceOverride === null ? '' : String(valueData.priceOverride),
       stockId: stockEntry?.id || null,
       stockQuantity: stockData.quantity === undefined || stockData.quantity === null ? '0' : String(stockData.quantity),
+      savedStockQuantity: stockEntry ? asDraftString(stockData.quantity, '0') : null,
+      updatedAt: getLoadedUpdatedAt(valueEntry),
+      stockUpdatedAt: stockEntry ? getLoadedUpdatedAt(stockEntry) : null,
     };
 
     const current = valuesByGroupId.get(valueData.productVariantId) || [];
@@ -665,6 +832,7 @@ function buildProductVariantDrafts(productId: string, relationSupportEntries: Co
     .map((entry) => {
       const data = getEntryData(entry);
       const values = valuesByGroupId.get(entry.id) || [];
+      const inventoryQuantity = data.inventoryQuantity === undefined || data.inventoryQuantity === null ? '0' : String(data.inventoryQuantity);
 
       return {
         localId: entry.id,
@@ -673,7 +841,9 @@ function buildProductVariantDrafts(productId: string, relationSupportEntries: Co
         name: asDraftString(data.name),
         sku: asDraftString(data.sku),
         priceOverride: data.priceOverride === undefined || data.priceOverride === null ? '' : String(data.priceOverride),
-        inventoryQuantity: data.inventoryQuantity === undefined || data.inventoryQuantity === null ? '0' : String(data.inventoryQuantity),
+        inventoryQuantity,
+        savedInventoryQuantity: inventoryQuantity,
+        updatedAt: getLoadedUpdatedAt(entry),
         values,
       };
     });
@@ -912,6 +1082,7 @@ function ProductVariantConfigurator({
   const [localError, setLocalError] = useState('');
   const [localStatus, setLocalStatus] = useState('');
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [hasStaleRows, setHasStaleRows] = useState(false);
 
   useEffect(() => {
     if (!productId) {
@@ -929,21 +1100,34 @@ function ProductVariantConfigurator({
       ? `${basePath}/api/collections/${collectionSlug}/entries/${id}`
       : `${basePath}/api/collections/${collectionSlug}/entries`;
 
-    const res = await fetch(url, {
+    const result = await requestEditorApi(url, {
       method,
       body: payload ? JSON.stringify(payload) : undefined,
-    });
+    }, `Failed to ${method === 'DELETE' ? 'delete' : 'save'} ${collectionSlug}`);
 
-    if (!res.ok) {
-      const errorData: any = await res.json().catch(() => ({}));
-      throw new Error(errorData.error || errorData.message || `Failed to ${method} ${collectionSlug}`);
+    return method === 'DELETE' ? null : result;
+  };
+
+  const showRequestError = (error: unknown) => {
+    if (error instanceof EditorRequestError && error.status === 409) {
+      setHasStaleRows(true);
+      setLocalError('This option or its stock changed after the page loaded, for example because a checkout reserved stock, so the change was refused. Load the latest values, then make your change again.');
+      return;
     }
+    setLocalError(describeRequestError(error));
+  };
 
-    if (method === 'DELETE') {
-      return null;
+  const loadLatestRows = async () => {
+    setBusyKey('refresh');
+    setLocalError('');
+    try {
+      await onRefresh();
+      setHasStaleRows(false);
+    } catch (error) {
+      showRequestError(error);
+    } finally {
+      setBusyKey(null);
     }
-
-    return res.json() as Promise<any>;
   };
 
   const updateGroupDraft = (localId: string, updates: Partial<ProductVariantGroupDraft>) => {
@@ -976,6 +1160,8 @@ function ProductVariantConfigurator({
         sku: '',
         priceOverride: '',
         inventoryQuantity: '0',
+        savedInventoryQuantity: null,
+        updatedAt: null,
         values: [],
       },
     ]);
@@ -998,6 +1184,9 @@ function ProductVariantConfigurator({
                   priceOverride: '',
                   stockId: null,
                   stockQuantity: '0',
+                  savedStockQuantity: null,
+                  updatedAt: null,
+                  stockUpdatedAt: null,
                 },
               ],
             }
@@ -1022,8 +1211,8 @@ function ProductVariantConfigurator({
       setNewDefinitionName('');
       await onRefresh();
       setLocalStatus(`Created option definition "${trimmedName}".`);
-    } catch (error: any) {
-      setLocalError(error.message);
+    } catch (error) {
+      showRequestError(error);
     } finally {
       setBusyKey(null);
     }
@@ -1045,6 +1234,8 @@ function ProductVariantConfigurator({
     setLocalStatus('');
 
     try {
+      const inventoryChanged = group.savedInventoryQuantity === null ||
+        toRequiredNumber(group.inventoryQuantity, 0) !== toRequiredNumber(group.savedInventoryQuantity, 0);
       const payload = {
         data: {
           productId,
@@ -1052,8 +1243,9 @@ function ProductVariantConfigurator({
           name: group.name.trim(),
           sku: group.sku.trim() || undefined,
           priceOverride: toOptionalNumber(group.priceOverride),
-          inventoryQuantity: toRequiredNumber(group.inventoryQuantity, 0),
+          ...(inventoryChanged ? { inventoryQuantity: toRequiredNumber(group.inventoryQuantity, 0) } : {}),
         },
+        ...(group.id && group.updatedAt !== null ? { expectedUpdatedAt: group.updatedAt } : {}),
       };
 
       await requestCollection(
@@ -1064,8 +1256,8 @@ function ProductVariantConfigurator({
       );
       await onRefresh();
       setLocalStatus(`Saved variant group "${group.name.trim()}".`);
-    } catch (error: any) {
-      setLocalError(error.message);
+    } catch (error) {
+      showRequestError(error);
     } finally {
       setBusyKey(null);
     }
@@ -1098,26 +1290,33 @@ function ProductVariantConfigurator({
             image: value.image.trim() || undefined,
             priceOverride: toOptionalNumber(value.priceOverride),
           },
+          ...(value.id && value.updatedAt !== null ? { expectedUpdatedAt: value.updatedAt } : {}),
         },
         value.id || undefined
       );
 
-      await requestCollection(
-        '_ecommerce_stocks',
-        value.stockId ? 'PUT' : 'POST',
-        {
-          data: {
-            productVariantValueId: savedValue.id,
-            quantity: toRequiredNumber(value.stockQuantity, 0),
+      // Checkout reserves stock in place, so only write the quantity the user actually changed.
+      const stockChanged = !value.stockId || value.savedStockQuantity === null ||
+        toRequiredNumber(value.stockQuantity, 0) !== toRequiredNumber(value.savedStockQuantity, 0);
+      if (stockChanged) {
+        await requestCollection(
+          '_ecommerce_stocks',
+          value.stockId ? 'PUT' : 'POST',
+          {
+            data: {
+              productVariantValueId: savedValue.id,
+              quantity: toRequiredNumber(value.stockQuantity, 0),
+            },
+            ...(value.stockId && value.stockUpdatedAt !== null ? { expectedUpdatedAt: value.stockUpdatedAt } : {}),
           },
-        },
-        value.stockId || undefined
-      );
+          value.stockId || undefined
+        );
+      }
 
       await onRefresh();
       setLocalStatus(`Saved variant value "${value.value.trim()}".`);
-    } catch (error: any) {
-      setLocalError(error.message);
+    } catch (error) {
+      showRequestError(error);
     } finally {
       setBusyKey(null);
     }
@@ -1150,8 +1349,8 @@ function ProductVariantConfigurator({
       await requestCollection('_ecommerce_product_variant_values', 'DELETE', undefined, value.id);
       await onRefresh();
       setLocalStatus(`Deleted variant value "${value.value || value.id}".`);
-    } catch (error: any) {
-      setLocalError(error.message);
+    } catch (error) {
+      showRequestError(error);
     } finally {
       setBusyKey(null);
     }
@@ -1184,8 +1383,8 @@ function ProductVariantConfigurator({
       await requestCollection('_ecommerce_product_variants', 'DELETE', undefined, group.id);
       await onRefresh();
       setLocalStatus(`Deleted variant group "${group.name || group.id}".`);
-    } catch (error: any) {
-      setLocalError(error.message);
+    } catch (error) {
+      showRequestError(error);
     } finally {
       setBusyKey(null);
     }
@@ -1244,7 +1443,16 @@ function ProductVariantConfigurator({
         </div>
       </div>
 
-      {localError && <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">{localError}</div>}
+      {localError && (
+        <div role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+          <p>{localError}</p>
+          {hasStaleRows && (
+            <Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => void loadLatestRows()} disabled={busyKey === 'refresh'}>
+              {busyKey === 'refresh' ? 'Loading...' : 'Load latest options and stock'}
+            </Button>
+          )}
+        </div>
+      )}
       {localStatus && <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100">{localStatus}</div>}
 
       <ProductStorefrontPreview
@@ -1436,8 +1644,13 @@ function ProductVariantConfigurator({
   );
 }
 
-function FieldRenderer({ field, form, basePath, relationOptions, relationSupportEntries, collapseStorageKey }: { field: any, form: any, basePath: string, relationOptions: any, relationSupportEntries: CommerceSupportEntries, collapseStorageKey?: string }) {
-    const fieldName = basePath ? `${basePath}.${field.name}` : field.name;
+// fieldPath is the form path of the parent value ('' at the top level); the admin API base path comes from context.
+function FieldRenderer({ field, form, fieldPath, relationOptions, relationSupportEntries, collapseStorageKey }: { field: any, form: any, fieldPath: string, relationOptions: any, relationSupportEntries: CommerceSupportEntries, collapseStorageKey?: string }) {
+    const fieldName = fieldPath ? `${fieldPath}.${field.name}` : field.name;
+    const adminBasePath = useContext(AdminBasePathContext);
+    const { errors: serverFieldErrors, clearError: clearServerFieldError } = useContext(ServerFieldErrorsContext);
+    const getErrorMessages = (fieldApi: any) =>
+        [...new Set([...formatFieldErrors(fieldApi.state.meta.errors), ...(serverFieldErrors[fieldName] || [])])];
     const [dragState, setDragState] = useState<{ listId: string; index: number } | null>(null);
     const [blockLibraryOpen, setBlockLibraryOpen] = useState(false);
     const [pendingBlockInsertIndex, setPendingBlockInsertIndex] = useState<number | null>(null);
@@ -1492,12 +1705,16 @@ function FieldRenderer({ field, form, basePath, relationOptions, relationSupport
                 mode="array"
                 children={(fieldApi: any) => {
                     const value = fieldApi.state.value || [];
+                    const errorMessages = getErrorMessages(fieldApi);
                     return (
                         <div className="border border-white/10 rounded-lg p-5 space-y-4 bg-zinc-950/40 shadow-inner">
                             <div className="flex items-center justify-between pb-3 border-b border-white/5">
                                 <label className="text-sm font-medium text-zinc-300">{field.label}</label>
-                                <Button size="sm" variant="outline" type="button" onClick={() => fieldApi.pushValue(buildDefaultValues(field.fields))}>Add Row</Button>
+                                <Button size="sm" variant="outline" type="button" onClick={() => { clearServerFieldError(fieldName); fieldApi.pushValue(buildDefaultValues(field.fields)); }}>Add Row</Button>
                             </div>
+                            {errorMessages.length > 0 && (
+                                <p role="alert" className="text-xs text-red-500">{errorMessages.join(', ')}</p>
+                            )}
                             {value.map((_: any, i: number) => (
                                 <div key={i} className="p-5 border border-white/5 bg-white/[0.02] rounded-lg relative group transition-colors hover:bg-white/[0.04]">
                                     <Button 
@@ -1505,13 +1722,13 @@ function FieldRenderer({ field, form, basePath, relationOptions, relationSupport
                                         variant="destructive" 
                                         type="button"
                                         className="absolute -right-2 -top-2 opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 p-0 rounded-full"
-                                        onClick={() => fieldApi.removeValue(i)}
+                                        onClick={() => { clearServerFieldError(fieldName); fieldApi.removeValue(i); }}
                                     >
                                         &times;
                                     </Button>
                                     <div className="space-y-4">
                                         {field.fields?.map((subField: any) => (
-                                            <FieldRenderer key={subField.name} field={subField} form={form} basePath={`${fieldName}[${i}]`} relationOptions={relationOptions} relationSupportEntries={relationSupportEntries} collapseStorageKey={collapseStorageKey} />
+                                            <FieldRenderer key={subField.name} field={subField} form={form} fieldPath={`${fieldName}[${i}]`} relationOptions={relationOptions} relationSupportEntries={relationSupportEntries} collapseStorageKey={collapseStorageKey} />
                                         ))}
                                     </div>
                                 </div>
@@ -1531,12 +1748,12 @@ function FieldRenderer({ field, form, basePath, relationOptions, relationSupport
                 form={form}
                 relationSupportEntries={relationSupportEntries}
                 collapseStorageKey={collapseStorageKey}
-                renderField={(nestedField, nestedBasePath) => (
+                renderField={(nestedField, nestedFieldPath) => (
                     <FieldRenderer
-                        key={`${nestedBasePath}:${nestedField.name}`}
+                        key={`${nestedFieldPath}:${nestedField.name}`}
                         field={nestedField}
                         form={form}
-                        basePath={nestedBasePath}
+                        fieldPath={nestedFieldPath}
                         relationOptions={relationOptions}
                         relationSupportEntries={relationSupportEntries}
                         collapseStorageKey={collapseStorageKey}
@@ -1554,7 +1771,7 @@ function FieldRenderer({ field, form, basePath, relationOptions, relationSupport
                 </div>
                 <div className="space-y-4">
                     {field.fields?.map((subField: any) => (
-                        <FieldRenderer key={subField.name} field={subField} form={form} basePath={fieldName} relationOptions={relationOptions} relationSupportEntries={relationSupportEntries} collapseStorageKey={collapseStorageKey} />
+                        <FieldRenderer key={subField.name} field={subField} form={form} fieldPath={fieldName} relationOptions={relationOptions} relationSupportEntries={relationSupportEntries} collapseStorageKey={collapseStorageKey} />
                     ))}
                 </div>
             </div>
@@ -1565,7 +1782,13 @@ function FieldRenderer({ field, form, basePath, relationOptions, relationSupport
         <form.Field
             name={fieldName}
             children={(fieldApi: any) => {
-                const hasError = fieldApi.state.meta.errors.length > 0;
+                const errorMessages = getErrorMessages(fieldApi);
+                const hasError = errorMessages.length > 0;
+                // A server error describes the value that was sent; drop it once the user edits the field.
+                const handleValueChange = (nextValue: any) => {
+                    if (serverFieldErrors[fieldName]) clearServerFieldError(fieldName);
+                    fieldApi.handleChange(nextValue);
+                };
                 return (
                   <div className="space-y-2">
                       {field.type !== 'boolean' && (
@@ -1576,22 +1799,22 @@ function FieldRenderer({ field, form, basePath, relationOptions, relationSupport
                       
                       {field.type === 'media' ? (
                           <MediaFieldInput
-                              adminBasePath={basePath}
+                              adminBasePath={adminBasePath}
                               value={(fieldApi.state.value as string) || ''}
-                              onChange={fieldApi.handleChange}
+                              onChange={handleValueChange}
                               onBlur={fieldApi.handleBlur}
                           />
                       ) : field.type === 'textarea' ? (
                           <textarea
                               value={(fieldApi.state.value as string) || ''}
-                              onChange={(e) => fieldApi.handleChange(e.target.value)}
+                              onChange={(e) => handleValueChange(e.target.value)}
                               onBlur={fieldApi.handleBlur}
                               className={`w-full bg-zinc-950/50 border rounded-md p-3 text-sm focus:outline-none focus:ring-2 transition-all shadow-inner ${hasError ? 'border-red-500/50 focus:ring-red-500/50' : 'border-white/10 focus:ring-indigo-500/50 focus:border-indigo-500/50'}`}
                           />
                       ) : field.type === 'select' ? (
                           <select
                               value={(fieldApi.state.value as string) || ''}
-                              onChange={(e) => fieldApi.handleChange(e.target.value)}
+                              onChange={(e) => handleValueChange(e.target.value)}
                               onBlur={fieldApi.handleBlur}
                               className={`w-full bg-zinc-950/50 border rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 transition-all shadow-inner ${hasError ? 'border-red-500/50 focus:ring-red-500/50' : 'border-white/10 focus:ring-indigo-500/50 focus:border-indigo-500/50'}`}
                           >
@@ -1606,7 +1829,7 @@ function FieldRenderer({ field, form, basePath, relationOptions, relationSupport
                           <RelationshipPicker
                               field={field}
                               value={fieldApi.state.value}
-                              onChange={fieldApi.handleChange}
+                              onChange={handleValueChange}
                               onBlur={fieldApi.handleBlur}
                               relationOptions={relationOptions}
                               relationSupportEntries={relationSupportEntries}
@@ -1614,7 +1837,7 @@ function FieldRenderer({ field, form, basePath, relationOptions, relationSupport
                       ) : field.type === 'richtext' ? (
                           <RichTextEditor
                               value={fieldApi.state.value} // ensure value format works with block editor
-                              onChange={(val: any) => fieldApi.handleChange(val)}
+                              onChange={(val: any) => handleValueChange(val)}
                               hasError={hasError}
                           />
                       ) : field.type === 'boolean' ? (
@@ -1623,7 +1846,7 @@ function FieldRenderer({ field, form, basePath, relationOptions, relationSupport
                                   type="checkbox" 
                                   id={`field-${fieldName}`} // Make unique for arrays
                                   checked={!!fieldApi.state.value}
-                                  onChange={(e) => fieldApi.handleChange(e.target.checked)}
+                                  onChange={(e) => handleValueChange(e.target.checked)}
                                   onBlur={fieldApi.handleBlur}
                                   className="w-4 h-4 rounded border-zinc-700 text-indigo-500 focus:ring-indigo-500 bg-zinc-950"
                               />
@@ -1634,8 +1857,8 @@ function FieldRenderer({ field, form, basePath, relationOptions, relationSupport
                       ) : (
                           <input 
                               type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'} 
-                              value={fieldApi.state.value !== undefined ? (fieldApi.state.value as any) : ''}
-                              onChange={(e) => fieldApi.handleChange(field.type === 'number' ? (e.target.value ? Number(e.target.value) : undefined) : e.target.value)}
+                              value={(fieldApi.state.value as any) ?? ''}
+                              onChange={(e) => handleValueChange(field.type === 'number' ? (e.target.value ? Number(e.target.value) : undefined) : e.target.value)}
                               onBlur={fieldApi.handleBlur}
                               className={`w-full bg-zinc-950/50 border rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 transition-all shadow-inner ${hasError ? 'border-red-500/50 focus:ring-red-500/50' : 'border-white/10 focus:ring-indigo-500/50 focus:border-indigo-500/50'}`}
                           />
@@ -1650,7 +1873,7 @@ function FieldRenderer({ field, form, basePath, relationOptions, relationSupport
                       )}
 
                       {hasError && (
-                          <p className="text-xs text-red-500">{fieldApi.state.meta.errors.join(', ')}</p>
+                          <p role="alert" className="text-xs text-red-500">{errorMessages.join(', ')}</p>
                       )}
                   </div>
                 );
@@ -1798,7 +2021,7 @@ function PresetEditorPanel({
                 key={`preset-${selectedComponent.slug}-${componentField.name}`}
                 field={componentField}
                 form={form}
-                basePath="presetProps"
+                fieldPath="presetProps"
                 relationOptions={relationOptions}
                 relationSupportEntries={relationSupportEntries}
                 collapseStorageKey={collapseStorageKey}
@@ -1813,6 +2036,24 @@ function PresetEditorPanel({
       </div>
     </div>
   );
+}
+
+type EditorAction = 'save' | 'publish' | 'archive' | 'restore';
+
+// Local edits kept after a 409, so the user can compare, copy or re-apply them.
+type EditConflict = {
+  action: EditorAction;
+  /** Only the top-level fields the user changed from the version they opened, with the edited values. */
+  changes: Record<string, any>;
+  /** The edited slug, or null when the user did not change it. */
+  slug: string | null;
+  latestLoaded: boolean;
+};
+
+/** Top-level fields whose value differs between the edited values and the version the edits started from. */
+function getChangedFieldNames(values: Record<string, any>, baseline: Record<string, any>) {
+  return [...new Set([...Object.keys(values), ...Object.keys(baseline)])]
+    .filter((name) => JSON.stringify(values[name]) !== JSON.stringify(baseline[name]));
 }
 
 export function CollectionEntryEditor({
@@ -1850,6 +2091,7 @@ export function CollectionEntryEditor({
   const sectionEntryRoute = getSectionEntryRoute(section);
   const editorFields = getEditorFields(collection, isNew);
   const nativeIdColumn = getNativeIdColumn(collection);
+  const recordLabel = nativeCollection ? 'record' : 'entry';
 
   const [currentEntry, setCurrentEntry] = useState<any>(initialEntry);
   const [revisions, setRevisions] = useState<any[]>(initialRevisions || []);
@@ -1857,7 +2099,9 @@ export function CollectionEntryEditor({
   const [viewMode, setViewMode] = useState<'form' | 'raw'>('form');
   const [isWorking, setIsWorking] = useState(false);
 
-  const defaultValues = (() => {
+  // Computed once: useForm re-applies changed defaultValues to an untouched form on every render,
+  // which would undo the form.reset calls below. Resets keep these defaults for the same reason.
+  const [defaultValues] = useState<Record<string, any>>(() => {
     if (presetCollection) {
       return buildPresetEditorDefaults(initialEntry, editorFields);
     }
@@ -1867,7 +2111,7 @@ export function CollectionEntryEditor({
     }
 
     return buildDefaultValues(editorFields);
-  })();
+  });
 
   const [selectedPresetLibraryId, setSelectedPresetLibraryId] = useState(defaultValues.libraryId || '');
   const [selectedPresetComponentSlug, setSelectedPresetComponentSlug] = useState(defaultValues.componentSlug || '');
@@ -1878,6 +2122,10 @@ export function CollectionEntryEditor({
   const [rawJsonStr, setRawJsonStr] = useState(() => JSON.stringify(defaultValues, null, 2));
 
   const [globalError, setGlobalError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [serverFieldErrors, setServerFieldErrors] = useState<ServerFieldErrors>({});
+  const [conflict, setConflict] = useState<EditConflict | null>(null);
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const collapseStorageKey = `talisman-cms:collapsed:collection:${slug}:${currentEntry?.id || entryId}`;
 
   const form = useForm({
@@ -1891,16 +2139,62 @@ export function CollectionEntryEditor({
         }
   });
 
+  // The last loaded or saved state. The editor has unsaved changes while the form, slug or raw JSON differ from it.
+  const savedSnapshotRef = useRef({ values: JSON.stringify(defaultValues), slug: initialEntry?.slug || '' });
+  const rawSnapshotRef = useRef(rawJsonStr);
+  const formValuesChanged = useStore(form.store, (state: any) => JSON.stringify(state.values) !== savedSnapshotRef.current.values);
+  const hasUnsavedChanges = Boolean(collection) && !collection.readOnly && (
+    formValuesChanged ||
+    entrySlug !== savedSnapshotRef.current.slug ||
+    (viewMode === 'raw' && rawJsonStr !== rawSnapshotRef.current)
+  );
+  const hasUnsavedChangesRef = useRef(hasUnsavedChanges);
+  hasUnsavedChangesRef.current = hasUnsavedChanges;
+  // Set when the editor itself navigates away after a successful save (opening a newly created entry).
+  const leavingEditorRef = useRef(false);
+
+  const shouldBlockNavigation = useCallback(({ current, next }: { current: { pathname: string }; next: { pathname: string } }) => {
+    // Same-page hash links (the product section nav) are not a navigation away.
+    if (leavingEditorRef.current || !hasUnsavedChangesRef.current || current.pathname === next.pathname) return false;
+    return !window.confirm('You have unsaved changes. Leave this page and discard them?');
+  }, []);
+  const warnBeforeUnload = useCallback(() => !leavingEditorRef.current && hasUnsavedChangesRef.current, []);
+  useBlocker({ shouldBlockFn: shouldBlockNavigation, enableBeforeUnload: warnBeforeUnload });
+
+  useEffect(() => {
+    const carriedNotice = takeEditorNotice(slug, entryId);
+    if (carriedNotice) setGlobalError(carriedNotice);
+  }, [slug, entryId]);
+
+  const clearServerFieldError = useCallback((fieldPath: string) => {
+    setServerFieldErrors((current) => {
+      if (!(fieldPath in current)) return current;
+      const next = { ...current };
+      delete next[fieldPath];
+      return next;
+    });
+  }, []);
+  const serverFieldErrorsContext = useMemo(
+    () => ({ errors: serverFieldErrors, clearError: clearServerFieldError }),
+    [serverFieldErrors, clearServerFieldError]
+  );
+
   if (!collection) return <div>Collection not found.</div>;
 
   const currentStatus = getEntryStatus(currentEntry, collection);
   const showProductConfigurator = isCommerceProductCollection(collection);
+  const inventoryFieldNames = getInventoryFieldNames(collection);
 
   const parseEditorValues = () => {
     if (supportsRawView && viewMode === 'raw') {
-      const parsed = JSON.parse(rawJsonStr);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(rawJsonStr);
+      } catch (error) {
+        throw new Error(`Fix the raw JSON before saving: ${error instanceof Error ? error.message : String(error)}`);
+      }
       const normalized = normalizeStoredFieldData(editorFields, parsed);
-      form.reset(normalized);
+      form.reset(normalized, { keepDefaultValues: true });
       return normalized;
     }
 
@@ -1916,11 +2210,14 @@ export function CollectionEntryEditor({
 
   const syncEntryState = (entry: any, nextRevisions?: any[]) => {
     const parsedData = parseEntryData(entry, editorFields);
+    const nextDefaults = presetCollection ? buildPresetEditorDefaults(entry, editorFields) : parsedData;
+    const nextRawJson = JSON.stringify(parsedData, null, 2);
+    savedSnapshotRef.current = { values: JSON.stringify(nextDefaults), slug: entry?.slug || '' };
+    rawSnapshotRef.current = nextRawJson;
     setCurrentEntry(entry);
     setEntrySlug(entry?.slug || '');
-    setRawJsonStr(JSON.stringify(parsedData, null, 2));
-    const nextDefaults = presetCollection ? buildPresetEditorDefaults(entry, editorFields) : parsedData;
-    form.reset(nextDefaults);
+    setRawJsonStr(nextRawJson);
+    form.reset(nextDefaults, { keepDefaultValues: true });
     if (presetCollection) {
       setSelectedPresetLibraryId(nextDefaults.libraryId || '');
       setSelectedPresetComponentSlug(nextDefaults.componentSlug || '');
@@ -1928,20 +2225,18 @@ export function CollectionEntryEditor({
     if (nextRevisions) setRevisions(nextRevisions);
   };
 
+  const fetchEntry = (targetEntryId: string) =>
+    requestEditorApi(`${basePath}/api/collections/${slug}/entries/${targetEntryId}`, {}, `Failed to load this ${recordLabel}`);
+
   const refreshEntryState = async (targetEntryId: string) => {
-    const [entryRes, revisionsRes] = await Promise.all([
-      fetch(`${basePath}/api/collections/${slug}/entries/${targetEntryId}`),
+    const [nextEntry, nextRevisions] = await Promise.all([
+      fetchEntry(targetEntryId),
       versioningEnabled
-        ? fetch(`${basePath}/api/collections/${slug}/entries/${targetEntryId}/revisions`)
-        : Promise.resolve(null as any)
+        ? requestEditorApi(`${basePath}/api/collections/${slug}/entries/${targetEntryId}/revisions`, {}, 'Failed to load revision history')
+          .catch(() => revisions)
+        : Promise.resolve(revisions)
     ]);
 
-    if (!entryRes.ok) {
-      throw new Error('Failed to refresh entry');
-    }
-
-    const nextEntry = await entryRes.json();
-    const nextRevisions = revisionsRes && revisionsRes.ok ? await revisionsRes.json() : revisions;
     syncEntryState(nextEntry, nextRevisions);
     await router.invalidate();
     return nextEntry;
@@ -1960,7 +2255,19 @@ export function CollectionEntryEditor({
     }
   };
 
-  const persistDraft = async (navigateAfterCreate = true) => {
+  // Native rows are written in place. Checkout changes stock with `quantity = quantity - n`, so an
+  // inventory value the user did not touch is left out rather than written back as loaded (the
+  // server validates native updates partially and keeps the stored value).
+  const buildNativeWriteData = (value: Record<string, any>) => {
+    const savedValues = JSON.parse(savedSnapshotRef.current.values);
+    const data = { ...value };
+    for (const name of inventoryFieldNames) {
+      if (JSON.stringify(data[name]) === JSON.stringify(savedValues[name])) delete data[name];
+    }
+    return data;
+  };
+
+  const persistDraft = async () => {
     const value = parseEditorValues();
     if (presetCollection) {
       const presetValidation = validatePresetPayload(getLibraryDefinitions() as any, value);
@@ -1972,107 +2279,203 @@ export function CollectionEntryEditor({
     const url = isNew
       ? `${basePath}/api/collections/${slug}/entries`
       : `${basePath}/api/collections/${slug}/entries/${entryId}`;
+    const loadedUpdatedAt = getLoadedUpdatedAt(currentEntry);
     const body = nativeCollection
-      ? { data: value }
-      : { slug: entrySlug, data: value, ...(!isNew ? { expectedRevisionId: currentEntry?.latestRevisionId } : {}) };
+      ? isNew
+        ? { data: value }
+        : { data: buildNativeWriteData(value), ...(loadedUpdatedAt !== null ? { expectedUpdatedAt: loadedUpdatedAt } : {}) }
+      : { slug: entrySlug, data: value, ...(!isNew ? { expectedRevisionId: currentEntry?.latestRevisionId ?? null } : {}) };
 
-    const res = await fetch(url, {
+    const savedEntry = await requestEditorApi(url, {
       method,
       body: JSON.stringify(body)
-    });
-
-    if (!res.ok) {
-      const errData: any = await res.json();
-      throw new Error(errData.error || errData.message || 'Failed to save draft');
-    }
-
-    const savedEntry: any = await res.json();
+    }, `Failed to save this ${recordLabel}`);
     broadcastChange(savedEntry.id);
-
-    if (isNew && navigateAfterCreate) {
-      navigate({ to: sectionEntryRoute, params: { slug, entryId: savedEntry.id } });
-      return savedEntry;
-    }
-
-    return refreshEntryState(savedEntry.id);
+    return savedEntry;
   };
 
-  const runEntryAction = async (action: 'save' | 'publish' | 'archive') => {
+  // A new entry opens at its own URL; the route remounts the editor there with the saved state.
+  const openCreatedEntry = (createdEntryId: string) => {
+    leavingEditorRef.current = true;
+    void navigate({ to: sectionEntryRoute, params: { slug, entryId: createdEntryId }, replace: true });
+  };
+
+  const handleRequestError = (error: unknown, action: EditorAction) => {
+    if (error instanceof EditorRequestError && error.status === 409) {
+      // Keep only what the user changed. Re-applying the whole form would write back fields that
+      // someone else (or a checkout, for stock) changed since the editor loaded.
+      const values = form.state.values as Record<string, any>;
+      const baseline = JSON.parse(savedSnapshotRef.current.values);
+      const changes = Object.fromEntries(getChangedFieldNames(values, baseline).map((name) => [name, values[name]]));
+      const slugChanged = entrySlug !== savedSnapshotRef.current.slug;
+      setConflict({ action, changes, slug: slugChanged ? entrySlug : null, latestLoaded: false });
+      setCopyState('idle');
+      return;
+    }
+
+    if (error instanceof EditorRequestError && Object.keys(error.fieldErrors).length > 0) {
+      setServerFieldErrors(error.fieldErrors);
+      setGlobalError('Some fields need attention. Fix them and try again.');
+      return;
+    }
+
+    setGlobalError(error instanceof Error ? error.message : String(error));
+  };
+
+  const resetFeedback = () => {
     setGlobalError('');
+    setNotice('');
+    setServerFieldErrors({});
+    setConflict(null);
+  };
+
+  const runEntryAction = async (action: Exclude<EditorAction, 'restore'>) => {
+    resetFeedback();
     setIsWorking(true);
+    let createdEntryId: string | null = null;
 
     try {
-      if (action === 'save') {
-        await persistDraft();
-        return;
+      let targetEntry = currentEntry;
+      // Publish and archive act on the stored draft, so only save first when there is something to save.
+      if (action === 'save' || isNew || hasUnsavedChangesRef.current) {
+        const savedEntry = await persistDraft();
+        if (isNew) {
+          createdEntryId = savedEntry.id;
+          if (action === 'save') {
+            openCreatedEntry(savedEntry.id);
+            return;
+          }
+          targetEntry = await fetchEntry(savedEntry.id);
+        } else {
+          targetEntry = await refreshEntryState(savedEntry.id);
+        }
       }
 
-      const targetEntry = await persistDraft(false);
+      if (action === 'save') return;
 
-      const res = await fetch(`${basePath}/api/collections/${slug}/entries/${targetEntry.id}/${action}`, {
+      const nextEntry = await requestEditorApi(`${basePath}/api/collections/${slug}/entries/${targetEntry.id}/${action}`, {
         method: 'POST',
-        body: JSON.stringify({ expectedRevisionId: targetEntry.latestRevisionId })
-      });
-
-      if (!res.ok) {
-        const errData: any = await res.json();
-        throw new Error(errData.error || errData.message || `Failed to ${action}`);
-      }
-
+        body: JSON.stringify({ expectedRevisionId: targetEntry.latestRevisionId ?? null })
+      }, `Failed to ${action} this ${recordLabel}`);
       broadcastChange(targetEntry.id);
-      const nextEntry: any = await res.json();
 
-      if (isNew) {
-        navigate({ to: sectionEntryRoute, params: { slug, entryId: nextEntry.id } });
+      if (createdEntryId) {
+        openCreatedEntry(createdEntryId);
         return;
       }
 
       await refreshEntryState(nextEntry.id);
-    } catch (e: any) {
-      setGlobalError(e.message);
+    } catch (error) {
+      if (createdEntryId) {
+        // The draft exists now; open it so a retry updates it instead of creating a duplicate.
+        stashEditorNotice(slug, createdEntryId, `The ${recordLabel} was saved as a draft, but the ${action} failed: ${describeRequestError(error)}`);
+        openCreatedEntry(createdEntryId);
+        return;
+      }
+      handleRequestError(error, action);
     } finally {
-      setIsWorking(false);
+      // Stay disabled while the created entry opens, so a second click cannot create a duplicate.
+      if (!leavingEditorRef.current) setIsWorking(false);
     }
   };
 
   const handleRestoreRevision = async (revisionId: string) => {
     if (!currentEntry?.id) return;
+    if (hasUnsavedChangesRef.current && !window.confirm('Restoring this revision replaces your unsaved changes. Continue?')) return;
 
-    setGlobalError('');
+    resetFeedback();
     setIsWorking(true);
 
     try {
-      const res = await fetch(`${basePath}/api/collections/${slug}/entries/${currentEntry.id}/revisions/${revisionId}/restore`, {
+      const restored = await requestEditorApi(`${basePath}/api/collections/${slug}/entries/${currentEntry.id}/revisions/${revisionId}/restore`, {
         method: 'POST',
-        body: JSON.stringify({ expectedRevisionId: currentEntry.latestRevisionId })
-      });
+        body: JSON.stringify({ expectedRevisionId: currentEntry.latestRevisionId ?? null })
+      }, 'Failed to restore this revision');
 
-      if (!res.ok) {
-        const errData: any = await res.json();
-        throw new Error(errData.error || errData.message || 'Failed to restore revision');
-      }
-
-      const restored: any = await res.json();
       broadcastChange(restored.id);
       await refreshEntryState(restored.id);
-    } catch (e: any) {
-      setGlobalError(e.message);
+    } catch (error) {
+      handleRequestError(error, 'restore');
     } finally {
       setIsWorking(false);
     }
   };
 
+  const conflictFieldNames = conflict ? Object.keys(conflict.changes) : [];
+  const conflictHasChanges = conflictFieldNames.length > 0 || conflict?.slug != null;
+  const conflictChangeLabels = [
+    ...(conflict?.slug != null ? ['Slug'] : []),
+    ...conflictFieldNames.map((name) => describeFieldPath(name, editorFields, conflict?.changes))
+  ].join(', ');
+  const conflictDraftJson = conflict && conflictHasChanges
+    ? JSON.stringify(nativeCollection ? conflict.changes : { ...(conflict.slug != null ? { slug: conflict.slug } : {}), data: conflict.changes }, null, 2)
+    : '';
+
+  const copyConflictDraft = async () => {
+    try {
+      await navigator.clipboard.writeText(conflictDraftJson);
+      setCopyState('copied');
+    } catch {
+      setCopyState('failed');
+    }
+  };
+
+  const loadLatestAfterConflict = async () => {
+    if (!conflict || !currentEntry?.id) return;
+    setGlobalError('');
+    setIsWorking(true);
+
+    try {
+      await refreshEntryState(currentEntry.id);
+      setConflict({ ...conflict, latestLoaded: true });
+    } catch (error) {
+      setGlobalError(describeRequestError(error));
+    } finally {
+      setIsWorking(false);
+    }
+  };
+
+  // Puts only the fields the user changed back on top of the latest version. Every other field keeps
+  // its latest value, so saving neither reverts someone else's edits nor writes back stale stock.
+  const reapplyConflictDraft = () => {
+    if (!conflict) return;
+    let latestValues: Record<string, any>;
+    try {
+      latestValues = supportsRawView && viewMode === 'raw' ? parseEditorValues() : form.state.values as Record<string, any>;
+    } catch (error) {
+      setGlobalError(describeRequestError(error));
+      return;
+    }
+
+    const nextValues = { ...latestValues };
+    for (const [name, value] of Object.entries(conflict.changes)) {
+      if (value === undefined) delete nextValues[name];
+      else nextValues[name] = value;
+    }
+    form.reset(nextValues, { keepDefaultValues: true });
+    if (conflict.slug != null) setEntrySlug(conflict.slug);
+    setRawJsonStr(JSON.stringify(nextValues, null, 2));
+    if (presetCollection) {
+      setSelectedPresetLibraryId(nextValues.libraryId || '');
+      setSelectedPresetComponentSlug(nextValues.componentSlug || '');
+    }
+    setConflict(null);
+    setNotice(`Your changes are back in the form on top of the latest version; other fields keep their latest values. Save to apply them.`);
+  };
+
   const toggleViewMode = () => {
     if (viewMode === 'form') {
        // Sync form values to raw view
-       setRawJsonStr(JSON.stringify(form.state.values, null, 2));
+       const nextRawJson = JSON.stringify(form.state.values, null, 2);
+       rawSnapshotRef.current = nextRawJson;
+       setRawJsonStr(nextRawJson);
        setViewMode('raw');
     } else {
        // Try syncing raw view back to form
        try {
          const parsed = JSON.parse(rawJsonStr);
          // Overwrite entire form state
-         form.reset(parsed);
+         form.reset(parsed, { keepDefaultValues: true });
          setViewMode('form');
          setGlobalError('');
        } catch (e) {
@@ -2085,12 +2488,8 @@ export function CollectionEntryEditor({
     void runEntryAction('save');
   };
 
+  // Variant, value and stock rows are separate records: reload them without resetting the product form.
   const refreshCommerceData = async () => {
-    if (currentEntry?.id) {
-      await refreshEntryState(currentEntry.id);
-      return;
-    }
-
     await router.invalidate();
   };
 
@@ -2098,7 +2497,6 @@ export function CollectionEntryEditor({
   const displayLabel = showProductConfigurator && typeof entryData.name === 'string' && entryData.name
     ? entryData.name
     : initialEntry?.slug || initialEntry?.id?.substring(0, 8) || slug;
-  const recordLabel = nativeCollection ? 'record' : 'entry';
 
   return (
     <div className="space-y-6 w-full pb-24">
@@ -2189,34 +2587,38 @@ export function CollectionEntryEditor({
                              className="w-full bg-black/50 border border-white/10 rounded-lg p-5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 min-h-[500px] shadow-inner text-indigo-100 leading-relaxed"
                          />
                     ) : (
-                        <div className="space-y-8 mt-2">
-                            {editorFields.length === 0 ? (
-                                <p className="text-sm text-zinc-500 italic">No editable fields defined for this {recordLabel}.</p>
-                            ) : presetCollection ? (
-                                <PresetEditorPanel
-                                  form={form}
-                                  selectedLibraryId={selectedPresetLibraryId}
-                                  setSelectedLibraryId={setSelectedPresetLibraryId}
-                                  selectedComponentSlug={selectedPresetComponentSlug}
-                                  setSelectedComponentSlug={setSelectedPresetComponentSlug}
-                                  relationOptions={relationOptions}
-                                  relationSupportEntries={relationSupportEntries}
-                                  collapseStorageKey={collapseStorageKey}
-                                />
-                            ) : (
-                                editorFields.map((field: any) => (
-                                    <FieldRenderer 
-                                        key={field.name} 
-                                        field={field} 
-                                        form={form} 
-                                        basePath=""
-                                        relationOptions={relationOptions}
-                                        relationSupportEntries={relationSupportEntries}
-                                        collapseStorageKey={collapseStorageKey}
+                        <AdminBasePathContext.Provider value={basePath}>
+                          <ServerFieldErrorsContext.Provider value={serverFieldErrorsContext}>
+                            <div className="space-y-8 mt-2">
+                                {editorFields.length === 0 ? (
+                                    <p className="text-sm text-zinc-500 italic">No editable fields defined for this {recordLabel}.</p>
+                                ) : presetCollection ? (
+                                    <PresetEditorPanel
+                                      form={form}
+                                      selectedLibraryId={selectedPresetLibraryId}
+                                      setSelectedLibraryId={setSelectedPresetLibraryId}
+                                      selectedComponentSlug={selectedPresetComponentSlug}
+                                      setSelectedComponentSlug={setSelectedPresetComponentSlug}
+                                      relationOptions={relationOptions}
+                                      relationSupportEntries={relationSupportEntries}
+                                      collapseStorageKey={collapseStorageKey}
                                     />
-                                ))
-                            )}
-                        </div>
+                                ) : (
+                                    editorFields.map((field: any) => (
+                                        <FieldRenderer
+                                            key={field.name}
+                                            field={field}
+                                            form={form}
+                                            fieldPath=""
+                                            relationOptions={relationOptions}
+                                            relationSupportEntries={relationSupportEntries}
+                                            collapseStorageKey={collapseStorageKey}
+                                        />
+                                    ))
+                                )}
+                            </div>
+                          </ServerFieldErrorsContext.Provider>
+                        </AdminBasePathContext.Provider>
                     )}
                  </div>
                </div>
@@ -2251,7 +2653,73 @@ export function CollectionEntryEditor({
                         </Button>
                       </div>
                     )}
-                    {globalError && <p className="text-red-400 text-sm mt-3 text-center">{globalError}</p>}
+                    {hasUnsavedChanges && !isWorking && (
+                      <p className="text-xs text-amber-300 mt-3 text-center">Unsaved changes</p>
+                    )}
+                    {globalError && <p role="alert" className="text-red-400 text-sm mt-3 text-center">{globalError}</p>}
+                    {Object.keys(serverFieldErrors).length > 0 && (
+                      <ul className="mt-3 space-y-1 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                        {Object.entries(serverFieldErrors).map(([fieldPath, messages]) => (
+                          <li key={fieldPath || 'entry'}>
+                            <span className="font-medium">{describeFieldPath(fieldPath, collection.fields || [], form.state.values)}</span>: {messages.join(', ')}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {notice && <p className="text-emerald-300 text-sm mt-3 text-center">{notice}</p>}
+                    {conflict && (
+                      <div role="alert" className="mt-4 space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+                        <div className="font-medium text-amber-50">
+                          {conflict.latestLoaded ? 'The latest saved version is now in the form' : `This ${recordLabel} changed after you opened it`}
+                        </div>
+                        <p className="text-amber-100/80">
+                          {conflict.latestLoaded
+                            ? conflictHasChanges
+                              ? `Your changes to ${conflictChangeLabels} are kept below. Put them back to apply only those fields on top of the latest version, then save. Everything else keeps its latest value.`
+                              : `You had no unsaved changes, so nothing was lost. Check the latest version, then retry the ${conflict.action} if it still applies.`
+                            : `The ${conflict.action} was refused because ${inventoryFieldNames.length > 0 ? 'another editor or an order' : 'someone else'} changed this ${recordLabel}. ${conflictHasChanges
+                              ? `Your changes to ${conflictChangeLabels} are still in the form. Load the latest version to see what changed; your changes stay available here.`
+                              : `You had no unsaved changes. Load the latest version, then retry the ${conflict.action}.`}`}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {conflictHasChanges && (
+                            <Button type="button" size="sm" variant="outline" onClick={() => void copyConflictDraft()}>
+                              {copyState === 'copied' ? 'Copied' : 'Copy my changes'}
+                            </Button>
+                          )}
+                          {conflict.latestLoaded ? (
+                            <>
+                              {conflictHasChanges && (
+                                <Button type="button" size="sm" variant="outline" onClick={reapplyConflictDraft} disabled={isWorking}>
+                                  Put my changes back
+                                </Button>
+                              )}
+                              <Button type="button" size="sm" variant="ghost" onClick={() => setConflict(null)}>
+                                Dismiss
+                              </Button>
+                            </>
+                          ) : (
+                            <Button type="button" size="sm" variant="outline" onClick={() => void loadLatestAfterConflict()} disabled={isWorking}>
+                              Load latest version
+                            </Button>
+                          )}
+                        </div>
+                        {conflictHasChanges && (
+                          <>
+                            {copyState === 'failed' && <p className="text-xs">This browser blocked copying. Select the text below and copy it.</p>}
+                            <details open={copyState === 'failed' || conflict.latestLoaded}>
+                              <summary className="cursor-pointer text-xs text-amber-100/80">My changes as JSON</summary>
+                              <textarea
+                                readOnly
+                                value={conflictDraftJson}
+                                spellCheck={false}
+                                className="mt-2 h-40 w-full rounded-md border border-white/10 bg-black/40 p-2 font-mono text-xs text-zinc-200"
+                              />
+                            </details>
+                          </>
+                        )}
+                      </div>
+                    )}
                  </div>
 
                  {!isNew && currentEntry && (
@@ -2338,8 +2806,10 @@ function CollectionsEntryEditorRoute() {
   const { slug, entryId } = Route.useParams();
   const routerContext = Route.useRouteContext();
 
+  // Keyed by entry so a different entry (including a new entry after its first save) starts from fresh state.
   return (
     <CollectionEntryEditor
+      key={`${slug}:${entryId}`}
       collection={collection}
       entry={entry}
       revisions={revisions}
