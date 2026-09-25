@@ -11,7 +11,7 @@ Talisman CMS and its plugins are licensed under [Apache-2.0](LICENSE.md).
 ## ✨ Key Features
 
 ### 🚀 Deep Astro Native Integration
-Talisman CMS is an Astro integration—it's an Astro integration that sits at the core of your project. Configure your complete backend inside your `astro.config.mjs` and enjoy Vite HMR, custom server hooks, and an optimized server-rendering pipeline that just works out of the box with the Astro ecosystem.
+Talisman CMS integrates directly with Astro. Configure the backend in your `astro.config.mjs` and use Vite HMR, custom server hooks, and an optimized server-rendering pipeline that just works out of the box with the Astro ecosystem.
 
 ### 🛠️ Talisman CMS Dev Toolbar App
 Astro 7's Dev Toolbar is extended natively by Talisman CMS during development:
@@ -137,4 +137,4 @@ This repeater helper follows the same practical pattern used in systems like Pay
 
 ---
 
-*Open sourced and optimized for creating galactic-scale tools with the minimum possible friction.* 🚀
+*Open source under Apache-2.0.* 🚀
