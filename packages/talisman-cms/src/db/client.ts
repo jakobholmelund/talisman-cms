@@ -1,6 +1,7 @@
 import { drizzle } from 'drizzle-orm/d1';
 import { eq, desc, inArray, and, gte, lte, count, type SQL } from 'drizzle-orm';
 import * as schema from './schema';
+import { canAccessCollection } from '../auth/collection-access';
 import {
   buildZodSchemaForFields,
   decodeGlobalData,
@@ -19,6 +20,7 @@ import {
   invalidateEntryCache,
   normalizeEntryDataForRead,
   saveDraftEntry,
+  toEditableEntry,
   triggerPublishingWorkflow
 } from '../versioning';
 
@@ -209,7 +211,6 @@ export type TalismanEnv = {
   STORAGE?: R2Bucket;
   IMAGES?: ImagesBinding;
   KV?: KVNamespace;
-  QUEUE?: Queue;
   [key: string]: unknown;
 };
 
@@ -502,6 +503,44 @@ function applyResolvedRelationships(
   }
 }
 
+// D1 binds at most 100 parameters per statement; the collection and status filters take two.
+const RELATION_ID_CHUNK_SIZE = 90;
+
+/** Fields from the deployed config, so a new relation resolves before the stored copy is synced. */
+async function getRelationFields(collection: any) {
+  const configured = (await getConfiguredCollections()).find((item) => item.slug === collection.slug);
+  if (configured?.fields?.length) return configured.fields;
+  return typeof collection.fields === 'string' ? JSON.parse(collection.fields) : collection.fields;
+}
+
+/**
+ * Relations are embedded in site reads, which have no CMS user, so a target collection that only
+ * administrators may read is left as ids.
+ */
+async function canEmbedRelationTarget(relationSlug: string) {
+  const configured = (await getConfiguredCollections()).find((item) => item.slug === relationSlug);
+  return !configured || canAccessCollection(configured, { role: 'editor' }, 'read');
+}
+
+async function findRelatedEntries(
+  db: any,
+  targetCollectionId: string,
+  ids: string[],
+  versionMode: 'draft' | 'published'
+) {
+  const chunks: string[][] = [];
+  for (let index = 0; index < ids.length; index += RELATION_ID_CHUNK_SIZE) {
+    chunks.push(ids.slice(index, index + RELATION_ID_CHUNK_SIZE));
+  }
+
+  const results = await Promise.all(chunks.map((chunk) => db.query.entries.findMany({
+    where: (e: any, operators: any) => versionMode === 'published'
+      ? operators.and(operators.eq(e.collectionId, targetCollectionId), operators.inArray(e.id, chunk), operators.eq(e.status, 'published'))
+      : operators.and(operators.eq(e.collectionId, targetCollectionId), operators.inArray(e.id, chunk))
+  })));
+  return results.flat();
+}
+
 async function resolveRelationships(
   entriesToResolve: any[],
   collection: any,
@@ -509,9 +548,10 @@ async function resolveRelationships(
   depth = 1,
   versionMode: 'draft' | 'published' = 'published'
 ): Promise<any[]> {
-  if (depth <= 0 || !entriesToResolve || entriesToResolve.length === 0 || !collection.fields) return entriesToResolve;
-  
-  const fieldsConfig = typeof collection.fields === 'string' ? JSON.parse(collection.fields) : collection.fields;
+  if (depth <= 0 || !entriesToResolve || entriesToResolve.length === 0) return entriesToResolve;
+
+  const fieldsConfig = await getRelationFields(collection);
+  if (!fieldsConfig) return entriesToResolve;
   const resolvedEntries = entriesToResolve.map((entry) => {
     const normalized = normalizeEntryDataForRead(entry, versionMode);
     return { ...normalized, data: typeof normalized.data === 'string' ? JSON.parse(normalized.data) : normalized.data };
@@ -527,6 +567,8 @@ async function resolveRelationships(
   const docsByRelation = new Map<string, Map<string, any>>();
 
   for (const [relationSlug, idsToFetch] of idsByRelation.entries()) {
+    if (!(await canEmbedRelationTarget(relationSlug))) continue;
+
     let targetCollection;
     try {
       targetCollection = await ensureCollection(db, relationSlug);
@@ -536,12 +578,7 @@ async function resolveRelationships(
     }
     if (idsToFetch.size === 0) continue;
 
-    let relatedDocs = await db.query.entries.findMany({
-      where: (e: any, operators: any) =>
-        versionMode === 'published'
-          ? operators.and(operators.inArray(e.id, Array.from(idsToFetch)), operators.eq(e.status, 'published'))
-          : operators.inArray(e.id, Array.from(idsToFetch))
-    });
+    let relatedDocs = await findRelatedEntries(db, targetCollection.id, Array.from(idsToFetch), versionMode);
 
     relatedDocs = relatedDocs.map((doc: any) => normalizeEntryDataForRead(doc, versionMode));
 
@@ -799,11 +836,16 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
             collection.fields = generateFieldsFromDrizzle(nativeTable);
           }
         } else {
+          // `slug` is the live slug of a published entry; a draft read looks for the slug the
+          // entry will have after its next publish.
           data = await db.query.entries.findFirst({
             // @ts-ignore
             where: (e, operators) => versionMode === 'published'
               ? operators.and(operators.eq(e.collectionId, collection.id), operators.eq(e.status, 'published'), operators.eq(e.slug, slug))
-              : operators.and(operators.eq(e.collectionId, collection.id), operators.eq(e.slug, slug)),
+              : operators.and(operators.eq(e.collectionId, collection.id), operators.or(
+                operators.eq(e.draftSlug, slug),
+                operators.and(operators.isNull(e.draftSlug), operators.eq(e.slug, slug))
+              )),
             orderBy: (e: any, { desc }: any) => [desc(e.createdAt)]
           });
           if (data) data = normalizeEntryDataForRead(data, versionMode);
@@ -896,6 +938,7 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
               action: opts.status === 'archived' ? 'archive' : 'publish'
             }, DEFAULT_PUBLISHING_WORKFLOW_BINDING);
           }
+          created = toEditableEntry(created);
         }
 
         await invalidateEntryCache(env, collectionSlug);
@@ -936,6 +979,8 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
               action: opts.status === 'archived' ? 'archive' : 'publish'
             }, DEFAULT_PUBLISHING_WORKFLOW_BINDING);
           }
+          // Like the admin API: `slug` is the one just saved, and `publishedSlug` the live one.
+          updated = toEditableEntry(updated);
         }
 
         await invalidateEntryCache(env, collectionSlug, id);
@@ -967,16 +1012,6 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
           await env.KV.delete(`talisman:entries:${collectionSlug}:${id}:published`);
         }
 
-        return true;
-      }
-    },
-    tasks: {
-      async enqueueImageProcessing(mediaId: string) {
-        if (!env.QUEUE) {
-          console.warn('Queues are not bound. Skiping background image processing.');
-          return false;
-        }
-        await env.QUEUE.send({ type: 'process-image', mediaId });
         return true;
       }
     }

@@ -1,5 +1,5 @@
-import React from 'react';
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
+import React, { useEffect, useState } from 'react';
+import { createFileRoute, Link, useLoaderData, useNavigate, useRouter } from '@tanstack/react-router';
 import { Card } from '../../../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
 import { Button } from '../../../components/ui/button';
@@ -11,21 +11,36 @@ export const Route = createFileRoute('/collections/$slug/')({
   loader: async ({ params, context }) => loadCollectionEntriesData(context.adminBasePath || '/admin', params.slug),
 });
 
+const ENTRIES_PAGE_SIZE = 50;
+
+type EntriesPage = { docs: any[]; nextCursor: string | null };
+
+/** One page of the list, newest first; `nextCursor` asks for the page after it. */
+async function fetchEntriesPage(basePath: string, slug: string, cursor?: string | null): Promise<EntriesPage> {
+  const params = new URLSearchParams({ limit: String(ENTRIES_PAGE_SIZE) });
+  if (cursor) params.set('cursor', cursor);
+  const res = await fetch(`${basePath}/api/collections/${slug}/entries?${params}`);
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(payload.error || 'Failed to fetch entries');
+  }
+  return await res.json() as EntriesPage;
+}
+
 export async function loadCollectionEntriesData(basePath: string, slug: string) {
-  const [collectionRes, entriesRes] = await Promise.all([
+  const [collectionRes, page] = await Promise.all([
     fetch(`${basePath}/api/collections`),
-    fetch(`${basePath}/api/collections/${slug}/entries`)
+    fetchEntriesPage(basePath, slug)
   ]);
 
-  if (!collectionRes.ok || !entriesRes.ok) {
+  if (!collectionRes.ok) {
     throw new Error('Failed to fetch data');
   }
 
   const collections = await collectionRes.json() as any[];
   const collection = collections.find((item: any) => item.slug === slug);
-  const entries = await entriesRes.json() as any[];
 
-  return { collection, entries };
+  return { collection, entries: page.docs, nextCursor: page.nextCursor };
 }
 
 function parseEntryData(entry: any) {
@@ -61,16 +76,49 @@ function getStatusBadgeClass(status: string | undefined) {
 
 export function CollectionEntriesPage({
   collection,
-  entries,
+  entries: firstPage,
+  nextCursor: firstCursor,
   slug,
   section
 }: {
   collection: any;
   entries: any[];
+  /** Defaults to the `nextCursor` of the route's loadCollectionEntriesData result. */
+  nextCursor?: string | null;
   slug: string;
   section: AdminSection;
 }) {
   const navigate = useNavigate();
+  const basePath = (useRouter().options.context as { adminBasePath?: string }).adminBasePath || '/admin';
+  const loaderCursor = useLoaderData({ strict: false, select: (data: any) => data?.nextCursor ?? null } as any) as string | null;
+  const initialCursor = firstCursor !== undefined ? firstCursor : loaderCursor;
+  const [entries, setEntries] = useState(firstPage);
+  const [cursor, setCursor] = useState<string | null>(initialCursor);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState('');
+
+  // A new loader result (another collection, or a reload) starts the list again.
+  useEffect(() => {
+    setEntries(firstPage);
+    setCursor(initialCursor);
+    setLoadMoreError('');
+  }, [firstPage, initialCursor]);
+
+  const loadMore = async () => {
+    if (!cursor || isLoadingMore) return;
+    setIsLoadingMore(true);
+    setLoadMoreError('');
+    try {
+      const page = await fetchEntriesPage(basePath, slug, cursor);
+      setEntries((current) => [...current, ...page.docs]);
+      setCursor(page.nextCursor);
+    } catch (error: any) {
+      setLoadMoreError(error.message || 'Failed to load more entries');
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
   const sectionBasePath = getSectionBasePath(section);
   const sectionEntryRoute = getSectionEntryRoute(section);
   const entryLabel = collection?.nativeSchemaMapping ? 'record' : 'entry';
@@ -212,13 +260,24 @@ export function CollectionEntriesPage({
           </TableBody>
         </Table>
       </Card>
+
+      {(cursor || loadMoreError) && (
+        <div className="flex flex-col items-center gap-2">
+          {loadMoreError && <p className="text-sm text-rose-400">{loadMoreError}</p>}
+          {cursor && (
+            <Button type="button" variant="outline" size="sm" disabled={isLoadingMore} onClick={() => void loadMore()}>
+              {isLoadingMore ? 'Loading...' : `Load more ${entryLabel}s`}
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 function CollectionsEntriesRoute() {
-  const { collection, entries } = Route.useLoaderData();
+  const { collection, entries, nextCursor } = Route.useLoaderData();
   const { slug } = Route.useParams();
 
-  return <CollectionEntriesPage collection={collection} entries={entries} slug={slug} section="collections" />;
+  return <CollectionEntriesPage collection={collection} entries={entries} nextCursor={nextCursor} slug={slug} section="collections" />;
 }

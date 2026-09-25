@@ -11,22 +11,33 @@ import {
   buildZodSchemaForCollection,
   buildZodSchemaForFields,
   decodeGlobalData,
+  describeInvalidEntryId,
+  describeInvalidEntrySlug,
+  findUnwritableNativeColumns,
   formatValidationIssues,
   generateFieldsFromDrizzle,
+  getNativeIdColumn,
   isGlobalData,
+  pickConfiguredNativeFields,
   prepareNativeWritePayload,
+  type CollectionHooks,
   type FieldValidationIssue
 } from '../types';
 import { validatePresetPayload } from '../presets';
-import { eq, inArray, desc, and, count, isNull } from 'drizzle-orm';
+import { eq, desc, and, or, lt, count, isNull, sql, getTableColumns } from 'drizzle-orm';
 import {
+  assertPublishableSlug,
   createDraftEntry,
+  getEntryRevision,
   getLatestRevision,
   invalidateEntryCache,
+  isEntryNotFound,
   isRevisionConflict,
+  isSlugConflict,
   listEntryRevisions,
   restoreEntryRevision,
   saveDraftEntry,
+  toEditableEntry,
   triggerPublishingWorkflow
 } from '../versioning';
 
@@ -61,6 +72,309 @@ function timestampKey(value: unknown) {
   return value ?? null;
 }
 
+/** A client error with its status; anything else becomes a generic 500 (see errorResponse). */
+class HttpError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'HttpError';
+    this.status = status;
+  }
+}
+
+/** Wraps an error thrown by a collection hook, whose message is written for editors. */
+class HookError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : 'A collection hook failed', { cause });
+    this.name = 'HookError';
+  }
+}
+
+const INTERNAL_ERROR_MESSAGE = 'The request could not be completed. Check the server logs for details.';
+
+/** Drizzle reports a failed statement as "Failed query: <sql> params: <values>"; D1 adds its own prefix. */
+function isDatabaseError(error: unknown): boolean {
+  for (let current: any = error, depth = 0; current && depth < 5; current = current.cause, depth += 1) {
+    const message = typeof current.message === 'string' ? current.message : '';
+    if (current.name === 'DrizzleQueryError' || message.startsWith('Failed query:') || /D1_ERROR|SQLITE_/.test(message)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Turns a SQLite constraint failure into a message without the statement or its values. */
+function describeConstraintError(error: unknown): { status: number; error: string } | null {
+  for (let current: any = error, depth = 0; current && depth < 5; current = current.cause, depth += 1) {
+    const message = typeof current.message === 'string' ? current.message : '';
+    // The statement text of a DrizzleQueryError holds the submitted values, so only its cause is read.
+    if (message.startsWith('Failed query:')) continue;
+    const columns = message.match(/constraint failed: ([\w.]+(?:, [\w.]+)*)/)?.[1]
+      ?.split(', ').map((column: string) => column.split('.').pop()).join(', ');
+    if (/UNIQUE constraint failed/i.test(message)) {
+      return { status: 409, error: columns ? `Another record already uses this ${columns}.` : 'Another record already uses this value.' };
+    }
+    if (/NOT NULL constraint failed/i.test(message)) {
+      return { status: 400, error: columns ? `A value is required for ${columns}.` : 'A required value is missing.' };
+    }
+    if (/FOREIGN KEY constraint failed/i.test(message)) {
+      return { status: 409, error: 'This change conflicts with a related record.' };
+    }
+    if (/CHECK constraint failed/i.test(message)) {
+      return { status: 400, error: 'A value is not allowed.' };
+    }
+    if (/SQLITE_TOOBIG|string or blob too big/i.test(message)) {
+      return { status: 413, error: 'This content is too large to store.' };
+    }
+  }
+  return null;
+}
+
+/**
+ * Client mistakes get a 4xx with a message for editors. Other failures are logged and answered
+ * with a generic 500, since database errors carry the SQL statement and the submitted values.
+ */
+function errorResponse(error: unknown, context: string) {
+  if (error instanceof HttpError) {
+    return Response.json({ error: error.message }, { status: error.status });
+  }
+  if (isRevisionConflict(error) || isSlugConflict(error)) {
+    return Response.json({ error: (error as Error).message }, { status: 409 });
+  }
+  if (isEntryNotFound(error)) {
+    return Response.json({ error: (error as Error).message }, { status: 404 });
+  }
+
+  const constraint = describeConstraintError(error);
+  if (constraint) {
+    return Response.json({ error: constraint.error }, { status: constraint.status });
+  }
+
+  console.error(`[talisman-cms] ${context}:`, error);
+  const message = error instanceof HookError && !isDatabaseError(error) ? error.message : INTERNAL_ERROR_MESSAGE;
+  return Response.json({ status: 'error', error: message, message }, { status: 500 });
+}
+
+function wrapCollectionHooks(hooks: CollectionHooks | undefined): CollectionHooks | undefined {
+  if (!hooks) return hooks;
+  const wrap = (list: ((args: any) => any)[] | undefined) => list?.map((hook) => async (args: any) => {
+    try {
+      return await hook(args);
+    } catch (error) {
+      throw new HookError(error);
+    }
+  });
+
+  return {
+    beforeValidate: wrap(hooks.beforeValidate),
+    beforeChange: wrap(hooks.beforeChange),
+    afterChange: wrap(hooks.afterChange),
+    beforeDelete: wrap(hooks.beforeDelete),
+    afterDelete: wrap(hooks.afterDelete),
+  };
+}
+
+// D1 rows are capped near 2 MB and every save also stores a revision copy of the data.
+const MAX_REQUEST_BODY_BYTES = 2 * 1024 * 1024;
+
+async function readJsonBody(request: Request): Promise<unknown> {
+  if (Number(request.headers.get('content-length')) > MAX_REQUEST_BODY_BYTES) {
+    throw new HttpError(413, 'The request body is too large.');
+  }
+  const text = await request.text();
+  if (text.length > MAX_REQUEST_BODY_BYTES) {
+    throw new HttpError(413, 'The request body is too large.');
+  }
+  if (!text.trim()) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new HttpError(400, 'The request body is not valid JSON.');
+  }
+}
+
+async function readJsonObject(request: Request) {
+  const body = await readJsonBody(request);
+  if (!isGlobalData(body)) throw new HttpError(400, 'The request body must be a JSON object.');
+  return body;
+}
+
+/** Entry data may also arrive as JSON text; either way it must be an object. */
+function readEntryData(data: unknown): Record<string, any> {
+  let value = data;
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      throw new HttpError(400, 'Entry data is not valid JSON.');
+    }
+  }
+  if (!isGlobalData(value)) throw new HttpError(400, 'Entry data must be a JSON object.');
+  return value;
+}
+
+/** Path segments arrive percent-encoded; lookups use the decoded id. */
+function decodePathSegment(segment: string) {
+  let value: string;
+  try {
+    value = decodeURIComponent(segment);
+  } catch {
+    throw new HttpError(400, 'The entry id in the path is not valid.');
+  }
+  if (value.length > 512) throw new HttpError(400, 'The entry id in the path is too long.');
+  return value;
+}
+
+function invalidInput(message: string, path: PropertyKey[] = []) {
+  return validationErrorResponse([{ path, message }]);
+}
+
+const isBlank = (value: unknown) => value === undefined || value === null || value === '';
+
+/** Columns the server sets itself; a client may send them back, and they are dropped. */
+function nativeSystemColumns(collectionConfig: (typeof configCollections)[number]) {
+  return [getNativeIdColumn(collectionConfig), 'createdAt', 'updatedAt'];
+}
+
+function unwritableColumnsResponse(columns: string[]) {
+  return validationErrorResponse(columns.map((column) => ({
+    path: [column],
+    message: 'Not a field of this collection, so it cannot be saved here'
+  })));
+}
+
+/** A native id may be a whole number (integer keys) or text in the entry id format. */
+function describeInvalidNativeId(value: unknown) {
+  if (isBlank(value)) return null;
+  if (typeof value === 'number') return Number.isSafeInteger(value) ? null : 'Record id must be a whole number or text';
+  return describeInvalidEntryId(value);
+}
+
+const MAX_PAGE_SIZE = 200;
+
+/** `limit` (1-200) asks for one page and `cursor` continues after the previous one. Null means the whole list. */
+function readPageRequest(url: URL) {
+  const limitParam = url.searchParams.get('limit');
+  const cursor = url.searchParams.get('cursor');
+  if (limitParam === null) {
+    if (cursor !== null) throw new HttpError(400, 'cursor needs a limit.');
+    return null;
+  }
+
+  const limit = Number(limitParam);
+  if (!/^\d+$/.test(limitParam) || limit < 1 || limit > MAX_PAGE_SIZE) {
+    throw new HttpError(400, `limit must be a whole number from 1 to ${MAX_PAGE_SIZE}.`);
+  }
+  return { limit, cursor: cursor || null };
+}
+
+function encodeCursor(position: unknown[]) {
+  const bytes = new TextEncoder().encode(JSON.stringify(position));
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function decodeCursor(cursor: string): unknown[] {
+  try {
+    const binary = atob(cursor.replace(/-/g, '+').replace(/_/g, '/'));
+    const position = JSON.parse(new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0))));
+    if (Array.isArray(position)) return position;
+  } catch {
+    // Reported below.
+  }
+  throw new HttpError(400, 'The cursor is not valid.');
+}
+
+const MEDIA_SCHEMA_PATH = 'talisman-cms/db/media';
+// Set by the upload from the stored file; changing them would repoint or relabel the asset.
+const UPLOAD_MANAGED_MEDIA_FIELDS = ['url', 'mimeType'];
+
+function isSystemMediaCollection(collectionConfig: { nativeSchemaMapping?: { schemaPath?: string } }) {
+  return collectionConfig.nativeSchemaMapping?.schemaPath === MEDIA_SCHEMA_PATH;
+}
+
+/** Work that should run once per isolate and D1 database, keyed by the binding. */
+function oncePerDatabase(runs: WeakMap<object, Promise<void>>, binding: unknown, run: () => Promise<void>) {
+  const key = binding && typeof binding === 'object' ? binding : null;
+  if (!key) return run();
+
+  let pending = runs.get(key);
+  if (!pending) {
+    pending = run();
+    runs.set(key, pending);
+    // A failed run is retried by the next request.
+    pending.catch(() => runs.delete(key));
+  }
+  return pending;
+}
+
+function configuredCollectionFields(collectionConfig: (typeof configCollections)[number]) {
+  const fields = collectionConfig.fields || [];
+  if (fields.length === 0 && collectionConfig.nativeSchemaMapping && nativeSchemas[collectionConfig.slug]) {
+    return generateFieldsFromDrizzle(nativeSchemas[collectionConfig.slug]);
+  }
+  return fields;
+}
+
+const collectionSyncs = new WeakMap<object, Promise<void>>();
+
+/**
+ * Entries reference a galaxy_collections row per configured collection, which also mirrors its
+ * name and fields. The sync reads every row once per isolate and writes only rows that are
+ * missing or changed, in one batch, so admin reads do not rewrite the table.
+ */
+function syncCollectionDefinitions(db: ReturnType<typeof createDbClient>, binding: unknown) {
+  return oncePerDatabase(collectionSyncs, binding, async () => {
+    const stored = await db.select({
+      id: schema.collections.id,
+      slug: schema.collections.slug,
+      name: schema.collections.name,
+      fields: schema.collections.fields,
+    }).from(schema.collections);
+    const storedBySlug = new Map(stored.map((row) => [row.slug, row]));
+    const now = new Date();
+    const missing: (typeof schema.collections.$inferInsert)[] = [];
+    const writes: any[] = [];
+
+    for (const collectionConfig of configCollections) {
+      const fields = configuredCollectionFields(collectionConfig);
+      const row = storedBySlug.get(collectionConfig.slug);
+      if (!row) {
+        missing.push({ id: crypto.randomUUID(), name: collectionConfig.name, slug: collectionConfig.slug, fields, createdAt: now });
+      } else if (row.name !== collectionConfig.name || JSON.stringify(row.fields) !== JSON.stringify(fields)) {
+        writes.push(db.update(schema.collections).set({ name: collectionConfig.name, fields }).where(eq(schema.collections.id, row.id)));
+      }
+    }
+
+    // Ten rows of five values stay under D1's 100 bound parameters per statement.
+    for (let index = 0; index < missing.length; index += 10) {
+      writes.push(db.insert(schema.collections).values(missing.slice(index, index + 10))
+        .onConflictDoNothing({ target: schema.collections.slug }));
+    }
+
+    if (writes.length > 0) await db.batch(writes as [any, ...any[]]);
+  });
+}
+
+/** Row counts for native tables in one statement, since D1 limits the queries per request. */
+async function countNativeRows(db: ReturnType<typeof createDbClient>, collections: typeof configCollections) {
+  const counts = new Map<string, number>();
+  const counted = collections.filter((collection) => collection.nativeSchemaMapping && nativeSchemas[collection.slug]);
+  if (counted.length === 0) return counts;
+
+  try {
+    const row = await db.get<Record<string, unknown>>(sql`SELECT ${sql.join(counted.map((collection, index) =>
+      sql`(SELECT count(*) FROM ${nativeSchemas[collection.slug]}) AS ${sql.identifier(`c${index}`)}`), sql`, `)}`);
+    counted.forEach((collection, index) => counts.set(collection.slug, Number(row?.[`c${index}`] ?? 0)));
+  } catch (error) {
+    console.error('[talisman-cms] Could not count native collection rows:', error);
+  }
+  return counts;
+}
+
 /**
  * An entry with revisions must name the latest one it was loaded with; without one the result is
  * undefined (answer 428). An entry loaded without revisions (seeded straight into D1) may send null
@@ -91,24 +405,22 @@ function validateCollectionPayload(slug: string, data: Record<string, any>) {
   };
 }
 
-async function resolveCollectionContext(db: ReturnType<typeof createDbClient>, slug: string) {
+async function resolveCollectionContext(db: ReturnType<typeof createDbClient>, slug: string, binding: unknown) {
   const configuredCollection = configCollections.find(c => c.slug === slug);
   const collectionConfig = configuredCollection
-    ? { ...configuredCollection, hooks: collectionHooks[slug] }
+    ? { ...configuredCollection, hooks: wrapCollectionHooks(collectionHooks[slug]) }
     : undefined;
   if (!collectionConfig) {
-    throw new Error(`Collection ${slug} not found in configuration`);
+    throw new HttpError(404, `Collection ${slug} not found`);
   }
 
+  await syncCollectionDefinitions(db, binding);
   let collection = await db.query.collections.findFirst({
     // @ts-ignore
     where: (c, { eq }) => eq(c.slug, slug)
   });
 
-  let activeFields = collectionConfig.fields || [];
-  if (activeFields.length === 0 && collectionConfig.nativeSchemaMapping && nativeSchemas[slug]) {
-    activeFields = generateFieldsFromDrizzle(nativeSchemas[slug]);
-  }
+  const activeFields = configuredCollectionFields(collectionConfig);
 
   if (!collection) {
     const id = Date.now().toString() + '-' + Math.random().toString(36).substring(7);
@@ -141,7 +453,14 @@ async function resolveCollectionContext(db: ReturnType<typeof createDbClient>, s
   };
 }
 
-async function syncConfiguredGlobals(db: ReturnType<typeof createDbClient>) {
+const globalSyncs = new WeakMap<object, Promise<void>>();
+
+/** Creates the configured globals' rows and mirrors their names, once per isolate. */
+function syncConfiguredGlobals(db: ReturnType<typeof createDbClient>, binding: unknown) {
+  return oncePerDatabase(globalSyncs, binding, () => writeConfiguredGlobals(db));
+}
+
+async function writeConfiguredGlobals(db: ReturnType<typeof createDbClient>) {
   for (const globalConfig of configGlobals) {
     const existing = await db.query.globals.findFirst({
       // @ts-ignore
@@ -238,7 +557,9 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         headers: { 'Content-Type': 'application/json' }
       });
     } catch (e: any) {
-      return new Response(JSON.stringify({ status: 'error', message: e.message }), {
+      // This route answers before authentication, so binding and driver errors stay in the logs.
+      console.error('[talisman-cms] Health check failed:', e);
+      return new Response(JSON.stringify({ status: 'error' }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' }
       });
@@ -260,33 +581,16 @@ export const ALL: APIRoute = async ({ request, locals }) => {
     try {
       const { env } = await import('cloudflare:workers');
       const db = createDbClient(env as any);
-      
-      // Auto-sync code-first collections to DB for foreign-key constraints
+
+      // A few statements whatever the number of collections: the rows are synced once per isolate,
+      // then read in one query, with one count for entries and one for every native table.
+      await syncCollectionDefinitions(db, (env as any).DB);
       const visibleCollections = configCollections.filter(col => canAccessCollection(col, user, 'read'));
-      for (const col of visibleCollections) {
-        
-        let activeFields = col.fields || [];
-        if (activeFields.length === 0 && col.nativeSchemaMapping && nativeSchemas[col.slug]) {
-          activeFields = generateFieldsFromDrizzle(nativeSchemas[col.slug]);
-        }
-        
-        // @ts-ignore
-        const exists = await db.query.collections.findFirst({ where: (c, { eq }) => eq(c.slug, col.slug) });
-        if (!exists) {
-          await db.insert(schema.collections).values({
-            id: Date.now().toString() + '-' + Math.random().toString(36).substring(7),
-            name: col.name,
-            slug: col.slug,
-            fields: activeFields,
-            createdAt: new Date()
-          });
-        } else {
-          // Sync fields mapping
-          await db.update(schema.collections).set({ fields: activeFields }).where(eq(schema.collections.id, exists.id));
-        }
-      }
-      
-      const persistedCollections = await db.query.collections.findMany();
+      const persistedCollections = await db.select({
+        id: schema.collections.id,
+        slug: schema.collections.slug,
+        createdAt: schema.collections.createdAt,
+      }).from(schema.collections);
       const persistedBySlug = new Map(persistedCollections.map(collection => [collection.slug, collection]));
 
       const entryCounts = await db.select({
@@ -294,20 +598,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         total: count()
       }).from(schema.entries).groupBy(schema.entries.collectionId);
       const entryCountById = new Map(entryCounts.map(row => [row.collectionId, row.total]));
-
-      const nativeCounts = await Promise.all(visibleCollections.map(async collection => {
-        const nativeTable = collection.nativeSchemaMapping && nativeSchemas[collection.slug];
-        if (!nativeTable) return [collection.slug, null] as const;
-
-        try {
-          const [result] = await db.select({ total: count() }).from(nativeTable);
-          return [collection.slug, result?.total ?? 0] as const;
-        } catch (error) {
-          console.error(`[talisman-cms] Could not count ${collection.slug}:`, error);
-          return [collection.slug, null] as const;
-        }
-      }));
-      const nativeCountBySlug = new Map(nativeCounts);
+      const nativeCountBySlug = await countNativeRows(db, visibleCollections);
 
       // Return the config collections augmented with persisted metadata and generated fields.
       const augmentedCollections = visibleCollections.map(c => {
@@ -316,7 +607,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
           ? nativeCountBySlug.get(c.slug) ?? null
           : persisted ? entryCountById.get(persisted.id) ?? 0 : 0;
         if ((!c.fields || c.fields.length === 0) && c.nativeSchemaMapping && nativeSchemas[c.slug]) {
-          return { ...c, id: persisted?.id, createdAt: persisted?.createdAt, itemCount, fields: generateFieldsFromDrizzle(nativeSchemas[c.slug]) };
+          return { ...c, id: persisted?.id, createdAt: persisted?.createdAt, itemCount, fields: configuredCollectionFields(c) };
         }
         return { ...c, id: persisted?.id, createdAt: persisted?.createdAt, itemCount };
       });
@@ -326,11 +617,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         headers: { 'Content-Type': 'application/json' }
       });
     } catch (e: any) {
-      console.error('[talisman-cms] Error in /api/collections:', e);
-      return new Response(JSON.stringify({ status: 'error', message: e.message }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return errorResponse(e, 'Error in /api/collections');
     }
   }
 
@@ -346,7 +633,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
 
       if (request.method === 'GET') {
         if (!slug) {
-          await syncConfiguredGlobals(db);
+          await syncConfiguredGlobals(db, env.DB);
           const allGlobals = await db.query.globals.findMany();
           const configuredOrder = new Map(configGlobals.map((globalConfig, index) => [globalConfig.slug, index]));
           const list = allGlobals
@@ -378,8 +665,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
       
       if (request.method === 'POST') {
         if (!slug) {
-          const bodyStr = await request.text();
-          const body = bodyStr ? JSON.parse(bodyStr) : {};
+          const body = await readJsonObject(request);
           const requestedSlug = typeof body.slug === 'string' ? body.slug.trim() : '';
           const requestedName = typeof body.name === 'string' ? body.name.trim() : '';
 
@@ -417,12 +703,16 @@ export const ALL: APIRoute = async ({ request, locals }) => {
           return new Response(JSON.stringify(created), { status: 201, headers: { 'Content-Type': 'application/json' } });
         }
         
-        const bodyStr = await request.text();
-        let data = bodyStr ? JSON.parse(bodyStr) : {};
+        let data = await readJsonBody(request);
         if (!isGlobalData(data)) {
           return Response.json({ error: 'Global data must be a JSON object', fieldErrors: {} }, { status: 400 });
         }
         const { globalConfig, globalRecord: existing } = await resolveGlobalContext(db, slug);
+        // Saving to a slug that is neither configured nor stored would create a global, which
+        // POST /api/globals keeps to administrators.
+        if (!globalConfig && !existing && user.role !== 'admin') {
+          return Response.json({ error: 'Only administrators can create globals' }, { status: 403 });
+        }
 
         if (globalConfig?.fields?.length) {
           const parsed = buildZodSchemaForFields(globalConfig.fields).safeParse(data);
@@ -467,21 +757,22 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         return new Response(JSON.stringify(updated && withDecodedGlobalData(updated)), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
     } catch (e: any) {
-      return new Response(JSON.stringify({ status: 'error', message: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      return errorResponse(e, 'Error in /api/globals');
     }
   }
 
-  const revisionsMatch = path.match(/\/api\/collections\/([^/]+)\/entries\/([^/]+)\/revisions(?:\/([^/]+)\/restore)?$/);
+  const revisionsMatch = path.match(/\/api\/collections\/([^/]+)\/entries\/([^/]+)\/revisions(?:\/([^/]+)(\/restore)?)?$/);
   if (revisionsMatch) {
     const slug = revisionsMatch[1];
-    const entryId = revisionsMatch[2];
-    const revisionId = revisionsMatch[3];
+    const isRestore = Boolean(revisionsMatch[4]);
 
     try {
+      const entryId = decodePathSegment(revisionsMatch[2]);
+      const revisionId = revisionsMatch[3] ? decodePathSegment(revisionsMatch[3]) : undefined;
       const { env } = await import('cloudflare:workers') as unknown as { env: TalismanEnv };
       // @ts-ignore
       const db = createDbClient(env as any);
-      const { collection, collectionConfig, nativeTable } = await resolveCollectionContext(db, slug);
+      const { collection, collectionConfig, nativeTable } = await resolveCollectionContext(db, slug, env.DB);
 
       if (!canAccessCollection(collectionConfig, user, request.method === 'GET' ? 'read' : 'update') ||
         (request.method !== 'GET' && collectionConfig.readOnly)) {
@@ -493,36 +784,46 @@ export const ALL: APIRoute = async ({ request, locals }) => {
       }
 
       if (request.method === 'GET' && !revisionId) {
-        const revisions = await listEntryRevisions(db as any, collection!.id, entryId);
+        // The history lists metadata; a revision's data is loaded on its own or with ?includeData=true.
+        const includeData = ['1', 'true'].includes(url.searchParams.get('includeData') ?? '');
+        const page = readPageRequest(url);
+        if (page?.cursor) throw new HttpError(400, 'Revision lists take a limit but no cursor.');
+        const revisions = await listEntryRevisions(db as any, collection!.id, entryId, { includeData, limit: page?.limit });
         return new Response(JSON.stringify(revisions), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
 
-      if (request.method === 'POST' && revisionId) {
+      if (request.method === 'GET' && revisionId && !isRestore) {
+        const revision = await getEntryRevision(db as any, collection!.id, entryId, revisionId);
+        return new Response(JSON.stringify(revision), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+
+      if (request.method === 'POST' && revisionId && isRestore) {
         const body = await request.json().catch(() => ({})) as { expectedRevisionId?: unknown };
         if (typeof body.expectedRevisionId !== 'string' || !body.expectedRevisionId) {
           return Response.json({ error: 'expectedRevisionId is required' }, { status: 428 });
         }
         const restored = await restoreEntryRevision(db as any, collection as any, entryId, revisionId, body.expectedRevisionId);
         await invalidateEntryCache(env, slug, entryId);
-        return new Response(JSON.stringify(restored), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify(toEditableEntry(restored)), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
+
+      return Response.json({ error: 'Method not allowed' }, { status: 405 });
     } catch (e: any) {
-      if (isRevisionConflict(e)) return Response.json({ error: e.message }, { status: 409 });
-      return new Response(JSON.stringify({ status: 'error', message: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      return errorResponse(e, 'Error in the revisions API');
     }
   }
 
   const transitionMatch = path.match(/\/api\/collections\/([^/]+)\/entries\/([^/]+)\/(publish|archive)$/);
   if (transitionMatch) {
     const slug = transitionMatch[1];
-    const entryId = transitionMatch[2];
     const action = transitionMatch[3] as 'publish' | 'archive';
 
     try {
+      const entryId = decodePathSegment(transitionMatch[2]);
       const { env } = await import('cloudflare:workers') as unknown as { env: TalismanEnv };
       // @ts-ignore
       const db = createDbClient(env as any);
-      const { collection, collectionConfig, activeFields, nativeTable } = await resolveCollectionContext(db, slug);
+      const { collection, collectionConfig, activeFields, nativeTable } = await resolveCollectionContext(db, slug, env.DB);
 
       if (!canAccessCollection(collectionConfig, user, 'update') || collectionConfig.readOnly) {
         return Response.json({ error: 'Collection access denied' }, { status: 403 });
@@ -553,6 +854,8 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         const draftData = typeof entry.data === 'string' ? JSON.parse(entry.data) : entry.data;
         const parsed = buildZodSchemaForCollection({ ...collectionConfig, fields: activeFields }).safeParse(draftData ?? {});
         if (!parsed.success) return validationErrorResponse(parsed.error.issues);
+        // Checked here too so a publish run by a Workflow fails fast with 409.
+        await assertPublishableSlug(db as any, entry);
       }
 
       const updated = await triggerPublishingWorkflow(env, {
@@ -563,10 +866,9 @@ export const ALL: APIRoute = async ({ request, locals }) => {
       }, publishing.workflowBinding);
 
       await invalidateEntryCache(env, slug, entryId);
-      return new Response(JSON.stringify(updated), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify(toEditableEntry(updated)), { status: 200, headers: { 'Content-Type': 'application/json' } });
     } catch (e: any) {
-      if (isRevisionConflict(e)) return Response.json({ error: e.message }, { status: 409 });
-      return new Response(JSON.stringify({ status: 'error', message: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      return errorResponse(e, `Error in the ${action} API`);
     }
   }
 
@@ -574,9 +876,9 @@ export const ALL: APIRoute = async ({ request, locals }) => {
   const entriesMatch = path.match(/\/api\/collections\/([^/]+)\/entries(?:\/([^/]+))?$/);
   if (entriesMatch) {
     const slug = entriesMatch[1];
-    const entryId = entriesMatch[2];
     
     try {
+      const entryId = entriesMatch[2] === undefined ? undefined : decodePathSegment(entriesMatch[2]);
       const { env } = await import('cloudflare:workers') as unknown as { env: TalismanEnv };
       // @ts-ignore
       const db = createDbClient(env as any);
@@ -587,7 +889,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         activeFields,
         nativeTable,
         nativeIdCol
-      } = await resolveCollectionContext(db, slug);
+      } = await resolveCollectionContext(db, slug, env.DB);
 
       const operation: CollectionOperation = request.method === 'GET' ? 'read'
         : request.method === 'POST' ? 'create'
@@ -598,19 +900,53 @@ export const ALL: APIRoute = async ({ request, locals }) => {
 
       if (request.method === 'GET') {
         if (!entryId) {
-          if (nativeTable) {
+          // Without `limit` the whole list comes back as an array; with it, one page and the cursor after it.
+          const page = readPageRequest(url);
+          if (nativeTable && !page) {
              const rows = await db.select().from(nativeTable);
              // Wrap in CMS envelope payload
              const mapped = rows.map((r: any) => mapNativeEntry(r, collection!.id, nativeIdCol));
              return new Response(JSON.stringify(mapped), { status: 200, headers: { 'Content-Type': 'application/json' } });
-          } else {
+          } else if (nativeTable && page) {
+            // Native tables differ in their id and timestamp columns, so pages run newest first by rowid.
+            const rowid = sql<number>`rowid`;
+            const after = page.cursor === null ? undefined : decodeCursor(page.cursor)[0];
+            if (after !== undefined && !Number.isSafeInteger(after)) throw new HttpError(400, 'The cursor is not valid.');
+            const rows: any[] = await db.select({ ...getTableColumns(nativeTable), __rowid: rowid }).from(nativeTable)
+              .where(after === undefined ? undefined : lt(rowid, after as number))
+              .orderBy(desc(rowid))
+              .limit(page.limit + 1);
+            const pageRows = rows.slice(0, page.limit);
+            const nextCursor = rows.length > page.limit ? encodeCursor([pageRows[pageRows.length - 1].__rowid]) : null;
+            const docs = pageRows.map(({ __rowid, ...row }) => mapNativeEntry(row, collection!.id, nativeIdCol));
+            return Response.json({ docs, nextCursor });
+          } else if (!page) {
             const allEntries = await db.query.entries.findMany({
               // @ts-ignore
               where: (e: any, { eq }: any) => eq(e.collectionId, collection!.id),
               // @ts-ignore
               orderBy: (e: any, { desc }: any) => [desc(e.createdAt)]
             });
-            return new Response(JSON.stringify(allEntries), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            return new Response(JSON.stringify(allEntries.map(toEditableEntry)), { status: 200, headers: { 'Content-Type': 'application/json' } });
+          } else {
+            const entries = schema.entries;
+            let after;
+            if (page.cursor !== null) {
+              const [createdAtMs, afterId] = decodeCursor(page.cursor);
+              if (typeof createdAtMs !== 'number' || !Number.isFinite(createdAtMs) || typeof afterId !== 'string') {
+                throw new HttpError(400, 'The cursor is not valid.');
+              }
+              const createdAt = new Date(createdAtMs);
+              after = or(lt(entries.createdAt, createdAt), and(eq(entries.createdAt, createdAt), lt(entries.id, afterId)));
+            }
+            const rows = await db.select().from(entries)
+              .where(and(eq(entries.collectionId, collection!.id), after))
+              .orderBy(desc(entries.createdAt), desc(entries.id))
+              .limit(page.limit + 1);
+            const pageRows = rows.slice(0, page.limit);
+            const last = pageRows[pageRows.length - 1];
+            const nextCursor = rows.length > page.limit ? encodeCursor([last.createdAt.getTime(), last.id]) : null;
+            return Response.json({ docs: pageRows.map(toEditableEntry), nextCursor });
           }
         } else {
           // Get specific entry
@@ -627,7 +963,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
             
             if (!entry) return new Response(JSON.stringify({ error: 'Entry not found' }), { status: 404 });
             const latestRevision = await getLatestRevision(db as any, entryId);
-            return new Response(JSON.stringify({ ...entry, latestRevisionId: latestRevision?.id ?? null }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            return new Response(JSON.stringify({ ...toEditableEntry(entry), latestRevisionId: latestRevision?.id ?? null }), { status: 200, headers: { 'Content-Type': 'application/json' } });
           }
         }
       }
@@ -637,9 +973,31 @@ export const ALL: APIRoute = async ({ request, locals }) => {
       }
 
       if (request.method === 'POST') {
-        const bodyStr = await request.text();
-        const payload = bodyStr ? JSON.parse(bodyStr) : {};
-        let { id: userProvidedId, data = {}, slug: entrySlug } = payload;
+        if (isSystemMediaCollection(collectionConfig)) {
+          return Response.json({ error: 'Media records are created by uploading a file to the media library.' }, { status: 403 });
+        }
+
+        const payload = await readJsonObject(request);
+        const { id: userProvidedId, slug: entrySlug } = payload;
+        let data: Record<string, any> = payload.data === undefined ? {} : readEntryData(payload.data);
+
+        if (nativeTable) {
+          // The configured fields are the columns a client may write; hooks can still set others.
+          const unwritable = findUnwritableNativeColumns(activeFields, nativeTable, data, {
+            ignore: nativeSystemColumns(collectionConfig)
+          });
+          if (unwritable.length > 0) return unwritableColumnsResponse(unwritable);
+          data = pickConfiguredNativeFields(activeFields, nativeTable, data);
+          for (const [value, path] of [[userProvidedId, []], [data[nativeIdCol], [nativeIdCol]]] as const) {
+            const problem = describeInvalidNativeId(value);
+            if (problem) return invalidInput(problem, [...path]);
+          }
+        } else {
+          const idProblem = isBlank(userProvidedId) ? null : describeInvalidEntryId(userProvidedId);
+          if (idProblem) return invalidInput(idProblem);
+          const slugProblem = isBlank(entrySlug) ? null : describeInvalidEntrySlug(entrySlug);
+          if (slugProblem) return invalidInput(slugProblem);
+        }
 
         if (collectionConfig.hooks?.beforeValidate) {
           for (const hook of collectionConfig.hooks.beforeValidate) {
@@ -707,8 +1065,8 @@ export const ALL: APIRoute = async ({ request, locals }) => {
            });
         } else {
           const created = await createDraftEntry(db as any, collection as any, validatedData, {
-            id: userProvidedId,
-            slug: entrySlug
+            id: isBlank(userProvidedId) ? undefined : userProvidedId,
+            slug: isBlank(entrySlug) ? undefined : entrySlug
           });
           await invalidateEntryCache(env, slug);
 
@@ -718,16 +1076,16 @@ export const ALL: APIRoute = async ({ request, locals }) => {
              }
           }
 
-          return new Response(JSON.stringify(created), { status: 201, headers: { 'Content-Type': 'application/json' } });
+          return new Response(JSON.stringify(toEditableEntry(created)), { status: 201, headers: { 'Content-Type': 'application/json' } });
         }
       }
 
       if (request.method === 'PUT') {
         if (!entryId) return new Response(JSON.stringify({ error: 'Entry ID required for PUT' }), { status: 400 });
         
-        const bodyStr = await request.text();
-        const payload = bodyStr ? JSON.parse(bodyStr) : {};
-        let { data, slug: entrySlug } = payload;
+        const payload = await readJsonObject(request);
+        const { slug: entrySlug } = payload;
+        let data: Record<string, any> | undefined = payload.data === undefined ? undefined : readEntryData(payload.data);
         
         if (nativeTable) {
            // Update native table
@@ -740,17 +1098,35 @@ export const ALL: APIRoute = async ({ request, locals }) => {
            if (checksUpdatedAt && timestampKey(rows[0].updatedAt) !== timestampKey(payload.expectedUpdatedAt)) {
              return Response.json({ error: NATIVE_RECORD_CONFLICT_MESSAGE }, { status: 409 });
            }
+
+           if (data !== undefined) {
+             // The configured fields are the columns a client may write; hooks can still set others.
+             const unwritable = findUnwritableNativeColumns(activeFields, nativeTable, data, {
+               ignore: nativeSystemColumns(collectionConfig),
+               stored: rows[0]
+             });
+             if (unwritable.length > 0) return unwritableColumnsResponse(unwritable);
+             const submitted = pickConfiguredNativeFields(activeFields, nativeTable, data);
+             if (isSystemMediaCollection(collectionConfig)) {
+               const changed = UPLOAD_MANAGED_MEDIA_FIELDS.filter((field) => field in submitted && submitted[field] !== rows[0][field]);
+               if (changed.length > 0) {
+                 return validationErrorResponse(changed.map((field) => ({ path: [field], message: 'Set by the upload and cannot be changed' })));
+               }
+               for (const field of UPLOAD_MANAGED_MEDIA_FIELDS) delete submitted[field];
+             }
+             data = submitted;
+           }
            
            if (data !== undefined && collectionConfig.hooks?.beforeValidate) {
              for (const hook of collectionConfig.hooks.beforeValidate) {
-               const hData = await hook({ data, req: request, operation: 'update', originalDoc });
+               const hData: Record<string, any> | void = await hook({ data, req: request, operation: 'update', originalDoc });
                if (hData) data = { ...data, ...hData };
              }
            }
 
            let updatePayload = {};
            if (data !== undefined) {
-             const rawDataToValidate = typeof data === 'string' ? JSON.parse(data) : data;
+             const rawDataToValidate = data;
              // A native update writes only the columns it sends (an editor leaves out stock it did not
              // change), so an omitted required column keeps its stored value.
              const dynamicSchema = buildZodSchemaForCollection({ ...collectionConfig, fields: activeFields }).partial();
@@ -816,15 +1192,23 @@ export const ALL: APIRoute = async ({ request, locals }) => {
              return Response.json({ error: 'expectedRevisionId is required' }, { status: 428 });
            }
 
+           // A blank slug keeps the current one; a published entry's rename waits for its next publish.
+           // Only a new slug is checked, so an entry whose slug predates the format rules can still be
+           // saved (the editor always sends the slug back).
+           const renamed = !isBlank(entrySlug) && entrySlug !== (origRow.draftSlug || origRow.slug);
+           const slugProblem = renamed ? describeInvalidEntrySlug(entrySlug) : null;
+           if (slugProblem) return invalidInput(slugProblem);
+           const draftSlug = isBlank(entrySlug) ? undefined : entrySlug as string;
+
            if (data !== undefined && collectionConfig.hooks?.beforeValidate) {
              for (const hook of collectionConfig.hooks.beforeValidate) {
-               const hData = await hook({ data, req: request, operation: 'update', originalDoc });
+               const hData: Record<string, any> | void = await hook({ data, req: request, operation: 'update', originalDoc });
                if (hData) data = { ...data, ...hData };
              }
            }
 
            if (data !== undefined) {
-             const rawDataToValidate = typeof data === 'string' ? JSON.parse(data) : data;
+             const rawDataToValidate = data;
              const dynamicSchema = buildZodSchemaForCollection({ ...collectionConfig, fields: activeFields });
              const parsedDataResult = dynamicSchema.safeParse(rawDataToValidate);
              
@@ -847,7 +1231,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
 
              const updated = await saveDraftEntry(db as any, collection as any, entryId, {
                data: validatedData,
-               slug: entrySlug,
+               slug: draftSlug,
                expectedRevisionId
              });
 
@@ -859,11 +1243,11 @@ export const ALL: APIRoute = async ({ request, locals }) => {
                }
              }
              
-             return new Response(JSON.stringify(updated), { status: 200, headers: { 'Content-Type': 'application/json' } });
+             return new Response(JSON.stringify(toEditableEntry(updated)), { status: 200, headers: { 'Content-Type': 'application/json' } });
            }
 
            const updated = await saveDraftEntry(db as any, collection as any, entryId, {
-             slug: entrySlug,
+             slug: draftSlug,
              expectedRevisionId
            });
            await invalidateEntryCache(env, slug, entryId);
@@ -874,7 +1258,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
              }
            }
 
-           return new Response(JSON.stringify(updated), { status: 200, headers: { 'Content-Type': 'application/json' } });
+           return new Response(JSON.stringify(toEditableEntry(updated)), { status: 200, headers: { 'Content-Type': 'application/json' } });
         }
       }
 
@@ -921,8 +1305,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
       }
 
     } catch (e: any) {
-      if (isRevisionConflict(e)) return Response.json({ error: e.message }, { status: 409 });
-      return new Response(JSON.stringify({ status: 'error', message: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      return errorResponse(e, 'Error in the entries API');
     }
   }
 

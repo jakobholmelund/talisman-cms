@@ -631,6 +631,83 @@ function normalizeFieldsForValidation(collectionConfig: CollectionConfig) {
   );
 }
 
+/**
+ * A native collection's fields are the allowlist for what an API client may write: keys that do
+ * not name a configured field (by property or column name) are dropped, so a table column left
+ * out of `fields` cannot be set through the CMS. Collections without `fields` expose every column.
+ */
+export function pickConfiguredNativeFields(
+  fields: Pick<FieldDefinition, 'name'>[],
+  table: Record<string, any> | null | undefined,
+  data: Record<string, any>
+) {
+  const writable = new Set(fields.map((field) => field.name));
+  for (const [property, column] of Object.entries(table || {})) {
+    if (column && typeof column === 'object' && 'dataType' in column && writable.has(column.name)) {
+      writable.add(property);
+    }
+  }
+
+  return Object.fromEntries(Object.entries(data).filter(([key]) => writable.has(key)));
+}
+
+/**
+ * Table columns a client tried to set although they are not configured fields, so a mismatch
+ * between a client and a collection's `fields` is refused instead of losing the value. `stored` is
+ * the row an update changes: the admin editor sends every column it loaded, so a column that still
+ * holds its stored value is not a write. Without `stored` (a create), any value but an empty one is.
+ */
+export function findUnwritableNativeColumns(
+  fields: Pick<FieldDefinition, 'name'>[],
+  table: Record<string, any> | null | undefined,
+  data: Record<string, any>,
+  options: { ignore?: string[]; stored?: Record<string, any> } = {}
+) {
+  const writable = pickConfiguredNativeFields(fields, table, data);
+  return Object.keys(data).filter((key) => {
+    const column = table?.[key];
+    if (Object.hasOwn(writable, key) || options.ignore?.includes(key) || !column || typeof column !== 'object' || !('dataType' in column)) {
+      return false;
+    }
+    const value = data[key];
+    if (options.stored) return JSON.stringify(value ?? null) !== JSON.stringify(options.stored[key] ?? null);
+    return value !== undefined && value !== null && value !== '';
+  });
+}
+
+const ENTRY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/;
+const ENTRY_SLUG_SEGMENT_PATTERN = /^[\p{L}\p{N}_.~:-]+$/u;
+// `new` is the admin's create route and `all` the key of cached entry lists.
+const RESERVED_ENTRY_IDS = new Set(['new', 'all']);
+export const MAX_ENTRY_ID_LENGTH = 128;
+export const MAX_ENTRY_SLUG_LENGTH = 200;
+
+/** Why an entry id chosen by a client cannot be used, or null when it can. */
+export function describeInvalidEntryId(value: unknown): string | null {
+  if (typeof value !== 'string') return 'Entry id must be a string';
+  if (value.length === 0 || value.length > MAX_ENTRY_ID_LENGTH) {
+    return `Entry id must be 1 to ${MAX_ENTRY_ID_LENGTH} characters`;
+  }
+  if (!ENTRY_ID_PATTERN.test(value)) {
+    return 'Entry id may only use letters, numbers, ".", "_", ":" and "-", and must start with a letter or number';
+  }
+  if (RESERVED_ENTRY_IDS.has(value)) return `Entry id "${value}" is reserved`;
+  return null;
+}
+
+/** Why a slug cannot be used, or null when it can. Slugs are URL paths: segments joined by "/". */
+export function describeInvalidEntrySlug(value: unknown): string | null {
+  if (typeof value !== 'string') return 'Slug must be a string';
+  if (value.length === 0 || value.length > MAX_ENTRY_SLUG_LENGTH) {
+    return `Slug must be 1 to ${MAX_ENTRY_SLUG_LENGTH} characters`;
+  }
+  const segments = value.split('/');
+  if (segments.some((segment) => segment === '.' || segment === '..' || !ENTRY_SLUG_SEGMENT_PATTERN.test(segment))) {
+    return 'Slug may only use letters, numbers, "-", "_", ".", "~" and ":", with single "/" between path segments';
+  }
+  return null;
+}
+
 export function prepareNativeWritePayload(
   collectionConfig: CollectionConfig,
   data: Record<string, any>,

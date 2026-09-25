@@ -30,6 +30,8 @@ const srcUrl = new URL('../src/', import.meta.url).href;
 
 let ALL;
 let types;
+let getClient;
+let schema;
 if (canLoadSource) {
   registerHooks({
     resolve(specifier, context, nextResolve) {
@@ -44,12 +46,16 @@ if (canLoadSource) {
   });
   ({ ALL } = await import('../src/api/handler.ts'));
   types = await import('../src/types.ts');
+  ({ getClient } = await import('../src/db/client.ts'));
+  schema = await import('../src/db/schema.ts');
 }
 
 const parts = sqliteTable('test_parts', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   quantity: integer('quantity').notNull(),
+  // A column the Parts collection leaves out of its fields.
+  internalNote: text('internal_note'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });
@@ -62,8 +68,12 @@ runtime.collections.push(
       { name: 'title', label: 'Title', type: 'text', required: true },
       { name: 'body', label: 'Body', type: 'richtext', required: true },
       { name: 'summary', label: 'Summary', type: 'textarea' },
+      { name: 'tags', label: 'Tags', type: 'relationship', relationTo: 'tags', hasMany: true },
+      { name: 'note', label: 'Internal note', type: 'relationship', relationTo: 'notes' },
     ],
   },
+  { name: 'Tags', slug: 'tags', fields: [{ name: 'label', label: 'Label', type: 'text' }] },
+  { name: 'Notes', slug: 'notes', access: { read: 'admin' }, fields: [{ name: 'text', label: 'Text', type: 'text' }] },
   {
     name: 'Parts',
     slug: 'parts',
@@ -74,9 +84,16 @@ runtime.collections.push(
     ],
     nativeSchemaMapping: { schemaPath: 'test', exportName: 'parts', idColumn: 'id' },
   },
+  {
+    name: 'Media',
+    slug: 'media',
+    fields: ['id', 'filename', 'url', 'mimeType', 'altText'].map((name) => ({ name, label: name, type: 'text' })),
+    nativeSchemaMapping: { schemaPath: 'talisman-cms/db/media', exportName: 'media', idColumn: 'id' },
+  },
 );
 runtime.globals.push({ name: 'Site', slug: 'site', fields: [{ name: 'siteName', label: 'Site name', type: 'text', required: true }] });
 runtime.nativeSchemas.parts = parts;
+if (schema) runtime.nativeSchemas.media = schema.media;
 
 const hourAgo = Math.floor(Date.now() / 1000) - 3600;
 const doc = (text) => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] });
@@ -85,20 +102,29 @@ function database() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
   for (const migration of ['0000_skinny_odin', '0001_abandoned_shotgun', '0002_flowery_midnight',
-    '0003_content_versioning', '0018_entry_revision_integrity', '0020_revision_baseline_and_globals']) {
+    '0003_content_versioning', '0006_media_metadata', '0018_entry_revision_integrity', '0020_revision_baseline_and_globals',
+    '0021_entry_draft_slug']) {
     const sql = readFileSync(new URL(`../drizzle/${migration}.sql`, import.meta.url), 'utf8');
     for (const statement of sql.split('--> statement-breakpoint')) {
       if (statement.trim()) sqlite.exec(statement);
     }
   }
   sqlite.exec(`CREATE TABLE test_parts (id text PRIMARY KEY NOT NULL, name text NOT NULL, quantity integer NOT NULL,
-    created_at integer NOT NULL, updated_at integer NOT NULL)`);
+    internal_note text, created_at integer NOT NULL, updated_at integer NOT NULL)`);
+  const statements = [];
   const DB = {
+    statements,
     prepare(sql) {
+      statements.push(sql);
       const statement = sqlite.prepare(sql);
       let values = [];
       return {
-        bind(...params) { values = params; return this; },
+        bind(...params) {
+          // D1 refuses statements with more than 100 bound parameters.
+          if (params.length > 100) throw new Error('D1_ERROR: too many SQL variables at offset 0: SQLITE_ERROR');
+          values = params;
+          return this;
+        },
         async all() { return { results: statement.all(...values) }; },
         async raw() {
           const raw = sqlite.prepare(sql);
@@ -128,11 +154,25 @@ function database() {
 async function call(method, path, body) {
   const request = new Request(`https://cms.test/admin/api${path}`, {
     method,
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
   });
   const response = await ALL({ request, locals: {} });
   return { status: response.status, body: await response.json() };
 }
+
+const admin = { id: 'admin-1', email: 'admin@example.test', role: 'admin' };
+const editor = { id: 'editor-1', email: 'editor@example.test', role: 'editor' };
+
+async function as(user, run) {
+  runtime.user = user;
+  try {
+    return await run();
+  } finally {
+    runtime.user = admin;
+  }
+}
+
+const liveSlug = (sqlite, id) => sqlite.prepare('SELECT slug, draft_slug FROM galaxy_entries WHERE id = ?').get(id);
 
 async function seedPost(sqlite, id, data, status = 'published') {
   // Resolving the collection once creates its row, as the admin does on first load.
@@ -308,4 +348,435 @@ test('empty rich text is recognised, and generated native fields with a database
   });
   assert.deepEqual(Object.fromEntries(generateFieldsFromDrizzle(table).map((field) => [field.name, field.required])),
     { id: true, items: false, note: true, memo: false });
+});
+
+test('native writes only reach configured fields, while hooks can still set other columns', { skip }, async () => {
+  const sqlite = database();
+  try {
+    const note = (id) => sqlite.prepare('SELECT internal_note FROM test_parts WHERE id = ?').get(id).internal_note;
+    const name = (id) => sqlite.prepare('SELECT name FROM test_parts WHERE id = ?').get(id).name;
+    const partCount = () => sqlite.prepare('SELECT COUNT(*) AS total FROM test_parts').get().total;
+
+    // A value for a column outside the fields is refused rather than dropped, so it is not lost silently.
+    const refused = await as(editor, () => call('POST', '/collections/parts/entries', {
+      data: { id: 'lens', name: 'Lens', quantity: 2, internalNote: 'from client' },
+    }));
+    assert.equal(refused.status, 400);
+    assert.deepEqual(Object.keys(refused.body.fieldErrors), ['internalNote']);
+    assert.equal(partCount(), 0);
+
+    // Keys that name no table property (here the SQL column name) never reach the table.
+    const created = await as(editor, () => call('POST', '/collections/parts/entries', {
+      data: { id: 'lens', name: 'Lens', quantity: 2, internalNote: null, internal_note: 'raw column' },
+    }));
+    assert.equal(created.status, 201);
+    assert.equal(note('lens'), null);
+
+    const changed = await as(editor, () => call('PUT', '/collections/parts/entries/lens', { data: { name: 'Lens 2', internalNote: 'changed' } }));
+    assert.equal(changed.status, 400);
+    assert.deepEqual(Object.keys(changed.body.fieldErrors), ['internalNote']);
+    assert.equal(note('lens'), null);
+    assert.equal(name('lens'), 'Lens');
+
+    // Server-side hooks are trusted to set columns outside the fields (plugin-stripe stores its IDs this way).
+    runtime.collectionHooks.parts = { beforeChange: [() => ({ internalNote: 'set by hook' })] };
+    try {
+      assert.equal((await call('PUT', '/collections/parts/entries/lens', { data: { name: 'Lens 3' } })).status, 200);
+    } finally {
+      delete runtime.collectionHooks.parts;
+    }
+    assert.equal(note('lens'), 'set by hook');
+
+    // The admin editor sends back every column it loaded, timestamps as JSON; unchanged ones are fine.
+    const loaded = await as(editor, () => call('GET', '/collections/parts/entries/lens'));
+    assert.equal(loaded.body.data.internalNote, 'set by hook');
+    const resaved = await as(editor, () => call('PUT', '/collections/parts/entries/lens', {
+      data: { ...loaded.body.data, name: 'Lens 4' }, expectedUpdatedAt: loaded.body.data.updatedAt,
+    }));
+    assert.equal(resaved.status, 200);
+    assert.equal(name('lens'), 'Lens 4');
+    assert.equal(note('lens'), 'set by hook');
+
+    const profiles = sqliteTable('profiles', { id: text('id'), displayName: text('display_name'), role: text('role') });
+    assert.deepEqual(
+      types.pickConfiguredNativeFields([{ name: 'id' }, { name: 'display_name' }], profiles,
+        { id: 'p1', displayName: 'By property', display_name: 'By column', role: 'admin', extra: true }),
+      { id: 'p1', displayName: 'By property', display_name: 'By column' });
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('a variant group saves the SKU, price override and stock the product editor sends', { skip }, async () => {
+  const sqlite = database();
+  // The columns of plugin-ecommerce's _ecommerce_product_variants table.
+  sqlite.exec(`CREATE TABLE test_variant_groups (id text PRIMARY KEY NOT NULL, product_id text NOT NULL, variant_id text,
+    name text NOT NULL, sku text, price_override integer, inventory_quantity integer DEFAULT 0 NOT NULL,
+    created_at integer NOT NULL, updated_at integer NOT NULL)`);
+  runtime.nativeSchemas['variant-groups'] = sqliteTable('test_variant_groups', {
+    id: text('id').primaryKey(),
+    productId: text('product_id').notNull(),
+    variantId: text('variant_id'),
+    name: text('name').notNull(),
+    sku: text('sku'),
+    priceOverride: integer('price_override'),
+    inventoryQuantity: integer('inventory_quantity').notNull().default(0),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  });
+  const collection = {
+    name: 'Product Variant Groups',
+    slug: 'variant-groups',
+    fields: [
+      { name: 'id', label: 'ID', type: 'text', required: true },
+      { name: 'productId', label: 'Product', type: 'relation', relationTo: 'products', required: true },
+      { name: 'variantId', label: 'Variant Definition', type: 'relation', relationTo: 'variants' },
+      { name: 'name', label: 'Display Name', type: 'text', required: true },
+    ],
+    nativeSchemaMapping: { schemaPath: 'test', exportName: 'variantGroups', idColumn: 'id' },
+  };
+  runtime.collections.push(collection);
+  try {
+    const row = () => ({ ...sqlite.prepare(`SELECT name, sku, price_override, inventory_quantity FROM test_variant_groups`).get() });
+    // What ProductVariantConfigurator sends for a new group.
+    const group = { productId: 'frame', name: 'Lens', sku: 'SKU-2', priceOverride: 999, inventoryQuantity: 3 };
+
+    // Without those fields configured the save is refused, instead of answering 200 and dropping them.
+    const refused = await call('POST', '/collections/variant-groups/entries', { data: group });
+    assert.equal(refused.status, 400);
+    assert.deepEqual(Object.keys(refused.body.fieldErrors), ['sku', 'priceOverride', 'inventoryQuantity']);
+    assert.equal(sqlite.prepare('SELECT COUNT(*) AS total FROM test_variant_groups').get().total, 0);
+
+    collection.fields.push(
+      { name: 'sku', label: 'SKU', type: 'text' },
+      { name: 'priceOverride', label: 'Price Override (Cents)', type: 'number' },
+      { name: 'inventoryQuantity', label: 'Inventory Quantity', type: 'number', defaultValue: 0 },
+    );
+    const created = await call('POST', '/collections/variant-groups/entries', { data: { id: 'lens', ...group } });
+    assert.equal(created.status, 201);
+    assert.deepEqual(row(), { name: 'Lens', sku: 'SKU-2', price_override: 999, inventory_quantity: 3 });
+
+    const saved = await call('PUT', '/collections/variant-groups/entries/lens', {
+      data: { ...group, sku: 'SKU-3', priceOverride: 1200, inventoryQuantity: 5 },
+      expectedUpdatedAt: created.body.updatedAt,
+    });
+    assert.equal(saved.status, 200);
+    assert.deepEqual(row(), { name: 'Lens', sku: 'SKU-3', price_override: 1200, inventory_quantity: 5 });
+  } finally {
+    runtime.collections.splice(runtime.collections.indexOf(collection), 1);
+    delete runtime.nativeSchemas['variant-groups'];
+    sqlite.close();
+  }
+});
+
+test('a draft slug change keeps the live URL until the entry is published', { skip }, async () => {
+  const sqlite = database();
+  try {
+    const client = getClient(runtime.env);
+    const created = await call('POST', '/collections/posts/entries', { slug: 'about', data: { title: 'About', body: doc('Hi') } });
+    assert.equal(created.status, 201);
+    const id = created.body.id;
+    const latest = async () => (await call('GET', `/collections/posts/entries/${id}`)).body;
+    assert.equal((await call('POST', `/collections/posts/entries/${id}/publish`, { expectedRevisionId: (await latest()).latestRevisionId })).status, 200);
+
+    // An editor renames the page in a draft: the admin shows the new slug, the site keeps the old URL.
+    const saved = await as(editor, async () => call('PUT', `/collections/posts/entries/${id}`, {
+      slug: 'about-us', data: { title: 'About us', body: doc('Hi') }, expectedRevisionId: (await latest()).latestRevisionId,
+    }));
+    assert.equal(saved.status, 200);
+    assert.equal(saved.body.slug, 'about-us');
+    assert.equal(saved.body.publishedSlug, 'about');
+    assert.deepEqual({ ...liveSlug(sqlite, id) }, { slug: 'about', draft_slug: 'about-us' });
+    assert.equal((await latest()).slug, 'about-us');
+
+    const live = await client.entries.findBySlug('posts', 'about', { depth: 0 });
+    assert.equal(live.slug, 'about');
+    assert.equal(live.data.title, 'About');
+    assert.equal('draftSlug' in live, false);
+    assert.equal(await client.entries.findBySlug('posts', 'about-us', { depth: 0 }), null);
+    assert.deepEqual((await client.entries.findMany('posts', { depth: 0 })).map((entry) => entry.slug), ['about']);
+    assert.equal((await client.entries.findBySlug('posts', 'about-us', { depth: 0, version: 'draft' })).data.title, 'About us');
+
+    // Editors cannot publish; an administrator's publish takes the new slug live.
+    const renamed = await latest();
+    assert.equal((await as(editor, () => call('POST', `/collections/posts/entries/${id}/publish`, { expectedRevisionId: renamed.latestRevisionId }))).status, 403);
+    const published = await call('POST', `/collections/posts/entries/${id}/publish`, { expectedRevisionId: renamed.latestRevisionId });
+    assert.equal(published.status, 200);
+    assert.equal(published.body.publishedSlug, 'about-us');
+    assert.deepEqual({ ...liveSlug(sqlite, id) }, { slug: 'about-us', draft_slug: null });
+    assert.equal(await client.entries.findBySlug('posts', 'about', { depth: 0 }), null);
+    assert.equal((await client.entries.findBySlug('posts', 'about-us', { depth: 0 })).data.title, 'About us');
+
+    // A blank slug keeps the current one instead of taking the page offline.
+    const blank = await call('PUT', `/collections/posts/entries/${id}`, { slug: '', expectedRevisionId: (await latest()).latestRevisionId });
+    assert.equal(blank.status, 200);
+    assert.equal(blank.body.slug, 'about-us');
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('entry ids and slugs are checked for format, and a slug names one entry per collection', { skip }, async () => {
+  const sqlite = database();
+  try {
+    const post = (body) => call('POST', '/collections/posts/entries', { data: { title: 'T', body: doc('B') }, ...body });
+    for (const id of ['bad id', 'new', 'all', '-dash', 'x'.repeat(129), { id: 1 }]) {
+      const res = await post({ id });
+      assert.equal(res.status, 400, JSON.stringify(id));
+      assert.match(res.body.error, /Entry id/);
+    }
+    for (const slug of ['../etc', 'a//b', '/lead', 'trail/', 'with space', 'q?x', 'x'.repeat(201), 42]) {
+      const res = await post({ slug });
+      assert.equal(res.status, 400, JSON.stringify(slug));
+      assert.match(res.body.error, /Slug/);
+    }
+    assert.equal(sqlite.prepare('SELECT COUNT(*) AS total FROM galaxy_entries').get().total, 0);
+
+    const nested = await post({ id: 'talisman-frame:mycelium', slug: 'guides/getting-started' });
+    assert.equal(nested.status, 201);
+    assert.equal(nested.body.slug, 'guides/getting-started');
+    assert.equal((await post({ slug: 'über-uns' })).status, 201);
+    assert.equal((await call('GET', '/collections/posts/entries/talisman-frame%3Amycelium')).body.id, 'talisman-frame:mycelium');
+
+    const duplicate = await post({ slug: 'guides/getting-started' });
+    assert.equal(duplicate.status, 409);
+    assert.equal(duplicate.body.error, 'Another entry in this collection already uses this slug.');
+    const sameId = await post({ id: 'talisman-frame:mycelium', slug: 'other' });
+    assert.equal(sameId.status, 409);
+    assert.equal(sameId.body.error, 'Another record already uses this id.');
+
+    // Rows written straight to D1 can share a slug; the second one cannot go live over the first.
+    const { id: collectionId } = sqlite.prepare(`SELECT id FROM galaxy_collections WHERE slug = 'posts'`).get();
+    const insert = sqlite.prepare(`INSERT INTO galaxy_entries (id, collection_id, slug, status, data, created_at, updated_at)
+      VALUES (?, ?, 'contact', ?, ?, ?, ?)`);
+    insert.run('contact-live', collectionId, 'published', JSON.stringify({ title: 'Live', body: doc('A') }), hourAgo, hourAgo);
+    insert.run('contact-copy', collectionId, 'draft', JSON.stringify({ title: 'Copy', body: doc('B') }), hourAgo + 1, hourAgo + 1);
+    const blocked = await call('POST', '/collections/posts/entries/contact-copy/publish', { expectedRevisionId: null });
+    assert.equal(blocked.status, 409);
+    assert.equal(sqlite.prepare(`SELECT status FROM galaxy_entries WHERE id = 'contact-copy'`).get().status, 'draft');
+    assert.equal(revisionCount(sqlite, 'contact-copy'), 0);
+
+    // A live page whose slug predates these rules still saves: the editor sends the slug back
+    // unchanged, and only a new slug is checked.
+    const page = JSON.stringify({ title: 'Mine', body: doc('A') });
+    sqlite.prepare(`INSERT INTO galaxy_entries (id, collection_id, slug, status, data, published_data, created_at, updated_at)
+      VALUES ('legacy', ?, 'My Page', 'published', ?, ?, ?, ?)`).run(collectionId, page, page, hourAgo, hourAgo);
+    const kept = await as(editor, () => call('PUT', '/collections/posts/entries/legacy', {
+      slug: 'My Page', data: { title: 'Edited', body: doc('A') }, expectedRevisionId: null,
+    }));
+    assert.equal(kept.status, 200);
+    assert.deepEqual({ ...liveSlug(sqlite, 'legacy') }, { slug: 'My Page', draft_slug: null });
+    const latestLegacy = (await call('GET', '/collections/posts/entries/legacy')).body.latestRevisionId;
+    const renamed = await as(editor, () => call('PUT', '/collections/posts/entries/legacy', {
+      slug: 'My New Page', data: { title: 'Edited', body: doc('A') }, expectedRevisionId: latestLegacy,
+    }));
+    assert.equal(renamed.status, 400);
+    assert.match(renamed.body.error, /Slug/);
+    assert.equal((await as(editor, () => call('PUT', '/collections/posts/entries/legacy', {
+      slug: 'my-page', data: { title: 'Edited', body: doc('A') }, expectedRevisionId: latestLegacy,
+    }))).status, 200);
+    assert.deepEqual({ ...liveSlug(sqlite, 'legacy') }, { slug: 'My Page', draft_slug: 'my-page' });
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('editors update existing globals but only administrators create new ones', { skip }, async () => {
+  const sqlite = database();
+  try {
+    const stored = (slug) => sqlite.prepare('SELECT COUNT(*) AS total FROM galaxy_globals WHERE slug = ?').get(slug).total;
+    const created = await as(editor, () => call('POST', '/globals/brand-new', { anything: true }));
+    assert.equal(created.status, 403);
+    assert.equal(stored('brand-new'), 0);
+
+    assert.equal((await as(editor, () => call('POST', '/globals/site', { siteName: 'Edited' }))).status, 200);
+    assert.equal((await call('POST', '/globals/footer', { note: 'By an admin' })).status, 200);
+    const updated = await as(editor, () => call('POST', '/globals/footer', { note: 'By an editor' }));
+    assert.equal(updated.status, 200);
+    assert.deepEqual(updated.body.data, { note: 'By an editor' });
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('media records come from uploads, and their url and type cannot be changed', { skip }, async () => {
+  const sqlite = database();
+  try {
+    const record = { id: 'pixel', filename: 'p.png', url: 'https://tracker.example/p.png', mimeType: 'image/png' };
+    for (const user of [editor, admin]) {
+      assert.equal((await as(user, () => call('POST', '/collections/media/entries', { data: record }))).status, 403);
+    }
+
+    sqlite.prepare(`INSERT INTO galaxy_media (id, filename, mime_type, size_bytes, url, created_at, updated_at)
+      VALUES ('m1', 'a.png', 'image/png', 10, '/api/media/m1', ?, ?)`).run(hourAgo, hourAgo);
+    const stored = () => ({ ...sqlite.prepare(`SELECT url, mime_type, alt_text FROM galaxy_media WHERE id = 'm1'`).get() });
+    const repointed = await as(editor, () => call('PUT', '/collections/media/entries/m1', { data: { url: 'https://tracker.example/p.png', altText: 'Alt' } }));
+    assert.equal(repointed.status, 400);
+    assert.deepEqual(Object.keys(repointed.body.fieldErrors), ['url']);
+    const retyped = await as(editor, () => call('PUT', '/collections/media/entries/m1', { data: { mimeType: 'text/html' } }));
+    assert.deepEqual(Object.keys(retyped.body.fieldErrors), ['mimeType']);
+    assert.deepEqual(stored(), { url: '/api/media/m1', mime_type: 'image/png', alt_text: null });
+
+    // The editor form sends the record back whole; unchanged upload values are fine.
+    const saved = await as(editor, () => call('PUT', '/collections/media/entries/m1', {
+      data: { id: 'm1', filename: 'a.png', url: '/api/media/m1', mimeType: 'image/png', altText: 'Alt' },
+    }));
+    assert.equal(saved.status, 200);
+    assert.deepEqual(stored(), { url: '/api/media/m1', mime_type: 'image/png', alt_text: 'Alt' });
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('the collections list takes a few statements and does not rewrite collection rows', { skip }, async () => {
+  const sqlite = database();
+  try {
+    const { statements } = runtime.env.DB;
+    assert.equal((await call('GET', '/collections')).status, 200);
+    assert.equal(sqlite.prepare('SELECT COUNT(*) AS total FROM galaxy_collections').get().total, runtime.collections.length);
+    await call('POST', '/collections/parts/entries', { data: { id: 'p1', name: 'P', quantity: 1 } });
+    await call('POST', '/collections/posts/entries', { data: { title: 'T', body: doc('B') } });
+
+    statements.length = 0;
+    const listed = await call('GET', '/collections');
+    assert.equal(listed.status, 200);
+    assert.ok(statements.length <= 3, statements.join('\n'));
+    assert.equal(statements.some((sql) => /^\s*(insert|update|delete)/i.test(sql)), false);
+    const bySlug = Object.fromEntries(listed.body.map((collection) => [collection.slug, collection]));
+    assert.equal(bySlug.parts.itemCount, 1);
+    assert.equal(bySlug.media.itemCount, 0);
+    assert.equal(bySlug.posts.itemCount, 1);
+    assert.ok(bySlug.posts.id);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('entry lists page with limit and cursor, and still return an array without them', { skip }, async () => {
+  const sqlite = database();
+  try {
+    for (let index = 0; index < 5; index += 1) {
+      assert.equal((await call('POST', '/collections/posts/entries', { id: `post-${index}`, data: { title: `Post ${index}`, body: doc('B') } })).status, 201);
+      assert.equal((await call('POST', '/collections/parts/entries', { data: { id: `part-${index}`, name: `Part ${index}`, quantity: index } })).status, 201);
+    }
+    // Known creation times, with a tie between post-3 and post-4.
+    for (let index = 0; index < 5; index += 1) {
+      sqlite.prepare('UPDATE galaxy_entries SET created_at = ? WHERE id = ?').run(hourAgo + Math.min(index, 3), `post-${index}`);
+    }
+
+    const walk = async (slug) => {
+      const ids = [];
+      let cursor = null;
+      do {
+        const res = await call('GET', `/collections/${slug}/entries?limit=2${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+        assert.equal(res.status, 200);
+        assert.ok(res.body.docs.length <= 2);
+        ids.push(...res.body.docs.map((entry) => entry.id));
+        cursor = res.body.nextCursor;
+      } while (cursor);
+      return ids;
+    };
+    assert.deepEqual(await walk('posts'), ['post-4', 'post-3', 'post-2', 'post-1', 'post-0']);
+    assert.deepEqual(await walk('parts'), ['part-4', 'part-3', 'part-2', 'part-1', 'part-0']);
+
+    const whole = await call('GET', '/collections/posts/entries');
+    assert.ok(Array.isArray(whole.body));
+    assert.equal(whole.body.length, 5);
+
+    for (const query of ['limit=0', 'limit=201', 'limit=abc', 'limit=2&cursor=not-a-cursor', 'limit=2&cursor=bm9wZQ', 'cursor=abc']) {
+      assert.equal((await call('GET', `/collections/posts/entries?${query}`)).status, 400, query);
+    }
+    assert.equal((await call('GET', '/collections/parts/entries?limit=2&cursor=WyJ4Il0')).status, 400);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('revision history lists metadata and loads one revision on request', { skip }, async () => {
+  const sqlite = database();
+  try {
+    await call('POST', '/collections/posts/entries', { id: 'history', data: { title: 'One', body: doc('B') } });
+    const first = (await call('GET', '/collections/posts/entries/history')).body.latestRevisionId;
+    await call('PUT', '/collections/posts/entries/history', { data: { title: 'Two', body: doc('B') }, expectedRevisionId: first });
+
+    const list = await call('GET', '/collections/posts/entries/history/revisions');
+    assert.equal(list.status, 200);
+    assert.deepEqual(list.body.map((revision) => revision.revisionNumber), [2, 1]);
+    assert.equal(list.body.some((revision) => 'data' in revision), false);
+    assert.equal((await call('GET', '/collections/posts/entries/history/revisions?includeData=true')).body[0].data.title, 'Two');
+    assert.equal((await call('GET', '/collections/posts/entries/history/revisions?limit=1')).body.length, 1);
+
+    const one = await call('GET', `/collections/posts/entries/history/revisions/${first}`);
+    assert.equal(one.status, 200);
+    assert.equal(one.body.data.title, 'One');
+    assert.equal((await call('GET', '/collections/posts/entries/history/revisions/missing')).status, 404);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('client mistakes get 4xx answers, and database errors stay out of responses', { skip }, async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const sqlite = database();
+  try {
+    assert.equal((await call('POST', '/collections/posts/entries', '{"data":')).status, 400);
+    assert.equal((await call('POST', '/collections/posts/entries', '[1, 2]')).status, 400);
+    assert.equal((await call('POST', '/collections/posts/entries', { data: 'not json' })).status, 400);
+    assert.equal((await call('POST', '/globals', '{oops')).status, 400);
+    const unknown = await call('GET', '/collections/unknown/entries');
+    assert.equal(unknown.status, 404);
+    assert.equal(unknown.body.error, 'Collection unknown not found');
+    assert.equal((await call('GET', '/collections/posts/entries/%E0%A4%A')).status, 400);
+
+    // A hook's refusal reaches the editor; an error from D1 does not.
+    await call('POST', '/collections/parts/entries', { data: { id: 'part', name: 'A', quantity: 1 } });
+    runtime.collectionHooks.parts = { beforeChange: [() => { throw new Error('Quantity is locked while an order ships'); }] };
+    const refused = await call('PUT', '/collections/parts/entries/part', { data: { quantity: 5 } });
+    assert.equal(refused.status, 500);
+    assert.equal(refused.body.error, 'Quantity is locked while an order ships');
+    runtime.collectionHooks.parts = { beforeChange: [() => { throw new Error('D1_ERROR: no such table: secrets: SQLITE_ERROR'); }] };
+    const failedHook = await call('PUT', '/collections/parts/entries/part', { data: { quantity: 5 } });
+    assert.equal(failedHook.status, 500);
+    assert.doesNotMatch(JSON.stringify(failedHook.body), /secrets|D1_ERROR/);
+    delete runtime.collectionHooks.parts;
+
+    sqlite.exec('DROP TABLE test_parts');
+    const failed = await call('POST', '/collections/parts/entries', { data: { id: 'secret-id', name: 'Secret name', quantity: 1 } });
+    assert.equal(failed.status, 500);
+    assert.doesNotMatch(JSON.stringify(failed.body), /insert|params|Secret name|test_parts/i);
+
+    runtime.env = { DB: { prepare() { throw new Error('D1_ERROR: binding talisman-db is not available'); } } };
+    const health = await call('GET', '/health');
+    assert.equal(health.status, 500);
+    assert.deepEqual(health.body, { status: 'error' });
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('relations resolve in chunks, within the target collection, and skip collections only admins may read', { skip }, async () => {
+  const sqlite = database();
+  try {
+    await call('GET', '/collections');
+    const collectionId = (slug) => sqlite.prepare('SELECT id FROM galaxy_collections WHERE slug = ?').get(slug).id;
+    const insert = sqlite.prepare(`INSERT INTO galaxy_entries (id, collection_id, slug, status, data, published_data, created_at, updated_at)
+      VALUES (?, ?, ?, 'published', ?, ?, ?, ?)`);
+    const add = (id, slug, data) => insert.run(id, collectionId(slug), id, JSON.stringify(data), JSON.stringify(data), hourAgo, hourAgo);
+
+    // More ids than D1 binds in one statement.
+    const tagIds = Array.from({ length: 150 }, (_, index) => `tag-${index}`);
+    tagIds.forEach((id, index) => add(id, 'tags', { label: `Tag ${index}` }));
+    add('note-1', 'notes', { text: 'Admins only' });
+    add('tagged', 'posts', { title: 'Tagged', body: doc('B'), tags: [...tagIds, 'note-1'], note: 'note-1' });
+
+    const post = await getClient(runtime.env).entries.find('posts', 'tagged');
+    assert.equal(post.data.tags.length, 151);
+    assert.deepEqual(post.data.tags.slice(0, 2).map((tag) => tag.data.label), ['Tag 0', 'Tag 1']);
+    assert.equal(post.data.tags[149].data.label, 'Tag 149');
+    // An entry of another collection is not resolved as a tag, and admin-only notes stay ids.
+    assert.equal(post.data.tags[150], 'note-1');
+    assert.equal(post.data.note, 'note-1');
+  } finally {
+    sqlite.close();
+  }
 });

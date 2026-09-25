@@ -4,13 +4,17 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../dist/db/schema.js';
-import { createDraftEntry, saveDraftEntry, publishEntry, archiveEntry, restoreEntryRevision, getLatestRevision, listEntryRevisions, RevisionConflictError, triggerPublishingWorkflow } from '../dist/versioning.js';
+import {
+  createDraftEntry, saveDraftEntry, publishEntry, archiveEntry, restoreEntryRevision, getLatestRevision, listEntryRevisions,
+  getEntryRevision, normalizeEntryDataForRead, toEditableEntry, RevisionConflictError, SlugConflictError, EntryNotFoundError,
+  triggerPublishingWorkflow
+} from '../dist/versioning.js';
 
 function database() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
   for (const migration of ['0000_skinny_odin', '0001_abandoned_shotgun', '0002_flowery_midnight',
-    '0003_content_versioning', '0018_entry_revision_integrity']) {
+    '0003_content_versioning', '0018_entry_revision_integrity', '0021_entry_draft_slug']) {
     const sql = readFileSync(new URL(`../drizzle/${migration}.sql`, import.meta.url), 'utf8');
     sqlite.exec(sql.replaceAll('--> statement-breakpoint', ''));
   }
@@ -246,6 +250,87 @@ test('migration 0020 backfills baseline revisions and unwraps double-encoded glo
 
     applyMigration(sqlite, '0020_revision_baseline_and_globals');
     assert.deepEqual(snapshot(), first);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('a published entry keeps its live slug until the next publish, and slugs stay unique', async () => {
+  const { sqlite, db } = database();
+  try {
+    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    const entry = await createDraftEntry(db, collection, { title: 'About' }, { id: 'about-page', slug: 'about' });
+    await publishEntry(db, collection, entry.id);
+
+    const renamed = await saveDraftEntry(db, collection, entry.id, { slug: 'about-us', data: { title: 'About us' } });
+    assert.equal(renamed.slug, 'about');
+    assert.equal(renamed.draftSlug, 'about-us');
+    const editable = toEditableEntry(renamed);
+    assert.deepEqual([editable.slug, editable.publishedSlug], ['about-us', 'about']);
+    const live = normalizeEntryDataForRead(renamed, 'published');
+    assert.deepEqual([live.slug, live.data.title, 'draftSlug' in live], ['about', 'About', false]);
+    assert.equal(normalizeEntryDataForRead(renamed, 'draft').slug, 'about-us');
+
+    // Renaming back to the live slug drops the pending rename; a blank slug keeps the current one.
+    assert.equal((await saveDraftEntry(db, collection, entry.id, { slug: 'about' })).draftSlug, null);
+    await saveDraftEntry(db, collection, entry.id, { slug: 'about-us' });
+    assert.equal((await saveDraftEntry(db, collection, entry.id, { slug: '  ' })).draftSlug, 'about-us');
+
+    // Another entry can take neither the live slug nor the pending one.
+    await assert.rejects(createDraftEntry(db, collection, { title: 'Copy' }, { slug: 'about' }), SlugConflictError);
+    await assert.rejects(createDraftEntry(db, collection, { title: 'Copy' }, { slug: 'about-us' }), SlugConflictError);
+    const other = await createDraftEntry(db, collection, { title: 'Contact' }, { id: 'contact', slug: 'contact' });
+    await assert.rejects(saveDraftEntry(db, collection, other.id, { slug: 'about' }), SlugConflictError);
+
+    const published = await publishEntry(db, collection, entry.id);
+    assert.deepEqual([published.slug, published.draftSlug], ['about-us', null]);
+    // The old slug is free again, and an unpublished entry's slug changes directly.
+    const moved = await saveDraftEntry(db, collection, other.id, { slug: 'about' });
+    assert.deepEqual([moved.slug, moved.draftSlug], ['about', null]);
+
+    // Archiving leaves the slug reserved; the archived entry is not served under it.
+    await archiveEntry(db, collection, entry.id);
+    await assert.rejects(saveDraftEntry(db, collection, other.id, { slug: 'about-us' }), SlugConflictError);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('revision lists can leave out the data, which is then loaded one revision at a time', async () => {
+  const { sqlite, db } = database();
+  try {
+    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    await createDraftEntry(db, collection, { title: 'One' }, { id: 'history' });
+    await saveDraftEntry(db, collection, 'history', { data: { title: 'Two' } });
+
+    const slim = await listEntryRevisions(db, collection.id, 'history', { includeData: false });
+    assert.deepEqual(slim.map((revision) => [revision.revisionNumber, 'data' in revision]), [[2, false], [1, false]]);
+    assert.equal((await listEntryRevisions(db, collection.id, 'history', { includeData: false, limit: 1 })).length, 1);
+    assert.equal((await listEntryRevisions(db, collection.id, 'history'))[0].data.title, 'Two');
+    assert.equal((await getEntryRevision(db, collection.id, 'history', slim[1].id)).data.title, 'One');
+    await assert.rejects(getEntryRevision(db, collection.id, 'history', 'missing'), EntryNotFoundError);
+    await assert.rejects(saveDraftEntry(db, collection, 'missing', { data: {} }), EntryNotFoundError);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('workflow instance ids stay within the characters Workflows accept when an entry id has a colon', async () => {
+  const { sqlite, DB, db } = database();
+  try {
+    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    await createDraftEntry(db, collection, { title: 'Amber' }, { id: 'talisman-lens:amber' });
+    const ids = [];
+    const workflow = {
+      async create({ id }) {
+        ids.push(id);
+        return { id, async status() { return { status: 'complete' }; } };
+      },
+    };
+    await triggerPublishingWorkflow({ DB, TALISMAN_PUBLISH_WORKFLOW: workflow },
+      { collectionSlug: 'posts', entryId: 'talisman-lens:amber', action: 'publish' });
+    assert.match(ids[0], /^talisman-publish-posts-talisman-lens-amber-\d+$/);
+    assert.ok(ids[0].length <= 100);
   } finally {
     sqlite.close();
   }

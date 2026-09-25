@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull, ne, or } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from './db/schema';
 import type { TalismanEnv } from './db/client';
@@ -32,6 +32,33 @@ export function isRevisionConflict(error: unknown) {
     (error instanceof Error && error.message.includes(REVISION_CONFLICT_MESSAGE));
 }
 
+const SLUG_CONFLICT_MESSAGE = 'Another entry in this collection already uses this slug.';
+
+export class SlugConflictError extends Error {
+  constructor() {
+    super(SLUG_CONFLICT_MESSAGE);
+    this.name = 'SlugConflictError';
+  }
+}
+
+/** Also matches the message of a publish that failed inside a Workflow instance. */
+export function isSlugConflict(error: unknown) {
+  return error instanceof SlugConflictError ||
+    (error instanceof Error && error.message.includes(SLUG_CONFLICT_MESSAGE));
+}
+
+export class EntryNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EntryNotFoundError';
+  }
+}
+
+export function isEntryNotFound(error: unknown) {
+  return error instanceof EntryNotFoundError ||
+    (error instanceof Error && /^(Entry|Revision) .+ not found/.test(error.message));
+}
+
 type CollectionRecord = typeof schema.collections.$inferSelect;
 type EntryRecord = typeof schema.entries.$inferSelect;
 type RevisionRecord = typeof schema.entryRevisions.$inferSelect;
@@ -41,11 +68,32 @@ function createId(prefix: string) {
 }
 
 export function normalizeEntryDataForRead(entry: any, version: 'draft' | 'published' = 'published') {
-  if (version === 'published' && entry?.status === 'published' && entry?.publishedData !== undefined && entry?.publishedData !== null) {
-    return { ...entry, data: entry.publishedData };
+  if (!entry) return entry;
+
+  if (version === 'draft') {
+    // A draft read shows the slug the next publish will make live.
+    return entry.draftSlug ? { ...entry, slug: entry.draftSlug } : entry;
   }
 
-  return entry;
+  // A pending rename is draft state, like the draft data, so the published read leaves it out.
+  const { draftSlug: _draftSlug, ...published } = entry;
+  if (entry.status === 'published' && entry.publishedData !== undefined && entry.publishedData !== null) {
+    return { ...published, data: entry.publishedData };
+  }
+
+  return published;
+}
+
+/**
+ * The admin's view of an entry: `slug` is the slug being edited, which a published entry only
+ * takes live on its next publish, and `publishedSlug` is the slug the site serves it under.
+ */
+export function toEditableEntry<T extends { slug: string; status: string; draftSlug?: string | null }>(entry: T) {
+  return {
+    ...entry,
+    slug: entry.draftSlug || entry.slug,
+    publishedSlug: entry.status === 'published' ? entry.slug : null,
+  };
 }
 
 function createVersioningDb(env: TalismanEnv) {
@@ -76,23 +124,110 @@ export async function getVersionedEntry(
   });
 
   if (!entry) {
-    throw new Error(`Entry ${entryId} not found`);
+    throw new EntryNotFoundError(`Entry ${entryId} not found`);
   }
 
   return entry as EntryRecord;
 }
 
+/**
+ * Newest first. `includeData: false` returns the metadata the history panel shows without each
+ * revision's full snapshot, which grows with every save; getEntryRevision loads one on demand.
+ */
 export async function listEntryRevisions(
   db: ReturnType<typeof createVersioningDb>,
   collectionId: string,
-  entryId: string
+  entryId: string,
+  opts: { includeData?: boolean; limit?: number } = {}
 ) {
+  const revisions = schema.entryRevisions;
+  if (opts.includeData === false) {
+    const query = db.select({
+      id: revisions.id,
+      entryId: revisions.entryId,
+      collectionId: revisions.collectionId,
+      revisionNumber: revisions.revisionNumber,
+      type: revisions.type,
+      status: revisions.status,
+      createdAt: revisions.createdAt,
+    }).from(revisions)
+      .where(and(eq(revisions.collectionId, collectionId), eq(revisions.entryId, entryId)))
+      .orderBy(desc(revisions.revisionNumber), desc(revisions.createdAt));
+    return opts.limit === undefined ? query : query.limit(opts.limit);
+  }
+
   return db.query.entryRevisions.findMany({
     // @ts-ignore
     where: (r, { and, eq }) => and(eq(r.collectionId, collectionId), eq(r.entryId, entryId)),
     // @ts-ignore
-    orderBy: (r, { desc }) => [desc(r.revisionNumber), desc(r.createdAt)]
+    orderBy: (r, { desc }) => [desc(r.revisionNumber), desc(r.createdAt)],
+    ...(opts.limit === undefined ? {} : { limit: opts.limit })
   }) as Promise<RevisionRecord[]>;
+}
+
+export async function getEntryRevision(
+  db: ReturnType<typeof createVersioningDb>,
+  collectionId: string,
+  entryId: string,
+  revisionId: string
+) {
+  const revision = await db.query.entryRevisions.findFirst({
+    // @ts-ignore
+    where: (r, { and, eq }) => and(eq(r.collectionId, collectionId), eq(r.entryId, entryId), eq(r.id, revisionId))
+  });
+
+  if (!revision) {
+    throw new EntryNotFoundError(`Revision ${revisionId} not found for entry ${entryId}`);
+  }
+
+  return revision as RevisionRecord;
+}
+
+/** The slug an editor works on: a published entry keeps serving its live slug until it is published again. */
+function editableSlug(entry: Pick<EntryRecord, 'slug' | 'draftSlug'>) {
+  return entry.draftSlug || entry.slug;
+}
+
+/**
+ * A slug names one entry per collection. A draft slug may not match another entry's slug or
+ * pending rename, so its publish cannot take over a page that is live.
+ */
+async function assertDraftSlugAvailable(
+  db: ReturnType<typeof createVersioningDb>,
+  collectionId: string,
+  entryId: string,
+  slug: string
+) {
+  const entries = schema.entries;
+  const [holder] = await db.select({ id: entries.id }).from(entries).where(and(
+    eq(entries.collectionId, collectionId),
+    ne(entries.id, entryId),
+    or(eq(entries.slug, slug), eq(entries.draftSlug, slug)),
+  )).limit(1);
+
+  if (holder) throw new SlugConflictError();
+}
+
+/**
+ * Publishing takes the entry's draft slug live, unless another published entry already serves it
+ * (slugs written straight to D1 are not checked on save). An unchanged live slug is not re-checked.
+ */
+export async function assertPublishableSlug(
+  db: ReturnType<typeof createVersioningDb>,
+  entry: Pick<EntryRecord, 'id' | 'collectionId' | 'slug' | 'draftSlug' | 'status'>
+) {
+  const slug = editableSlug(entry);
+  if (entry.status === 'published' && slug === entry.slug) return;
+
+  const entries = schema.entries;
+  const [holder] = await db.select({ id: entries.id }).from(entries).where(and(
+    eq(entries.collectionId, entry.collectionId),
+    ne(entries.id, entry.id),
+    eq(entries.status, 'published'),
+    eq(entries.slug, slug),
+  )).limit(1);
+
+  if (holder) throw new SlugConflictError();
 }
 
 export async function getLatestRevision(
@@ -210,7 +345,8 @@ export async function createDraftEntry(
 ) {
   const now = new Date();
   const id = opts?.id || createId('entry');
-  const slug = opts?.slug || id;
+  const slug = opts?.slug?.trim() || id;
+  await assertDraftSlugAvailable(db, collection.id, id, slug);
 
   const entryInsert = db.insert(schema.entries).values({
     id,
@@ -245,7 +381,22 @@ export async function saveDraftEntry(
   };
 
   if (params.data !== undefined) updates.data = params.data;
-  if (params.slug !== undefined) updates.slug = params.slug;
+
+  // A blank slug keeps the current one. A published entry's rename is kept as its draft slug, so
+  // the live URL only changes when the entry is published again.
+  const slug = params.slug?.trim();
+  if (slug) {
+    if (slug !== editableSlug(existing)) {
+      await assertDraftSlugAvailable(db, collection.id, entryId, slug);
+    }
+
+    if (existing.status === 'published') {
+      updates.draftSlug = slug === existing.slug ? null : slug;
+    } else {
+      updates.slug = slug;
+      updates.draftSlug = null;
+    }
+  }
 
   const revision = await buildRevisionInsert(db, {
     entry: existing,
@@ -278,11 +429,14 @@ export async function publishEntry(
     expectedRevisionId,
     existing: entry
   });
+  await assertPublishableSlug(db, entry);
 
   const now = new Date();
   await writeRevisionBatch(db, [...revision.queries, db.update(schema.entries)
     .set({
       status: 'published',
+      slug: editableSlug(entry),
+      draftSlug: null,
       publishedData: entry.data,
       publishedRevisionId: revision.id,
       publishedAt: now,
@@ -332,14 +486,7 @@ export async function restoreEntryRevision(
   expectedRevisionId?: string | null
 ) {
   const entry = await getVersionedEntry(db, collection.id, entryId);
-  const revision = await db.query.entryRevisions.findFirst({
-    // @ts-ignore
-    where: (r, { and, eq }) => and(eq(r.collectionId, collection.id), eq(r.entryId, entryId), eq(r.id, revisionId))
-  });
-
-  if (!revision) {
-    throw new Error(`Revision ${revisionId} not found for entry ${entryId}`);
-  }
+  const revision = await getEntryRevision(db, collection.id, entryId, revisionId);
 
   const now = new Date();
   const restoredRevision = await buildRevisionInsert(db, {
@@ -400,6 +547,12 @@ export async function waitForWorkflowCompletion(instance: WorkflowInstance, time
   throw new Error(`Workflow ${instance.id} did not complete within ${timeoutMs}ms`);
 }
 
+/** Instance ids allow letters, digits, "-" and "_" (at most 100), while entry ids may also hold ":" or ".". */
+function workflowInstanceId(payload: PublishWorkflowPayload) {
+  const target = `${payload.collectionSlug}-${payload.entryId}`.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 60);
+  return `talisman-${payload.action}-${target}-${Date.now()}`;
+}
+
 export async function triggerPublishingWorkflow(
   env: TalismanEnv,
   payload: PublishWorkflowPayload,
@@ -415,7 +568,7 @@ export async function triggerPublishingWorkflow(
   }
 
   const instance = await workflow.create({
-    id: `talisman-${payload.action}-${payload.collectionSlug}-${payload.entryId}-${Date.now()}`,
+    id: workflowInstanceId(payload),
     params: payload,
   });
 
