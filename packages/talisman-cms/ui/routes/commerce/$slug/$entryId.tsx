@@ -14,6 +14,8 @@ export const Route = createFileRoute('/commerce/$slug/$entryId')({
 
     return data;
   },
+  // Same as /collections/$slug/$entryId: the editor keeps its own copy after saving, so never reuse a cached load.
+  gcTime: 0,
 });
 
 function CommerceEntryEditorRoute() {

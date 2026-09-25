@@ -107,6 +107,7 @@ export function ComponentSlotPicker({
           variant={open ? 'secondary' : 'outline'}
           type="button"
           className="gap-2"
+          aria-expanded={open}
           onClick={() => {
             setOpen(!open);
             if (open) {
@@ -128,8 +129,11 @@ export function ComponentSlotPicker({
               {contextMessage ? <div className="mt-2 text-xs text-indigo-300">{contextMessage}</div> : null}
             </div>
             <div className="relative w-full md:max-w-sm">
-              <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+              <Search size={14} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
               <Input
+                // Opening the library is a request to pick something, so the search takes focus.
+                autoFocus
+                aria-label="Search components and presets"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search components or presets..."

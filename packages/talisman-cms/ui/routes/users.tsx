@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { createFileRoute, useRouter } from '@tanstack/react-router';
 
 type CmsAccount = { id: string; name: string; email: string; role: string; banned?: boolean };
@@ -38,6 +38,12 @@ function UsersPage() {
   }
 
   useEffect(() => { if (!context.isDevAuth && !context.isAccessAuth && context.user?.role === 'admin') loadUsers(offset).catch(cause => setError(String(cause))); }, [offset]);
+
+  // The confirm and reset forms open below the table, so focus moves to them and is read out.
+  const confirmHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const resetHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  useEffect(() => { if (pending) confirmHeadingRef.current?.focus(); }, [pending]);
+  useEffect(() => { if (resetUser) resetHeadingRef.current?.focus(); }, [resetUser]);
 
   function clearMessages() {
     setError(''); setNotice(''); setWarning('');
@@ -154,11 +160,11 @@ function UsersPage() {
       <span>{loading ? 'Loading…' : total ? `Showing ${offset + 1}–${offset + users.length} of ${total}` : '0 users'}</span>
       <div className="flex gap-3"><button type="button" disabled={loading || offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))} className="disabled:opacity-40">Previous</button><button type="button" disabled={loading || offset + PAGE_SIZE >= total} onClick={() => setOffset(offset + PAGE_SIZE)} className="disabled:opacity-40">Next</button></div>
     </div>
-    {pending && <form onSubmit={confirmAction} className="space-y-3 rounded-xl border border-amber-500/30 bg-zinc-900/70 p-6">
-      <h2 className="text-lg font-medium">Confirm {pending.kind === 'role' ? 'role change' : pending.kind === 'ban' ? 'disable account' : pending.kind === 'unban' ? 'enable account' : 'account removal'}</h2>
+    {pending && <form onSubmit={confirmAction} aria-labelledby="users-confirm-heading" className="space-y-3 rounded-xl border border-amber-500/30 bg-zinc-900/70 p-6">
+      <h2 id="users-confirm-heading" ref={confirmHeadingRef} tabIndex={-1} className="text-lg font-medium focus:outline-none">Confirm {pending.kind === 'role' ? 'role change' : pending.kind === 'ban' ? 'disable account' : pending.kind === 'unban' ? 'enable account' : 'account removal'}</h2>
       <p className="text-sm text-zinc-300">{pending.kind === 'role' ? pending.role === 'customer' ? `Revoke CMS access for ${pending.user.email}? Their CMS sessions will end. Their shopper account and orders remain.` : `Change ${pending.user.email} to ${pending.role}? Their current CMS sessions will end.` : pending.kind === 'ban' ? `Disable CMS access for ${pending.user.email}? Their current CMS sessions will end.` : pending.kind === 'unban' ? pending.user.role === 'customer' ? `Enable ${pending.user.email}? They keep the shopper role; use ${context.isHybridAuth ? 'Add editor' : 'Add user'} afterwards to grant CMS access.` : `Restore CMS access for ${pending.user.email}?` : `Permanently remove ${pending.user.email} and all of their CMS sessions? This cannot be undone.`}</p>
       <div className="flex gap-3"><button disabled={busy} className="rounded-md bg-indigo-500 px-4 py-2 text-sm text-white disabled:opacity-50">{busy ? 'Working…' : 'Confirm'}</button><button type="button" onClick={() => setPending(null)} className="text-sm text-zinc-400">Cancel</button></div>
     </form>}
-    {resetUser && <form onSubmit={resetPassword} className="space-y-3 rounded-xl border border-white/10 bg-zinc-900/70 p-6"><h2 className="text-lg font-medium">Reset password for {resetUser.email}</h2><label className="block text-sm">New password<input required type="password" minLength={12} autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} className="mt-1 w-full rounded-md border border-white/15 bg-zinc-950 px-3 py-2" /></label><div className="flex gap-3"><button disabled={busy} className="rounded-md bg-indigo-500 px-4 py-2 text-sm text-white disabled:opacity-50">Reset password</button><button type="button" onClick={() => setResetUser(null)} className="text-sm text-zinc-400">Cancel</button></div></form>}
+    {resetUser && <form onSubmit={resetPassword} aria-labelledby="users-reset-heading" className="space-y-3 rounded-xl border border-white/10 bg-zinc-900/70 p-6"><h2 id="users-reset-heading" ref={resetHeadingRef} tabIndex={-1} className="text-lg font-medium focus:outline-none">Reset password for {resetUser.email}</h2><label className="block text-sm">New password<input required type="password" minLength={12} autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} className="mt-1 w-full rounded-md border border-white/15 bg-zinc-950 px-3 py-2" /></label><div className="flex gap-3"><button disabled={busy} className="rounded-md bg-indigo-500 px-4 py-2 text-sm text-white disabled:opacity-50">Reset password</button><button type="button" onClick={() => setResetUser(null)} className="text-sm text-zinc-400">Cancel</button></div></form>}
   </div>;
 }

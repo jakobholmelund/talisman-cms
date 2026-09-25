@@ -102,12 +102,13 @@ function GlobalsIndexRoute() {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8"
+                      aria-label={`Edit ${glb.name}`}
                       onClick={(event) => {
                         event.stopPropagation();
                         window.location.assign(`${adminBasePath}/globals/${glb.slug}`);
                       }}
                     >
-                        <MoreHorizontal size={14} />
+                        <MoreHorizontal size={14} aria-hidden="true" />
                     </Button>
                   </TableCell>
                 </TableRow>

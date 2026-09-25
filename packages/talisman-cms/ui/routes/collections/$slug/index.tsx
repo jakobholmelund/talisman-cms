@@ -3,8 +3,10 @@ import { createFileRoute, Link, useLoaderData, useNavigate, useRouter } from '@t
 import { Card } from '../../../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
 import { Button } from '../../../components/ui/button';
-import { Plus, MoreHorizontal, ArrowLeft } from 'lucide-react';
+import { Plus, MoreHorizontal, ArrowLeft, ChevronRight } from 'lucide-react';
 import { getSectionBasePath, getSectionEntryRoute, type AdminSection } from '../../../lib/admin-sections';
+import { fetchCollectionConfigs } from '../../../lib/admin-api';
+import { getPagePath, getPendingSlugRename } from '../../../lib/entry-save';
 
 export const Route = createFileRoute('/collections/$slug/')({
   component: CollectionsEntriesRoute,
@@ -28,16 +30,11 @@ async function fetchEntriesPage(basePath: string, slug: string, cursor?: string 
 }
 
 export async function loadCollectionEntriesData(basePath: string, slug: string) {
-  const [collectionRes, page] = await Promise.all([
-    fetch(`${basePath}/api/collections`),
+  const [collections, page] = await Promise.all([
+    fetchCollectionConfigs(basePath),
     fetchEntriesPage(basePath, slug)
   ]);
 
-  if (!collectionRes.ok) {
-    throw new Error('Failed to fetch data');
-  }
-
-  const collections = await collectionRes.json() as any[];
   const collection = collections.find((item: any) => item.slug === slug);
 
   return { collection, entries: page.docs, nextCursor: page.nextCursor };
@@ -49,8 +46,7 @@ function parseEntryData(entry: any) {
 }
 
 function getPageUrl(slug: string) {
-  if (!slug || slug === 'index') return '/';
-  return `/${slug}`;
+  return getPagePath(slug);
 }
 
 function formatEntryStatus(status: string | undefined) {
@@ -144,11 +140,12 @@ export function CollectionEntriesPage({
             {collection.description || `Manage ${collection.nativeSchemaMapping ? 'records' : 'content'} for ${collection.name}.`}
           </p>
         </div>
-        {!collection.readOnly && <Link to={sectionEntryRoute} params={{ slug, entryId: 'new' }}>
-          <Button className="gap-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-400 hover:to-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_25px_rgba(99,102,241,0.5)] transition-all duration-300 border-0">
-            <Plus size={16} strokeWidth={2.5} /> {isProductsCollection ? 'Add product' : `Create ${entryLabel}`}
-          </Button>
-        </Link>}
+        {/* One link styled as a button, so the keyboard reaches it once. */}
+        {!collection.readOnly && <Button asChild className="gap-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-400 hover:to-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_25px_rgba(99,102,241,0.5)] transition-all duration-300 border-0">
+          <Link to={sectionEntryRoute} params={{ slug, entryId: 'new' }}>
+            <Plus size={16} strokeWidth={2.5} aria-hidden="true" /> {isProductsCollection ? 'Add product' : `Create ${entryLabel}`}
+          </Link>
+        </Button>}
       </div>
 
       <Card className="overflow-hidden border-white/10 bg-zinc-950/50 backdrop-blur-2xl shadow-xl">
@@ -162,7 +159,7 @@ export function CollectionEntriesPage({
               <TableHead className="text-zinc-400 font-medium">Status</TableHead>
               {isPagesCollection && <TableHead className="text-zinc-400 font-medium">Sections</TableHead>}
               <TableHead className="text-right text-zinc-400 font-medium">Last Updated</TableHead>
-              <TableHead className="w-[50px]"></TableHead>
+              <TableHead className="w-[50px]"><span className="sr-only">Open</span></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -171,14 +168,14 @@ export function CollectionEntriesPage({
                 <TableCell colSpan={isPagesCollection ? 6 : 4} className="text-center text-zinc-500 py-16">
                   <div className="flex flex-col items-center justify-center space-y-4">
                     <div className="p-4 bg-white/5 rounded-full border border-white/5 shadow-inner">
-                      <MoreHorizontal size={24} className="text-zinc-500" />
+                      <MoreHorizontal size={24} aria-hidden="true" className="text-zinc-500" />
                     </div>
                     <p className="text-sm font-medium text-zinc-300">No {entryLabel}s found for {collection.name}.</p>
-                    {!collection.readOnly && <Link to={sectionEntryRoute} params={{ slug, entryId: 'new' }}>
-                      <Button variant="outline" size="sm" className="mt-2 text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/10">
+                    {!collection.readOnly && <Button asChild variant="outline" size="sm" className="mt-2 text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/10">
+                      <Link to={sectionEntryRoute} params={{ slug, entryId: 'new' }}>
                         {isProductsCollection ? 'Add the first product' : `Create the first ${entryLabel}`}
-                      </Button>
-                    </Link>}
+                      </Link>
+                    </Button>}
                   </div>
                 </TableCell>
               </TableRow>
@@ -190,8 +187,11 @@ export function CollectionEntriesPage({
                   .find(value => typeof value === 'string' && value.length > 0)
                   || (slug === '_ecommerce_orders' ? `Order ${String(entry.id).slice(-8)}` : entry.slug);
                 const displayStatus = collection.nativeSchemaMapping && !('status' in data) ? 'record' : entry.status;
-                const pageUrl = getPageUrl(entry.slug);
+                // A published entry keeps serving its live slug until the renamed draft is published.
+                const pendingRename = getPendingSlugRename(entry);
+                const pageUrl = getPageUrl(pendingRename ? pendingRename.liveSlug : entry.slug);
                 const sectionCount = Array.isArray(data.layout) ? data.layout.length : 0;
+                const rowLabel = isPagesCollection ? pageTitle : entryName;
 
                 return (
                   <TableRow 
@@ -202,31 +202,35 @@ export function CollectionEntriesPage({
                     }}
                   >
                     <TableCell>
-                      {isPagesCollection ? (
-                        <>
-                          <div className="font-medium text-zinc-100 group-hover:text-indigo-400 transition-colors flex items-center gap-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-zinc-700 group-hover:bg-indigo-400 transition-colors" />
-                            {pageTitle}
-                          </div>
-                          <div className="text-xs text-zinc-500 mt-1 ml-3.5 tracking-tight group-hover:text-zinc-400 transition-colors">
-                            {entry.slug}
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="font-medium text-zinc-100 group-hover:text-indigo-400 transition-colors flex items-center gap-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-zinc-700 group-hover:bg-indigo-400 transition-colors" />
-                            {entryName}
-                          </div>
-                          <div className="text-xs text-zinc-500 font-mono mt-1 ml-3.5 tracking-tight group-hover:text-zinc-400 transition-colors">{entry.slug}</div>
-                        </>
-                      )}
+                      {/* The name is a real link, so the row can be reached and opened from the keyboard. */}
+                      <Link
+                        to={sectionEntryRoute}
+                        params={{ slug, entryId: entry.id }}
+                        onClick={(event) => event.stopPropagation()}
+                        className="font-medium text-zinc-100 group-hover:text-indigo-400 transition-colors flex items-center gap-2 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/60"
+                      >
+                        <span aria-hidden="true" className="w-1.5 h-1.5 rounded-full bg-zinc-700 group-hover:bg-indigo-400 transition-colors" />
+                        {rowLabel}
+                      </Link>
+                      <div className={`text-xs text-zinc-500 mt-1 ml-3.5 tracking-tight group-hover:text-zinc-400 transition-colors ${isPagesCollection ? '' : 'font-mono'}`}>
+                        {pendingRename && !isPagesCollection ? (
+                          <>
+                            {pendingRename.liveSlug}
+                            <span className="ml-2 font-sans text-amber-300/90">renames to {pendingRename.nextSlug} on publish</span>
+                          </>
+                        ) : entry.slug}
+                      </div>
                     </TableCell>
                     {isPagesCollection && (
                       <TableCell>
                         <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-mono bg-zinc-900 border border-white/10 text-zinc-300 shadow-sm">
                           {pageUrl}
                         </span>
+                        {pendingRename && (
+                          <div className="mt-1 text-[11px] text-amber-300/90">
+                            Renames to <span className="font-mono">{getPageUrl(pendingRename.nextSlug)}</span> on publish
+                          </div>
+                        )}
                       </TableCell>
                     )}
                     <TableCell>
@@ -249,9 +253,7 @@ export function CollectionEntriesPage({
                       })}
                     </TableCell>
                     <TableCell>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-500 hover:text-zinc-200 hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-all duration-200">
-                        <MoreHorizontal size={14} />
-                      </Button>
+                      <ChevronRight aria-hidden="true" size={14} className="text-zinc-600 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
                     </TableCell>
                   </TableRow>
                 );

@@ -1,14 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useId, useState } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useForm } from '@tanstack/react-form';
 import { globals as configuredGlobals } from 'virtual:talisman-cms/config';
 import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, ChevronRight, GripVertical, Plus, Save } from 'lucide-react';
 import { BlockLibraryPicker } from '../../components/BlockLibraryPicker';
 import { ComponentSlotPicker } from '../../components/ComponentSlotPicker';
-import { PageBuilderComposer } from '../../components/PageBuilderComposer';
+import { formatFieldErrors as formatErrorMessages, PageBuilderComposer } from '../../components/PageBuilderComposer';
 import { Card, CardContent } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { RichTextEditor } from '../../components/RichTextEditor';
+import { fetchCollectionConfigs, fetchEntriesBySlug } from '../../lib/admin-api';
+import { prepareFieldValuesForSave } from '../../lib/entry-save';
 import {
   getRelationOptionKey,
   getRelationTargets,
@@ -223,6 +225,8 @@ function RelationshipPicker({
   onBlur,
   relationOptions,
   relationSupportEntries,
+  labelId,
+  describedBy,
 }: {
   field: any;
   value: any;
@@ -230,6 +234,9 @@ function RelationshipPicker({
   onBlur: () => void;
   relationOptions: Record<string, RelationOptionRecord[]>;
   relationSupportEntries: RelationSupportEntries;
+  /** The id of the field's visible label, which names the picker. */
+  labelId?: string;
+  describedBy?: string;
 }) {
   const [query, setQuery] = useState('');
   const options = getRelationOptionsForField(field, relationOptions);
@@ -265,12 +272,13 @@ function RelationshipPicker({
   }
 
   return (
-    <div className="space-y-3">
+    <div role="group" aria-labelledby={labelId} aria-describedby={describedBy} className="space-y-3">
       <input
         type="text"
         value={query}
         onChange={(event) => setQuery(event.target.value)}
         placeholder={`Search ${field.label.toLowerCase()}...`}
+        aria-label={`Search ${field.label}`}
         className="w-full rounded-md border border-white/10 bg-zinc-950/50 px-3 py-2.5 text-sm text-zinc-100 shadow-inner transition-all focus:border-indigo-500/50 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
       />
 
@@ -288,7 +296,7 @@ function RelationshipPicker({
                       {entry ? ` • ${getRecordSubtitle(entry)}` : ''}
                     </div>
                   </div>
-                  <Button type="button" size="sm" variant="destructive" onClick={() => removeSelection(selection)}>
+                  <Button type="button" size="sm" variant="destructive" aria-label={`Remove ${entry ? getRecordLabel(entry) : selection.value}`} onClick={() => removeSelection(selection)}>
                     Remove
                   </Button>
                 </div>
@@ -298,7 +306,7 @@ function RelationshipPicker({
         </div>
       ) : null}
 
-      <div className="max-h-72 overflow-y-auto rounded-lg border border-white/10 bg-zinc-950/30">
+      <div role="group" aria-label={`${field.label} options`} className="max-h-72 overflow-y-auto rounded-lg border border-white/10 bg-zinc-950/30">
         {filteredOptions.length === 0 ? (
           <div className="px-3 py-4 text-sm text-zinc-500">No entries matched this search.</div>
         ) : (
@@ -347,6 +355,10 @@ function FieldRenderer({
   collapseStorageKey?: string;
 }) {
   const fieldName = basePath ? `${basePath}.${field.name}` : field.name;
+  // Links each label to its control, and each control to its error message.
+  const controlId = useId();
+  const labelId = `${controlId}-label`;
+  const errorId = `${controlId}-error`;
   const [dragState, setDragState] = useState<{ listId: string; index: number } | null>(null);
   const [blockLibraryOpen, setBlockLibraryOpen] = useState(false);
   const [pendingBlockInsertIndex, setPendingBlockInsertIndex] = useState<number | null>(null);
@@ -402,21 +414,22 @@ function FieldRenderer({
         children={(fieldApi: any) => {
           const value = fieldApi.state.value || [];
           return (
-            <div className="space-y-4 rounded-lg border border-white/10 bg-zinc-950/40 p-5 shadow-inner">
+            <div role="group" aria-labelledby={labelId} className="space-y-4 rounded-lg border border-white/10 bg-zinc-950/40 p-5 shadow-inner">
               <div className="flex items-center justify-between border-b border-white/5 pb-3">
-                <label className="text-sm font-medium text-zinc-300">{field.label}</label>
+                <div id={labelId} className="text-sm font-medium text-zinc-300">{field.label}</div>
                 <Button size="sm" variant="outline" type="button" onClick={() => fieldApi.pushValue(buildDefaultValues(field.fields))}>
                   Add Row
                 </Button>
               </div>
 
               {value.map((_: any, index: number) => (
-                <div key={index} className="relative rounded-lg border border-white/5 bg-white/[0.02] p-5">
+                <div key={index} role="group" aria-label={`${field.label} row ${index + 1}`} className="relative rounded-lg border border-white/5 bg-white/[0.02] p-5">
                   <Button
                     size="sm"
                     variant="destructive"
                     type="button"
                     className="absolute right-3 top-3"
+                    aria-label={`Remove ${field.label} row ${index + 1}`}
                     onClick={() => fieldApi.removeValue(index)}
                   >
                     Remove
@@ -953,9 +966,9 @@ function FieldRenderer({
 
   if (field.type === 'group') {
     return (
-      <div className="space-y-4 rounded-lg border border-white/10 bg-zinc-950/40 p-5 shadow-inner">
+      <div role="group" aria-labelledby={labelId} className="space-y-4 rounded-lg border border-white/10 bg-zinc-950/40 p-5 shadow-inner">
         <div className="border-b border-white/5 pb-3">
-          <label className="text-sm font-medium text-zinc-300">{field.label}</label>
+          <div id={labelId} className="text-sm font-medium text-zinc-300">{field.label}</div>
         </div>
         <div className="space-y-4">
           {field.fields?.map((subField: any) => (
@@ -978,19 +991,35 @@ function FieldRenderer({
     <form.Field
       name={fieldName}
       children={(fieldApi: any) => {
-        const hasError = fieldApi.state.meta.errors.length > 0;
+        const errorMessages = formatErrorMessages(fieldApi.state.meta.errors);
+        const hasError = errorMessages.length > 0;
         const value = fieldApi.state.value;
+        const describedBy = hasError ? errorId : undefined;
+        // Shared by the native controls: the label names them, the error describes them.
+        const controlProps = {
+          id: controlId,
+          'aria-invalid': hasError || undefined,
+          'aria-describedby': describedBy,
+          'aria-required': field.required || undefined,
+        };
+        // Relation pickers and rich text are not single form controls, so they take the label by id.
+        const labelNamesGroup = isRelationshipFieldType(field.type) || field.type === 'richtext';
 
         return (
           <div className="space-y-2">
-            {field.type !== 'boolean' ? (
-              <label className="block text-sm font-medium text-zinc-300">
-                {field.label} {field.required ? <span className="text-red-400">*</span> : null}
+            {field.type !== 'boolean' ? (labelNamesGroup ? (
+              <div id={labelId} className="block text-sm font-medium text-zinc-300">
+                {field.label} {field.required ? <span aria-hidden="true" className="text-red-400">*</span> : null}
+              </div>
+            ) : (
+              <label id={labelId} htmlFor={controlId} className="block text-sm font-medium text-zinc-300">
+                {field.label} {field.required ? <span aria-hidden="true" className="text-red-400">*</span> : null}
               </label>
-            ) : null}
+            )) : null}
 
             {field.type === 'textarea' ? (
               <textarea
+                {...controlProps}
                 value={(value as string) || ''}
                 onChange={(event) => fieldApi.handleChange(event.target.value)}
                 onBlur={fieldApi.handleBlur}
@@ -998,6 +1027,7 @@ function FieldRenderer({
               />
             ) : field.type === 'select' ? (
               <select
+                {...controlProps}
                 value={(value as string) || ''}
                 onChange={(event) => fieldApi.handleChange(event.target.value)}
                 onBlur={fieldApi.handleBlur}
@@ -1018,38 +1048,44 @@ function FieldRenderer({
                 onBlur={fieldApi.handleBlur}
                 relationOptions={relationOptions}
                 relationSupportEntries={relationSupportEntries}
+                labelId={labelId}
+                describedBy={describedBy}
               />
             ) : field.type === 'richtext' ? (
               <RichTextEditor
                 value={value}
                 onChange={(nextValue: any) => fieldApi.handleChange(nextValue)}
                 hasError={hasError}
+                ariaLabelledBy={labelId}
+                ariaDescribedBy={describedBy}
               />
             ) : field.type === 'boolean' ? (
               <div className="flex items-center gap-2">
                 <input
+                  {...controlProps}
                   type="checkbox"
-                  id={`field-${fieldName}`}
                   checked={!!value}
                   onChange={(event) => fieldApi.handleChange(event.target.checked)}
                   onBlur={fieldApi.handleBlur}
                   className="h-4 w-4 rounded border-zinc-700 bg-zinc-950 text-indigo-500 focus:ring-indigo-500"
                 />
-                <label htmlFor={`field-${fieldName}`} className="text-sm font-medium">
-                  {field.label} {field.required ? <span className="text-red-500">*</span> : null}
+                <label id={labelId} htmlFor={controlId} className="text-sm font-medium">
+                  {field.label} {field.required ? <span aria-hidden="true" className="text-red-500">*</span> : null}
                 </label>
               </div>
             ) : (
               <input
+                {...controlProps}
                 type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
                 value={value !== undefined && value !== null ? (field.type === 'date' && typeof value === 'string' ? value.slice(0, 10) : (value as any)) : ''}
-                onChange={(event) => fieldApi.handleChange(field.type === 'number' ? (event.target.value ? Number(event.target.value) : undefined) : event.target.value)}
+                // A cleared optional number is null, so saving clears it; a required one stays empty and shows "Required".
+                onChange={(event) => fieldApi.handleChange(field.type === 'number' ? (event.target.value ? Number(event.target.value) : field.required ? undefined : null) : event.target.value)}
                 onBlur={fieldApi.handleBlur}
                 className={`w-full rounded-md border bg-zinc-950/50 px-3 py-2.5 text-sm shadow-inner transition-all focus:outline-none focus:ring-2 ${hasError ? 'border-red-500/50 focus:ring-red-500/50' : 'border-white/10 focus:border-indigo-500/50 focus:ring-indigo-500/50'}`}
               />
             )}
 
-            {hasError ? <p className="text-xs text-red-500">{fieldApi.state.meta.errors.join(', ')}</p> : null}
+            {hasError ? <p id={errorId} role="alert" className="text-xs text-red-500">{errorMessages.join(', ')}</p> : null}
           </div>
         );
       }}
@@ -1077,18 +1113,16 @@ export const Route = createFileRoute('/globals/$slug')({
       if (globalNeedsPresetEntries(globalConfig)) {
         relationTargets.push('_ui_component_presets');
       }
-      const relationEntriesBySlug = new Map<string, any[]>();
 
-      for (const relationTo of relationTargets) {
-        const relationRes = await fetch(`${adminBasePath}/api/collections/${relationTo}/entries`);
-        const entries = (relationRes.ok ? await relationRes.json() : []) as any[];
-        relationEntriesBySlug.set(relationTo, entries);
-        relationSupportEntries[relationTo] = entries;
+      // The related collections load in parallel, each one bounded page at a time.
+      if (relationTargets.length > 0) {
+        const collections = await fetchCollectionConfigs(adminBasePath).catch(() => [] as any[]);
+        Object.assign(relationSupportEntries, await fetchEntriesBySlug(adminBasePath, relationTargets, collections));
       }
 
       for (const field of relationFields) {
         relationOptions[getRelationOptionKey(field)] = getRelationTargets(field).flatMap((relationTo) =>
-          (relationEntriesBySlug.get(relationTo) || []).map((entry) => ({
+          (relationSupportEntries[relationTo] || []).map((entry) => ({
             collectionSlug: relationTo,
             entry,
           }))
@@ -1177,8 +1211,9 @@ function GlobalEditorRoute() {
     }
 
     try {
+      // Optional fields left blank are sent as null, not as '' (which a number or select refuses).
       const payload = hasConfiguredFields
-        ? form.state.values
+        ? prepareFieldValuesForSave(schemaFields, form.state.values)
         : (rawJsonValue.trim() ? JSON.parse(rawJsonValue) : {});
       if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
         throw new Error('The JSON document must be an object, for example {"title": "Hello"}.');
@@ -1284,6 +1319,7 @@ function GlobalEditorRoute() {
                 </p>
               </div>
               <textarea
+                aria-label="Global JSON document"
                 value={rawJsonValue}
                 onChange={(event) => setRawJsonValue(event.target.value)}
                 spellCheck={false}

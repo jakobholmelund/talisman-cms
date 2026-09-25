@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createFileRoute, Link, useBlocker, useNavigate, useRouter } from '@tanstack/react-router';
 import { uiLibraries as configuredUiLibraries } from 'virtual:talisman-cms/ui-libraries';
 import { Card, CardContent } from '../../../components/ui/card';
@@ -15,6 +15,19 @@ import {
 } from '../../../components/PageBuilderComposer';
 import { RichTextEditor } from '../../../components/RichTextEditor';
 import { getSectionCollectionRoute, getSectionEntryRoute, type AdminSection } from '../../../lib/admin-sections';
+import { fetchCollectionConfigs, fetchEntriesBySlug } from '../../../lib/admin-api';
+import {
+  describeSettledTransition,
+  getPagePath,
+  getPendingSlugRename,
+  hasEntryMovedOn,
+  isSlugConflict,
+  isStaleRecordConflict,
+  prepareFieldValuesForSave,
+  readPendingTransition,
+  waitForPendingTransition,
+  type PendingTransition,
+} from '../../../lib/entry-save';
 import {
   describeCommerceEntry,
   getCommerceFlowSummary,
@@ -124,70 +137,75 @@ function collectionNeedsPresetEntries(collection: any) {
 
 export const Route = createFileRoute('/collections/$slug/$entryId')({
   component: CollectionsEntryEditorRoute,
-  loader: async ({ params, context }) => loadEntryEditorData(context.adminBasePath || '/admin', params.slug, params.entryId)
+  loader: async ({ params, context }) => loadEntryEditorData(context.adminBasePath || '/admin', params.slug, params.entryId),
+  // The editor keeps its own copy of the entry after saving, so a cached load would be stale when the
+  // user comes back; always load the entry afresh instead.
+  gcTime: 0,
 });
+
+/** How many revisions the history lists; the newest come first. */
+const REVISION_LIST_LIMIT = 50;
+
+/** The tables the product's variant editor reads and writes; it reloads these after each change. */
+const PRODUCT_CONFIGURATOR_SLUGS = [
+  '_ecommerce_variants',
+  '_ecommerce_product_variants',
+  '_ecommerce_product_variant_values',
+  '_ecommerce_stocks',
+];
+
+/** The collections whose records the editor needs next to the entry: relation targets, commerce models, presets. */
+function getRelationSupportSlugs(collection: any) {
+  if (!collection?.fields) return [];
+  const relationFields = collectRelationshipFields(collection.fields);
+  const relationTargets = [...new Set(relationFields.flatMap((field: any) => getRelationTargets(field)))];
+  const supportSlugs = getCommerceSupportSlugs(collection.slug, relationTargets);
+  if (collectionNeedsPresetEntries(collection)) {
+    supportSlugs.push('_ui_component_presets');
+  }
+  return supportSlugs;
+}
+
+function buildRelationOptions(collection: any, relationEntriesBySlug: Record<string, any[]>) {
+  const relationOptions: Record<string, RelationOptionRecord[]> = {};
+  for (const field of collectRelationshipFields(collection?.fields)) {
+    relationOptions[getRelationOptionKey(field)] = getRelationTargets(field).flatMap((relationTo) =>
+      (relationEntriesBySlug[relationTo] || []).map((entry) => ({
+        collectionSlug: relationTo,
+        entry,
+      }))
+    );
+  }
+  return relationOptions;
+}
 
 export async function loadEntryEditorData(basePath: string, slug: string, entryId: string) {
   const isNew = entryId === 'new';
-
-  const [collectionRes] = await Promise.all([
-    fetch(`${basePath}/api/collections`),
-  ]);
-  
-  if (!collectionRes.ok) throw new Error('Failed to fetch collection');
-  const collections = await collectionRes.json() as any[];
+  const collections = await fetchCollectionConfigs(basePath);
   const collection = collections.find((c: any) => c.slug === slug);
 
-  let entry = null;
-  let revisions: any[] = [];
-  if (!isNew) {
+  // The entry, its history and the related records do not depend on each other, so they load together.
+  const [loadedEntry, revisions, relationSupportEntries] = await Promise.all([
+    isNew ? Promise.resolve(null) : (async () => {
+      const entryRes = await fetch(`${basePath}/api/collections/${slug}/entries/${entryId}`);
+      if (!entryRes.ok) {
+        throw await toRequestError(entryRes, entryRes.status === 404 ? 'This entry no longer exists' : 'Failed to load this entry');
+      }
+      return entryRes.json();
+    })(),
     // Native records have no revision history; asking for it only produces a 400.
-    const [entryRes, revisionsRes] = await Promise.all([
-      fetch(`${basePath}/api/collections/${slug}/entries/${entryId}`),
-      collection && !isNativeCollection(collection)
-        ? fetch(`${basePath}/api/collections/${slug}/entries/${entryId}/revisions`)
-        : Promise.resolve(null)
-    ]);
+    isNew || !collection || isNativeCollection(collection)
+      ? Promise.resolve([] as any[])
+      : fetch(`${basePath}/api/collections/${slug}/entries/${entryId}/revisions?limit=${REVISION_LIST_LIMIT}`)
+          .then(async (res) => (res.ok ? await res.json() as any[] : []))
+          .catch(() => [] as any[]),
+    collection ? fetchEntriesBySlug(basePath, getRelationSupportSlugs(collection), collections) : Promise.resolve({}),
+  ]);
 
-    if (!entryRes.ok) {
-      throw await toRequestError(entryRes, entryRes.status === 404 ? 'This entry no longer exists' : 'Failed to load this entry');
-    }
-    entry = await entryRes.json();
+  const entry = loadedEntry as any;
+  const relationOptions = collection ? buildRelationOptions(collection, relationSupportEntries) : {};
 
-    if (revisionsRes?.ok) {
-      revisions = await revisionsRes.json();
-    }
-  }
-
-  const relationOptions: Record<string, RelationOptionRecord[]> = {};
-  const relationSupportEntries: CommerceSupportEntries = {};
-  if (collection && collection.fields) {
-    const relationFields = collectRelationshipFields(collection.fields);
-    const relationTargets = [...new Set(relationFields.flatMap((field: any) => getRelationTargets(field)))];
-    const supportSlugs = getCommerceSupportSlugs(collection.slug, relationTargets);
-    if (collectionNeedsPresetEntries(collection)) {
-      supportSlugs.push('_ui_component_presets');
-    }
-    const relationEntriesBySlug = new Map<string, any[]>();
-
-    for (const relationTo of supportSlugs) {
-      const res = await fetch(`${basePath}/api/collections/${relationTo}/entries`);
-      const entries = (res.ok ? await res.json() : []) as any[];
-      relationEntriesBySlug.set(relationTo, entries);
-      relationSupportEntries[relationTo] = entries;
-    }
-
-    for (const field of relationFields) {
-      relationOptions[getRelationOptionKey(field)] = getRelationTargets(field).flatMap((relationTo) =>
-        (relationEntriesBySlug.get(relationTo) || []).map((entry) => ({
-          collectionSlug: relationTo,
-          entry,
-        }))
-      );
-    }
-  }
-
-  return { collection, entry, revisions, isNew, relationOptions, relationSupportEntries };
+  return { collection, entry, revisions, isNew, relationOptions, relationSupportEntries: relationSupportEntries as CommerceSupportEntries };
 }
 
 import { useForm, useStore } from '@tanstack/react-form';
@@ -196,13 +214,26 @@ const SESSION_EXPIRED_MESSAGE = 'Your session has expired. Sign in again in anot
 class EditorRequestError extends Error {
   status: number;
   fieldErrors: ServerFieldErrors;
+  /** The error body's machine-readable `code`, such as `revision_conflict` or `slug_conflict`. */
+  code: string | null;
 
-  constructor(message: string, status: number, fieldErrors: ServerFieldErrors = {}) {
+  constructor(message: string, status: number, fieldErrors: ServerFieldErrors = {}, code: string | null = null) {
     super(message);
     this.name = 'EditorRequestError';
     this.status = status;
     this.fieldErrors = fieldErrors;
+    this.code = code;
   }
+}
+
+/** True when the record changed after it was loaded, so the conflict panel and "Load latest version" help. */
+function isStaleEditError(error: unknown): error is EditorRequestError {
+  return error instanceof EditorRequestError && isStaleRecordConflict(error);
+}
+
+/** True when another entry already uses the slug; the user has to choose another one. */
+function isSlugConflictError(error: unknown): error is EditorRequestError {
+  return error instanceof EditorRequestError && isSlugConflict(error);
 }
 
 /** Converts an error path (`['layout', 0, 'title']` or `layout.0.title`) to the form's field name (`layout[0].title`). */
@@ -251,8 +282,9 @@ function readErrorMessage(payload: any) {
 
 async function toRequestError(res: Response, fallback: string) {
   if (res.status === 401) return new EditorRequestError(SESSION_EXPIRED_MESSAGE, 401);
-  const payload = await res.json().catch(() => null);
-  return new EditorRequestError(readErrorMessage(payload) || `${fallback} (HTTP ${res.status})`, res.status, readFieldErrors(payload));
+  const payload: any = await res.json().catch(() => null);
+  const code = typeof payload?.code === 'string' && payload.code ? payload.code : null;
+  return new EditorRequestError(readErrorMessage(payload) || `${fallback} (HTTP ${res.status})`, res.status, readFieldErrors(payload), code);
 }
 
 async function requestEditorApi(url: string, init: RequestInit, fallback: string): Promise<any> {
@@ -334,6 +366,35 @@ function takeEditorNotice(slug: string, entryId: string) {
     return message || '';
   } catch {
     return '';
+  }
+}
+
+// A publish or archive still running when a newly created entry opens at its own URL; the editor
+// there keeps waiting for it.
+function getPendingTransitionKey(slug: string, entryId: string) {
+  return `talisman-cms:editor-pending:${slug}:${entryId}`;
+}
+
+function stashPendingTransition(slug: string, pending: PendingTransition) {
+  try {
+    window.sessionStorage.setItem(getPendingTransitionKey(slug, pending.entryId), JSON.stringify(pending));
+  } catch {
+    // Storage can be unavailable; the entry still opens, without the notice.
+  }
+}
+
+function takePendingTransition(slug: string, entryId: string): PendingTransition | null {
+  try {
+    const key = getPendingTransitionKey(slug, entryId);
+    const stored = window.sessionStorage.getItem(key);
+    if (!stored) return null;
+    window.sessionStorage.removeItem(key);
+    const pending = JSON.parse(stored);
+    return pending?.entryId === entryId && typeof pending.action === 'string' && typeof pending.message === 'string'
+      ? { action: pending.action, entryId, fromRevisionId: typeof pending.fromRevisionId === 'string' ? pending.fromRevisionId : null, message: pending.message }
+      : null;
+  } catch {
+    return null;
   }
 }
 
@@ -557,6 +618,8 @@ function RelationshipPicker({
   onBlur,
   relationOptions,
   relationSupportEntries,
+  labelId,
+  describedBy,
 }: {
   field: any;
   value: any;
@@ -564,6 +627,9 @@ function RelationshipPicker({
   onBlur: () => void;
   relationOptions: Record<string, RelationOptionRecord[]>;
   relationSupportEntries: CommerceSupportEntries;
+  /** The id of the field's visible label, which names the picker. */
+  labelId?: string;
+  describedBy?: string;
 }) {
   const [query, setQuery] = useState('');
   const options = getRelationOptionsForField(field, relationOptions);
@@ -610,12 +676,13 @@ function RelationshipPicker({
   }
 
   return (
-    <div className="space-y-3">
+    <div role="group" aria-labelledby={labelId} aria-describedby={describedBy} className="space-y-3">
       <input
         type="text"
         value={query}
         onChange={(event) => setQuery(event.target.value)}
         placeholder={`Search ${field.label.toLowerCase()}...`}
+        aria-label={`Search ${field.label}`}
         className="w-full rounded-md border border-white/10 bg-zinc-950/50 px-3 py-2.5 text-sm text-zinc-100 shadow-inner transition-all focus:border-indigo-500/50 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
       />
 
@@ -640,15 +707,15 @@ function RelationshipPicker({
                   <div className="flex flex-wrap gap-2">
                     {field.hasMany && (
                       <>
-                        <Button type="button" size="sm" variant="outline" onClick={() => moveSelection(selection, -1)} disabled={index === 0}>
+                        <Button type="button" size="sm" variant="outline" aria-label={`Move ${description.title} up`} onClick={() => moveSelection(selection, -1)} disabled={index === 0}>
                           Up
                         </Button>
-                        <Button type="button" size="sm" variant="outline" onClick={() => moveSelection(selection, 1)} disabled={index === selections.length - 1}>
+                        <Button type="button" size="sm" variant="outline" aria-label={`Move ${description.title} down`} onClick={() => moveSelection(selection, 1)} disabled={index === selections.length - 1}>
                           Down
                         </Button>
                       </>
                     )}
-                    <Button type="button" size="sm" variant="destructive" onClick={() => removeSelection(selection)}>
+                    <Button type="button" size="sm" variant="destructive" aria-label={`Remove ${description.title}`} onClick={() => removeSelection(selection)}>
                       Remove
                     </Button>
                   </div>
@@ -659,7 +726,7 @@ function RelationshipPicker({
         </div>
       )}
 
-      <div className="max-h-72 overflow-y-auto rounded-lg border border-white/10 bg-zinc-950/30">
+      <div role="group" aria-label={`${field.label} options`} className="max-h-72 overflow-y-auto rounded-lg border border-white/10 bg-zinc-950/30">
         {filteredOptions.length === 0 ? (
           <div className="px-3 py-4 text-sm text-zinc-500">No entries matched this search.</div>
         ) : (
@@ -1083,6 +1150,8 @@ function ProductVariantConfigurator({
   const [localStatus, setLocalStatus] = useState('');
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [hasStaleRows, setHasStaleRows] = useState(false);
+  const idPrefix = useId();
+  const controlId = (...parts: string[]) => [idPrefix, ...parts].join('-');
 
   useEffect(() => {
     if (!productId) {
@@ -1109,7 +1178,9 @@ function ProductVariantConfigurator({
   };
 
   const showRequestError = (error: unknown) => {
-    if (error instanceof EditorRequestError && error.status === 409) {
+    // Only a stale row is fixed by loading the latest values; a clash such as a SKU another record
+    // already uses is reported as the server words it.
+    if (isStaleEditError(error)) {
       setHasStaleRows(true);
       setLocalError('This option or its stock changed after the page loaded, for example because a checkout reserved stock, so the change was refused. Load the latest values, then make your change again.');
       return;
@@ -1237,12 +1308,13 @@ function ProductVariantConfigurator({
       const inventoryChanged = group.savedInventoryQuantity === null ||
         toRequiredNumber(group.inventoryQuantity, 0) !== toRequiredNumber(group.savedInventoryQuantity, 0);
       const payload = {
+        // A blank optional value is sent as null, so clearing it on a saved group clears the column.
         data: {
           productId,
-          variantId: group.variantId || undefined,
+          variantId: group.variantId || null,
           name: group.name.trim(),
-          sku: group.sku.trim() || undefined,
-          priceOverride: toOptionalNumber(group.priceOverride),
+          sku: group.sku.trim() || null,
+          priceOverride: toOptionalNumber(group.priceOverride) ?? null,
           ...(inventoryChanged ? { inventoryQuantity: toRequiredNumber(group.inventoryQuantity, 0) } : {}),
         },
         ...(group.id && group.updatedAt !== null ? { expectedUpdatedAt: group.updatedAt } : {}),
@@ -1286,9 +1358,9 @@ function ProductVariantConfigurator({
           data: {
             productVariantId: group.id,
             value: value.value.trim(),
-            sku: value.sku.trim() || undefined,
-            image: value.image.trim() || undefined,
-            priceOverride: toOptionalNumber(value.priceOverride),
+            sku: value.sku.trim() || null,
+            image: value.image.trim() || null,
+            priceOverride: toOptionalNumber(value.priceOverride) ?? null,
           },
           ...(value.id && value.updatedAt !== null ? { expectedUpdatedAt: value.updatedAt } : {}),
         },
@@ -1419,7 +1491,9 @@ function ProductVariantConfigurator({
         <div className="text-sm font-medium text-zinc-100">Option Definitions</div>
         <p className="mt-1 text-xs text-zinc-400">Create reusable option families like Size, Color, or Material.</p>
         <div className="mt-4 flex flex-col gap-3 md:flex-row">
+          <label htmlFor={controlId('new-definition')} className="sr-only">New option definition name</label>
           <input
+            id={controlId('new-definition')}
             type="text"
             value={newDefinitionName}
             onChange={(event) => setNewDefinitionName(event.target.value)}
@@ -1478,7 +1552,7 @@ function ProductVariantConfigurator({
                   <Button type="button" variant="outline" onClick={() => void saveGroup(group)} disabled={busyKey === `group:${group.localId}`}>
                     {busyKey === `group:${group.localId}` ? 'Saving...' : group.id ? 'Save Group' : 'Create Group'}
                   </Button>
-                  <Button type="button" variant="destructive" onClick={() => void deleteGroup(group)} disabled={busyKey === `delete-group:${group.localId}`}>
+                  <Button type="button" variant="destructive" aria-label={`Delete variant group ${group.name || index + 1}`} onClick={() => void deleteGroup(group)} disabled={busyKey === `delete-group:${group.localId}`}>
                     Delete
                   </Button>
                 </div>
@@ -1486,8 +1560,9 @@ function ProductVariantConfigurator({
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-zinc-300">Option Definition</label>
+                  <label htmlFor={controlId(group.localId, 'definition')} className="text-sm font-medium text-zinc-300">Option Definition</label>
                   <select
+                    id={controlId(group.localId, 'definition')}
                     value={group.variantId}
                     onChange={(event) => updateGroupDraft(group.localId, { variantId: event.target.value })}
                     className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
@@ -1501,8 +1576,9 @@ function ProductVariantConfigurator({
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-zinc-300">Group Name</label>
+                  <label htmlFor={controlId(group.localId, 'name')} className="text-sm font-medium text-zinc-300">Group Name</label>
                   <input
+                    id={controlId(group.localId, 'name')}
                     type="text"
                     value={group.name}
                     onChange={(event) => updateGroupDraft(group.localId, { name: event.target.value })}
@@ -1511,8 +1587,9 @@ function ProductVariantConfigurator({
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-zinc-300">SKU Override</label>
+                  <label htmlFor={controlId(group.localId, 'sku')} className="text-sm font-medium text-zinc-300">SKU Override</label>
                   <input
+                    id={controlId(group.localId, 'sku')}
                     type="text"
                     value={group.sku}
                     onChange={(event) => updateGroupDraft(group.localId, { sku: event.target.value })}
@@ -1521,8 +1598,9 @@ function ProductVariantConfigurator({
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-zinc-300">Group Price Override (Cents)</label>
+                  <label htmlFor={controlId(group.localId, 'price')} className="text-sm font-medium text-zinc-300">Group Price Override (Cents)</label>
                   <input
+                    id={controlId(group.localId, 'price')}
                     type="number"
                     value={group.priceOverride}
                     onChange={(event) => updateGroupDraft(group.localId, { priceOverride: event.target.value })}
@@ -1531,8 +1609,9 @@ function ProductVariantConfigurator({
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-zinc-300">Legacy Inventory Quantity</label>
+                  <label htmlFor={controlId(group.localId, 'inventory')} className="text-sm font-medium text-zinc-300">Legacy Inventory Quantity</label>
                   <input
+                    id={controlId(group.localId, 'inventory')}
                     type="number"
                     value={group.inventoryQuantity}
                     onChange={(event) => updateGroupDraft(group.localId, { inventoryQuantity: event.target.value })}
@@ -1575,7 +1654,7 @@ function ProductVariantConfigurator({
                             <Button type="button" variant="outline" onClick={() => void saveValue(group, value)} disabled={!group.id || busyKey === `value:${value.localId}`}>
                               {busyKey === `value:${value.localId}` ? 'Saving...' : value.id ? 'Save Value' : 'Create Value'}
                             </Button>
-                            <Button type="button" variant="destructive" onClick={() => void deleteValue(group.localId, value)} disabled={busyKey === `delete-value:${value.localId}`}>
+                            <Button type="button" variant="destructive" aria-label={`Delete variant value ${value.value || 'Untitled value'}`} onClick={() => void deleteValue(group.localId, value)} disabled={busyKey === `delete-value:${value.localId}`}>
                               Delete
                             </Button>
                           </div>
@@ -1583,8 +1662,9 @@ function ProductVariantConfigurator({
 
                         <div className="grid gap-4 md:grid-cols-2">
                           <div className="space-y-2">
-                            <label className="text-sm font-medium text-zinc-300">Value Label</label>
+                            <label htmlFor={controlId(value.localId, 'label')} className="text-sm font-medium text-zinc-300">Value Label</label>
                             <input
+                              id={controlId(value.localId, 'label')}
                               type="text"
                               value={value.value}
                               onChange={(event) => updateValueDraft(group.localId, value.localId, { value: event.target.value })}
@@ -1593,8 +1673,9 @@ function ProductVariantConfigurator({
                             />
                           </div>
                           <div className="space-y-2">
-                            <label className="text-sm font-medium text-zinc-300">Value SKU</label>
+                            <label htmlFor={controlId(value.localId, 'sku')} className="text-sm font-medium text-zinc-300">Value SKU</label>
                             <input
+                              id={controlId(value.localId, 'sku')}
                               type="text"
                               value={value.sku}
                               onChange={(event) => updateValueDraft(group.localId, value.localId, { sku: event.target.value })}
@@ -1603,8 +1684,9 @@ function ProductVariantConfigurator({
                             />
                           </div>
                           <div className="space-y-2">
-                            <label className="text-sm font-medium text-zinc-300">Variant Image</label>
+                            <label htmlFor={controlId(value.localId, 'image')} className="text-sm font-medium text-zinc-300">Variant Image</label>
                             <MediaFieldInput
+                              inputId={controlId(value.localId, 'image')}
                               adminBasePath={basePath}
                               value={value.image}
                               onChange={(nextValue) => updateValueDraft(group.localId, value.localId, { image: nextValue })}
@@ -1612,8 +1694,9 @@ function ProductVariantConfigurator({
                             />
                           </div>
                           <div className="space-y-2">
-                            <label className="text-sm font-medium text-zinc-300">Price Override (Cents)</label>
+                            <label htmlFor={controlId(value.localId, 'price')} className="text-sm font-medium text-zinc-300">Price Override (Cents)</label>
                             <input
+                              id={controlId(value.localId, 'price')}
                               type="number"
                               value={value.priceOverride}
                               onChange={(event) => updateValueDraft(group.localId, value.localId, { priceOverride: event.target.value })}
@@ -1622,8 +1705,9 @@ function ProductVariantConfigurator({
                             />
                           </div>
                           <div className="space-y-2">
-                            <label className="text-sm font-medium text-zinc-300">Stock Quantity</label>
+                            <label htmlFor={controlId(value.localId, 'stock')} className="text-sm font-medium text-zinc-300">Stock Quantity</label>
                             <input
+                              id={controlId(value.localId, 'stock')}
                               type="number"
                               value={value.stockQuantity}
                               onChange={(event) => updateValueDraft(group.localId, value.localId, { stockQuantity: event.target.value })}
@@ -1647,6 +1731,10 @@ function ProductVariantConfigurator({
 // fieldPath is the form path of the parent value ('' at the top level); the admin API base path comes from context.
 function FieldRenderer({ field, form, fieldPath, relationOptions, relationSupportEntries, collapseStorageKey }: { field: any, form: any, fieldPath: string, relationOptions: any, relationSupportEntries: CommerceSupportEntries, collapseStorageKey?: string }) {
     const fieldName = fieldPath ? `${fieldPath}.${field.name}` : field.name;
+    // Links each label to its control, and each control to its error message.
+    const controlId = useId();
+    const labelId = `${controlId}-label`;
+    const errorId = `${controlId}-error`;
     const adminBasePath = useContext(AdminBasePathContext);
     const { errors: serverFieldErrors, clearError: clearServerFieldError } = useContext(ServerFieldErrorsContext);
     const getErrorMessages = (fieldApi: any) =>
@@ -1707,21 +1795,22 @@ function FieldRenderer({ field, form, fieldPath, relationOptions, relationSuppor
                     const value = fieldApi.state.value || [];
                     const errorMessages = getErrorMessages(fieldApi);
                     return (
-                        <div className="border border-white/10 rounded-lg p-5 space-y-4 bg-zinc-950/40 shadow-inner">
+                        <div role="group" aria-labelledby={labelId} className="border border-white/10 rounded-lg p-5 space-y-4 bg-zinc-950/40 shadow-inner">
                             <div className="flex items-center justify-between pb-3 border-b border-white/5">
-                                <label className="text-sm font-medium text-zinc-300">{field.label}</label>
+                                <div id={labelId} className="text-sm font-medium text-zinc-300">{field.label}</div>
                                 <Button size="sm" variant="outline" type="button" onClick={() => { clearServerFieldError(fieldName); fieldApi.pushValue(buildDefaultValues(field.fields)); }}>Add Row</Button>
                             </div>
                             {errorMessages.length > 0 && (
                                 <p role="alert" className="text-xs text-red-500">{errorMessages.join(', ')}</p>
                             )}
                             {value.map((_: any, i: number) => (
-                                <div key={i} className="p-5 border border-white/5 bg-white/[0.02] rounded-lg relative group transition-colors hover:bg-white/[0.04]">
+                                <div key={i} role="group" aria-label={`${field.label} row ${i + 1}`} className="p-5 border border-white/5 bg-white/[0.02] rounded-lg relative group transition-colors hover:bg-white/[0.04]">
                                     <Button 
                                         size="sm" 
                                         variant="destructive" 
                                         type="button"
-                                        className="absolute -right-2 -top-2 opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 p-0 rounded-full"
+                                        aria-label={`Remove ${field.label} row ${i + 1}`}
+                                        className="absolute -right-2 -top-2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity h-6 w-6 p-0 rounded-full"
                                         onClick={() => { clearServerFieldError(fieldName); fieldApi.removeValue(i); }}
                                     >
                                         &times;
@@ -1765,9 +1854,9 @@ function FieldRenderer({ field, form, fieldPath, relationOptions, relationSuppor
 
     if (field.type === 'group') {
         return (
-            <div className="border border-white/10 rounded-lg p-5 space-y-4 bg-zinc-950/40 shadow-inner">
+            <div role="group" aria-labelledby={labelId} className="border border-white/10 rounded-lg p-5 space-y-4 bg-zinc-950/40 shadow-inner">
                 <div className="pb-3 border-b border-white/5">
-                    <label className="text-sm font-medium text-zinc-300">{field.label}</label>
+                    <div id={labelId} className="text-sm font-medium text-zinc-300">{field.label}</div>
                 </div>
                 <div className="space-y-4">
                     {field.fields?.map((subField: any) => (
@@ -1784,6 +1873,16 @@ function FieldRenderer({ field, form, fieldPath, relationOptions, relationSuppor
             children={(fieldApi: any) => {
                 const errorMessages = getErrorMessages(fieldApi);
                 const hasError = errorMessages.length > 0;
+                const describedBy = hasError ? errorId : undefined;
+                // Shared by the native controls: the label names them, the error describes them.
+                const controlProps = {
+                    id: controlId,
+                    'aria-invalid': hasError || undefined,
+                    'aria-describedby': describedBy,
+                    'aria-required': field.required || undefined,
+                };
+                // Relation pickers and rich text are not single form controls, so they take the label by id.
+                const labelNamesGroup = isRelationshipFieldType(field.type) || field.type === 'richtext';
                 // A server error describes the value that was sent; drop it once the user edits the field.
                 const handleValueChange = (nextValue: any) => {
                     if (serverFieldErrors[fieldName]) clearServerFieldError(fieldName);
@@ -1791,14 +1890,22 @@ function FieldRenderer({ field, form, fieldPath, relationOptions, relationSuppor
                 };
                 return (
                   <div className="space-y-2">
-                      {field.type !== 'boolean' && (
-                        <label className="text-sm font-medium block text-zinc-300">
-                            {field.label} {field.required && <span className="text-red-400">*</span>}
+                      {field.type !== 'boolean' && (labelNamesGroup ? (
+                        <div id={labelId} className="text-sm font-medium block text-zinc-300">
+                            {field.label} {field.required && <span aria-hidden="true" className="text-red-400">*</span>}
+                        </div>
+                      ) : (
+                        <label id={labelId} htmlFor={controlId} className="text-sm font-medium block text-zinc-300">
+                            {field.label} {field.required && <span aria-hidden="true" className="text-red-400">*</span>}
                         </label>
-                      )}
+                      ))}
                       
                       {field.type === 'media' ? (
                           <MediaFieldInput
+                              inputId={controlId}
+                              describedBy={describedBy}
+                              invalid={hasError}
+                              required={Boolean(field.required)}
                               adminBasePath={adminBasePath}
                               value={(fieldApi.state.value as string) || ''}
                               onChange={handleValueChange}
@@ -1806,6 +1913,7 @@ function FieldRenderer({ field, form, fieldPath, relationOptions, relationSuppor
                           />
                       ) : field.type === 'textarea' ? (
                           <textarea
+                              {...controlProps}
                               value={(fieldApi.state.value as string) || ''}
                               onChange={(e) => handleValueChange(e.target.value)}
                               onBlur={fieldApi.handleBlur}
@@ -1813,6 +1921,7 @@ function FieldRenderer({ field, form, fieldPath, relationOptions, relationSuppor
                           />
                       ) : field.type === 'select' ? (
                           <select
+                              {...controlProps}
                               value={(fieldApi.state.value as string) || ''}
                               onChange={(e) => handleValueChange(e.target.value)}
                               onBlur={fieldApi.handleBlur}
@@ -1833,32 +1942,38 @@ function FieldRenderer({ field, form, fieldPath, relationOptions, relationSuppor
                               onBlur={fieldApi.handleBlur}
                               relationOptions={relationOptions}
                               relationSupportEntries={relationSupportEntries}
+                              labelId={labelId}
+                              describedBy={describedBy}
                           />
                       ) : field.type === 'richtext' ? (
                           <RichTextEditor
                               value={fieldApi.state.value} // ensure value format works with block editor
                               onChange={(val: any) => handleValueChange(val)}
                               hasError={hasError}
+                              ariaLabelledBy={labelId}
+                              ariaDescribedBy={describedBy}
                           />
                       ) : field.type === 'boolean' ? (
                           <div className="flex items-center gap-2">
                               <input 
+                                  {...controlProps}
                                   type="checkbox" 
-                                  id={`field-${fieldName}`} // Make unique for arrays
                                   checked={!!fieldApi.state.value}
                                   onChange={(e) => handleValueChange(e.target.checked)}
                                   onBlur={fieldApi.handleBlur}
                                   className="w-4 h-4 rounded border-zinc-700 text-indigo-500 focus:ring-indigo-500 bg-zinc-950"
                               />
-                              <label htmlFor={`field-${fieldName}`} className="text-sm font-medium">
-                                  {field.label} {field.required && <span className="text-red-500">*</span>}
+                              <label id={labelId} htmlFor={controlId} className="text-sm font-medium">
+                                  {field.label} {field.required && <span aria-hidden="true" className="text-red-500">*</span>}
                               </label>
                           </div>
                       ) : (
                           <input 
+                              {...controlProps}
                               type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'} 
                               value={(fieldApi.state.value as any) ?? ''}
-                              onChange={(e) => handleValueChange(field.type === 'number' ? (e.target.value ? Number(e.target.value) : undefined) : e.target.value)}
+                              // A cleared optional number is null, so saving clears it; a required one stays empty and shows "Required".
+                              onChange={(e) => handleValueChange(field.type === 'number' ? (e.target.value ? Number(e.target.value) : field.required ? undefined : null) : e.target.value)}
                               onBlur={fieldApi.handleBlur}
                               className={`w-full bg-zinc-950/50 border rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 transition-all shadow-inner ${hasError ? 'border-red-500/50 focus:ring-red-500/50' : 'border-white/10 focus:ring-indigo-500/50 focus:border-indigo-500/50'}`}
                           />
@@ -1873,7 +1988,7 @@ function FieldRenderer({ field, form, fieldPath, relationOptions, relationSuppor
                       )}
 
                       {hasError && (
-                          <p role="alert" className="text-xs text-red-500">{errorMessages.join(', ')}</p>
+                          <p id={errorId} role="alert" className="text-xs text-red-500">{errorMessages.join(', ')}</p>
                       )}
                   </div>
                 );
@@ -1901,6 +2016,7 @@ function PresetEditorPanel({
   relationSupportEntries: CommerceSupportEntries;
   collapseStorageKey?: string;
 }) {
+  const idPrefix = useId();
   const libraries = getLibraryDefinitions();
   const selectedLibrary = libraries.find((library: any) => library.id === selectedLibraryId) || null;
   const selectedComponent = getLibraryComponentDefinition(selectedLibraryId, selectedComponentSlug);
@@ -1911,8 +2027,10 @@ function PresetEditorPanel({
         name="name"
         children={(fieldApi: any) => (
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-zinc-300">Preset Name <span className="text-red-400">*</span></label>
+            <label htmlFor={`${idPrefix}-name`} className="block text-sm font-medium text-zinc-300">Preset Name <span aria-hidden="true" className="text-red-400">*</span></label>
             <input
+              id={`${idPrefix}-name`}
+              aria-required="true"
               type="text"
               value={fieldApi.state.value || ''}
               onChange={(event) => fieldApi.handleChange(event.target.value)}
@@ -1928,8 +2046,10 @@ function PresetEditorPanel({
           name="libraryId"
           children={(fieldApi: any) => (
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-zinc-300">Library <span className="text-red-400">*</span></label>
+              <label htmlFor={`${idPrefix}-library`} className="block text-sm font-medium text-zinc-300">Library <span aria-hidden="true" className="text-red-400">*</span></label>
               <select
+                id={`${idPrefix}-library`}
+                aria-required="true"
                 value={fieldApi.state.value || ''}
                 onChange={(event) => {
                   const nextLibraryId = event.target.value;
@@ -1956,8 +2076,10 @@ function PresetEditorPanel({
           name="componentSlug"
           children={(fieldApi: any) => (
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-zinc-300">Component <span className="text-red-400">*</span></label>
+              <label htmlFor={`${idPrefix}-component`} className="block text-sm font-medium text-zinc-300">Component <span aria-hidden="true" className="text-red-400">*</span></label>
               <select
+                id={`${idPrefix}-component`}
+                aria-required="true"
                 value={fieldApi.state.value || ''}
                 onChange={(event) => {
                   const nextComponentSlug = event.target.value;
@@ -1988,8 +2110,9 @@ function PresetEditorPanel({
           name="variant"
           children={(fieldApi: any) => (
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-zinc-300">Variant</label>
+              <label htmlFor={`${idPrefix}-variant`} className="block text-sm font-medium text-zinc-300">Variant</label>
               <input
+                id={`${idPrefix}-variant`}
                 type="text"
                 value={fieldApi.state.value || ''}
                 onChange={(event) => fieldApi.handleChange(event.target.value)}
@@ -2011,7 +2134,7 @@ function PresetEditorPanel({
 
       <div className="space-y-4 rounded-lg border border-white/10 bg-zinc-950/40 p-5 shadow-inner">
         <div className="border-b border-white/5 pb-3">
-          <label className="text-sm font-medium text-zinc-300">Component Props</label>
+          <div className="text-sm font-medium text-zinc-300">Component Props</div>
           <p className="mt-1 text-xs text-zinc-500">These fields are stored into the preset payload and injected when the preset is used in a block slot.</p>
         </div>
         {selectedComponent ? (
@@ -2062,7 +2185,7 @@ export function CollectionEntryEditor({
   revisions: initialRevisions,
   isNew,
   relationOptions,
-  relationSupportEntries,
+  relationSupportEntries: loadedSupportEntries,
   slug,
   entryId,
   basePath,
@@ -2096,6 +2219,12 @@ export function CollectionEntryEditor({
   const [currentEntry, setCurrentEntry] = useState<any>(initialEntry);
   const [revisions, setRevisions] = useState<any[]>(initialRevisions || []);
   const [entrySlug, setEntrySlug] = useState(initialEntry?.slug || '');
+  const [slugError, setSlugError] = useState('');
+  const slugInputId = useId();
+  // Records next to the entry (relation targets, commerce options and stock). The variant editor
+  // reloads its own tables into this, rather than reloading the whole page.
+  const [relationSupportEntries, setRelationSupportEntries] = useState<CommerceSupportEntries>(loadedSupportEntries);
+  useEffect(() => setRelationSupportEntries(loadedSupportEntries), [loadedSupportEntries]);
   const [viewMode, setViewMode] = useState<'form' | 'raw'>('form');
   const [isWorking, setIsWorking] = useState(false);
 
@@ -2123,6 +2252,10 @@ export function CollectionEntryEditor({
 
   const [globalError, setGlobalError] = useState('');
   const [notice, setNotice] = useState('');
+  // A publish or archive answered with HTTP 202: a Workflow is still running it. The editor checks the
+  // entry a few times ('checking'), then leaves the next reload to the user ('waiting'). Entry actions
+  // stay disabled until a reload, so a second click cannot start another instance.
+  const [pendingTransition, setPendingTransition] = useState<(PendingTransition & { phase: 'checking' | 'waiting' }) | null>(null);
   const [serverFieldErrors, setServerFieldErrors] = useState<ServerFieldErrors>({});
   const [conflict, setConflict] = useState<EditConflict | null>(null);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -2171,7 +2304,28 @@ export function CollectionEntryEditor({
   useEffect(() => {
     const carriedNotice = takeEditorNotice(slug, entryId);
     if (carriedNotice) setGlobalError(carriedNotice);
+    const carriedTransition = takePendingTransition(slug, entryId);
+    if (carriedTransition) setPendingTransition({ ...carriedTransition, phase: 'checking' });
   }, [slug, entryId]);
+
+  // Checks a pending publish or archive a few times. The handlers it calls are defined after the
+  // collection check below; a transition can only be pending once the editor rendered past it.
+  useEffect(() => {
+    if (!collection || !pendingTransition || pendingTransition.phase !== 'checking') return;
+    const pending = pendingTransition;
+    let cancelled = false;
+    void waitForPendingTransition(pending, {
+      loadEntry: () => fetchEntry(pending.entryId),
+      isCancelled: () => cancelled,
+    }).then((latest) => {
+      if (cancelled) return;
+      if (latest) void settlePendingTransition(pending, latest);
+      else setPendingTransition({ ...pending, phase: 'waiting' });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingTransition]);
 
   const clearServerFieldError = useCallback((fieldPath: string) => {
     setServerFieldErrors((current) => {
@@ -2189,6 +2343,9 @@ export function CollectionEntryEditor({
   if (!collection) return <div>Collection not found.</div>;
 
   const currentStatus = getEntryStatus(currentEntry, collection);
+  const entryActionsLocked = isWorking || pendingTransition !== null;
+  const pendingSlugRename = versioningEnabled ? getPendingSlugRename(currentEntry, entrySlug) : null;
+  const formatSlugForDisplay = (value: string) => (slug === 'pages' ? getPagePath(value) : value);
   const showProductConfigurator = isCommerceProductCollection(collection);
   const inventoryFieldNames = getInventoryFieldNames(collection);
 
@@ -2235,17 +2392,21 @@ export function CollectionEntryEditor({
   const fetchEntry = (targetEntryId: string) =>
     requestEditorApi(`${basePath}/api/collections/${slug}/entries/${targetEntryId}`, {}, `Failed to load this ${recordLabel}`);
 
-  const refreshEntryState = async (targetEntryId: string) => {
+  // Reloads only this entry and its history. The route drops its cached load when the editor is
+  // left (gcTime 0), so there is no need to rerun the whole loader after every save.
+  // `keepUnsavedWork`: when the form has unsaved changes once the entry is loaded, leave it as it is
+  // and resolve with null.
+  const refreshEntryState = async (targetEntryId: string, { keepUnsavedWork = false } = {}) => {
     const [nextEntry, nextRevisions] = await Promise.all([
       fetchEntry(targetEntryId),
       versioningEnabled
-        ? requestEditorApi(`${basePath}/api/collections/${slug}/entries/${targetEntryId}/revisions`, {}, 'Failed to load revision history')
+        ? requestEditorApi(`${basePath}/api/collections/${slug}/entries/${targetEntryId}/revisions?limit=${REVISION_LIST_LIMIT}`, {}, 'Failed to load revision history')
           .catch(() => revisions)
         : Promise.resolve(revisions)
     ]);
 
+    if (keepUnsavedWork && hasUnsavedWorkRef.current) return null;
     syncEntryState(nextEntry, nextRevisions);
-    await router.invalidate();
     return nextEntry;
   };
 
@@ -2259,6 +2420,53 @@ export function CollectionEntryEditor({
       });
     } catch (err) {
       console.error('[Talisman CMS] Failed to broadcast save event', err);
+    }
+  };
+
+  // The entry moved on from a pending publish or archive. Edits made while waiting stay in the form:
+  // their next save gets the conflict panel, which loads the latest version and keeps them. Without
+  // edits the entry and its history are reloaded, unless the user starts typing during that reload.
+  const settlePendingTransition = async (pending: PendingTransition, latest: any) => {
+    broadcastChange(pending.entryId);
+    try {
+      const shown = hasUnsavedWorkRef.current ? null : await refreshEntryState(pending.entryId, { keepUnsavedWork: true });
+      if (!shown) {
+        // A publish or archive leaves the content as it was, so take on the new status and revision
+        // under the user's edits; otherwise their next save is refused as a stale edit.
+        const values = presetCollection ? buildPresetEditorDefaults(latest, editorFields) : parseEntryData(latest, editorFields);
+        if (JSON.stringify(values) === savedSnapshotRef.current.values && (latest?.slug || '') === savedSnapshotRef.current.slug) {
+          setCurrentEntry(latest);
+        }
+      }
+      setNotice(shown
+        ? describeSettledTransition(shown, pending, recordLabel)
+        : `${describeSettledTransition(latest, pending, recordLabel)} Your unsaved changes are still in the form.`);
+    } catch (error) {
+      setGlobalError(describeRequestError(error));
+    } finally {
+      setPendingTransition(null);
+    }
+  };
+
+  // After the automatic checks, the user reloads the entry. That ends the wait either way, so a
+  // transition that failed in its Workflow can be tried again.
+  const checkPendingTransition = async () => {
+    if (!pendingTransition) return;
+    const pending = pendingTransition;
+    setGlobalError('');
+    setIsWorking(true);
+    try {
+      const latest = await fetchEntry(pending.entryId);
+      if (hasEntryMovedOn(latest, pending)) {
+        await settlePendingTransition(pending, latest);
+        return;
+      }
+      setPendingTransition(null);
+      setNotice(`The ${pending.action} has not finished yet. It can still finish in the background: reload the page in a minute and check the status before you try again.`);
+    } catch (error) {
+      setGlobalError(describeRequestError(error));
+    } finally {
+      setIsWorking(false);
     }
   };
 
@@ -2287,11 +2495,15 @@ export function CollectionEntryEditor({
       ? `${basePath}/api/collections/${slug}/entries`
       : `${basePath}/api/collections/${slug}/entries/${entryId}`;
     const loadedUpdatedAt = getLoadedUpdatedAt(currentEntry);
+    // Optional fields left blank are sent as null (or left out of a new native row), not as ''.
+    const data = prepareFieldValuesForSave(editorFields, value, nativeCollection
+      ? { native: true, mode: isNew ? 'create' : 'update', baseline: JSON.parse(savedSnapshotRef.current.values) }
+      : {});
     const body = nativeCollection
       ? isNew
-        ? { data: value }
-        : { data: buildNativeWriteData(value), ...(loadedUpdatedAt !== null ? { expectedUpdatedAt: loadedUpdatedAt } : {}) }
-      : { slug: entrySlug, data: value, ...(!isNew ? { expectedRevisionId: currentEntry?.latestRevisionId ?? null } : {}) };
+        ? { data }
+        : { data: buildNativeWriteData(data), ...(loadedUpdatedAt !== null ? { expectedUpdatedAt: loadedUpdatedAt } : {}) }
+      : { slug: entrySlug, data, ...(!isNew ? { expectedRevisionId: currentEntry?.latestRevisionId ?? null } : {}) };
 
     const savedEntry = await requestEditorApi(url, {
       method,
@@ -2317,15 +2529,23 @@ export function CollectionEntryEditor({
   };
 
   const handleRequestError = (error: unknown, action: EditorAction) => {
-    if (error instanceof EditorRequestError && error.status === 409) {
+    // The server also answers 409 for a slug or unique value another record uses. Only a stale edit
+    // opens the conflict panel: loading the latest version cannot fix the others.
+    if (isStaleEditError(error) && currentEntry?.id) {
       setConflict({ action, ...collectUserChanges(form.state.values as Record<string, any>), latestLoaded: false });
       setCopyState('idle');
       return;
     }
 
+    if (isSlugConflictError(error)) {
+      setSlugError(error.message);
+      setGlobalError(`${error.message} Choose a different slug, then try the ${action} again.`);
+      return;
+    }
+
     if (error instanceof EditorRequestError && Object.keys(error.fieldErrors).length > 0) {
       setServerFieldErrors(error.fieldErrors);
-      setGlobalError('Some fields need attention. Fix them and try again.');
+      setGlobalError(error.status === 400 ? 'Some fields need attention. Fix them and try again.' : error.message);
       return;
     }
 
@@ -2336,10 +2556,12 @@ export function CollectionEntryEditor({
     setGlobalError('');
     setNotice('');
     setServerFieldErrors({});
+    setSlugError('');
     setConflict(null);
   };
 
   const runEntryAction = async (action: Exclude<EditorAction, 'restore'>) => {
+    if (pendingTransition) return;
     if (!confirmDiscardConflictChanges(`The ${action} will not include them and they will be lost. Continue?`)) return;
     resetFeedback();
     setIsWorking(true);
@@ -2368,14 +2590,32 @@ export function CollectionEntryEditor({
         method: 'POST',
         body: JSON.stringify({ expectedRevisionId: targetEntry.latestRevisionId ?? null })
       }, `Failed to ${action} this ${recordLabel}`);
-      broadcastChange(targetEntry.id);
+      // HTTP 202: a Workflow is still running the transition, and the answer is the entry before it.
+      const pending = readPendingTransition(nextEntry, {
+        action,
+        entryId: targetEntry.id,
+        fromRevisionId: targetEntry.latestRevisionId,
+        recordLabel,
+      });
+      // Preview windows hear about a pending transition once it has happened.
+      if (!pending) broadcastChange(targetEntry.id);
 
       if (createdEntryId) {
+        if (pending) stashPendingTransition(slug, pending);
         openCreatedEntry(createdEntryId);
         return;
       }
 
-      await refreshEntryState(nextEntry.id);
+      if (!pending) {
+        await refreshEntryState(nextEntry.id);
+        return;
+      }
+
+      // The form is left alone: it already holds the entry before the transition (a draft save reloads
+      // it first), and anything typed during the server's wait or from now on must stay in it.
+      setPendingTransition({ ...pending, phase: 'checking' });
+      const latest = await fetchEntry(pending.entryId).catch(() => null);
+      if (latest && hasEntryMovedOn(latest, pending)) await settlePendingTransition(pending, latest);
     } catch (error) {
       if (createdEntryId) {
         // The draft exists now; open it so a retry updates it instead of creating a duplicate.
@@ -2391,7 +2631,7 @@ export function CollectionEntryEditor({
   };
 
   const handleRestoreRevision = async (revisionId: string) => {
-    if (!currentEntry?.id) return;
+    if (!currentEntry?.id || pendingTransition) return;
     if (hasUnsavedWorkRef.current && !window.confirm('Restoring this revision replaces your unsaved changes. Continue?')) return;
 
     resetFeedback();
@@ -2517,9 +2757,12 @@ export function CollectionEntryEditor({
     void runEntryAction('save');
   };
 
-  // Variant, value and stock rows are separate records: reload them without resetting the product form.
+  // Variant, value and stock rows are separate records: reload just those tables, without resetting
+  // the product form or reloading the entry and every other related collection.
   const refreshCommerceData = async () => {
-    await router.invalidate();
+    const collections = await fetchCollectionConfigs(basePath);
+    const latest = await fetchEntriesBySlug(basePath, PRODUCT_CONFIGURATOR_SLUGS, collections);
+    setRelationSupportEntries((current) => ({ ...current, ...latest }));
   };
 
   const entryData = parseEntryData(currentEntry, editorFields);
@@ -2565,15 +2808,24 @@ export function CollectionEntryEditor({
 
                   {!nativeCollection && (
                     <div className="bg-white/[0.02] border border-white/5 rounded-lg p-5">
-                      <label className="text-sm font-medium mb-2 block text-zinc-300">Slug (Optional)</label>
+                      <label htmlFor={slugInputId} className="text-sm font-medium mb-2 block text-zinc-300">Slug (Optional)</label>
                       <input 
+                         id={slugInputId}
                          type="text" 
                          value={entrySlug}
-                         onChange={(e) => setEntrySlug(e.target.value)}
+                         onChange={(e) => { setEntrySlug(e.target.value); setSlugError(''); }}
                          placeholder="e.g. my-awesome-post"
-                         className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all placeholder:text-zinc-600 shadow-inner"
+                         aria-invalid={slugError ? true : undefined}
+                         aria-describedby={[`${slugInputId}-help`, pendingSlugRename ? `${slugInputId}-live` : '', slugError ? `${slugInputId}-error` : ''].filter(Boolean).join(' ')}
+                         className={`w-full bg-zinc-950/50 border rounded-md px-4 py-2 text-sm focus:outline-none focus:ring-2 transition-all placeholder:text-zinc-600 shadow-inner ${slugError ? 'border-red-500/50 focus:ring-red-500/50' : 'border-white/10 focus:ring-indigo-500/50 focus:border-indigo-500/50'}`}
                       />
-                      <p className="text-xs text-zinc-500 mt-2 flex items-center gap-1.5"><span className="w-1 h-1 rounded-full bg-indigo-500/50" />Leave blank to auto-generate from ID.</p>
+                      <p id={`${slugInputId}-help`} className="text-xs text-zinc-500 mt-2 flex items-center gap-1.5"><span className="w-1 h-1 rounded-full bg-indigo-500/50" />Leave blank to auto-generate from ID.</p>
+                      {pendingSlugRename && (
+                        <p id={`${slugInputId}-live`} className="text-xs text-amber-300 mt-2">
+                          Live at <code className="font-mono">{formatSlugForDisplay(pendingSlugRename.liveSlug)}</code>. The site keeps that address until this {recordLabel} is published; then <code className="font-mono">{formatSlugForDisplay(pendingSlugRename.nextSlug)}</code> goes live.
+                        </p>
+                      )}
+                      {slugError && <p id={`${slugInputId}-error`} role="alert" className="text-xs text-red-400 mt-2">{slugError}</p>}
                     </div>
                   )}
 
@@ -2591,12 +2843,12 @@ export function CollectionEntryEditor({
 
                   <div className="pt-2">
                      <div className="flex items-center justify-between mb-6 pb-4 border-b border-white/5">
-                         <label className="text-base font-medium block text-white flex items-center gap-2">
-                           <span className="p-1 rounded bg-indigo-500/10 text-indigo-400">
+                         <h2 className="text-base font-medium block text-white flex items-center gap-2">
+                           <span aria-hidden="true" className="p-1 rounded bg-indigo-500/10 text-indigo-400">
                              <Database size={14} />
                            </span>
                            {showProductConfigurator ? 'Product fields' : nativeCollection ? 'Record fields' : 'Content fields'}
-                         </label>
+                         </h2>
                          {supportsRawView && (
                            <button 
                                type="button"
@@ -2610,6 +2862,7 @@ export function CollectionEntryEditor({
                      
                      {supportsRawView && viewMode === 'raw' ? (
                          <textarea 
+                             aria-label="Raw JSON"
                              value={rawJsonStr}
                              onChange={(e) => setRawJsonStr(e.target.value)}
                              spellCheck={false}
@@ -2669,16 +2922,16 @@ export function CollectionEntryEditor({
                  </div>
 
                  <div className="pt-2">
-                    {!collection.readOnly && <Button onClick={handleManualSaveClick} disabled={isWorking} className="w-full gap-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-400 hover:to-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_25px_rgba(99,102,241,0.5)] transition-all duration-300 border-0 h-11 text-base">
+                    {!collection.readOnly && <Button onClick={handleManualSaveClick} disabled={entryActionsLocked} className="w-full gap-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-400 hover:to-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_25px_rgba(99,102,241,0.5)] transition-all duration-300 border-0 h-11 text-base">
                       <Save size={18} /> {isWorking ? 'Working...' : versioningEnabled ? 'Save Draft' : 'Save Changes'}
                     </Button>}
                     {versioningEnabled && !collection.readOnly && isAdmin && (
                       <div className="grid grid-cols-2 gap-3 mt-3">
-                        <Button type="button" variant="outline" disabled={isWorking} onClick={() => void runEntryAction('publish')} className="gap-2">
-                          <Send size={16} /> Publish
+                        <Button type="button" variant="outline" disabled={entryActionsLocked} onClick={() => void runEntryAction('publish')} className="gap-2">
+                          <Send size={16} /> {pendingTransition?.action === 'publish' ? 'Publishing...' : 'Publish'}
                         </Button>
-                        <Button type="button" variant="outline" disabled={isWorking || isNew} onClick={() => void runEntryAction('archive')} className="gap-2">
-                          <Archive size={16} /> Archive
+                        <Button type="button" variant="outline" disabled={entryActionsLocked || isNew} onClick={() => void runEntryAction('archive')} className="gap-2">
+                          <Archive size={16} /> {pendingTransition?.action === 'archive' ? 'Archiving...' : 'Archive'}
                         </Button>
                       </div>
                     )}
@@ -2694,6 +2947,18 @@ export function CollectionEntryEditor({
                           </li>
                         ))}
                       </ul>
+                    )}
+                    {pendingTransition && (
+                      <div role="status" className="mt-3 space-y-2 rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 text-center text-sm text-sky-100">
+                        <p>{pendingTransition.message}</p>
+                        {pendingTransition.phase === 'checking' ? (
+                          <p className="text-xs text-sky-100/70">Checking for the result...</p>
+                        ) : (
+                          <Button type="button" size="sm" variant="outline" onClick={() => void checkPendingTransition()} disabled={isWorking}>
+                            Reload {recordLabel}
+                          </Button>
+                        )}
+                      </div>
                     )}
                     {notice && <p className="text-emerald-300 text-sm mt-3 text-center">{notice}</p>}
                     {conflict && (
@@ -2788,6 +3053,9 @@ export function CollectionEntryEditor({
                        <History size={14} />
                        Revision History
                      </div>
+                     {revisions.length >= REVISION_LIST_LIMIT && (
+                       <p className="text-xs text-zinc-500">Showing the {REVISION_LIST_LIMIT} most recent revisions.</p>
+                     )}
                      {revisions.length === 0 ? (
                        <p className="text-xs text-zinc-500">No revisions saved yet.</p>
                      ) : (
@@ -2799,7 +3067,7 @@ export function CollectionEntryEditor({
                                  <div className="text-sm text-zinc-200">Revision #{revision.revisionNumber}</div>
                                  <div className="text-[11px] uppercase tracking-widest text-zinc-500">{revision.type.replace('_', ' ')}</div>
                                </div>
-                               {isAdmin && !collection.readOnly && <Button type="button" variant="ghost" size="sm" disabled={isWorking} onClick={() => void handleRestoreRevision(revision.id)}>
+                               {isAdmin && !collection.readOnly && <Button type="button" variant="ghost" size="sm" disabled={entryActionsLocked} onClick={() => void handleRestoreRevision(revision.id)}>
                                  Restore
                                </Button>}
                              </div>

@@ -36,30 +36,41 @@ function formatBytes(bytes: number | null | undefined) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-async function fetchMediaEntries(adminBasePath: string) {
-  const res = await fetch(`${adminBasePath}/api/collections/media/entries`);
+const MEDIA_PAGE_SIZE = 60;
+
+/** One page of the library, newest uploads first; `nextCursor` asks for the page after it. */
+async function fetchMediaPage(adminBasePath: string, cursor?: string | null) {
+  const params = new URLSearchParams({ limit: String(MEDIA_PAGE_SIZE) });
+  if (cursor) params.set('cursor', cursor);
+  const res = await fetch(`${adminBasePath}/api/collections/media/entries?${params}`);
   if (!res.ok) throw new Error('Failed to fetch media library');
-  const payload = await res.json();
-  return Array.isArray(payload)
-    ? payload.map(readMediaEntry).filter((entry): entry is MediaEntry => Boolean(entry?.id))
-    : [];
+  const payload = await res.json() as { docs?: unknown; nextCursor?: unknown };
+  const docs = Array.isArray(payload?.docs) ? payload.docs : [];
+  return {
+    entries: docs.map(readMediaEntry).filter((entry): entry is MediaEntry => Boolean(entry?.id)),
+    nextCursor: typeof payload?.nextCursor === 'string' && payload.nextCursor ? payload.nextCursor : null,
+  };
 }
 
 export const Route = createFileRoute('/media')({
   component: MediaLibraryRoute,
   loader: async ({ context }) => {
     const adminBasePath = context.adminBasePath || '/admin';
+    const page = await fetchMediaPage(adminBasePath);
     return {
       adminBasePath,
-      entries: await fetchMediaEntries(adminBasePath),
+      entries: page.entries,
+      nextCursor: page.nextCursor,
     };
   },
 });
 
 function MediaLibraryRoute() {
-  const { adminBasePath, entries: initialEntries } = Route.useLoaderData();
+  const { adminBasePath, entries: initialEntries, nextCursor: initialCursor } = Route.useLoaderData();
   const [entries, setEntries] = useState(initialEntries);
+  const [cursor, setCursor] = useState<string | null>(initialCursor);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState('');
 
@@ -68,11 +79,29 @@ function MediaLibraryRoute() {
     setError('');
 
     try {
-      setEntries(await fetchMediaEntries(adminBasePath));
+      const page = await fetchMediaPage(adminBasePath);
+      setEntries(page.entries);
+      setCursor(page.nextCursor);
     } catch (nextError: any) {
       setError(nextError.message || 'Failed to fetch media library');
     } finally {
       setIsRefreshing(false);
+    }
+  };
+
+  const loadMore = async () => {
+    if (!cursor || isLoadingMore) return;
+    setIsLoadingMore(true);
+    setError('');
+
+    try {
+      const page = await fetchMediaPage(adminBasePath, cursor);
+      setEntries((current) => [...current, ...page.entries]);
+      setCursor(page.nextCursor);
+    } catch (nextError: any) {
+      setError(nextError.message || 'Failed to fetch media library');
+    } finally {
+      setIsLoadingMore(false);
     }
   };
 
@@ -120,16 +149,17 @@ function MediaLibraryRoute() {
             <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
             Refresh
           </Button>
-          <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-indigo-500 px-4 py-2 text-sm font-medium text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] transition-colors hover:bg-indigo-400">
-            <Upload size={14} />
+          <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-indigo-500 px-4 py-2 text-sm font-medium text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] transition-colors hover:bg-indigo-400 focus-within:ring-2 focus-within:ring-indigo-300">
+            <Upload size={14} aria-hidden="true" />
             {isUploading ? 'Uploading...' : 'Upload Media'}
-            <input type="file" className="hidden" accept="image/jpeg,image/png,image/gif,image/webp,image/avif" onChange={(event) => void handleUpload(event)} />
+            {/* Visually hidden rather than display:none, so the file picker can be reached with the keyboard. */}
+            <input type="file" className="sr-only" accept="image/jpeg,image/png,image/gif,image/webp,image/avif" onChange={(event) => void handleUpload(event)} />
           </label>
         </div>
       </div>
 
       {error && (
-        <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+        <div role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
           {error}
         </div>
       )}
@@ -167,6 +197,14 @@ function MediaLibraryRoute() {
               </div>
             </Link>
           ))}
+        </div>
+      )}
+
+      {cursor && (
+        <div className="flex justify-center">
+          <Button type="button" variant="outline" size="sm" disabled={isLoadingMore} onClick={() => void loadMore()}>
+            {isLoadingMore ? 'Loading...' : 'Load more media'}
+          </Button>
         </div>
       )}
     </div>

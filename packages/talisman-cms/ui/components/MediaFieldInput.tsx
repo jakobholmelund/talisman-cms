@@ -51,52 +51,96 @@ function isPreviewableImage(entry: MediaLibraryEntry | null | undefined) {
   return Boolean(entry?.url && entry.mimeType?.startsWith('image/'));
 }
 
+// The picker shows the newest uploads first, one page at a time, instead of the whole library.
+const LIBRARY_PAGE_SIZE = 48;
+
+function readLibraryItems(docs: unknown) {
+  return Array.isArray(docs)
+    ? docs.map(readMediaRecord).filter((item): item is MediaLibraryEntry => Boolean(item?.id && item.url))
+    : [];
+}
+
 export function MediaFieldInput({
   adminBasePath,
   value,
   onChange,
   onBlur,
   placeholder = 'Select a media asset or paste a URL',
+  inputId,
+  describedBy,
+  invalid,
+  required,
 }: {
   adminBasePath: string;
   value: string;
   onChange: (value: string) => void;
   onBlur?: () => void;
   placeholder?: string;
+  /** The URL input's id, so the field's label names it. */
+  inputId?: string;
+  describedBy?: string;
+  invalid?: boolean;
+  required?: boolean;
 }) {
   const fileInputId = useId();
+  const libraryPanelId = useId();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
   const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [libraryError, setLibraryError] = useState('');
   const [libraryItems, setLibraryItems] = useState<MediaLibraryEntry[]>([]);
+  const [libraryCursor, setLibraryCursor] = useState<string | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   // Opening Browse loads the library once; later loads come from Refresh or an upload, so an
   // empty or failed response cannot trigger another request by itself.
   const libraryRequestedRef = useRef(false);
+
+  const fetchLibraryPage = async (cursor: string | null) => {
+    const params = new URLSearchParams({ limit: String(LIBRARY_PAGE_SIZE) });
+    if (cursor) params.set('cursor', cursor);
+    const res = await fetch(`${adminBasePath}/api/collections/media/entries?${params}`);
+    if (!res.ok) {
+      throw new Error(await readErrorResponse(res, 'Failed to load media library'));
+    }
+
+    const payload = await res.json().catch(() => {
+      throw new Error('Failed to load media library: the server did not return JSON');
+    }) as { docs?: unknown; nextCursor?: unknown };
+    return {
+      items: readLibraryItems(payload?.docs),
+      nextCursor: typeof payload?.nextCursor === 'string' && payload.nextCursor ? payload.nextCursor : null,
+    };
+  };
 
   const refreshLibrary = async () => {
     setIsLoadingLibrary(true);
     setLibraryError('');
 
     try {
-      const res = await fetch(`${adminBasePath}/api/collections/media/entries`);
-      if (!res.ok) {
-        throw new Error(await readErrorResponse(res, 'Failed to load media library'));
-      }
-
-      const payload = await res.json().catch(() => {
-        throw new Error('Failed to load media library: the server did not return JSON');
-      });
-      const nextItems = Array.isArray(payload)
-        ? payload.map(readMediaRecord).filter((item): item is MediaLibraryEntry => Boolean(item?.id && item.url))
-        : [];
-
-      setLibraryItems(nextItems);
+      const page = await fetchLibraryPage(null);
+      setLibraryItems(page.items);
+      setLibraryCursor(page.nextCursor);
     } catch (error: any) {
       setLibraryError(error.message || 'Failed to load media library');
     } finally {
       setIsLoadingLibrary(false);
+    }
+  };
+
+  const loadMoreLibrary = async () => {
+    if (!libraryCursor || isLoadingMore) return;
+    setIsLoadingMore(true);
+    setLibraryError('');
+
+    try {
+      const page = await fetchLibraryPage(libraryCursor);
+      setLibraryItems((current) => [...current, ...page.items]);
+      setLibraryCursor(page.nextCursor);
+    } catch (error: any) {
+      setLibraryError(error.message || 'Failed to load media library');
+    } finally {
+      setIsLoadingMore(false);
     }
   };
 
@@ -151,11 +195,15 @@ export function MediaFieldInput({
     <div className="space-y-3">
       <div className="flex flex-col gap-3 md:flex-row">
         <input
+          id={inputId}
           type="text"
           value={value}
           onChange={(event) => onChange(event.target.value)}
           onBlur={onBlur}
           placeholder={placeholder}
+          aria-invalid={invalid || undefined}
+          aria-describedby={describedBy}
+          aria-required={required || undefined}
           className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
         />
         <div className="flex gap-2">
@@ -171,7 +219,14 @@ export function MediaFieldInput({
             {isUploading ? <LoaderCircle size={14} className="animate-spin" /> : <Upload size={14} />}
             {isUploading ? 'Uploading...' : 'Upload'}
           </Button>
-          <Button type="button" variant="outline" className="gap-2" onClick={() => setIsLibraryOpen((current) => !current)}>
+          <Button
+            type="button"
+            variant="outline"
+            className="gap-2"
+            aria-expanded={isLibraryOpen}
+            aria-controls={isLibraryOpen ? libraryPanelId : undefined}
+            onClick={() => setIsLibraryOpen((current) => !current)}
+          >
             <Images size={14} />
             {isLibraryOpen ? 'Hide Library' : 'Browse'}
           </Button>
@@ -179,7 +234,7 @@ export function MediaFieldInput({
       </div>
 
       {libraryError && (
-        <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+        <div role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
           {libraryError}
         </div>
       )}
@@ -207,7 +262,7 @@ export function MediaFieldInput({
       )}
 
       {isLibraryOpen && (
-        <div className="rounded-xl border border-white/10 bg-zinc-950/40 p-4 space-y-4 shadow-inner">
+        <div id={libraryPanelId} role="region" aria-label="Media library" className="rounded-xl border border-white/10 bg-zinc-950/40 p-4 space-y-4 shadow-inner">
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-medium text-zinc-100">Media Library</div>
@@ -235,6 +290,7 @@ export function MediaFieldInput({
                   <button
                     key={item.id}
                     type="button"
+                    aria-pressed={isSelected}
                     onClick={() => onChange(item.url)}
                     className={`overflow-hidden rounded-xl border text-left transition-colors ${
                       isSelected
@@ -257,6 +313,14 @@ export function MediaFieldInput({
                   </button>
                 );
               })}
+            </div>
+          )}
+
+          {libraryCursor && !isLoadingLibrary && (
+            <div className="flex justify-center">
+              <Button type="button" variant="outline" size="sm" disabled={isLoadingMore} onClick={() => void loadMoreLibrary()}>
+                {isLoadingMore ? 'Loading...' : 'Load more media'}
+              </Button>
             </div>
           )}
         </div>

@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useState } from 'react';
+import React, { useContext, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useStore } from '@tanstack/react-form';
 import {
@@ -15,6 +15,7 @@ import { BlockLibraryPicker } from './BlockLibraryPicker';
 import { ComponentSlotPicker } from './ComponentSlotPicker';
 import { Button } from './ui/button';
 import { cn } from '../lib/utils';
+import { useModalDialog } from '../lib/use-modal-dialog';
 import {
   buildBlockValue,
   buildInlineComponentValue,
@@ -162,6 +163,12 @@ function isSelectionValid(selection: SelectedNode | null, value: any[], blocks: 
 
   const slotItems = getComponentSlotItems(slot, blockValue?.[selection.slotName]);
   return selection.itemIndex >= 0 && selection.itemIndex < slotItems.length;
+}
+
+function getNodeKey(fieldName: string, node: SelectedNode) {
+  return node.kind === 'block'
+    ? `${fieldName}:${node.blockIndex}`
+    : `${fieldName}:${node.blockIndex}:${node.slotName}:${node.itemIndex}`;
 }
 
 function getDefaultSelection(value: any[]) {
@@ -342,6 +349,19 @@ function BuilderPanel({
       ? (relationSupportEntries._ui_component_presets || []).find((preset: any) => preset.id === selectedSlotItem.presetId) || null
       : null;
 
+  // The inspector is a modal dialog: it takes focus when a block or component is opened and gives
+  // it back to that item in the outline when it closes.
+  const inspectorOpen = Boolean(selectedNode && selectedBlockDef);
+  const inspectorTitleId = useId();
+  const lastSelectedNodeKeyRef = useRef<string | null>(null);
+  if (selectedNode) lastSelectedNodeKeyRef.current = getNodeKey(fieldName, selectedNode);
+  const inspectorRef = useModalDialog<HTMLDivElement>({
+    open: inspectorOpen,
+    onClose: () => setSelectedNode(null),
+    getReturnFocus: () => Array.from(document.querySelectorAll<HTMLElement>('[data-builder-node]'))
+      .find((element) => element.dataset.builderNode === lastSelectedNodeKeyRef.current),
+  });
+
   return (
     <div className="space-y-6">
       <div className="space-y-4">
@@ -431,7 +451,6 @@ function BuilderPanel({
                         event.preventDefault();
                         if (dragState?.listId === fieldName && dragState.index !== blockIndex) {
                           reorderFieldArrayValue(fieldApi, dragState.index, blockIndex);
-                          setSelectedNode({ kind: 'block', blockIndex });
                         }
                         setDragState(null);
                       }}
@@ -442,17 +461,10 @@ function BuilderPanel({
                       )}
                     >
                       <div className="flex items-start justify-between gap-3">
+                        {/* The whole card opens the inspector for the mouse; the block name is the keyboard's button. */}
                         <div
-                          role="button"
-                          tabIndex={0}
                           onClick={() => setSelectedNode({ kind: 'block', blockIndex })}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault();
-                              setSelectedNode({ kind: 'block', blockIndex });
-                            }
-                          }}
-                          className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                          className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 text-left"
                         >
                           <div
                             draggable
@@ -473,10 +485,24 @@ function BuilderPanel({
                                 }}
                                 className="flex items-center gap-1 text-zinc-500"
                                 aria-label={blockCollapsed ? 'Expand block' : 'Collapse block'}
+                                aria-expanded={!blockCollapsed}
                               >
                                 {blockCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                               </button>
-                              <div className="text-sm font-medium text-zinc-100">{blockDef.name}</div>
+                              <button
+                                type="button"
+                                aria-haspopup="dialog"
+                                data-builder-node={getNodeKey(fieldName, { kind: 'block', blockIndex })}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setSelectedNode({ kind: 'block', blockIndex });
+                                }}
+                                className="rounded-sm text-left text-sm font-medium text-zinc-100 hover:text-indigo-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/60"
+                              >
+                                <span className="sr-only">Edit </span>
+                                {blockDef.name}
+                                <span className="sr-only"> (block {blockIndex + 1})</span>
+                              </button>
                               {blockDef.source?.library ? (
                                 <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[10px] uppercase tracking-wider text-zinc-400">
                                   {blockDef.source.library}
@@ -529,10 +555,7 @@ function BuilderPanel({
                             variant="outline"
                             type="button"
                             className="h-8 w-8 p-0"
-                            onClick={() => {
-                              reorderFieldArrayValue(fieldApi, blockIndex, blockIndex - 1);
-                              setSelectedNode({ kind: 'block', blockIndex: blockIndex - 1 });
-                            }}
+                            onClick={() => reorderFieldArrayValue(fieldApi, blockIndex, blockIndex - 1)}
                             disabled={blockIndex === 0}
                             title="Move block up"
                           >
@@ -543,10 +566,7 @@ function BuilderPanel({
                             variant="outline"
                             type="button"
                             className="h-8 w-8 p-0"
-                            onClick={() => {
-                              reorderFieldArrayValue(fieldApi, blockIndex, blockIndex + 1);
-                              setSelectedNode({ kind: 'block', blockIndex: blockIndex + 1 });
-                            }}
+                            onClick={() => reorderFieldArrayValue(fieldApi, blockIndex, blockIndex + 1)}
                             disabled={blockIndex === value.length - 1}
                             title="Move block down"
                           >
@@ -556,10 +576,8 @@ function BuilderPanel({
                             size="sm"
                             variant="destructive"
                             type="button"
-                            onClick={() => {
-                              fieldApi.removeValue(blockIndex);
-                              setSelectedNode(value.length > 1 ? { kind: 'block', blockIndex: Math.max(0, blockIndex - 1) } : null);
-                            }}
+                            aria-label={`Remove ${blockDef.name} (block ${blockIndex + 1})`}
+                            onClick={() => fieldApi.removeValue(blockIndex)}
                           >
                             Remove
                           </Button>
@@ -700,12 +718,6 @@ function BuilderPanel({
                                                 event.preventDefault();
                                                 if (slot.hasMany && dragState?.listId === slotFieldName && dragState.index !== slotIndex) {
                                                   reorderFieldArrayValue(slotApi, dragState.index, slotIndex);
-                                                  setSelectedNode({
-                                                    kind: 'slot-item',
-                                                    blockIndex,
-                                                    slotName: slot.name,
-                                                    itemIndex: slotIndex,
-                                                  });
                                                 }
                                                 setDragState(null);
                                               }}
@@ -716,17 +728,10 @@ function BuilderPanel({
                                               )}
                                             >
                                               <div className="flex items-start justify-between gap-3">
+                                                {/* The whole card opens the inspector for the mouse; the item name is the keyboard's button. */}
                                                 <div
-                                                  role="button"
-                                                  tabIndex={0}
                                                   onClick={() => setSelectedNode({ kind: 'slot-item', blockIndex, slotName: slot.name, itemIndex: slotIndex })}
-                                                  onKeyDown={(event) => {
-                                                    if (event.key === 'Enter' || event.key === ' ') {
-                                                      event.preventDefault();
-                                                      setSelectedNode({ kind: 'slot-item', blockIndex, slotName: slot.name, itemIndex: slotIndex });
-                                                    }
-                                                  }}
-                                                  className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                                                  className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 text-left"
                                                 >
                                                   {slot.hasMany ? (
                                                     <div
@@ -749,10 +754,24 @@ function BuilderPanel({
                                                         }}
                                                         className="flex items-center gap-1 text-zinc-500"
                                                         aria-label={slotCardCollapsed ? 'Expand item' : 'Collapse item'}
+                                                        aria-expanded={!slotCardCollapsed}
                                                       >
                                                         {slotCardCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                                                       </button>
-                                                      <div className="text-sm font-medium text-zinc-100">{itemLabel}</div>
+                                                      <button
+                                                        type="button"
+                                                        aria-haspopup="dialog"
+                                                        data-builder-node={getNodeKey(fieldName, { kind: 'slot-item', blockIndex, slotName: slot.name, itemIndex: slotIndex })}
+                                                        onClick={(event) => {
+                                                          event.stopPropagation();
+                                                          setSelectedNode({ kind: 'slot-item', blockIndex, slotName: slot.name, itemIndex: slotIndex });
+                                                        }}
+                                                        className="rounded-sm text-left text-sm font-medium text-zinc-100 hover:text-indigo-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/60"
+                                                      >
+                                                        <span className="sr-only">Edit </span>
+                                                        {itemLabel}
+                                                        <span className="sr-only"> ({slot.label} item {slotIndex + 1})</span>
+                                                      </button>
                                                     </div>
                                                     <div className="mt-1 text-[11px] uppercase tracking-[0.22em] text-zinc-500">{itemMeta}</div>
                                                     {!slotCardCollapsed && componentSummary.length > 0 ? (
@@ -781,15 +800,7 @@ function BuilderPanel({
                                                         variant="outline"
                                                         type="button"
                                                         className="h-8 w-8 p-0"
-                                                        onClick={() => {
-                                                          reorderFieldArrayValue(slotApi, slotIndex, slotIndex - 1);
-                                                          setSelectedNode({
-                                                            kind: 'slot-item',
-                                                            blockIndex,
-                                                            slotName: slot.name,
-                                                            itemIndex: slotIndex - 1,
-                                                          });
-                                                        }}
+                                                        onClick={() => reorderFieldArrayValue(slotApi, slotIndex, slotIndex - 1)}
                                                         disabled={slotIndex === 0}
                                                         title="Move item up"
                                                       >
@@ -800,15 +811,7 @@ function BuilderPanel({
                                                         variant="outline"
                                                         type="button"
                                                         className="h-8 w-8 p-0"
-                                                        onClick={() => {
-                                                          reorderFieldArrayValue(slotApi, slotIndex, slotIndex + 1);
-                                                          setSelectedNode({
-                                                            kind: 'slot-item',
-                                                            blockIndex,
-                                                            slotName: slot.name,
-                                                            itemIndex: slotIndex + 1,
-                                                          });
-                                                        }}
+                                                        onClick={() => reorderFieldArrayValue(slotApi, slotIndex, slotIndex + 1)}
                                                         disabled={slotIndex === slotItems.length - 1}
                                                         title="Move item down"
                                                       >
@@ -820,10 +823,8 @@ function BuilderPanel({
                                                     size="sm"
                                                     variant="destructive"
                                                     type="button"
-                                                    onClick={() => {
-                                                      removeSlotValue(slot, slotApi, slotIndex);
-                                                      setSelectedNode({ kind: 'block', blockIndex });
-                                                    }}
+                                                    aria-label={`Remove ${itemLabel} (${slot.label} item ${slotIndex + 1})`}
+                                                    onClick={() => removeSlotValue(slot, slotApi, slotIndex)}
                                                   >
                                                     Remove
                                                   </Button>
@@ -857,10 +858,19 @@ function BuilderPanel({
             onClick={() => setSelectedNode(null)} 
             aria-hidden="true"
           />
-          <div className="relative z-[101] flex w-full max-w-2xl max-h-[85vh] flex-col overflow-hidden rounded-2xl border border-white/10 bg-zinc-950 shadow-2xl">
+          <div
+            ref={inspectorRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={inspectorTitleId}
+            tabIndex={-1}
+            className="relative z-[101] flex w-full max-w-2xl max-h-[85vh] flex-col overflow-hidden rounded-2xl border border-white/10 bg-zinc-950 shadow-2xl focus:outline-none"
+          >
             <div className="shrink-0 flex items-center justify-between border-b border-white/10 bg-zinc-950/80 px-6 py-4 backdrop-blur-md">
-              <h2 className="text-lg font-semibold text-white">Inspector</h2>
-              <Button variant="ghost" size="sm" onClick={() => setSelectedNode(null)} className="h-8 rounded-full px-3 text-zinc-400 hover:text-white hover:bg-white/10">
+              <h2 id={inspectorTitleId} className="text-lg font-semibold text-white">
+                Inspector<span className="sr-only">: {selectedNode.kind === 'block' ? selectedBlockDef.name : selectedComponentDef?.name || (selectedPresetEntry ? getPresetRecordLabel(selectedPresetEntry) : selectedBlockDef.name)}</span>
+              </h2>
+              <Button type="button" variant="ghost" size="sm" data-dialog-close="" onClick={() => setSelectedNode(null)} className="h-8 rounded-full px-3 text-zinc-400 hover:text-white hover:bg-white/10">
                 Close
               </Button>
             </div>

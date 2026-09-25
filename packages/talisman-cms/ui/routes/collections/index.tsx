@@ -1,19 +1,19 @@
 import React from 'react';
-import { createFileRoute, useNavigate } from '@tanstack/react-router';
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { Card } from '../../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 import { Button } from '../../components/ui/button';
-import { MoreHorizontal, Plus, Database } from 'lucide-react';
+import { ChevronRight, Plus, Database } from 'lucide-react';
 import { filterCollectionsBySection, getEmptyStateCopy, getSectionCollectionRoute, getSectionDescription, getSectionTitle, isPagesCollection, type AdminSection } from '../../lib/admin-sections';
+import { fetchCollectionConfigs } from '../../lib/admin-api';
 
 export const Route = createFileRoute('/collections/')({
   component: CollectionsIndexRoute,
   loader: async ({ context }) => {
     // We already have `adminBasePath` injected into the router context
     const adminBasePath = context.adminBasePath || '/admin';
-    const res = await fetch(`${adminBasePath}/api/collections`);
-    if (!res.ok) throw new Error('Failed to fetch collections');
-    const collections = await res.json() as Array<{
+    // Item counts change, so this screen always asks the server (which also refreshes the shared copy).
+    const collections = await fetchCollectionConfigs(adminBasePath, { fresh: true }) as Array<{
       id: string;
       name: string;
       slug: string;
@@ -59,7 +59,7 @@ export function CollectionSectionPage({
               <TableHead className="text-zinc-400 font-medium">Slug</TableHead>
               <TableHead className="text-zinc-400 font-medium">Items</TableHead>
               <TableHead className="text-right text-zinc-400 font-medium">Created</TableHead>
-              <TableHead className="w-[50px]"></TableHead>
+              <TableHead className="w-[50px]"><span className="sr-only">Open</span></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -82,11 +82,19 @@ export function CollectionSectionPage({
                     navigate({ to: sectionCollectionRoute, params: { slug: col.slug } });
                   }}
                 >
-                  <TableCell className="font-medium text-zinc-100 group-hover:text-indigo-400 transition-colors flex items-center gap-3">
-                    <span className="p-1.5 rounded-md bg-white/5 group-hover:bg-indigo-500/10 transition-colors">
-                      <Database size={14} className="text-zinc-400 group-hover:text-indigo-400" />
-                    </span>
-                    {col.name}
+                  <TableCell className="font-medium text-zinc-100 group-hover:text-indigo-400 transition-colors">
+                    {/* The name is a real link, so the row can be reached and opened from the keyboard. */}
+                    <Link
+                      to={sectionCollectionRoute}
+                      params={{ slug: col.slug }}
+                      onClick={(event) => event.stopPropagation()}
+                      className="flex items-center gap-3 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/60"
+                    >
+                      <span aria-hidden="true" className="p-1.5 rounded-md bg-white/5 group-hover:bg-indigo-500/10 transition-colors">
+                        <Database size={14} className="text-zinc-400 group-hover:text-indigo-400" />
+                      </span>
+                      {col.name}
+                    </Link>
                   </TableCell>
                   <TableCell>
                     <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-mono bg-zinc-900 border border-white/10 text-zinc-400 shadow-sm">
@@ -106,9 +114,7 @@ export function CollectionSectionPage({
                     })}
                   </TableCell>
                   <TableCell>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-500 hover:text-zinc-200 hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-all duration-200">
-                      <MoreHorizontal size={14} />
-                    </Button>
+                    <ChevronRight aria-hidden="true" size={14} className="text-zinc-600 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
                   </TableCell>
                 </TableRow>
               ))

@@ -2,6 +2,7 @@ import React from 'react';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { ArrowRight, Boxes, CircleDollarSign, Gift, Package, Plus, ShoppingBag, Sparkles, Truck, Users } from 'lucide-react';
 import { filterCollectionsBySection } from '../../lib/admin-sections';
+import { fetchCollectionConfigs } from '../../lib/admin-api';
 // @ts-ignore Virtual module is provided by the CMS integration.
 import { adminLinks } from 'virtual:talisman-cms/config';
 
@@ -11,9 +12,10 @@ type Tool = { section: string; label: string; description: string; href: string 
 export const Route = createFileRoute('/commerce/')({
   component: CommerceIndexRoute,
   loader: async ({ context }) => {
-    const response = await fetch(`${context.adminBasePath || '/admin'}/api/collections`);
-    if (!response.ok) throw new Error('Could not load commerce collections');
-    return filterCollectionsBySection(await response.json() as Model[], 'commerce');
+    // Item counts change, so this screen always asks the server (which also refreshes the shared copy).
+    const collections = await fetchCollectionConfigs(context.adminBasePath || '/admin', { fresh: true })
+      .catch(() => { throw new Error('Could not load commerce collections'); });
+    return filterCollectionsBySection(collections as Model[], 'commerce');
   }
 });
 
