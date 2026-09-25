@@ -49,7 +49,11 @@ try {
       assert.ok(!version.startsWith('workspace:'), `${manifest.name}: unresolved dependency ${name}`);
     }
     if (manifest.name === 'talisman-cms') {
-      assert.ok(entries.has('package/drizzle/0018_entry_revision_integrity.sql'), 'talisman-cms: missing latest migration');
+      const journal = JSON.parse(readFileSync(join(cwd, 'drizzle', 'meta', '_journal.json'), 'utf8'));
+      assert.ok(journal.entries?.length, 'talisman-cms: migration journal is empty');
+      for (const { tag } of journal.entries) {
+        assert.ok(entries.has(`package/drizzle/${tag}.sql`), `talisman-cms: missing migration ${tag}`);
+      }
     }
     console.log(`${manifest.name}@${manifest.version}: ${entries.size} archived files; exports and dependencies verified`);
   }
