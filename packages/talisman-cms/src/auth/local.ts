@@ -3,7 +3,7 @@ import { drizzleAdapter } from '@better-auth/drizzle-adapter';
 import { admin } from 'better-auth/plugins/admin';
 import { hashPassword } from 'better-auth/crypto';
 import { drizzle } from 'drizzle-orm/d1';
-import { and, eq, count, sql } from 'drizzle-orm';
+import { and, eq, ne, count, sql } from 'drizzle-orm';
 import type { TalismanAuthAdapter, TalismanUser } from './types';
 import type { TalismanEnv } from '../db/client';
 import * as schema from './local-schema';
@@ -63,6 +63,9 @@ function createLocalAuth(request: Request, env: LocalEnv, adminPath = '/admin') 
     advanced: {
       cookiePrefix: 'talisman-cms',
       useSecureCookies: new URL(request.url).protocol === 'https:',
+      // Cloudflare sets CF-Connecting-IP itself; X-Forwarded-For is client-controlled there,
+      // and an unresolvable IP would put every sign-in into one shared rate-limit bucket.
+      ipAddress: { ipAddressHeaders: ['cf-connecting-ip'] },
     },
   });
 }
@@ -101,24 +104,30 @@ export async function signInCloudflareAdmin(request: Request, adminPath = '/admi
   if (account.email !== email) {
     await db.update(schema.user).set({ email, updatedAt: new Date() }).where(eq(schema.user.id, account.id));
   }
-  const credential = await db.query.account.findFirst({ where: and(eq(schema.account.userId, account.id), eq(schema.account.providerId, 'credential')) });
-  const hashed = await hashPassword(password);
-  if (credential) {
-    await db.update(schema.account).set({ password: hashed, updatedAt: new Date() }).where(eq(schema.account.id, credential.id));
-  } else {
-    await db.insert(schema.account).values({ id: crypto.randomUUID(), accountId: account.id,
-      providerId: 'credential', userId: account.id, password: hashed, createdAt: new Date(), updatedAt: new Date() });
-  }
   if (account.role !== 'admin') {
     await db.update(schema.user).set({ role: 'admin', emailVerified: true, updatedAt: new Date() }).where(eq(schema.user.id, account.id));
   }
-  await db.delete(schema.session).where(eq(schema.session.userId, account.id));
-  const url = new URL(`${normalizedPath === '/' ? '' : normalizedPath}/api/auth/sign-in/email`, request.url);
-  const signIn = await auth.handler(new Request(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Origin: new URL(request.url).origin },
-    body: JSON.stringify({ email, password }),
-  }));
+  // Carry the admin's client IP and user agent onto the session. The direct API call skips the HTTP
+  // router's per-IP sign-in rate limit, so other clients' failed attempts cannot block a verified admin.
+  const signInHeaders = new Headers({ 'Content-Type': 'application/json' });
+  for (const name of ['cf-connecting-ip', 'user-agent']) {
+    const value = request.headers.get(name);
+    if (value) signInHeaders.set(name, value);
+  }
+  const signInAdmin = () => auth.api.signInEmail({ body: { email, password }, headers: signInHeaders, asResponse: true });
+  let signIn = await signInAdmin();
+  if (signIn.status === 401) {
+    // The derived credential is missing or stale (for example after a secret rotation); store it and retry once.
+    const credential = await db.query.account.findFirst({ where: and(eq(schema.account.userId, account.id), eq(schema.account.providerId, 'credential')) });
+    const hashed = await hashPassword(password);
+    if (credential) {
+      await db.update(schema.account).set({ password: hashed, updatedAt: new Date() }).where(eq(schema.account.id, credential.id));
+    } else {
+      await db.insert(schema.account).values({ id: crypto.randomUUID(), accountId: account.id,
+        providerId: 'credential', userId: account.id, password: hashed, createdAt: new Date(), updatedAt: new Date() });
+    }
+    signIn = await signInAdmin();
+  }
   if (!signIn.ok) return Response.json({ error: 'Cloudflare admin sign-in failed' }, { status: 503 });
   const signedIn = await signIn.clone().json().catch(() => null) as { token?: unknown } | null;
   if (typeof signedIn?.token !== 'string') return Response.json({ error: 'Cloudflare admin session failed' }, { status: 503 });
@@ -127,6 +136,8 @@ export async function signInCloudflareAdmin(request: Request, adminPath = '/admi
   if (issuedSession?.authMethod !== 'cloudflare' || issuedSession.userId !== account.id) {
     return Response.json({ error: 'Cloudflare admin session failed' }, { status: 503 });
   }
+  // Revoke the admin's other sessions only once the replacement session exists.
+  await db.delete(schema.session).where(and(eq(schema.session.userId, account.id), ne(schema.session.token, signedIn.token)));
   const headers = new Headers({ Location: normalizedPath, 'Cache-Control': 'no-store' });
   for (const cookie of signIn.headers.getSetCookie()) headers.append('Set-Cookie', cookie);
   return new Response(null, { status: 303, headers });
@@ -140,6 +151,12 @@ export async function createInitialAdmin(
 ): Promise<void> {
   const auth = createLocalAuth(request, env, adminPath);
   await auth.api.createUser({ body: { ...details, role: 'admin' } });
+}
+
+/** Better Auth's wrong-password response, so accounts without CMS password access look like unknown emails. */
+function invalidCredentials(): Response {
+  return Response.json({ message: 'Invalid email or password', code: 'INVALID_EMAIL_OR_PASSWORD' },
+    { status: 401, statusText: 'UNAUTHORIZED', headers: { 'Cache-Control': 'no-store' } });
 }
 
 function sameOrigin(request: Request): boolean {
@@ -207,16 +224,8 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
       }
       if (action === 'sign-in/email') {
         if (request.method !== 'POST') return new Response(null, { status: 405 });
-        if (options.editorOnly) {
-          const body = await request.clone().json().catch(() => null) as { email?: unknown } | null;
-          if (typeof body?.email === 'string') {
-            const db = drizzle(env.DB, { schema });
-            const target = await db.query.user.findFirst({ where: eq(schema.user.email, body.email.trim().toLowerCase()) });
-            if (target && target.role !== 'editor') {
-              return Response.json({ error: 'This account does not have editor password access' }, { status: 403 });
-            }
-          }
-        }
+        // Account roles are checked only after Better Auth has rate-limited the request and verified the
+        // password, so the response never reveals whether an email belongs to a shopper or an admin.
         if (accessEmail !== undefined) {
           const body = await request.clone().json().catch(() => null) as { email?: unknown } | null;
           if (typeof body?.email !== 'string' || body.email.toLowerCase() !== accessEmail) {
@@ -232,7 +241,7 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
       }
       if (action === 'admin/create-user') {
         const body = await request.clone().json().catch(() => null) as { role?: unknown; password?: unknown; email?: unknown } | null;
-        if (!body || !['admin', 'editor'].includes(String(body.role)) ||
+        if (!body || typeof body.role !== 'string' || !['admin', 'editor'].includes(body.role) ||
             (options.editorOnly && body.role !== 'editor') ||
             typeof body.password !== 'string' || body.password.length < 12 ||
             typeof body.email !== 'string') {
@@ -263,7 +272,11 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
       const resetBody = action === 'admin/set-user-password'
         ? await request.clone().json().catch(() => null) as { userId?: unknown } | null
         : null;
-      if (typeof resetBody?.userId === 'string') {
+      if (action === 'admin/set-user-password') {
+        // Better Auth coerces userId to a string, so reject arrays and other shapes before the guards below.
+        if (typeof resetBody?.userId !== 'string' || !resetBody.userId) {
+          return Response.json({ error: 'Choose a valid user' }, { status: 400 });
+        }
         const db = drizzle(env.DB, { schema });
         const target = await db.query.user.findFirst({ where: eq(schema.user.id, resetBody.userId) });
         if (target?.role === 'admin' && options.editorOnly) {
@@ -273,7 +286,8 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
       if (['admin/set-role', 'admin/ban-user', 'admin/unban-user', 'admin/remove-user'].includes(action)) {
         const body = await request.clone().json().catch(() => null) as { userId?: unknown; role?: unknown } | null;
         if (typeof body?.userId !== 'string' || !body.userId ||
-            (action === 'admin/set-role' && (!(options.editorOnly ? ['editor', 'customer'] : ['admin', 'editor']).includes(String(body.role))))) {
+            (action === 'admin/set-role' && (typeof body.role !== 'string' ||
+              !(options.editorOnly ? ['editor', 'customer'] : ['admin', 'editor']).includes(body.role)))) {
           return Response.json({ error: 'Choose a valid user and role' }, { status: 400 });
         }
         const actor = await adapter.getUser(request);
@@ -307,6 +321,19 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
       const headers = new Headers(response.headers);
       headers.set('Cache-Control', 'no-store');
       if (action === 'sign-in/email' && response.ok) {
+        const signedIn = await response.clone().json().catch(() => null) as { token?: unknown } | null;
+        const db = drizzle(env.DB, { schema });
+        const [issued] = typeof signedIn?.token === 'string'
+          ? await db.select({ role: schema.user.role }).from(schema.session)
+            .innerJoin(schema.user, eq(schema.user.id, schema.session.userId))
+            .where(eq(schema.session.token, signedIn.token)).limit(1)
+          : [];
+        if (!issued || !(options.editorOnly ? ['editor'] : ['admin', 'editor']).includes(issued.role)) {
+          // Admins use Cloudflare SSO in editor-only mode and shoppers never get CMS sessions: drop the session
+          // and answer exactly like a wrong password.
+          if (typeof signedIn?.token === 'string') await db.delete(schema.session).where(eq(schema.session.token, signedIn.token));
+          return invalidCredentials();
+        }
         headers.delete('content-length');
         return Response.json({ ok: true }, { status: response.status, headers });
       }
