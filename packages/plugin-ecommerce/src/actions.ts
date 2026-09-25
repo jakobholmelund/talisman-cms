@@ -6,6 +6,7 @@ import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from './accounts';
 import { REFERRAL_COOKIE } from './referrals';
 import { ensureCartSession } from './cookies';
 import type { TalismanEnv } from 'talisman-cms/client';
+import { readSetting } from 'talisman-cms/env';
 
 function getOrCreateCartSession(context: any): string {
   if (!context.cookies) return `anon_${crypto.randomUUID()}`;
@@ -133,7 +134,7 @@ export const ecommerceActions = {
 
       try {
         const { env } = await import('cloudflare:workers');
-        if ((env as any).GALAXY_COMMERCE_CHECKOUT_ENABLED !== 'true') {
+        if (readSetting(env, 'COMMERCE_CHECKOUT_ENABLED') !== 'true') {
           throw new ActionError({ code: 'FORBIDDEN', message: 'Checkout is disabled' });
         }
         const api = bindCommerceApi({

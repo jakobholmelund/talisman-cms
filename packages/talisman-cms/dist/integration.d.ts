@@ -32,7 +32,7 @@ interface TalismanCmsOptions {
     publishing?: {
         /**
          * Workflow binding available on the Worker environment.
-         * @default 'GALAXY_PUBLISH_WORKFLOW'
+         * @default 'TALISMAN_PUBLISH_WORKFLOW'
          */
         workflowBinding?: string;
     };

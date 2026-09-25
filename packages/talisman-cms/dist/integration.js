@@ -4,7 +4,7 @@ import {
 } from "./chunk-JCYUX5UW.js";
 import {
   registerAuthAdapter
-} from "./chunk-BMQAS7XB.js";
+} from "./chunk-UKQJWUX7.js";
 import "./chunk-MLKGABMK.js";
 
 // src/integration.ts
@@ -340,7 +340,7 @@ function talismanCms(options) {
                       export const globals = ${JSON.stringify(finalOptions?.globals || [])};
                       export const uiLibraries = ${JSON.stringify(getPluginUiLibraryMetadata(finalOptions?.plugins || []))};
                       export const publishing = ${JSON.stringify({
-                      workflowBinding: finalOptions?.publishing?.workflowBinding || "GALAXY_PUBLISH_WORKFLOW"
+                      workflowBinding: finalOptions?.publishing?.workflowBinding || "TALISMAN_PUBLISH_WORKFLOW"
                     })};
                     `;
                   }

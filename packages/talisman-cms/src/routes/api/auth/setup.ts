@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { drizzle } from 'drizzle-orm/d1';
 import { createInitialAdmin, getAccessEmail, getLocalAuthEnv } from '../../../auth/local';
 import { user } from '../../../auth/local-schema';
+import { readSetting } from '../../../env';
 import { eq } from 'drizzle-orm';
 import { adminPath } from 'virtual:talisman-cms/config';
 import { authAdapter } from 'virtual:talisman-cms/auth';
@@ -35,7 +36,7 @@ export const POST: APIRoute = async ({ request }) => {
   if ('response' in state) return state.response!;
   if (!state.required) return Response.json({ error: 'Setup is already complete' }, { status: 409 });
 
-  const expected = state.env!.GALAXY_AUTH_SETUP_TOKEN;
+  const expected = readSetting(state.env, 'AUTH_SETUP_TOKEN');
   const supplied = request.headers.get('x-talisman-setup-token') || '';
   if (typeof expected !== 'string' || expected.length < 32 || supplied.length !== expected.length) {
     return Response.json({ error: 'Invalid setup token' }, { status: 403 });

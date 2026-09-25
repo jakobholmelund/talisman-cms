@@ -1,6 +1,9 @@
 import {
   getAccessEmail
-} from "./chunk-XMM5SQBN.js";
+} from "./chunk-73U764HX.js";
+import {
+  readSetting
+} from "./chunk-XG3TKNL6.js";
 import {
   __export
 } from "./chunk-MLKGABMK.js";
@@ -89,15 +92,16 @@ async function getLocalAuthEnv() {
 }
 function createLocalAuth(request, env, adminPath = "/admin") {
   if (!env.DB) throw new Error("Local CMS authentication requires the DB binding");
-  if (!env.GALAXY_AUTH_SECRET || env.GALAXY_AUTH_SECRET.length < 32) {
-    throw new Error("Local CMS authentication requires GALAXY_AUTH_SECRET (at least 32 characters)");
+  const secret = readSetting(env, "AUTH_SECRET");
+  if (!secret || secret.length < 32) {
+    throw new Error("Local CMS authentication requires TALISMAN_AUTH_SECRET (at least 32 characters)");
   }
   const origin = new URL(request.url).origin;
   return betterAuth({
     appName: "Talisman CMS",
     baseURL: origin,
     basePath: `${adminPath === "/" ? "" : adminPath}/api/auth`,
-    secret: env.GALAXY_AUTH_SECRET,
+    secret,
     trustedOrigins: [origin],
     database: drizzleAdapter(drizzle(env.DB, { schema: local_schema_exports }), {
       provider: "sqlite",
@@ -136,13 +140,13 @@ async function ssoPassword(email, secret) {
 async function signInCloudflareAdmin(request, adminPath = "/admin") {
   const env = await getLocalAuthEnv();
   const email = await getAccessEmail(request, env);
-  const allowed = new Set((env.GALAXY_ACCESS_ADMIN_EMAILS || "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean));
+  const allowed = new Set((readSetting(env, "ACCESS_ADMIN_EMAILS") || "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean));
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !allowed.has(email)) {
     return Response.json({ error: "Cloudflare admin access required" }, { status: 403 });
   }
   const normalizedPath = adminPath === "/" ? "/" : `/${adminPath.replace(/^\/+|\/+$/g, "")}`;
   const auth = createLocalAuth(request, env, normalizedPath);
-  const password = await ssoPassword(email, env.GALAXY_AUTH_SECRET);
+  const password = await ssoPassword(email, readSetting(env, "AUTH_SECRET"));
   const db = drizzle(env.DB, { schema: local_schema_exports });
   let account2 = await db.query.user.findFirst({ where: sql`lower(${user.email}) = ${email}` });
   if (!account2) {
@@ -225,7 +229,7 @@ function LocalAuthAdapter(adminPath = "/admin", options = {}) {
       const rawUser = result?.user;
       if (!rawUser || rawUser.role !== "admin" && rawUser.role !== "editor") return null;
       if (options.editorOnly && rawUser.role === "admin") {
-        const admins = (env.GALAXY_ACCESS_ADMIN_EMAILS || "").split(",").map((value) => value.trim().toLowerCase());
+        const admins = (readSetting(env, "ACCESS_ADMIN_EMAILS") || "").split(",").map((value) => value.trim().toLowerCase());
         if (!admins.includes(rawUser.email.toLowerCase()) || !result?.session?.id) return null;
         const cmsSession = await drizzle(env.DB, { schema: local_schema_exports }).query.session.findFirst({ where: eq(session.id, result.session.id) });
         if (cmsSession?.authMethod !== "cloudflare") return null;

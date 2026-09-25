@@ -1,5 +1,6 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
+import { readSetting } from 'talisman-cms/env';
 import { creditLedger, customerAccounts, referralCodes, referrals, referralSettings } from './schema';
 
 export const REFERRAL_COOKIE = 'talisman-referral';
@@ -9,15 +10,14 @@ export const REFERRAL_MIN_ORDER_CENTS = 5000;
 
 /** A site can set both values as Worker vars; invalid values fall back to defaults. */
 export function referralPolicy(env: TalismanEnv) {
-  const vars = env as TalismanEnv & Record<string, unknown>;
   const readCents = (value: unknown, fallback: number) => {
     const parsed = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : NaN;
     return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 100_000 ? parsed : fallback;
   };
   return {
     enabled: true,
-    rewardCents: readCents(vars.GALAXY_COMMERCE_REFERRAL_REWARD_CENTS, REFERRAL_REWARD_CENTS),
-    minOrderCents: readCents(vars.GALAXY_COMMERCE_REFERRAL_MIN_ORDER_CENTS, REFERRAL_MIN_ORDER_CENTS),
+    rewardCents: readCents(readSetting(env, 'COMMERCE_REFERRAL_REWARD_CENTS'), REFERRAL_REWARD_CENTS),
+    minOrderCents: readCents(readSetting(env, 'COMMERCE_REFERRAL_MIN_ORDER_CENTS'), REFERRAL_MIN_ORDER_CENTS),
     attributionDays: 30,
   };
 }

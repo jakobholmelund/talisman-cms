@@ -4,20 +4,20 @@ type TalismanRuntimeStore = {
   authAdapters: Map<string, TalismanAuthAdapter>;
 };
 
-const GALAXY_RUNTIME_STORE_KEY = '__GALAXY_CMS_RUNTIME_STORE__';
+const TALISMAN_RUNTIME_STORE_KEY = '__TALISMAN_CMS_RUNTIME_STORE__';
 
 function getRuntimeStore(): TalismanRuntimeStore {
   const runtime = globalThis as typeof globalThis & {
-    [GALAXY_RUNTIME_STORE_KEY]?: TalismanRuntimeStore;
+    [TALISMAN_RUNTIME_STORE_KEY]?: TalismanRuntimeStore;
   };
 
-  if (!runtime[GALAXY_RUNTIME_STORE_KEY]) {
-    runtime[GALAXY_RUNTIME_STORE_KEY] = {
+  if (!runtime[TALISMAN_RUNTIME_STORE_KEY]) {
+    runtime[TALISMAN_RUNTIME_STORE_KEY] = {
       authAdapters: new Map()
     };
   }
 
-  return runtime[GALAXY_RUNTIME_STORE_KEY];
+  return runtime[TALISMAN_RUNTIME_STORE_KEY];
 }
 
 export function registerAuthAdapter(key: string, adapter: TalismanAuthAdapter | null | undefined) {

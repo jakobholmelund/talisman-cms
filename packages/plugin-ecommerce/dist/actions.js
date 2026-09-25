@@ -1,6 +1,6 @@
 import {
   runtimePaymentAdapters
-} from "./chunk-WXEFSKPU.js";
+} from "./chunk-VVBLCUTQ.js";
 import "./chunk-FK3KKBW6.js";
 import "./chunk-6LYWG22B.js";
 import {
@@ -9,21 +9,22 @@ import {
 } from "./chunk-OM7CZNWS.js";
 import {
   bindCommerceApi
-} from "./chunk-4B5ROQI2.js";
-import "./chunk-MQPA2QMJ.js";
+} from "./chunk-65BIYSUK.js";
+import "./chunk-K2FMPEG6.js";
 import {
   REFERRAL_COOKIE
-} from "./chunk-PRGHPNDB.js";
+} from "./chunk-5JBBAHBQ.js";
 import {
   ensureCartSession
 } from "./chunk-MDTTSWBR.js";
 import "./chunk-AGAY2N6E.js";
-import "./chunk-U46CR236.js";
+import "./chunk-4DBNSZO2.js";
 import "./chunk-6RT3KMIV.js";
 
 // src/actions.ts
 import { defineAction, ActionError } from "astro:actions";
 import { z } from "astro/zod";
+import { readSetting } from "talisman-cms/env";
 function getOrCreateCartSession(context) {
   if (!context.cookies) return `anon_${crypto.randomUUID()}`;
   return ensureCartSession(context.cookies, context.url?.protocol === "https:");
@@ -139,7 +140,7 @@ var ecommerceActions = {
       const sessionToken = getOrCreateCartSession(context);
       try {
         const { env } = await import("cloudflare:workers");
-        if (env.GALAXY_COMMERCE_CHECKOUT_ENABLED !== "true") {
+        if (readSetting(env, "COMMERCE_CHECKOUT_ENABLED") !== "true") {
           throw new ActionError({ code: "FORBIDDEN", message: "Checkout is disabled" });
         }
         const api = bindCommerceApi({

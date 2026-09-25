@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
+import { readSetting } from 'talisman-cms/env';
 import { giftCardPurchases, giftCards, giftCardLedger } from './schema';
 import type { PaymentProviderAdapter } from './payments';
 
@@ -17,8 +18,7 @@ const adminIssueSchema = z.object({
 const hex = (bytes: Uint8Array) => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
 const unhex = (value: string) => new Uint8Array(value.match(/.{2}/g)?.map(byte => parseInt(byte, 16)) ?? []);
 const randomHex = (bytes: number) => hex(crypto.getRandomValues(new Uint8Array(bytes)));
-const keyString = (env: TalismanEnv) => (env as TalismanEnv & { GALAXY_COMMERCE_GIFT_CARD_KEY?: string })
-  .GALAXY_COMMERCE_GIFT_CARD_KEY;
+const keyString = (env: TalismanEnv) => readSetting(env, 'COMMERCE_GIFT_CARD_KEY');
 
 async function encryptionKey(env: TalismanEnv) {
   const value = keyString(env);

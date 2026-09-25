@@ -3,11 +3,14 @@ import {
   entryRevisions,
   schema_exports
 } from "./chunk-QDILJIDR.js";
+import {
+  readBinding
+} from "./chunk-XG3TKNL6.js";
 
 // src/versioning.ts
 import { and, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
-var DEFAULT_PUBLISHING_WORKFLOW_BINDING = "GALAXY_PUBLISH_WORKFLOW";
+var DEFAULT_PUBLISHING_WORKFLOW_BINDING = "TALISMAN_PUBLISH_WORKFLOW";
 var REVISION_CONFLICT_MESSAGE = "This entry changed since it was opened. Reload it before saving.";
 var RevisionConflictError = class extends Error {
   constructor() {
@@ -222,7 +225,7 @@ async function waitForWorkflowCompletion(instance, timeoutMs = 5e3) {
   throw new Error(`Workflow ${instance.id} did not complete within ${timeoutMs}ms`);
 }
 async function triggerPublishingWorkflow(env, payload, bindingName = DEFAULT_PUBLISHING_WORKFLOW_BINDING) {
-  const workflow = env?.[bindingName];
+  const workflow = bindingName === DEFAULT_PUBLISHING_WORKFLOW_BINDING ? readBinding(env, "PUBLISH_WORKFLOW") : env?.[bindingName];
   if (!workflow) {
     return runPublishingTransition(env, payload);
   }

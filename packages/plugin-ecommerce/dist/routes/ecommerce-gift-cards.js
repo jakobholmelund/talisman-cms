@@ -1,6 +1,6 @@
 import {
   runtimePaymentAdapters
-} from "../chunk-WXEFSKPU.js";
+} from "../chunk-VVBLCUTQ.js";
 import "../chunk-FK3KKBW6.js";
 import "../chunk-6LYWG22B.js";
 import {
@@ -9,10 +9,11 @@ import {
 import {
   getGiftCardBalance,
   startGiftCardPurchase
-} from "../chunk-U46CR236.js";
+} from "../chunk-4DBNSZO2.js";
 import "../chunk-6RT3KMIV.js";
 
 // src/routes/ecommerce-gift-cards.ts
+import { readSetting } from "talisman-cms/env";
 var POST = async ({ request, cookies }) => {
   const headers = { "Cache-Control": "no-store" };
   if (request.headers.get("origin") !== new URL(request.url).origin) {
@@ -25,7 +26,7 @@ var POST = async ({ request, cookies }) => {
     if (body && typeof body === "object" && body.action === "balance" && typeof body.code === "string") {
       return Response.json(await getGiftCardBalance(runtimeEnv, body.code), { headers });
     }
-    if (runtimeEnv.GALAXY_COMMERCE_CHECKOUT_ENABLED !== "true" || runtimeEnv.GALAXY_COMMERCE_GIFT_CARDS_ENABLED !== "true") {
+    if (readSetting(runtimeEnv, "COMMERCE_CHECKOUT_ENABLED") !== "true" || readSetting(runtimeEnv, "COMMERCE_GIFT_CARDS_ENABLED") !== "true") {
       return Response.json({ error: "Gift card purchases are unavailable" }, { status: 503, headers });
     }
     const adapter = runtimePaymentAdapters(runtimeEnv).find((provider) => provider.providerId === "stripe");

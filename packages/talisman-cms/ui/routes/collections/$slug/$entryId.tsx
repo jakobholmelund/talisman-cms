@@ -1951,7 +1951,7 @@ export function CollectionEntryEditor({
     try {
       const channel = new BroadcastChannel('talisman-cms-preview');
       channel.postMessage({
-        type: 'GALAXY_ENTRY_SAVED',
+        type: 'TALISMAN_ENTRY_SAVED',
         collectionSlug: slug,
         entryId: targetEntryId,
       });

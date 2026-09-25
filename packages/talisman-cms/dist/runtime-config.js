@@ -1,7 +1,7 @@
 import {
   getRegisteredAuthAdapter,
   registerAuthAdapter
-} from "./chunk-BMQAS7XB.js";
+} from "./chunk-UKQJWUX7.js";
 import "./chunk-MLKGABMK.js";
 export {
   getRegisteredAuthAdapter,

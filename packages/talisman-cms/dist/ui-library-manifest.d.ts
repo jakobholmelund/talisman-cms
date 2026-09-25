@@ -106,8 +106,8 @@ declare function buildUiLibraryDefinition(library: Pick<UiLibraryDefinition, 'id
     blocks: UiLibraryBlockAdapter[];
     components: UiLibraryComponentAdapter[];
     presets: UiComponentPresetDefinition[];
-    id: string;
     name: string;
+    id: string;
     requirements?: UiLibraryRequirement[] | undefined;
 };
 declare function buildUiLibraryPlugin(pluginName: string, library: UiLibraryDefinition): {

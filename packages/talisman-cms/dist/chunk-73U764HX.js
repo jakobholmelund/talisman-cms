@@ -1,3 +1,7 @@
+import {
+  readSetting
+} from "./chunk-XG3TKNL6.js";
+
 // src/auth/access.ts
 import { createRemoteJWKSet, jwtVerify } from "jose";
 var jwksCache = /* @__PURE__ */ new Map();
@@ -10,8 +14,8 @@ async function getAccessEnv() {
   }
 }
 async function getAccessEmail(request, env) {
-  const teamDomain = env.GALAXY_ACCESS_TEAM_DOMAIN;
-  const audience = env.GALAXY_ACCESS_AUDIENCE;
+  const teamDomain = readSetting(env, "ACCESS_TEAM_DOMAIN");
+  const audience = readSetting(env, "ACCESS_AUDIENCE");
   if (!teamDomain && !audience) return void 0;
   if (!teamDomain || !audience || !/^https:\/\/[^/]+\.cloudflareaccess\.com\/?$/.test(teamDomain)) return null;
   const token = request.headers.get("cf-access-jwt-assertion");
@@ -37,11 +41,11 @@ function AccessAuthAdapter(adminPath = "/admin") {
   const adapter = {
     async getUser(request) {
       const env = await getAccessEnv();
-      if (!env.GALAXY_ACCESS_TEAM_DOMAIN || !env.GALAXY_ACCESS_AUDIENCE) return null;
+      if (!readSetting(env, "ACCESS_TEAM_DOMAIN") || !readSetting(env, "ACCESS_AUDIENCE")) return null;
       const email = await getAccessEmail(request, env);
       if (!email) return null;
-      const admins = allowedEmails(env.GALAXY_ACCESS_ADMIN_EMAILS);
-      const editors = allowedEmails(env.GALAXY_ACCESS_EDITOR_EMAILS);
+      const admins = allowedEmails(readSetting(env, "ACCESS_ADMIN_EMAILS"));
+      const editors = allowedEmails(readSetting(env, "ACCESS_EDITOR_EMAILS"));
       const role = admins.has(email) ? "admin" : editors.has(email) ? "editor" : null;
       if (!role) return null;
       return { id: `cloudflare-access:${email}`, email, role };

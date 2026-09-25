@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import type { TalismanEnv } from 'talisman-cms/client';
+import { readSetting } from 'talisman-cms/env';
 import { bindCommerceApi } from '../api';
 import { CUSTOMER_SESSION_COOKIE, CUSTOMER_SESSION_MAX_AGE,
   consumeCustomerEmailSignIn, findCustomerSession, requestCustomerEmailSignIn,
@@ -36,8 +37,8 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
   if (typeof body?.email === 'string') {
     const settings = runtimeEnv as TalismanEnv & Record<string, unknown>;
     const apiKey = settings.RESEND_API_KEY;
-    const from = settings.GALAXY_COMMERCE_EMAIL_FROM;
-    const publicOrigin = settings.GALAXY_COMMERCE_PUBLIC_ORIGIN;
+    const from = readSetting(settings, 'COMMERCE_EMAIL_FROM');
+    const publicOrigin = readSetting(settings, 'COMMERCE_PUBLIC_ORIGIN');
     if (typeof apiKey !== 'string' || !apiKey || typeof from !== 'string' || !from ||
       typeof publicOrigin !== 'string' || publicOrigin !== new URL(request.url).origin) {
       return Response.json({ error: 'Email sign-in is unavailable' }, { status: 503, headers });

@@ -7,11 +7,11 @@ import '../media-Cfo_aHOS.js';
 import 'drizzle-orm/sqlite-core';
 
 type LocalEnv = TalismanEnv & {
-    GALAXY_AUTH_SECRET?: string;
-    GALAXY_AUTH_SETUP_TOKEN?: string;
-    GALAXY_ACCESS_TEAM_DOMAIN?: string;
-    GALAXY_ACCESS_AUDIENCE?: string;
-    GALAXY_ACCESS_ADMIN_EMAILS?: string;
+    TALISMAN_AUTH_SECRET?: string;
+    TALISMAN_AUTH_SETUP_TOKEN?: string;
+    TALISMAN_ACCESS_TEAM_DOMAIN?: string;
+    TALISMAN_ACCESS_AUDIENCE?: string;
+    TALISMAN_ACCESS_ADMIN_EMAILS?: string;
 };
 declare function getLocalAuthEnv(): Promise<LocalEnv>;
 /** Exchange a verified Cloudflare Access admin identity for a local CMS session. */

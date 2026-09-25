@@ -14,7 +14,7 @@ import { issueAdminGiftCard, evaluateGiftCard, getGiftCardBalance, startGiftCard
   refundGiftCardTender, refundGiftCardOnlyOrder, reconcileGiftCardPurchase } from '../dist/gift-cards.js';
 import { fulfillCommerceOrder, listCommerceOrdersAdmin } from '../dist/fulfillment.js';
 
-const giftEnv = (DB) => ({ DB, GALAXY_COMMERCE_GIFT_CARD_KEY: 'a'.repeat(64) });
+const giftEnv = (DB) => ({ DB, TALISMAN_COMMERCE_GIFT_CARD_KEY: 'a'.repeat(64) });
 const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.sql', '0007_local_auth.sql',
   '0008_shared_components.sql', '0010_checkout_inventory.sql', '0011_order_payment_provider.sql',
   '0012_customer_accounts.sql', '0013_referrals_and_credit.sql', '0014_promotions.sql',
@@ -752,9 +752,12 @@ test('self-referrals and existing shoppers do not earn referral credit', async (
 });
 
 test('referral terms are validated and snapshotted on the pending order', async () => {
-  assert.deepEqual(referralPolicy({ GALAXY_COMMERCE_REFERRAL_REWARD_CENTS: '-100',
-    GALAXY_COMMERCE_REFERRAL_MIN_ORDER_CENTS: 'not-a-number' }),
+  assert.deepEqual(referralPolicy({ TALISMAN_COMMERCE_REFERRAL_REWARD_CENTS: '-100',
+    TALISMAN_COMMERCE_REFERRAL_MIN_ORDER_CENTS: 'not-a-number' }),
     { enabled: true, rewardCents: 1000, minOrderCents: 5000, attributionDays: 30 });
+  assert.deepEqual(referralPolicy({ GALAXY_COMMERCE_REFERRAL_REWARD_CENTS: '1200',
+    TALISMAN_COMMERCE_REFERRAL_MIN_ORDER_CENTS: ' 100 ' }),
+    { enabled: true, rewardCents: 1200, minOrderCents: 100, attributionDays: 30 });
   const { sqlite, DB } = database();
   seed(sqlite);
   const now = Math.floor(Date.now() / 1000);
@@ -762,8 +765,8 @@ test('referral terms are validated and snapshotted on the pending order', async 
     (id, email, email_normalized, created_at, updated_at) VALUES ('owner', 'owner@example.com', 'owner@example.com', ?, ?)`)
     .run(now, now);
   const code = await getOrCreateReferralCode({ DB }, 'owner');
-  const settings = { DB, GALAXY_COMMERCE_REFERRAL_REWARD_CENTS: '1500',
-    GALAXY_COMMERCE_REFERRAL_MIN_ORDER_CENTS: '10000' };
+  const settings = { DB, TALISMAN_COMMERCE_REFERRAL_REWARD_CENTS: '1500',
+    TALISMAN_COMMERCE_REFERRAL_MIN_ORDER_CENTS: '10000' };
   const adapter = { providerId: 'stripe',
     async createCheckoutSession({ orderId }) {
       return { providerSessionId: `session-${orderId}`, url: `https://example.test/${orderId}` };
@@ -775,7 +778,7 @@ test('referral terms are validated and snapshotted on the pending order', async 
     ...address, customerEmail: 'friend@example.com', referralCode: code
   })).order;
   assert.equal(order.referralRewardCents, 1500);
-  settings.GALAXY_COMMERCE_REFERRAL_REWARD_CENTS = '2000';
+  settings.TALISMAN_COMMERCE_REFERRAL_REWARD_CENTS = '2000';
   await bindCommerceApi({ env: settings, paymentAdapters: [adapter] }).orders.finalizePayment(order.id, {
     provider: 'stripe', providerId: order.checkoutSessionId, paymentStatus: 'success',
     amount: order.totalAmount, currency: 'usd'

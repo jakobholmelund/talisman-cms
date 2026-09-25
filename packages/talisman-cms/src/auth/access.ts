@@ -1,11 +1,12 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import type { TalismanAuthAdapter, TalismanUser } from './types';
+import { readSetting } from '../env';
 
 type AccessEnv = {
-  GALAXY_ACCESS_TEAM_DOMAIN?: string;
-  GALAXY_ACCESS_AUDIENCE?: string;
-  GALAXY_ACCESS_ADMIN_EMAILS?: string;
-  GALAXY_ACCESS_EDITOR_EMAILS?: string;
+  TALISMAN_ACCESS_TEAM_DOMAIN?: string;
+  TALISMAN_ACCESS_AUDIENCE?: string;
+  TALISMAN_ACCESS_ADMIN_EMAILS?: string;
+  TALISMAN_ACCESS_EDITOR_EMAILS?: string;
 };
 
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
@@ -21,8 +22,8 @@ async function getAccessEnv(): Promise<AccessEnv> {
 
 /** Verify the Access JWT at the Worker, including its signature, issuer and audience. */
 export async function getAccessEmail(request: Request, env: AccessEnv): Promise<string | null | undefined> {
-  const teamDomain = env.GALAXY_ACCESS_TEAM_DOMAIN;
-  const audience = env.GALAXY_ACCESS_AUDIENCE;
+  const teamDomain = readSetting(env, 'ACCESS_TEAM_DOMAIN');
+  const audience = readSetting(env, 'ACCESS_AUDIENCE');
   if (!teamDomain && !audience) return undefined;
   if (!teamDomain || !audience || !/^https:\/\/[^/]+\.cloudflareaccess\.com\/?$/.test(teamDomain)) return null;
 
@@ -54,12 +55,12 @@ export function AccessAuthAdapter(adminPath = '/admin'): TalismanAuthAdapter {
     async getUser(request) {
       const env = await getAccessEnv();
       // Access must be configured explicitly. A missing or invalid token never grants a session.
-      if (!env.GALAXY_ACCESS_TEAM_DOMAIN || !env.GALAXY_ACCESS_AUDIENCE) return null;
+      if (!readSetting(env, 'ACCESS_TEAM_DOMAIN') || !readSetting(env, 'ACCESS_AUDIENCE')) return null;
       const email = await getAccessEmail(request, env);
       if (!email) return null;
 
-      const admins = allowedEmails(env.GALAXY_ACCESS_ADMIN_EMAILS);
-      const editors = allowedEmails(env.GALAXY_ACCESS_EDITOR_EMAILS);
+      const admins = allowedEmails(readSetting(env, 'ACCESS_ADMIN_EMAILS'));
+      const editors = allowedEmails(readSetting(env, 'ACCESS_EDITOR_EMAILS'));
       const role: TalismanUser['role'] | null = admins.has(email) ? 'admin' : editors.has(email) ? 'editor' : null;
       if (!role) return null;
       return { id: `cloudflare-access:${email}`, email, role };

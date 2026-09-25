@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import type { TalismanEnv } from 'talisman-cms/client';
+import { readSetting } from 'talisman-cms/env';
 import { runtimePaymentAdapters } from '../runtime';
 import { getGiftCardBalance, startGiftCardPurchase } from '../gift-cards';
 import { giftCardAccessCookie } from '../cookies';
@@ -16,8 +17,8 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     if (body && typeof body === 'object' && body.action === 'balance' && typeof body.code === 'string') {
       return Response.json(await getGiftCardBalance(runtimeEnv, body.code), { headers });
     }
-    if (runtimeEnv.GALAXY_COMMERCE_CHECKOUT_ENABLED !== 'true' ||
-      runtimeEnv.GALAXY_COMMERCE_GIFT_CARDS_ENABLED !== 'true') {
+    if (readSetting(runtimeEnv, 'COMMERCE_CHECKOUT_ENABLED') !== 'true' ||
+      readSetting(runtimeEnv, 'COMMERCE_GIFT_CARDS_ENABLED') !== 'true') {
       return Response.json({ error: 'Gift card purchases are unavailable' }, { status: 503, headers });
     }
     const adapter = runtimePaymentAdapters(runtimeEnv).find(provider => provider.providerId === 'stripe');

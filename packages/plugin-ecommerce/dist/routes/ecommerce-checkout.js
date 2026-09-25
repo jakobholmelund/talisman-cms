@@ -3,7 +3,7 @@ import {
 } from "../chunk-WVDCIW2W.js";
 import {
   runtimePaymentAdapters
-} from "../chunk-WXEFSKPU.js";
+} from "../chunk-VVBLCUTQ.js";
 import "../chunk-FK3KKBW6.js";
 import "../chunk-6LYWG22B.js";
 import {
@@ -12,19 +12,20 @@ import {
 } from "../chunk-OM7CZNWS.js";
 import {
   bindCommerceApi
-} from "../chunk-4B5ROQI2.js";
-import "../chunk-MQPA2QMJ.js";
+} from "../chunk-65BIYSUK.js";
+import "../chunk-K2FMPEG6.js";
 import {
   REFERRAL_COOKIE
-} from "../chunk-PRGHPNDB.js";
+} from "../chunk-5JBBAHBQ.js";
 import {
   readCartSessionToken
 } from "../chunk-MDTTSWBR.js";
 import "../chunk-AGAY2N6E.js";
-import "../chunk-U46CR236.js";
+import "../chunk-4DBNSZO2.js";
 import "../chunk-6RT3KMIV.js";
 
 // src/routes/ecommerce-checkout.ts
+import { readSetting } from "talisman-cms/env";
 var POST = async ({ request, cookies }) => {
   if (request.headers.get("origin") !== new URL(request.url).origin) {
     return Response.json({ error: "Same-origin request required" }, { status: 403 });
@@ -42,7 +43,7 @@ var POST = async ({ request, cookies }) => {
     const body = parsed.data;
     const { env } = await import("cloudflare:workers");
     const runtimeEnv = env;
-    if (runtimeEnv.GALAXY_COMMERCE_CHECKOUT_ENABLED !== "true") {
+    if (readSetting(runtimeEnv, "COMMERCE_CHECKOUT_ENABLED") !== "true") {
       return Response.json({ error: "Checkout is disabled" }, { status: 503 });
     }
     const api = bindCommerceApi({

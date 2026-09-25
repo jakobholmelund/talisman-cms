@@ -60,7 +60,7 @@ export default defineConfig({
   integrations: [talismanCms({
     auth: LocalAuthAdapter(),
     publishing: {
-      workflowBinding: 'GALAXY_PUBLISH_WORKFLOW'
+      workflowBinding: 'TALISMAN_PUBLISH_WORKFLOW'
     },
     globals: [
       {

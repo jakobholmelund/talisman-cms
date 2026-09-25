@@ -1,5 +1,5 @@
 # Copy to .dev.vars and fill in both values. Never commit real values.
 # Each must be a distinct random value of at least 32 characters.
 # Generate with: openssl rand -hex 32
-GALAXY_AUTH_SECRET=
-GALAXY_AUTH_SETUP_TOKEN=
+TALISMAN_AUTH_SECRET=
+TALISMAN_AUTH_SETUP_TOKEN=

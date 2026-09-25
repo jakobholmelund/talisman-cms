@@ -33,6 +33,6 @@ The plugin is suitable for a controlled production deployment with public checko
 4. Configure live Stripe keys and a signed webhook for completion, expiry, and refunds. Run a real low-value order through payment, reconciliation, fulfillment, refund, and inventory review before opening checkout broadly.
 5. Configure a verified sender domain, Resend API key, sender address, and public origin. Prove that the checkout email receives a one-time sign-in link and an unrelated browser cannot use the cart cookie to enter that account.
 6. Assign staff to inspect the admin order queue, pack and label shipments, tell customers about dispatch, resolve failed deliveries, handle refunds, and monitor webhook and scheduled Worker failures. The plugin records fulfillment but does not buy labels or send shipment or order confirmation emails.
-7. Keep `GALAXY_COMMERCE_CHECKOUT_ENABLED=false` until these gates pass. Enable gift card sales separately only after their key backup and purchase, delivery, and refund procedures are tested.
+7. Keep `TALISMAN_COMMERCE_CHECKOUT_ENABLED=false` until these gates pass. Enable gift card sales separately only after their key backup and purchase, delivery, and refund procedures are tested.
 
 Talisman deployment steps and secret names are in its `DEPLOYMENT.md`. This review covers the code and local integration; it does not certify the merchant's legal, tax, product, or operational readiness.

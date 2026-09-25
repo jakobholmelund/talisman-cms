@@ -8,15 +8,16 @@ import type { TalismanAuthAdapter, TalismanUser } from './types';
 import type { TalismanEnv } from '../db/client';
 import * as schema from './local-schema';
 import { getAccessEmail } from './access';
+import { readSetting } from '../env';
 
 export { getAccessEmail } from './access';
 
 type LocalEnv = TalismanEnv & {
-  GALAXY_AUTH_SECRET?: string;
-  GALAXY_AUTH_SETUP_TOKEN?: string;
-  GALAXY_ACCESS_TEAM_DOMAIN?: string;
-  GALAXY_ACCESS_AUDIENCE?: string;
-  GALAXY_ACCESS_ADMIN_EMAILS?: string;
+  TALISMAN_AUTH_SECRET?: string;
+  TALISMAN_AUTH_SETUP_TOKEN?: string;
+  TALISMAN_ACCESS_TEAM_DOMAIN?: string;
+  TALISMAN_ACCESS_AUDIENCE?: string;
+  TALISMAN_ACCESS_ADMIN_EMAILS?: string;
 };
 
 export async function getLocalAuthEnv(): Promise<LocalEnv> {
@@ -30,8 +31,9 @@ export async function getLocalAuthEnv(): Promise<LocalEnv> {
 
 function createLocalAuth(request: Request, env: LocalEnv, adminPath = '/admin') {
   if (!env.DB) throw new Error('Local CMS authentication requires the DB binding');
-  if (!env.GALAXY_AUTH_SECRET || env.GALAXY_AUTH_SECRET.length < 32) {
-    throw new Error('Local CMS authentication requires GALAXY_AUTH_SECRET (at least 32 characters)');
+  const secret = readSetting(env, 'AUTH_SECRET');
+  if (!secret || secret.length < 32) {
+    throw new Error('Local CMS authentication requires TALISMAN_AUTH_SECRET (at least 32 characters)');
   }
 
   const origin = new URL(request.url).origin;
@@ -39,7 +41,7 @@ function createLocalAuth(request: Request, env: LocalEnv, adminPath = '/admin') 
     appName: 'Talisman CMS',
     baseURL: origin,
     basePath: `${adminPath === '/' ? '' : adminPath}/api/auth`,
-    secret: env.GALAXY_AUTH_SECRET,
+    secret,
     trustedOrigins: [origin],
     database: drizzleAdapter(drizzle(env.DB, { schema }), {
       provider: 'sqlite',
@@ -81,13 +83,13 @@ async function ssoPassword(email: string, secret: string): Promise<string> {
 export async function signInCloudflareAdmin(request: Request, adminPath = '/admin'): Promise<Response> {
   const env = await getLocalAuthEnv();
   const email = await getAccessEmail(request, env);
-  const allowed = new Set((env.GALAXY_ACCESS_ADMIN_EMAILS || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
+  const allowed = new Set((readSetting(env, 'ACCESS_ADMIN_EMAILS') || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !allowed.has(email)) {
     return Response.json({ error: 'Cloudflare admin access required' }, { status: 403 });
   }
   const normalizedPath = adminPath === '/' ? '/' : `/${adminPath.replace(/^\/+|\/+$/g, '')}`;
   const auth = createLocalAuth(request, env, normalizedPath);
-  const password = await ssoPassword(email, env.GALAXY_AUTH_SECRET!);
+  const password = await ssoPassword(email, readSetting(env, 'AUTH_SECRET')!);
   const db = drizzle(env.DB, { schema });
   let account = await db.query.user.findFirst({ where: sql`lower(${schema.user.email}) = ${email}` });
   if (!account) {
@@ -177,7 +179,7 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
       const rawUser = result?.user;
       if (!rawUser || (rawUser.role !== 'admin' && rawUser.role !== 'editor')) return null;
       if (options.editorOnly && rawUser.role === 'admin') {
-        const admins = (env.GALAXY_ACCESS_ADMIN_EMAILS || '').split(',').map(value => value.trim().toLowerCase());
+        const admins = (readSetting(env, 'ACCESS_ADMIN_EMAILS') || '').split(',').map(value => value.trim().toLowerCase());
         if (!admins.includes(rawUser.email.toLowerCase()) || !result?.session?.id) return null;
         const cmsSession = await drizzle(env.DB, { schema }).query.session.findFirst({ where: eq(schema.session.id, result.session.id) });
         if (cmsSession?.authMethod !== 'cloudflare') return null;

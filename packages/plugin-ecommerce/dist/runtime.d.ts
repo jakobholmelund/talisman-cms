@@ -9,6 +9,6 @@ declare function runtimeStripeSecrets(env: Record<string, unknown>): {
     webhookSecret: string;
     mode: string;
 };
-declare function runtimePaymentAdapters(env: Record<string, unknown>): (StripePaymentAdapter | AdminTestPaymentAdapter)[];
+declare function runtimePaymentAdapters(env: Record<string, unknown>): (AdminTestPaymentAdapter | StripePaymentAdapter)[];
 
 export { runtimePaymentAdapters, runtimeStripeSecrets };

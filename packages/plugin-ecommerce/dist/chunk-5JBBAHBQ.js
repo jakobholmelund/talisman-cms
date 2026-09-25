@@ -9,20 +9,20 @@ import {
 // src/referrals.ts
 import { and, desc, eq } from "drizzle-orm";
 import { createDbClient } from "talisman-cms/client";
+import { readSetting } from "talisman-cms/env";
 var REFERRAL_COOKIE = "talisman-referral";
 var REFERRAL_COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
 var REFERRAL_REWARD_CENTS = 1e3;
 var REFERRAL_MIN_ORDER_CENTS = 5e3;
 function referralPolicy(env) {
-  const vars = env;
   const readCents = (value, fallback) => {
     const parsed = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : NaN;
     return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 1e5 ? parsed : fallback;
   };
   return {
     enabled: true,
-    rewardCents: readCents(vars.GALAXY_COMMERCE_REFERRAL_REWARD_CENTS, REFERRAL_REWARD_CENTS),
-    minOrderCents: readCents(vars.GALAXY_COMMERCE_REFERRAL_MIN_ORDER_CENTS, REFERRAL_MIN_ORDER_CENTS),
+    rewardCents: readCents(readSetting(env, "COMMERCE_REFERRAL_REWARD_CENTS"), REFERRAL_REWARD_CENTS),
+    minOrderCents: readCents(readSetting(env, "COMMERCE_REFERRAL_MIN_ORDER_CENTS"), REFERRAL_MIN_ORDER_CENTS),
     attributionDays: 30
   };
 }

@@ -56,7 +56,7 @@ function d1(sqlite) {
   return { prepare: (sql) => statement(sql) };
 }
 
-function setup() {
+function setup(prefix = 'TALISMAN') {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
   sqlite.exec(readFileSync(new URL('../drizzle/0007_local_auth.sql', import.meta.url), 'utf8'));
@@ -69,10 +69,10 @@ function setup() {
   for (const key of Object.keys(env)) delete env[key];
   Object.assign(env, {
     DB: d1(sqlite),
-    GALAXY_AUTH_SECRET: 'talisman-test-secret-0123456789abcdef',
-    GALAXY_ACCESS_TEAM_DOMAIN: TEAM_DOMAIN,
-    GALAXY_ACCESS_AUDIENCE: AUDIENCE,
-    GALAXY_ACCESS_ADMIN_EMAILS: ADMIN_EMAIL,
+    [`${prefix}_AUTH_SECRET`]: 'talisman-test-secret-0123456789abcdef',
+    [`${prefix}_ACCESS_TEAM_DOMAIN`]: TEAM_DOMAIN,
+    [`${prefix}_ACCESS_AUDIENCE`]: AUDIENCE,
+    [`${prefix}_ACCESS_ADMIN_EMAILS`]: ADMIN_EMAIL,
   });
   return sqlite;
 }
@@ -205,6 +205,21 @@ test('Cloudflare SSO fails closed without a valid Access JWT and replaces sessio
   } finally { sqlite.close(); }
 });
 
+test('deployments that still use the GALAXY_* setting names keep working', async () => {
+  const sqlite = setup('GALAXY');
+  try {
+    const adapter = HybridAuthAdapter('/admin');
+    const signedIn = await sso(await accessToken());
+    assert.equal(signedIn.status, 303);
+    assert.equal((await cmsUser(adapter, cookieOf(signedIn)))?.role, 'admin');
+
+    // A TALISMAN_* value takes precedence over its legacy name.
+    env.TALISMAN_ACCESS_ADMIN_EMAILS = 'someone-else@example.test';
+    assert.equal(await cmsUser(adapter, cookieOf(signedIn)), null);
+    assert.equal((await sso(await accessToken())).status, 403);
+  } finally { sqlite.close(); }
+});
+
 test('hybrid password sign-in never issues a session for an admin row', async () => {
   const sqlite = setup();
   try {
@@ -231,7 +246,7 @@ test('hybrid password sign-in never issues a session for an admin row', async ()
     assert.equal(await cmsUser(adapter, ssoCookie), null, 'an allowlisted admin still needs a Cloudflare session');
     sqlite.prepare(`UPDATE galaxy_auth_session SET auth_method = 'cloudflare' WHERE user_id = ?`).run(admin.id);
     assert.equal((await cmsUser(adapter, ssoCookie))?.id, admin.id);
-    env.GALAXY_ACCESS_ADMIN_EMAILS = 'someone-else@example.test';
+    env.TALISMAN_ACCESS_ADMIN_EMAILS = 'someone-else@example.test';
     assert.equal(await cmsUser(adapter, ssoCookie), null, 'removing an email from the allowlist ends its admin access');
   } finally { sqlite.close(); }
 });

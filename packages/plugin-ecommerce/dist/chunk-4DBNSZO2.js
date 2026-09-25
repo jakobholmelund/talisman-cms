@@ -7,6 +7,7 @@ import {
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { createDbClient } from "talisman-cms/client";
+import { readSetting } from "talisman-cms/env";
 var amountSchema = z.number().int().min(500).max(1e5);
 var purchaseSchema = z.object({
   amountCents: amountSchema,
@@ -19,7 +20,7 @@ var adminIssueSchema = z.object({
 var hex = (bytes) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 var unhex = (value) => new Uint8Array(value.match(/.{2}/g)?.map((byte) => parseInt(byte, 16)) ?? []);
 var randomHex = (bytes) => hex(crypto.getRandomValues(new Uint8Array(bytes)));
-var keyString = (env) => env.GALAXY_COMMERCE_GIFT_CARD_KEY;
+var keyString = (env) => readSetting(env, "COMMERCE_GIFT_CARD_KEY");
 async function encryptionKey(env) {
   const value = keyString(env);
   if (!value || !/^[a-fA-F0-9]{64}$/.test(value)) {

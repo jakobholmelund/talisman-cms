@@ -78,8 +78,15 @@ binding = "IMAGES"
 - `KV` (optional): read-through cache for collection, global, and `depth: 0` entry reads. Without it, reads go to D1.
 - `IMAGES` (optional): responsive WebP variants; see [Public site performance](#public-site-performance).
 - `QUEUE` (optional Queue producer): used only by `getClient(env).tasks.enqueueImageProcessing()`. The CMS does not include a queue consumer.
+- `TALISMAN_PUBLISH_WORKFLOW` (optional Workflow binding): runs publish and archive transitions. Change the name with the integration's `publishing.workflowBinding` option. Without it, transitions run in the request.
 
 The Worker must use the `nodejs_compat` flag with a compatibility date of at least `2024-09-23`.
+
+### Setting names
+
+Talisman settings and the default Workflow binding use the `TALISMAN_` prefix. Pre-release deployments used `GALAXY_` for the same names, for example `GALAXY_AUTH_SECRET`. A `GALAXY_` name is still read when its `TALISMAN_` name is missing or blank, and the Worker logs one deprecation warning. To migrate, rename each key and keep its value; for example, keep the same auth secret so sessions stay valid. Plugins can read settings the same way with `readSetting(env, 'AUTH_SECRET')` and `readBinding(env, 'PUBLISH_WORKFLOW')` from `talisman-cms/env`.
+
+The `galaxy_` prefix on CMS database tables, such as `galaxy_entries` and `galaxy_auth_user`, is internal and permanent. Migrations keep these names; do not rename the tables.
 
 ### Database migrations
 
@@ -121,18 +128,18 @@ Migration `0019` adds the session column the local and hybrid adapters now read,
 
 ### Secrets and first admin
 
-The local adapter needs two distinct Worker secrets: `GALAXY_AUTH_SECRET` (at least 32 random characters, retained for sessions) and `GALAXY_AUTH_SETUP_TOKEN` (at least 32 random characters, needed only for first-admin setup). For local development, put them in `.dev.vars` and keep that file out of version control:
+The local adapter needs two distinct Worker secrets: `TALISMAN_AUTH_SECRET` (at least 32 random characters, retained for sessions) and `TALISMAN_AUTH_SETUP_TOKEN` (at least 32 random characters, needed only for first-admin setup). For local development, put them in `.dev.vars` and keep that file out of version control:
 
 ```text
 # Each must be a distinct random value of at least 32 characters.
 # Generate with: openssl rand -hex 32
-GALAXY_AUTH_SECRET=
-GALAXY_AUTH_SETUP_TOKEN=
+TALISMAN_AUTH_SECRET=
+TALISMAN_AUTH_SETUP_TOKEN=
 ```
 
 Fill in both values before starting the dev server; never copy example or placeholder values. For production, set each with `wrangler secret put`, using values generated for that environment.
 
-Open `/admin` and enter the setup token, then a name, email, and a password of 12–128 characters, to create the first admin. Remove `GALAXY_AUTH_SETUP_TOKEN` from production after setup. The hybrid and Access-only adapters below do not use the setup token; their admins come from the Cloudflare Access allowlist. An admin can create, change roles, disable, enable, and remove editor/admin accounts in **Users**, and reset their passwords; CMS accounts cannot sign up publicly. Shopper sign-in through the ecommerce plugin adds users with the `customer` role, which cannot open the CMS. Role changes and password resets revoke existing sessions. The current admin and the last active admin are protected from losing admin access. Users can change their own password in **Account**. CMS login sessions expire after 12 hours. Keep `GALAXY_AUTH_SECRET` stable across deployments; replacing it invalidates sessions.
+Open `/admin` and enter the setup token, then a name, email, and a password of 12–128 characters, to create the first admin. Remove `TALISMAN_AUTH_SETUP_TOKEN` from production after setup. The hybrid and Access-only adapters below do not use the setup token; their admins come from the Cloudflare Access allowlist. An admin can create, change roles, disable, enable, and remove editor/admin accounts in **Users**, and reset their passwords; CMS accounts cannot sign up publicly. Shopper sign-in through the ecommerce plugin adds users with the `customer` role, which cannot open the CMS. Role changes and password resets revoke existing sessions. The current admin and the last active admin are protected from losing admin access. Users can change their own password in **Account**. CMS login sessions expire after 12 hours. Keep `TALISMAN_AUTH_SECRET` stable across deployments; replacing it invalidates sessions.
 
 ### Admin screens and API clients
 
@@ -142,11 +149,11 @@ For direct admin API clients, versioned entry updates, publish/archive actions, 
 
 ### Optional Cloudflare Access gate
 
-Each installing project can protect its CMS admin path and all child paths with its own Cloudflare Access application. Set `GALAXY_ACCESS_TEAM_DOMAIN` to that project's `https://<team>.cloudflareaccess.com` URL and `GALAXY_ACCESS_AUDIENCE` to its application AUD tag. If either is set, the CMS requires both, verifies the Access JWT in the Worker, and requires its email to match the local account email. When using a custom `adminPath`, pass the same path to `LocalAuthAdapter(adminPath)`. Public media, cart, checkout, and Stripe webhook routes live under `/api` and must remain outside the Access application. Stripe webhooks authenticate with their signature; checkout remains disabled by default.
+Each installing project can protect its CMS admin path and all child paths with its own Cloudflare Access application. Set `TALISMAN_ACCESS_TEAM_DOMAIN` to that project's `https://<team>.cloudflareaccess.com` URL and `TALISMAN_ACCESS_AUDIENCE` to its application AUD tag. If either is set, the CMS requires both, verifies the Access JWT in the Worker, and requires its email to match the local account email. When using a custom `adminPath`, pass the same path to `LocalAuthAdapter(adminPath)`. Public media, cart, checkout, and Stripe webhook routes live under `/api` and must remain outside the Access application. Stripe webhooks authenticate with their signature; checkout remains disabled by default.
 
-For Cloudflare Access login without a separate CMS password, use `AccessAuthAdapter` from `talisman-cms/auth/access` as the integration's `auth` option. Set both Access values above and `GALAXY_ACCESS_ADMIN_EMAILS` to a comma-separated list of allowed admin emails; optional `GALAXY_ACCESS_EDITOR_EMAILS` grants editor access. The Worker grants no access when either Access value or an email allowlist is missing. Protect both the admin base path and its child paths with a self-hosted Access application. This adapter does not use the local account tables, password setup or `GALAXY_AUTH_SECRET`.
+For Cloudflare Access login without a separate CMS password, use `AccessAuthAdapter` from `talisman-cms/auth/access` as the integration's `auth` option. Set both Access values above and `TALISMAN_ACCESS_ADMIN_EMAILS` to a comma-separated list of allowed admin emails; optional `TALISMAN_ACCESS_EDITOR_EMAILS` grants editor access. The Worker grants no access when either Access value or an email allowlist is missing. Protect both the admin base path and its child paths with a self-hosted Access application. This adapter does not use the local account tables, password setup or `TALISMAN_AUTH_SECRET`.
 
-For local editor passwords with Cloudflare SSO for admins, use `HybridAuthAdapter` from `talisman-cms/auth/hybrid`. Configure `GALAXY_AUTH_SECRET` and the Access team domain, audience, and admin email allowlist. Protect only `<adminPath>/sso` with a Cloudflare Access application; leave the rest of `<adminPath>` reachable so editors can see the local login. Every CMS API route still requires a CMS session. The SSO route verifies the Access JWT, then marks its new CMS session as Cloudflare authenticated. Admin sessions require that marker and a currently allowlisted email. In this mode, local password accounts are editors; admins sign in through Cloudflare. In **Users**, an admin can add editors, give a verified shopper editor access by setting a password with **Add editor**, and revoke CMS access; users are not removed, so the shared identity remains. Keep the auth secret stable so existing sessions remain valid. The CMS stores one user identity per verified email; the ecommerce plugin links shopper profiles to that identity while retaining separate shopper sessions. `ensureVerifiedEmailIdentity(env, email, name)` from `talisman-cms/auth/identity` finds or creates that identity for another plugin; call it only after the user has proved control of the address. New identities get the `customer` role, which has no CMS access.
+For local editor passwords with Cloudflare SSO for admins, use `HybridAuthAdapter` from `talisman-cms/auth/hybrid`. Configure `TALISMAN_AUTH_SECRET` and the Access team domain, audience, and admin email allowlist. Protect only `<adminPath>/sso` with a Cloudflare Access application; leave the rest of `<adminPath>` reachable so editors can see the local login. Every CMS API route still requires a CMS session. The SSO route verifies the Access JWT, then marks its new CMS session as Cloudflare authenticated. Admin sessions require that marker and a currently allowlisted email. In this mode, local password accounts are editors; admins sign in through Cloudflare. In **Users**, an admin can add editors, give a verified shopper editor access by setting a password with **Add editor**, and revoke CMS access; users are not removed, so the shared identity remains. Keep the auth secret stable so existing sessions remain valid. The CMS stores one user identity per verified email; the ecommerce plugin links shopper profiles to that identity while retaining separate shopper sessions. `ensureVerifiedEmailIdentity(env, email, name)` from `talisman-cms/auth/identity` finds or creates that identity for another plugin; call it only after the user has proved control of the address. New identities get the `customer` role, which has no CMS access.
 
 Media uploaded before this route change may have URLs beginning `/<adminPath>/api/media/` (normally `/admin/api/media/`). Change those stored URLs to `/api/media/` before protecting the admin path with Access, including URLs copied into entry data.
 

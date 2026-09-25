@@ -33,7 +33,7 @@ declare function getReferralDashboard(env: TalismanEnv, accountId: string): Prom
         orderId: string;
         rewardCents: number;
         currency: string;
-        status: "approved" | "void";
+        status: "void" | "approved";
         createdAt: Date;
     }[];
     activity: {

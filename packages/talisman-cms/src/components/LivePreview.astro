@@ -6,7 +6,8 @@
     const channel = new BroadcastChannel('talisman-cms-preview');
 
     channel.onmessage = (event) => {
-      if (event.data?.type === 'GALAXY_ENTRY_UPDATED' || event.data?.type === 'GALAXY_ENTRY_SAVED') {
+      // The GALAXY_* types are the names used before the rename.
+      if (['TALISMAN_ENTRY_UPDATED', 'TALISMAN_ENTRY_SAVED', 'GALAXY_ENTRY_UPDATED', 'GALAXY_ENTRY_SAVED'].includes(event.data?.type)) {
         console.log('[Talisman CMS] Content update detected, reloading...');
         
         // Wait a brief moment to let server persist if needed, then reload

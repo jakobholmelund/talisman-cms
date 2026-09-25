@@ -1,13 +1,13 @@
 // src/runtime-config.ts
-var GALAXY_RUNTIME_STORE_KEY = "__GALAXY_CMS_RUNTIME_STORE__";
+var TALISMAN_RUNTIME_STORE_KEY = "__TALISMAN_CMS_RUNTIME_STORE__";
 function getRuntimeStore() {
   const runtime = globalThis;
-  if (!runtime[GALAXY_RUNTIME_STORE_KEY]) {
-    runtime[GALAXY_RUNTIME_STORE_KEY] = {
+  if (!runtime[TALISMAN_RUNTIME_STORE_KEY]) {
+    runtime[TALISMAN_RUNTIME_STORE_KEY] = {
       authAdapters: /* @__PURE__ */ new Map()
     };
   }
-  return runtime[GALAXY_RUNTIME_STORE_KEY];
+  return runtime[TALISMAN_RUNTIME_STORE_KEY];
 }
 function registerAuthAdapter(key, adapter) {
   const store = getRuntimeStore();

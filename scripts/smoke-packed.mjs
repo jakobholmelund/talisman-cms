@@ -318,7 +318,7 @@ async function smokeProject(project, port, packages, browserReady) {
   writeFileSync(join(dir, 'package.json'), `${JSON.stringify({ name: `talisman-smoke-${project.name}`, private: true, type: 'module', dependencies }, null, 2)}\n`);
   writeFileSync(join(dir, 'astro.config.mjs'), project.plugins ? fullConfig : coreConfig);
   writeFileSync(join(dir, 'wrangler.toml'), wranglerToml);
-  writeFileSync(join(dir, '.dev.vars'), `GALAXY_AUTH_SECRET=${randomBytes(32).toString('hex')}\nGALAXY_AUTH_SETUP_TOKEN=${randomBytes(32).toString('hex')}\n`);
+  writeFileSync(join(dir, '.dev.vars'), `TALISMAN_AUTH_SECRET=${randomBytes(32).toString('hex')}\nTALISMAN_AUTH_SETUP_TOKEN=${randomBytes(32).toString('hex')}\n`);
   writeFileSync(join(dir, 'src', 'pages', 'index.astro'), '<h1>Talisman smoke test</h1>\n');
   for (const file of ['import-entries.mjs', 'stub-virtual-modules.mjs']) copyFileSync(join(fixtures, file), join(dir, file));
 

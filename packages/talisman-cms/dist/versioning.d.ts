@@ -3,7 +3,7 @@ import { s as schema, c as collections } from './media-Cfo_aHOS.js';
 import { TalismanEnv } from './client.js';
 import 'drizzle-orm/sqlite-core';
 
-declare const DEFAULT_PUBLISHING_WORKFLOW_BINDING = "GALAXY_PUBLISH_WORKFLOW";
+declare const DEFAULT_PUBLISHING_WORKFLOW_BINDING = "TALISMAN_PUBLISH_WORKFLOW";
 type EntryStatus = 'draft' | 'published' | 'archived';
 type RevisionType = 'draft_save' | 'publish' | 'archive' | 'restore';
 type PublishWorkflowAction = 'publish' | 'archive';

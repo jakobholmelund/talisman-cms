@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../dist/db/schema.js';
-import { createDraftEntry, saveDraftEntry, publishEntry, archiveEntry, restoreEntryRevision, getLatestRevision, listEntryRevisions, RevisionConflictError } from '../dist/versioning.js';
+import { createDraftEntry, saveDraftEntry, publishEntry, archiveEntry, restoreEntryRevision, getLatestRevision, listEntryRevisions, RevisionConflictError, triggerPublishingWorkflow } from '../dist/versioning.js';
 
 function database() {
   const sqlite = new DatabaseSync(':memory:');
@@ -50,7 +50,7 @@ function database() {
       }
     },
   };
-  return { sqlite, db: drizzle(DB, { schema }), failNextBatchAt: (index) => { failBatchAt = index; } };
+  return { sqlite, DB, db: drizzle(DB, { schema }), failNextBatchAt: (index) => { failBatchAt = index; } };
 }
 
 test('draft, revision, and publish writes are atomic', async () => {
@@ -99,6 +99,34 @@ test('stale editor actions preserve the latest entry and revision', async () => 
     assert.equal(stored.status, 'draft');
     assert.equal((await getLatestRevision(db, entry.id)).id, latestRevision.id);
     assert.equal((await listEntryRevisions(db, collection.id, entry.id)).length, 2);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('the default publishing workflow binding also accepts its pre-rename GALAXY_ name', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const { sqlite, DB, db } = database();
+  try {
+    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    await createDraftEntry(db, collection, { title: 'Workflow' }, { id: 'post-3' });
+    const started = [];
+    const workflow = (name) => ({
+      async create() {
+        started.push(name);
+        return { id: `${name}-instance`, async status() { return { status: 'complete' }; } };
+      },
+    });
+    const payload = { collectionSlug: 'posts', entryId: 'post-3', action: 'publish' };
+
+    await triggerPublishingWorkflow({ DB, TALISMAN_PUBLISH_WORKFLOW: workflow('talisman'), GALAXY_PUBLISH_WORKFLOW: workflow('galaxy') }, payload);
+    await triggerPublishingWorkflow({ DB, GALAXY_PUBLISH_WORKFLOW: workflow('galaxy') }, payload);
+    await triggerPublishingWorkflow({ DB, CUSTOM_WORKFLOW: workflow('custom'), GALAXY_PUBLISH_WORKFLOW: workflow('galaxy') }, payload, 'CUSTOM_WORKFLOW');
+    assert.deepEqual(started, ['talisman', 'galaxy', 'custom']);
+    assert.equal(sqlite.prepare('SELECT status FROM galaxy_entries WHERE id = ?').get('post-3').status, 'draft');
+
+    // Without a workflow binding the transition runs in the request.
+    assert.equal((await triggerPublishingWorkflow({ DB }, payload)).status, 'published');
   } finally {
     sqlite.close();
   }

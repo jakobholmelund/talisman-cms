@@ -70,7 +70,7 @@ export interface TalismanCmsOptions {
   publishing?: {
     /**
      * Workflow binding available on the Worker environment.
-     * @default 'GALAXY_PUBLISH_WORKFLOW'
+     * @default 'TALISMAN_PUBLISH_WORKFLOW'
      */
     workflowBinding?: string;
   };
@@ -472,7 +472,7 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
                       export const globals = ${JSON.stringify(finalOptions?.globals || [])};
                       export const uiLibraries = ${JSON.stringify(getPluginUiLibraryMetadata(finalOptions?.plugins || []))};
                       export const publishing = ${JSON.stringify({
-                        workflowBinding: finalOptions?.publishing?.workflowBinding || 'GALAXY_PUBLISH_WORKFLOW'
+                        workflowBinding: finalOptions?.publishing?.workflowBinding || 'TALISMAN_PUBLISH_WORKFLOW'
                       })};
                     `;
                   }

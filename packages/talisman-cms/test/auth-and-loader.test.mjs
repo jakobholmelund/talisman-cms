@@ -36,10 +36,13 @@ test('local auth preserves its runtime path and requires both Access settings', 
   const request = new Request('https://example.test/cms');
   assert.deepEqual(LocalAuthAdapter('/cms/').__talismanAuthRuntime.args, ['/cms']);
   assert.equal(await getAccessEmail(request, {}), undefined);
+  assert.equal(await getAccessEmail(request, { TALISMAN_ACCESS_TEAM_DOMAIN: 'https://team.cloudflareaccess.com' }), null);
+  // Pre-rename GALAXY_* names are still read, and blank values count as unset.
   assert.equal(await getAccessEmail(request, { GALAXY_ACCESS_TEAM_DOMAIN: 'https://team.cloudflareaccess.com' }), null);
+  assert.equal(await getAccessEmail(request, { TALISMAN_ACCESS_TEAM_DOMAIN: ' ', TALISMAN_ACCESS_AUDIENCE: '' }), undefined);
   assert.equal(await getAccessEmail(request, {
-    GALAXY_ACCESS_TEAM_DOMAIN: 'https://team.cloudflareaccess.com',
-    GALAXY_ACCESS_AUDIENCE: 'audience',
+    TALISMAN_ACCESS_TEAM_DOMAIN: 'https://team.cloudflareaccess.com',
+    TALISMAN_ACCESS_AUDIENCE: 'audience',
   }), null);
 });
 
@@ -60,21 +63,21 @@ test('Cloudflare Access auth fails closed without verified identity and an allow
   assert.equal(await adapter.getUser(request), null);
 
   const previous = {
-    team: process.env.GALAXY_ACCESS_TEAM_DOMAIN,
-    audience: process.env.GALAXY_ACCESS_AUDIENCE,
-    admins: process.env.GALAXY_ACCESS_ADMIN_EMAILS,
+    team: process.env.TALISMAN_ACCESS_TEAM_DOMAIN,
+    audience: process.env.TALISMAN_ACCESS_AUDIENCE,
+    admins: process.env.TALISMAN_ACCESS_ADMIN_EMAILS,
   };
   try {
-    process.env.GALAXY_ACCESS_TEAM_DOMAIN = 'https://team.cloudflareaccess.com';
-    process.env.GALAXY_ACCESS_AUDIENCE = 'test-audience';
-    process.env.GALAXY_ACCESS_ADMIN_EMAILS = 'admin@example.test';
+    process.env.TALISMAN_ACCESS_TEAM_DOMAIN = 'https://team.cloudflareaccess.com';
+    process.env.TALISMAN_ACCESS_AUDIENCE = 'test-audience';
+    process.env.TALISMAN_ACCESS_ADMIN_EMAILS = 'admin@example.test';
     assert.equal(await adapter.getUser(request), null);
     assert.equal(await adapter.getUser(new Request(request.url)), null);
   } finally {
     for (const [key, value] of Object.entries({
-      GALAXY_ACCESS_TEAM_DOMAIN: previous.team,
-      GALAXY_ACCESS_AUDIENCE: previous.audience,
-      GALAXY_ACCESS_ADMIN_EMAILS: previous.admins,
+      TALISMAN_ACCESS_TEAM_DOMAIN: previous.team,
+      TALISMAN_ACCESS_AUDIENCE: previous.audience,
+      TALISMAN_ACCESS_ADMIN_EMAILS: previous.admins,
     })) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;

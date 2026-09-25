@@ -20,60 +20,60 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     active: z.ZodBoolean;
 }, "strict", z.ZodTypeAny, {
     description: string | null;
-    type: "amount" | "credit" | "percent";
+    type: "credit" | "amount" | "percent";
     value: number;
-    expiresAt: number | null;
-    code: string;
     active: boolean;
-    minOrderCents: number;
+    code: string;
     maxDiscountCents: number | null;
+    minOrderCents: number;
     eligibleProductIds: string[];
     maxUses: number | null;
     maxUsesPerCustomer: number | null;
     firstOrderOnly: boolean;
     startsAt: number | null;
+    expiresAt: number | null;
 }, {
     description: string | null;
-    type: "amount" | "credit" | "percent";
+    type: "credit" | "amount" | "percent";
     value: number;
-    expiresAt: number | null;
-    code: string;
     active: boolean;
-    minOrderCents: number;
+    code: string;
     maxDiscountCents: number | null;
+    minOrderCents: number;
     eligibleProductIds: string[];
     maxUses: number | null;
     maxUsesPerCustomer: number | null;
     firstOrderOnly: boolean;
     startsAt: number | null;
+    expiresAt: number | null;
 }>, {
     description: string | null;
-    type: "amount" | "credit" | "percent";
+    type: "credit" | "amount" | "percent";
     value: number;
-    expiresAt: number | null;
-    code: string;
     active: boolean;
-    minOrderCents: number;
+    code: string;
     maxDiscountCents: number | null;
+    minOrderCents: number;
     eligibleProductIds: string[];
     maxUses: number | null;
     maxUsesPerCustomer: number | null;
     firstOrderOnly: boolean;
     startsAt: number | null;
+    expiresAt: number | null;
 }, {
     description: string | null;
-    type: "amount" | "credit" | "percent";
+    type: "credit" | "amount" | "percent";
     value: number;
-    expiresAt: number | null;
-    code: string;
     active: boolean;
-    minOrderCents: number;
+    code: string;
     maxDiscountCents: number | null;
+    minOrderCents: number;
     eligibleProductIds: string[];
     maxUses: number | null;
     maxUsesPerCustomer: number | null;
     firstOrderOnly: boolean;
     startsAt: number | null;
+    expiresAt: number | null;
 }>;
 type DiscountCodeInput = z.infer<typeof discountCodeSchema>;
 declare const referralSettingsSchema: z.ZodObject<{
@@ -82,14 +82,14 @@ declare const referralSettingsSchema: z.ZodObject<{
     minOrderCents: z.ZodNumber;
     attributionDays: z.ZodNumber;
 }, "strict", z.ZodTypeAny, {
+    minOrderCents: number;
     rewardCents: number;
     enabled: boolean;
-    minOrderCents: number;
     attributionDays: number;
 }, {
+    minOrderCents: number;
     rewardCents: number;
     enabled: boolean;
-    minOrderCents: number;
     attributionDays: number;
 }>;
 declare function discountAmountForLines(code: Pick<typeof discountCodes.$inferSelect, 'type' | 'value' | 'remainingCents' | 'maxDiscountCents' | 'minOrderCents' | 'eligibleProductIds'>, lines: Array<{
@@ -109,7 +109,7 @@ declare function evaluateDiscountCode(env: TalismanEnv, input: {
     subtotal: number;
 }): Promise<{
     code: string;
-    type: "amount" | "credit" | "percent";
+    type: "credit" | "amount" | "percent";
     amount: number;
     emailNormalized: string;
 }>;
@@ -128,7 +128,7 @@ declare function getPromotionsAdmin(env: TalismanEnv): Promise<{
     codes: {
         code: string;
         description: string | null;
-        type: "amount" | "credit" | "percent";
+        type: "credit" | "amount" | "percent";
         value: number;
         remainingCents: number | null;
         maxDiscountCents: number | null;
@@ -145,7 +145,7 @@ declare function getPromotionsAdmin(env: TalismanEnv): Promise<{
     }[];
     usage: {
         code: string;
-        status: "reserved" | "confirmed" | "cancelled" | "refunded";
+        status: "cancelled" | "refunded" | "reserved" | "confirmed";
         uses: number;
     }[];
 }>;
@@ -162,7 +162,7 @@ declare function saveReferralSettings(env: TalismanEnv, input: unknown): Promise
 declare function createDiscountCode(env: TalismanEnv, input: unknown): Promise<{
     code: string;
     description: string | null;
-    type: "amount" | "credit" | "percent";
+    type: "credit" | "amount" | "percent";
     value: number;
     remainingCents: number | null;
     maxDiscountCents: number | null;
@@ -180,7 +180,7 @@ declare function createDiscountCode(env: TalismanEnv, input: unknown): Promise<{
 declare function updateDiscountCode(env: TalismanEnv, code: string, input: unknown): Promise<{
     code: string;
     description: string | null;
-    type: "amount" | "credit" | "percent";
+    type: "credit" | "amount" | "percent";
     value: number;
     remainingCents: number | null;
     maxDiscountCents: number | null;

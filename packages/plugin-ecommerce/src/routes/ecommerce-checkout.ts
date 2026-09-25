@@ -3,6 +3,7 @@ import { bindCommerceApi } from '../api';
 import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from '../accounts';
 import { runtimePaymentAdapters } from '../runtime';
 import type { TalismanEnv } from 'talisman-cms/client';
+import { readSetting } from 'talisman-cms/env';
 import { checkoutSchema } from '../checkout-input';
 import { REFERRAL_COOKIE } from '../referrals';
 import { readCartSessionToken } from '../cookies';
@@ -25,7 +26,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     const body = parsed.data;
     const { env } = await import('cloudflare:workers');
     const runtimeEnv = env as unknown as TalismanEnv & Record<string, unknown>;
-    if (runtimeEnv.GALAXY_COMMERCE_CHECKOUT_ENABLED !== 'true') {
+    if (readSetting(runtimeEnv, 'COMMERCE_CHECKOUT_ENABLED') !== 'true') {
       return Response.json({ error: 'Checkout is disabled' }, { status: 503 });
     }
     const api = bindCommerceApi({

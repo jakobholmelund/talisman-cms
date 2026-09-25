@@ -2,8 +2,9 @@ import { and, desc, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from './db/schema';
 import type { TalismanEnv } from './db/client';
+import { readBinding } from './env';
 
-export const DEFAULT_PUBLISHING_WORKFLOW_BINDING = 'GALAXY_PUBLISH_WORKFLOW';
+export const DEFAULT_PUBLISHING_WORKFLOW_BINDING = 'TALISMAN_PUBLISH_WORKFLOW';
 
 export type EntryStatus = 'draft' | 'published' | 'archived';
 export type RevisionType = 'draft_save' | 'publish' | 'archive' | 'restore';
@@ -356,7 +357,10 @@ export async function triggerPublishingWorkflow(
   payload: PublishWorkflowPayload,
   bindingName = DEFAULT_PUBLISHING_WORKFLOW_BINDING
 ) {
-  const workflow = (env as any)?.[bindingName] as Workflow<PublishWorkflowPayload> | undefined;
+  // The default binding also accepts its pre-rename GALAXY_PUBLISH_WORKFLOW name.
+  const workflow = (bindingName === DEFAULT_PUBLISHING_WORKFLOW_BINDING
+    ? readBinding(env, 'PUBLISH_WORKFLOW')
+    : (env as any)?.[bindingName]) as Workflow<PublishWorkflowPayload> | undefined;
 
   if (!workflow) {
     return runPublishingTransition(env, payload);

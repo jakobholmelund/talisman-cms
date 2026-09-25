@@ -8,19 +8,20 @@ import {
 } from "../chunk-OM7CZNWS.js";
 import {
   bindCommerceApi
-} from "../chunk-4B5ROQI2.js";
-import "../chunk-MQPA2QMJ.js";
-import "../chunk-PRGHPNDB.js";
+} from "../chunk-65BIYSUK.js";
+import "../chunk-K2FMPEG6.js";
+import "../chunk-5JBBAHBQ.js";
 import {
   CART_SESSION_COOKIE,
   LEGACY_CART_SESSION_COOKIE,
   readCartSessionToken
 } from "../chunk-MDTTSWBR.js";
 import "../chunk-AGAY2N6E.js";
-import "../chunk-U46CR236.js";
+import "../chunk-4DBNSZO2.js";
 import "../chunk-6RT3KMIV.js";
 
 // src/routes/ecommerce-account.ts
+import { readSetting } from "talisman-cms/env";
 var ALL = async ({ request, cookies }) => {
   const { env } = await import("cloudflare:workers");
   const runtimeEnv = env;
@@ -46,8 +47,8 @@ var ALL = async ({ request, cookies }) => {
   if (typeof body?.email === "string") {
     const settings = runtimeEnv;
     const apiKey = settings.RESEND_API_KEY;
-    const from = settings.GALAXY_COMMERCE_EMAIL_FROM;
-    const publicOrigin = settings.GALAXY_COMMERCE_PUBLIC_ORIGIN;
+    const from = readSetting(settings, "COMMERCE_EMAIL_FROM");
+    const publicOrigin = readSetting(settings, "COMMERCE_PUBLIC_ORIGIN");
     if (typeof apiKey !== "string" || !apiKey || typeof from !== "string" || !from || typeof publicOrigin !== "string" || publicOrigin !== new URL(request.url).origin) {
       return Response.json({ error: "Email sign-in is unavailable" }, { status: 503, headers });
     }
