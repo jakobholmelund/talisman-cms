@@ -222,7 +222,24 @@ export const customerSessions = sqliteTable('_ecommerce_customer_sessions', {
   expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   revokedAt: integer('revoked_at', { mode: 'timestamp' }),
+  /** `email_challenge` rows come from sign-in links sent before migration 0024; new links use `signInTokens`. */
   purpose: text('purpose').$type<'session' | 'email_challenge'>().notNull().default('session'),
+});
+
+/** One-time sign-in links. The account for the address is created or linked only when a link is used. */
+export const signInTokens = sqliteTable('_ecommerce_sign_in_tokens', {
+  tokenHash: text('token_hash').primaryKey(),
+  emailNormalized: text('email_normalized').notNull(),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  revokedAt: integer('revoked_at', { mode: 'timestamp' }),
+});
+
+/** Fixed-window counters for shopper requests, in seconds. Kept apart from better-auth's table, which prunes by its own clock. */
+export const rateLimits = sqliteTable('_ecommerce_rate_limits', {
+  key: text('key').primaryKey(),
+  count: integer('count').notNull(),
+  windowStart: integer('window_start').notNull(),
 });
 
 export const fulfillments = sqliteTable('_ecommerce_fulfillments', {

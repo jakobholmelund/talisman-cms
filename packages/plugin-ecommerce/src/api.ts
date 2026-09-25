@@ -4,6 +4,7 @@ import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import type { PaymentProviderAdapter } from './payments';
 import { findReferralCode, getReferralPolicy } from './referrals';
+import { PURCHASED_ORDER_STATUSES, hasPurchaseHistory } from './accounts';
 import { evaluateDiscountCode } from './promotions';
 import { fulfillCommerceOrder } from './fulfillment';
 import { evaluateGiftCard, confirmGiftCardPurchase, expireGiftCardPurchase,
@@ -110,6 +111,11 @@ export function bindCommerceApi(options: CommerceApiOptions) {
     if (!legacyVariant || legacyVariant.productId !== product.id) {
       throw new Error(`Variant not found or mismatch: ${variantId}`);
     }
+    // Only a group without values is a legacy variant. A group with values is the choice itself, so
+    // its own price and stock never sell a unit that skips the values' components.
+    const groupValue = await db.select({ id: schema.productVariantValues.id }).from(schema.productVariantValues)
+      .where(eq(schema.productVariantValues.productVariantId, legacyVariant.id)).limit(1).get();
+    if (groupValue) throw new Error(`Select an option for ${product.name}`);
 
     return {
       price: legacyVariant.priceOverride ?? product.basePrice,
@@ -121,10 +127,19 @@ export function bindCommerceApi(options: CommerceApiOptions) {
     };
   }
 
+  /** A product with variant groups is sold only as one of its variants, never at its base price and stock. */
+  async function requireVariantChoice(product: { id: string; name: string }, variantId?: string | null) {
+    if (variantId) return;
+    const group = await db.select({ id: schema.productVariants.id }).from(schema.productVariants)
+      .where(eq(schema.productVariants.productId, product.id)).limit(1).get();
+    if (group) throw new Error(`Select an option for ${product.name}`);
+  }
+
   /**
    * Check the lines a request adds against the catalog; lines already in the basket were checked when
    * they were added. Draft products are accepted so a concept basket works; archived ones are not.
-   * Stores only the known fields.
+   * A product with variant groups needs a variant, and a group with values is not one. Stores only the
+   * known fields.
    */
   async function checkCartItems(items: unknown, current: Array<{ productId: string; variantId?: string | null }> = []) {
     assertCartItems(items);
@@ -139,18 +154,36 @@ export function bindCommerceApi(options: CommerceApiOptions) {
 
     const variantIds = [...new Set(added.flatMap((item) => item.variantId ? [item.variantId] : []))];
     if (variantIds.length) {
-      // Like checkout: a purchasable value of one of the product's variant groups, or a legacy variant group.
-      const owners = new Map((await db.select({ id: schema.productVariants.id, productId: schema.productVariants.productId })
-        .from(schema.productVariants).where(inArray(schema.productVariants.id, variantIds)))
-        .map((variant) => [variant.id, variant.productId]));
+      // Like checkout: a purchasable value of one of the product's variant groups, or a legacy variant
+      // group, which has no values. Naming a group that has values leaves the choice unmade.
+      const groups = await db.select({ id: schema.productVariants.id, productId: schema.productVariants.productId })
+        .from(schema.productVariants).where(inArray(schema.productVariants.id, variantIds));
+      const groupsWithValues = new Set(groups.length ? (await db.selectDistinct({ id: schema.productVariantValues.productVariantId })
+        .from(schema.productVariantValues)
+        .where(inArray(schema.productVariantValues.productVariantId, groups.map((group) => group.id))))
+        .map((value) => value.id) : []);
+      const owners = new Map(groups.filter((group) => !groupsWithValues.has(group.id))
+        .map((group) => [group.id, group.productId]));
+      const choices = new Map(groups.filter((group) => groupsWithValues.has(group.id))
+        .map((group) => [group.id, group.productId]));
       for (const value of await db.select({ id: schema.productVariantValues.id, productId: schema.productVariants.productId })
         .from(schema.productVariantValues)
         .innerJoin(schema.productVariants, eq(schema.productVariants.id, schema.productVariantValues.productVariantId))
         .where(inArray(schema.productVariantValues.id, variantIds))) {
         owners.set(value.id, value.productId);
       }
+      const unchosenGroup = added.find((item) => item.variantId && choices.get(item.variantId) === item.productId);
+      if (unchosenGroup) throw new Error(`Cart items must choose one of the variants of ${unchosenGroup.productId}`);
       const unknownVariant = added.find((item) => item.variantId && owners.get(item.variantId) !== item.productId);
       if (unknownVariant) throw new Error(`Cart items must use a variant of their product; ${unknownVariant.variantId} is not available`);
+    }
+    const withoutVariant = [...new Set(added.flatMap((item) => item.variantId ? [] : [item.productId]))];
+    if (withoutVariant.length) {
+      const withGroups = new Set((await db.selectDistinct({ productId: schema.productVariants.productId })
+        .from(schema.productVariants).where(inArray(schema.productVariants.productId, withoutVariant)))
+        .map((variant) => variant.productId));
+      const unchosen = added.find((item) => !item.variantId && withGroups.has(item.productId));
+      if (unchosen) throw new Error(`Cart items must choose one of the variants of ${unchosen.productId}`);
     }
     return items.map(({ productId, variantId, quantity }) => variantId ? { productId, variantId, quantity } : { productId, quantity });
   }
@@ -214,32 +247,41 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         SET user_id = (SELECT id FROM _ecommerce_customer_accounts WHERE email_normalized = ?)
         WHERE id = ? AND status = 'paid' AND user_id IS NULL`)
         .bind(normalizedEmail, params.orderId));
-      if (order.referralCode && order.referralRewardCents > 0 &&
-          params.provider !== 'admin_test') {
-        statements.push(env.DB.prepare(`INSERT INTO _ecommerce_referrals
-          (id, code, referrer_account_id, referred_account_id, order_id, reward_cents, currency, status, created_at, updated_at)
-          SELECT ?, rc.code, rc.account_id, o.user_id, o.id, ?, o.currency, 'approved', ?, ?
-          FROM _ecommerce_orders o
-          JOIN _ecommerce_referral_codes rc ON rc.code = o.referral_code
-          JOIN _ecommerce_customer_accounts referrer ON referrer.id = rc.account_id
-          WHERE o.id = ? AND o.status = 'paid' AND o.user_id = ?
-            AND referrer.email_normalized <> ? AND rc.account_id <> o.user_id
-          ON CONFLICT DO NOTHING`)
-          .bind(`ref_${order.id}`, order.referralRewardCents, timestamp, timestamp,
-            params.orderId, newAccountId, normalizedEmail));
-        statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
-          (id, account_id, order_id, kind, amount_cents, created_at)
-          SELECT ?, referrer_account_id, order_id, 'referral_award', reward_cents, ?
-          FROM _ecommerce_referrals WHERE order_id = ? AND status = 'approved'
-          ON CONFLICT(order_id, kind) DO NOTHING`)
-          .bind(`credit_ref_${order.id}`, timestamp, params.orderId));
-        statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
-          (id, account_id, order_id, kind, amount_cents, created_at)
-          SELECT ?, referred_account_id, order_id, 'welcome_award', reward_cents, ?
-          FROM _ecommerce_referrals WHERE order_id = ? AND status = 'approved'
-          ON CONFLICT(order_id, kind) DO NOTHING`)
-          .bind(`credit_welcome_${order.id}`, timestamp, params.orderId));
-      }
+    }
+    if (order.referralCode && order.referralRewardCents > 0 && params.provider !== 'admin_test') {
+      // The referral pays out only on the buyer's first purchase: the order's account (new, signed up
+      // earlier or signed in) has no other paid order under that account or either email, and is not
+      // the referrer.
+      const purchased = PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(', ');
+      statements.push(env.DB.prepare(`INSERT INTO _ecommerce_referrals
+        (id, code, referrer_account_id, referred_account_id, order_id, reward_cents, currency, status, created_at, updated_at)
+        SELECT ?, rc.code, rc.account_id, o.user_id, o.id, ?, o.currency, 'approved', ?, ?
+        FROM _ecommerce_orders o
+        JOIN _ecommerce_referral_codes rc ON rc.code = o.referral_code
+        JOIN _ecommerce_customer_accounts referrer ON referrer.id = rc.account_id
+        JOIN _ecommerce_customer_accounts buyer ON buyer.id = o.user_id
+        WHERE o.id = ? AND o.status = 'paid' AND rc.account_id <> o.user_id
+          AND referrer.email_normalized NOT IN (?, buyer.email_normalized)
+          AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders prior
+            WHERE prior.id <> o.id AND prior.status IN (${purchased})
+              AND COALESCE(prior.payment_provider, 'stripe') <> 'admin_test'
+              AND (prior.user_id = o.user_id OR lower(prior.customer_email) IN (?, buyer.email_normalized)
+                OR prior.user_id IN (SELECT id FROM _ecommerce_customer_accounts WHERE email_normalized = ?)))
+        ON CONFLICT DO NOTHING`)
+        .bind(`ref_${order.id}`, order.referralRewardCents, timestamp, timestamp,
+          params.orderId, normalizedEmail, normalizedEmail, normalizedEmail));
+      statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
+        (id, account_id, order_id, kind, amount_cents, created_at)
+        SELECT ?, referrer_account_id, order_id, 'referral_award', reward_cents, ?
+        FROM _ecommerce_referrals WHERE order_id = ? AND status = 'approved'
+        ON CONFLICT(order_id, kind) DO NOTHING`)
+        .bind(`credit_ref_${order.id}`, timestamp, params.orderId));
+      statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
+        (id, account_id, order_id, kind, amount_cents, created_at)
+        SELECT ?, referred_account_id, order_id, 'welcome_award', reward_cents, ?
+        FROM _ecommerce_referrals WHERE order_id = ? AND status = 'approved'
+        ON CONFLICT(order_id, kind) DO NOTHING`)
+        .bind(`credit_welcome_${order.id}`, timestamp, params.orderId));
     }
     statements.push(
       env.DB.prepare(`UPDATE _ecommerce_discount_redemptions SET status = 'confirmed', updated_at = ?
@@ -349,6 +391,7 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         for (const item of cart.items) {
           const product = await db.select().from(schema.products).where(eq(schema.products.id, item.productId)).get();
           if (!product || product.status !== 'active') throw new Error(`Product is not available: ${item.productId}`);
+          await requireVariantChoice(product, item.variantId);
           const variant = item.variantId ? await resolveSelectedVariant(product, item.variantId) : null;
           const unitAmount = variant?.price ?? product.basePrice;
           const name = variant?.name ?? product.name;
@@ -626,6 +669,8 @@ export function bindCommerceApi(options: CommerceApiOptions) {
             if (product.status !== 'active') {
                throw new Error(`Product is not available: ${item.productId}`);
             }
+            // A line saved before its product had variants must be changed to one of them first.
+            await requireVariantChoice(product, item.variantId);
 
             let price = product.basePrice;
             let finalName = product.name;
@@ -696,11 +741,12 @@ export function bindCommerceApi(options: CommerceApiOptions) {
            }) : null;
          const discountAmount = discount?.amount ?? 0;
          let creditApplied = 0;
-         if (cart.userId && defaultAdapter.providerId === 'stripe') {
-           const owner = await db.select({ creditBalance: schema.customerAccounts.creditBalance })
-             .from(schema.customerAccounts).where(eq(schema.customerAccounts.id, cart.userId)).get();
+         const owner = cart.userId ? await db.select({ creditBalance: schema.customerAccounts.creditBalance,
+           emailNormalized: schema.customerAccounts.emailNormalized })
+           .from(schema.customerAccounts).where(eq(schema.customerAccounts.id, cart.userId)).get() : undefined;
+         if (owner && defaultAdapter.providerId === 'stripe') {
            // Stripe requires a positive card charge. Credit is never offered to a guest basket.
-           creditApplied = Math.min(Math.max(0, owner?.creditBalance ?? 0),
+           creditApplied = Math.min(Math.max(0, owner.creditBalance),
              Math.max(0, subtotalAmount - discountAmount - 50));
          }
          totalAmount = subtotalAmount - discountAmount - creditApplied;
@@ -710,11 +756,14 @@ export function bindCommerceApi(options: CommerceApiOptions) {
          totalAmount -= giftCardApplied;
          const internallyPaid = Boolean(giftCard && totalAmount === 0);
          let referralCode: string | null = null;
-         if (referralsPolicy.enabled && !cart.userId && options.referralCode &&
-             defaultAdapter.providerId === 'stripe' && !internallyPaid) {
+         if (referralsPolicy.enabled && options.referralCode && defaultAdapter.providerId === 'stripe' &&
+             !internallyPaid && subtotalAmount >= referralsPolicy.minOrderCents) {
+           // A referral is for a first purchase. A shopper who signed up first still qualifies;
+           // only past paid orders under the account or either email rule it out.
            const referral = await findReferralCode(env, options.referralCode);
-           if (referral && subtotalAmount >= referralsPolicy.minOrderCents &&
-               referral.emailNormalized !== options.customerEmail.trim().toLowerCase()) {
+           const buyerEmails = [options.customerEmail.trim().toLowerCase(), owner?.emailNormalized];
+           if (referral && referral.accountId !== cart.userId && !buyerEmails.includes(referral.emailNormalized) &&
+               !await hasPurchaseHistory(env, { emails: buyerEmails, accountIds: [cart.userId] })) {
              referralCode = referral.code;
            }
          }
@@ -1186,19 +1235,39 @@ export async function purgeStaleCommerceData(options: CommercePurgeOptions) {
   const batchSize = Math.max(1, Math.min(1000, Math.floor(options.batchSize ?? 500)));
   const now = Math.floor((options.now ?? new Date()).getTime() / 1000);
   const day = 24 * 60 * 60;
-  const deleted = { carts: 0, customerSessions: 0, authSessions: 0, authRateLimits: 0 };
+  const deleted = { carts: 0, customerSessions: 0, signInTokens: 0, unverifiedAccounts: 0, rateLimits: 0,
+    authSessions: 0, authRateLimits: 0 };
   const steps: Array<[keyof typeof deleted, string, number[]]> = [
     // Guest baskets untouched for 30 days. Account, checked-out and locked baskets stay.
     ['carts', `DELETE FROM _ecommerce_carts WHERE id IN (SELECT id FROM _ecommerce_carts
       WHERE user_id IS NULL AND closed = 0 AND checkout_session_id IS NULL AND updated_at < ?
         AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders WHERE cart_id = _ecommerce_carts.id)
       LIMIT ?)`, [now - 30 * day]],
-    // Shopper sessions and email sign-in links a day after they expired, were used or signed out.
+    // Shopper sessions, and sign-in links sent before migration 0024, a day after they expired, were used or signed out.
     ['customerSessions', `DELETE FROM _ecommerce_customer_sessions WHERE id IN (SELECT id
       FROM _ecommerce_customer_sessions WHERE expires_at < ? OR revoked_at < ? LIMIT ?)`, [now - day, now - day]],
+    // Sign-in links, with the address they were sent to, a day after they expired or were used.
+    ['signInTokens', `DELETE FROM _ecommerce_sign_in_tokens WHERE token_hash IN (SELECT token_hash
+      FROM _ecommerce_sign_in_tokens WHERE expires_at < ? OR revoked_at < ? LIMIT ?)`, [now - day, now - day]],
+    // Accounts that asking for a sign-in link used to create: never verified, a day old, and with no
+    // orders, sessions, basket, credit, referral or discount use. Anything else keeps the account.
+    ['unverifiedAccounts', `DELETE FROM _ecommerce_customer_accounts WHERE id IN (SELECT a.id
+      FROM _ecommerce_customer_accounts a
+      WHERE a.email_verified_at IS NULL AND a.cms_user_id IS NULL AND a.credit_balance = 0 AND a.created_at < ?
+        AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders WHERE user_id = a.id)
+        AND NOT EXISTS (SELECT 1 FROM _ecommerce_customer_sessions WHERE account_id = a.id)
+        AND NOT EXISTS (SELECT 1 FROM _ecommerce_carts WHERE user_id = a.id AND closed = 0)
+        AND NOT EXISTS (SELECT 1 FROM _ecommerce_credit_ledger WHERE account_id = a.id)
+        AND NOT EXISTS (SELECT 1 FROM _ecommerce_referral_codes WHERE account_id = a.id)
+        AND NOT EXISTS (SELECT 1 FROM _ecommerce_referrals WHERE referrer_account_id = a.id OR referred_account_id = a.id)
+        AND NOT EXISTS (SELECT 1 FROM _ecommerce_discount_redemptions WHERE account_id = a.id)
+      LIMIT ?)`, [now - day]],
+    // Shopper request counters. Every window is at most a day long.
+    ['rateLimits', `DELETE FROM _ecommerce_rate_limits WHERE key IN (SELECT key FROM _ecommerce_rate_limits
+      WHERE window_start < ? LIMIT ?)`, [now - day]],
     ['authSessions', `DELETE FROM galaxy_auth_session WHERE id IN (SELECT id FROM galaxy_auth_session
       WHERE expires_at < ? LIMIT ?)`, [now]],
-    // better-auth records milliseconds; the shopper sign-in limiter records seconds.
+    // better-auth records milliseconds. Shopper counters written in seconds before migration 0024 may remain.
     ['authRateLimits', `DELETE FROM galaxy_auth_rate_limit WHERE id IN (SELECT id FROM galaxy_auth_rate_limit
       WHERE CASE WHEN last_request >= 100000000000 THEN last_request / 1000 ELSE last_request END < ?
       LIMIT ?)`, [now - day]],

@@ -3,6 +3,7 @@ import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
 import { z } from 'zod';
 import { customerAccounts, discountCodes, discountRedemptions, referralCodes, referralSettings } from './schema';
 import { getReferralPolicy } from './referrals';
+import { hasPurchaseHistory } from './accounts';
 
 const optionalLimit = z.number().int().positive().max(1_000_000).nullable();
 const optionalDate = z.number().int().positive().nullable();
@@ -81,10 +82,9 @@ export async function evaluateDiscountCode(env: TalismanEnv, input: {
     .where(eq(customerAccounts.id, input.accountId)).get() : null;
   const emailNormalized = (account?.emailNormalized ?? input.customerEmail.trim().toLowerCase());
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNormalized)) throw new Error('Valid email required for a discount');
-  if (code.firstOrderOnly) {
-    const known = account ?? await db.select({ id: customerAccounts.id }).from(customerAccounts)
-      .where(eq(customerAccounts.emailNormalized, emailNormalized)).get();
-    if (known) throw new Error('Discount is for a first purchase only');
+  // A first purchase means no paid order yet. Signing up or asking for a sign-in link does not count.
+  if (code.firstOrderOnly && await hasPurchaseHistory(env, { emails: [emailNormalized], accountIds: [account?.id] })) {
+    throw new Error('Discount is for a first purchase only');
   }
   if (code.maxUses !== null) {
     const [{ uses }] = await db.select({ uses: count() }).from(discountRedemptions)

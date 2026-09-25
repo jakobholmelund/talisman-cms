@@ -19,7 +19,7 @@ const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.
   '0008_shared_components.sql', '0010_checkout_inventory.sql', '0011_order_payment_provider.sql',
   '0012_customer_accounts.sql', '0013_referrals_and_credit.sql', '0014_promotions.sql',
   '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
-  '0019_shared_customer_identity.sql'];
+  '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql'];
 
 function database(migrationCount = migrationFiles.length) {
   const sqlite = new DatabaseSync(':memory:');
@@ -459,10 +459,12 @@ test('a real paid checkout requires email proof before granting an account sessi
   await requestCustomerEmailSignIn({ DB }, 'unknown@example.test',
     value => `https://example.test/account/verify?token=${value}`,
     async (_to, value) => { registrationLink = value; });
-  assert.equal(sqlite.prepare(`SELECT email_verified_at FROM _ecommerce_customer_accounts
-    WHERE email_normalized = 'unknown@example.test'`).get().email_verified_at, null);
+  assert.equal(sqlite.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_customer_accounts
+    WHERE email_normalized = 'unknown@example.test'`).get().count, 0, 'the account waits for the link to be used');
   const registered = await consumeCustomerEmailSignIn({ DB }, new URL(registrationLink).searchParams.get('token'));
   assert.equal(registered.account.email, 'unknown@example.test');
+  assert.ok(sqlite.prepare(`SELECT email_verified_at FROM _ecommerce_customer_accounts
+    WHERE email_normalized = 'unknown@example.test'`).get().email_verified_at);
   assert.equal(sqlite.prepare(`SELECT COUNT(*) AS count FROM galaxy_auth_user WHERE email = 'unknown@example.test'`).get().count, 1);
   assert.equal(await activateNewCustomer({ DB }, order.id, 'another-browser'), null);
   await revokeCustomerSession({ DB }, activated.token);
@@ -489,7 +491,8 @@ test('shopper email links allow registration but limit requests from one IP', as
       async () => { sent++; }, '203.0.113.10');
   }
   assert.equal(sent, 20);
-  assert.equal(sqlite.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_customer_accounts`).get().count, 20);
+  assert.equal(sqlite.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_sign_in_tokens`).get().count, 20);
+  assert.equal(sqlite.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_customer_accounts`).get().count, 0);
   sqlite.close();
 });
 
@@ -573,9 +576,9 @@ test('account upgrade preserves both populated baskets when a choice is needed',
     .run('existing-account', address.customerEmail, address.customerEmail, now, now);
   const api = shop(DB);
   const owned = await api.carts.getOrCreate('older-browser', 'existing-account');
-  await api.carts.updateItems(owned.id, [{ productId: 'mycelium', quantity: 1 }]);
+  await api.carts.updateItems(owned.id, [{ productId: 'mycelium', variantId: 'mycelium-amber', quantity: 1 }]);
   const guest = await api.carts.getOrCreate('guest-browser');
-  await api.carts.updateItems(guest.id, [{ productId: 'forrest', quantity: 1 }]);
+  await api.carts.updateItems(guest.id, [{ productId: 'forrest', variantId: 'forrest-amber', quantity: 1 }]);
   await assert.rejects(api.carts.getOrCreate('guest-browser', 'existing-account'), /Both baskets have items/);
   assert.equal((await api.carts.find('guest-browser')).items[0].productId, 'forrest');
   assert.equal((await api.carts.find(undefined, 'existing-account')).items[0].productId, 'mycelium');
@@ -595,9 +598,9 @@ test('choosing the account basket preserves its items on the current browser', a
     .run('existing-account', address.customerEmail, address.customerEmail, now, now);
   const api = shop(DB);
   const owned = await api.carts.getOrCreate('older-browser', 'existing-account');
-  await api.carts.updateItems(owned.id, [{ productId: 'mycelium', quantity: 1 }]);
+  await api.carts.updateItems(owned.id, [{ productId: 'mycelium', variantId: 'mycelium-amber', quantity: 1 }]);
   const guest = await api.carts.getOrCreate('guest-browser');
-  await api.carts.updateItems(guest.id, [{ productId: 'forrest', quantity: 1 }]);
+  await api.carts.updateItems(guest.id, [{ productId: 'forrest', variantId: 'forrest-amber', quantity: 1 }]);
   const selected = await api.carts.claim('guest-browser', 'existing-account', 'account');
   assert.equal(selected.id, owned.id);
   assert.equal(selected.items[0].productId, 'mycelium');
@@ -615,7 +618,7 @@ test('an expired shopper session cannot use its browser token to edit the accoun
     .run('existing-account', address.customerEmail, address.customerEmail, now, now);
   const api = shop(DB);
   const owned = await api.carts.getOrCreate('old-session-token', 'existing-account');
-  await api.carts.updateItems(owned.id, [{ productId: 'mycelium', quantity: 1 }]);
+  await api.carts.updateItems(owned.id, [{ productId: 'mycelium', variantId: 'mycelium-amber', quantity: 1 }]);
   assert.ok(!(await api.carts.find('old-session-token')));
   const fresh = await api.carts.getOrCreate('old-session-token');
   assert.notEqual(fresh.id, owned.id);
@@ -748,6 +751,185 @@ test('self-referrals and existing shoppers do not earn referral credit', async (
   });
   assert.equal((await getReferralDashboard({ DB }, 'owner')).creditBalance, 0);
   assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM _ecommerce_referrals').get().count, 0);
+  sqlite.close();
+});
+
+/** Asks for a sign-in link for `email` and, unless `use` is false, uses it, as a shopper who signs up first. */
+async function signUp(DB, email, { use = true } = {}) {
+  let link;
+  await requestCustomerEmailSignIn({ DB }, email, (token) => `https://example.test/account/verify#token=${token}`,
+    async (_to, value) => { link = value; });
+  return use ? consumeCustomerEmailSignIn({ DB }, new URL(link).hash.slice('#token='.length)) : null;
+}
+
+function referralShop(sqlite, DB) {
+  seed(sqlite, 10);
+  sqlite.exec('UPDATE _ecommerce_components SET quantity = 10');
+  const now = Math.floor(Date.now() / 1000);
+  sqlite.prepare(`INSERT INTO _ecommerce_customer_accounts
+    (id, email, email_normalized, email_verified_at, created_at, updated_at)
+    VALUES ('referrer', 'referrer@example.com', 'referrer@example.com', ?, ?, ?)`).run(now, now, now);
+  return stripeWithRefunds(DB);
+}
+
+async function buy(api, browser, details, { accountId, productId = 'mycelium' } = {}) {
+  const cart = await api.carts.getOrCreate(browser, accountId);
+  await api.carts.updateItems(cart.id, [{ productId, variantId: `${productId}-amber`, quantity: 1 }]);
+  const { order } = await api.orders.createFromCart(cart.id, { ...address, providerId: 'stripe', ...details });
+  return order;
+}
+
+const pay = (api, order) => api.orders.finalizePayment(order.id, { provider: 'stripe',
+  providerId: order.checkoutSessionId, paymentStatus: 'success', amount: order.totalAmount, currency: 'usd' });
+const firstOrderLines = { lines: [{ productId: 'mycelium', quantity: 1, priceAtPurchase: 12000 }], subtotal: 12000 };
+
+test('asking for a sign-in link before a first purchase keeps the first-order code and the referral', async () => {
+  const { sqlite, DB } = database();
+  const api = referralShop(sqlite, DB);
+  const code = await getOrCreateReferralCode({ DB }, 'referrer');
+  await createDiscountCode({ DB }, discountInput('WELCOME10', 'amount', 1000, { firstOrderOnly: true }));
+  // A simulated admin test order for the address is not a purchase.
+  const admin = bindCommerceApi({ env: { DB }, paymentAdapters: [new AdminTestPaymentAdapter()] });
+  const testCart = await admin.carts.getOrCreate('admin-browser');
+  await admin.carts.updateItems(testCart.id, [{ productId: 'forrest', variantId: 'forrest-amber', quantity: 1 }]);
+  const simulated = (await admin.orders.createFromCart(testCart.id, { ...address, customerEmail: 'friend@example.com',
+    providerId: 'admin_test' })).order;
+  await admin.orders.finalizePayment(simulated.id, { provider: 'admin_test', providerId: simulated.checkoutSessionId,
+    paymentStatus: 'success', amount: simulated.totalAmount, currency: 'usd' });
+
+  // The shopper asks for a link on the account page and never uses it.
+  await signUp(DB, 'Friend@Example.com', { use: false });
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM _ecommerce_customer_accounts').get().count, 1, 'only the referrer');
+  assert.equal((await evaluateDiscountCode({ DB }, { code: 'WELCOME10', customerEmail: 'friend@example.com',
+    ...firstOrderLines })).amount, 1000);
+
+  const order = await buy(api, 'friend-browser', { customerEmail: 'friend@example.com', discountCode: 'WELCOME10', referralCode: code });
+  assert.deepEqual([order.discountAmount, order.referralCode], [1000, code]);
+  await pay(api, order);
+  const friend = (await api.orders.find(order.id)).userId;
+  assert.equal((await getReferralDashboard({ DB }, 'referrer')).creditBalance, 1000);
+  assert.equal((await getReferralDashboard({ DB }, friend)).creditBalance, 1000);
+
+  // Now the shopper has bought: the code is refused, in any letter case, and a new referral is not attributed.
+  await assert.rejects(evaluateDiscountCode({ DB }, { code: 'WELCOME10', customerEmail: 'FRIEND@example.com',
+    ...firstOrderLines }), /first purchase only/);
+  const repeat = await buy(api, 'friend-again', { customerEmail: 'Friend@Example.com', referralCode: code }, { productId: 'forrest' });
+  assert.equal(repeat.referralCode, null);
+  sqlite.close();
+});
+
+test('a shopper who signs up and buys signed in gets the first-order code and the referral once', async () => {
+  const { sqlite, DB } = database();
+  const api = referralShop(sqlite, DB);
+  const code = await getOrCreateReferralCode({ DB }, 'referrer');
+  await createDiscountCode({ DB }, discountInput('WELCOME10', 'amount', 1000, { firstOrderOnly: true }));
+  const member = (await signUp(DB, 'member@example.com')).account.id;
+
+  // The database trigger that reserves the code accepts an account without purchases.
+  const order = await buy(api, 'member-browser', { customerEmail: 'member@example.com', discountCode: 'WELCOME10',
+    referralCode: code }, { accountId: member });
+  assert.deepEqual([order.userId, order.discountAmount, order.referralCode], [member, 1000, code]);
+  await pay(api, order);
+  assert.deepEqual({ ...sqlite.prepare('SELECT referrer_account_id, referred_account_id FROM _ecommerce_referrals').get() },
+    { referrer_account_id: 'referrer', referred_account_id: member });
+  assert.equal((await getReferralDashboard({ DB }, member)).creditBalance, 1000);
+
+  const cart = await api.carts.getOrCreate('member-browser', member);
+  await api.carts.updateItems(cart.id, [{ productId: 'forrest', variantId: 'forrest-amber', quantity: 1 }]);
+  await assert.rejects(api.orders.createFromCart(cart.id, { ...address, customerEmail: 'member@example.com',
+    discountCode: 'WELCOME10' }), /first purchase only/);
+  const repeat = (await api.orders.createFromCart(cart.id, { ...address, customerEmail: 'member@example.com',
+    referralCode: code })).order;
+  assert.equal(repeat.referralCode, null);
+  // The referrer cannot be referred, even signed in with another checkout email.
+  const own = await buy(api, 'referrer-browser', { customerEmail: 'someone@example.com', referralCode: code },
+    { accountId: 'referrer' });
+  assert.equal(own.referralCode, null);
+  sqlite.close();
+});
+
+test('only the first paid purchase earns a referral when two checkouts overlap', async () => {
+  const { sqlite, DB } = database();
+  const api = referralShop(sqlite, DB);
+  const code = await getOrCreateReferralCode({ DB }, 'referrer');
+  const second = (await signUp(DB, 'second@example.com')).account.id;
+  // Both checkouts start before either is paid, so both carry the referral.
+  const guest = await buy(api, 'guest-browser', { customerEmail: 'buyer@example.com', referralCode: code });
+  const signedIn = await buy(api, 'account-browser', { customerEmail: 'Buyer@Example.com', referralCode: code },
+    { accountId: second, productId: 'forrest' });
+  assert.deepEqual([guest.referralCode, signedIn.referralCode], [code, code]);
+  await pay(api, guest);
+  // The second order is paid by the same buyer under another account, so it is not a first purchase.
+  await pay(api, signedIn);
+  assert.deepEqual(sqlite.prepare('SELECT order_id FROM _ecommerce_referrals').all().map((row) => row.order_id), [guest.id]);
+  assert.equal((await getReferralDashboard({ DB }, second)).creditBalance, 0);
+  assert.equal((await getReferralDashboard({ DB }, 'referrer')).creditBalance, 1000);
+  sqlite.close();
+});
+
+test('a product with variant groups is never sold without a variant', async () => {
+  const { sqlite, DB } = database();
+  seed(sqlite, 10);
+  // Product-level stock on a variant product, which checkout used to sell at the base price.
+  sqlite.exec(`UPDATE _ecommerce_products SET inventory_quantity = 5 WHERE id = 'mycelium'`);
+  const api = shop(DB);
+  const cart = await api.carts.getOrCreate('variantless');
+  await assert.rejects(api.carts.updateItems(cart.id, [{ productId: 'mycelium', quantity: 1 }]),
+    /Cart items must choose one of the variants of mycelium/);
+  await assert.rejects(api.carts.validateItems([{ productId: 'forrest', variantId: '', quantity: 1 }]),
+    /Cart items must choose one of the variants of forrest/);
+
+  // A line saved before the product had variants is refused by the quote and at checkout, before any reservation.
+  sqlite.prepare('UPDATE _ecommerce_carts SET items = ? WHERE id = ?')
+    .run(JSON.stringify([{ productId: 'mycelium', quantity: 1 }]), cart.id);
+  await assert.rejects(api.carts.quote(cart.id), /Select an option for Mycelium/);
+  await assert.rejects(api.orders.createFromCart(cart.id, address), /Select an option for Mycelium/);
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM _ecommerce_orders').get().count, 0);
+  assert.equal(sqlite.prepare(`SELECT inventory_quantity FROM _ecommerce_products WHERE id = 'mycelium'`).get().inventory_quantity, 5);
+  assert.equal((await api.carts.find('variantless')).checkoutSessionId, null);
+
+  // Naming the group instead of one of its values is no choice either, even with stock on the group,
+  // which would sell the frame at the base price without its lens and without using its components.
+  sqlite.exec(`UPDATE _ecommerce_product_variants SET inventory_quantity = 5 WHERE id = 'mycelium-group'`);
+  await assert.rejects(api.carts.updateItems(cart.id, [{ productId: 'mycelium', variantId: 'mycelium-group', quantity: 1 }]),
+    /Cart items must choose one of the variants of mycelium/);
+  await assert.rejects(api.carts.validateItems([{ productId: 'mycelium', variantId: 'forrest-group', quantity: 1 }]),
+    /must use a variant of their product; forrest-group/);
+  sqlite.prepare('UPDATE _ecommerce_carts SET items = ? WHERE id = ?')
+    .run(JSON.stringify([{ productId: 'mycelium', variantId: 'mycelium-group', quantity: 1 }]), cart.id);
+  await assert.rejects(api.carts.quote(cart.id), /Select an option for Mycelium/);
+  await assert.rejects(api.orders.createFromCart(cart.id, address), /Select an option for Mycelium/);
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM _ecommerce_orders').get().count, 0);
+  assert.equal(sqlite.prepare(`SELECT inventory_quantity FROM _ecommerce_product_variants WHERE id = 'mycelium-group'`)
+    .get().inventory_quantity, 5);
+  assert.equal(sqlite.prepare(`SELECT quantity FROM _ecommerce_components WHERE id = 'mycelium-frame'`).get().quantity, 2);
+  assert.equal((await api.carts.find('variantless')).checkoutSessionId, null);
+
+  // The shopper can still swap it for a variant, and a product without variant groups sells on its own.
+  await api.carts.updateItems(cart.id, [{ productId: 'mycelium', variantId: 'mycelium-amber', quantity: 1 }]);
+  assert.equal((await api.carts.quote(cart.id)).lines[0].variantId, 'mycelium-amber');
+  const now = Math.floor(Date.now() / 1000);
+  sqlite.prepare(`INSERT INTO _ecommerce_products (id, name, slug, base_price, inventory_quantity, status, created_at, updated_at)
+    VALUES ('case', 'Case', 'case', 2000, 3, 'active', ?, ?)`).run(now, now);
+  const plain = await api.carts.getOrCreate('plain');
+  await api.carts.updateItems(plain.id, [{ productId: 'case', quantity: 1 }]);
+  const { order } = await api.orders.createFromCart(plain.id, address);
+  assert.equal(order.totalAmount, 2000);
+  assert.equal(sqlite.prepare(`SELECT inventory_quantity FROM _ecommerce_products WHERE id = 'case'`).get().inventory_quantity, 2);
+
+  // A legacy variant, a group with no values, is still sold at its own price and stock.
+  sqlite.prepare(`INSERT INTO _ecommerce_products (id, name, slug, base_price, inventory_quantity, status, created_at, updated_at)
+    VALUES ('strap', 'Strap', 'strap', 1500, 0, 'active', ?, ?)`).run(now, now);
+  sqlite.prepare(`INSERT INTO _ecommerce_product_variants (id, product_id, name, price_override, inventory_quantity, created_at, updated_at)
+    VALUES ('strap-black', 'strap', 'Black', 1800, 4, ?, ?)`).run(now, now);
+  const legacy = await api.carts.getOrCreate('legacy');
+  await assert.rejects(api.carts.updateItems(legacy.id, [{ productId: 'strap', quantity: 1 }]),
+    /Cart items must choose one of the variants of strap/);
+  await api.carts.updateItems(legacy.id, [{ productId: 'strap', variantId: 'strap-black', quantity: 1 }]);
+  const legacyOrder = (await api.orders.createFromCart(legacy.id, address)).order;
+  assert.equal(legacyOrder.totalAmount, 1800);
+  assert.equal(sqlite.prepare(`SELECT inventory_quantity FROM _ecommerce_product_variants WHERE id = 'strap-black'`)
+    .get().inventory_quantity, 3);
   sqlite.close();
 });
 

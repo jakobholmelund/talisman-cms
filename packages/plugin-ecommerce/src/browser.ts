@@ -79,6 +79,15 @@ export function readCustomerSignInToken(
   return token;
 }
 
+/**
+ * The address a sign-in link belongs to, masked as `{ email: 'j•••@example.com' }`, so the verify page
+ * can show which account the shopper is about to open. The link stays usable and no session is
+ * created. Rejects with "This sign-in link is invalid or has expired." for a used or expired link.
+ */
+export function previewCustomerSignIn(token: string) {
+  return commerceRequest<{ email: string }>('/api/ecommerce/account', 'POST', { token, preview: true });
+}
+
 export function verifyCustomerEmailSignIn(token: string) {
   return commerceRequest<{ account: CustomerAccountSummary }>('/api/ecommerce/account', 'POST', { token });
 }

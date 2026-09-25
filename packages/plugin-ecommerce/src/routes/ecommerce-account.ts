@@ -4,11 +4,14 @@ import { readSetting } from 'talisman-cms/env';
 import { isEmailDeliveryError, parseAddress, sendEmail } from 'talisman-cms/email';
 import { getEmailProvider } from 'talisman-cms/email/runtime';
 import { bindCommerceApi } from '../api';
-import { CUSTOMER_SESSION_COOKIE, CUSTOMER_SESSION_MAX_AGE,
-  consumeCustomerEmailSignIn, findCustomerSession, requestCustomerEmailSignIn,
+import { CUSTOMER_SESSION_COOKIE, CUSTOMER_SESSION_MAX_AGE, CustomerRequestLimitError,
+  consumeCustomerEmailSignIn, findCustomerSession, previewCustomerEmailSignIn, requestCustomerEmailSignIn,
   revokeCustomerSession } from '../accounts';
 import { CART_SESSION_COOKIE, LEGACY_CART_SESSION_COOKIE, readCartSessionToken } from '../cookies';
 import { shopperSignInEmail } from '../emails';
+
+/** One answer for every link that cannot be used, so a response never tells links apart. */
+const INVALID_LINK = 'This sign-in link is invalid or has expired.';
 
 function originOf(value: string | undefined) {
   try {
@@ -42,7 +45,7 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
   if (request.method !== 'POST') return Response.json({ error: 'Method not allowed' }, { status: 405, headers });
 
   const body = await request.json().catch(() => null) as {
-    basketChoice?: unknown; orderId?: unknown; email?: unknown; token?: unknown
+    basketChoice?: unknown; orderId?: unknown; email?: unknown; token?: unknown; preview?: unknown
   } | null;
   const basketToken = readCartSessionToken(cookies);
   if (typeof body?.email === 'string') {
@@ -64,7 +67,8 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
         // The token travels in the fragment, so it never reaches the server or its request logs.
         token => `${publicOrigin}/account/verify#token=${encodeURIComponent(token)}`,
         async (to, link) => {
-          await sendEmail(settings, { to, from, ...shopperSignInEmail({ link, siteName }) }, provider);
+          // The object form keeps the recipient a bare address; a display name can never change it.
+          await sendEmail(settings, { to: { email: to }, from, ...shopperSignInEmail({ link, siteName }) }, provider);
         }, request.headers.get('cf-connecting-ip'));
       return Response.json({ accepted: true }, { headers });
     } catch (error) {
@@ -91,9 +95,23 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
       return Response.json({ error: 'The sign-in email could not be sent. Please try again later.' }, { status: 503, headers });
     }
   }
+  // A preview names the account a link opens, masked, and leaves the link usable. Any request that
+  // mentions `preview` is treated as one, so a malformed flag never spends the link.
+  if (body?.token !== undefined && body.preview !== undefined && body.preview !== false) {
+    try {
+      const email = await previewCustomerEmailSignIn(runtimeEnv, body.token, request.headers.get('cf-connecting-ip'));
+      if (!email) return Response.json({ error: INVALID_LINK }, { status: 400, headers });
+      return Response.json({ email }, { headers });
+    } catch (error) {
+      if (error instanceof CustomerRequestLimitError) {
+        return Response.json({ error: 'Too many sign-in requests. Please try again later.' }, { status: 429, headers });
+      }
+      throw error;
+    }
+  }
   if (typeof body?.token === 'string') {
     const result = await consumeCustomerEmailSignIn(runtimeEnv, body.token);
-    if (!result) return Response.json({ error: 'Sign-in link is invalid or expired' }, { status: 400, headers });
+    if (!result) return Response.json({ error: INVALID_LINK }, { status: 400, headers });
     await revokeCustomerSession(runtimeEnv, sessionToken);
     cookies.set(CUSTOMER_SESSION_COOKIE, result.token, {
       path: '/', httpOnly: true, sameSite: 'lax', secure: new URL(request.url).protocol === 'https:',

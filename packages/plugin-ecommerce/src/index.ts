@@ -427,7 +427,7 @@ export const ecommercePlugin = (
         collections.push({
           name: 'Shopper Accounts',
           slug: '_ecommerce_customer_accounts',
-          description: 'Shopper accounts from email sign-in or a confirmed payment. A verified shopper shares the CMS user for that email, shown in Users with the customer role.',
+          description: 'Shopper accounts from a used email sign-in link or a confirmed payment. A verified shopper shares the CMS user for that email, shown in Users with the customer role.',
           adminSection: 'commerce',
           readOnly: true,
           fields: [

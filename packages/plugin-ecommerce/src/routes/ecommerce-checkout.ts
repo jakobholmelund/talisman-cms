@@ -95,6 +95,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       error.message?.startsWith('Insufficient stock for ') ||
       error.message?.startsWith('Insufficient stock or checkout') ||
       error.message?.startsWith('Product is not available') ||
+      error.message?.startsWith('Select an option for ') ||
       error.message?.startsWith('A positive price is required') ||
       error.message?.startsWith('Insufficient shared component stock') ||
       error.message === 'Shipping address is required for physical products' ||

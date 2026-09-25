@@ -42,7 +42,7 @@ const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.
   '0008_shared_components.sql', '0010_checkout_inventory.sql', '0011_order_payment_provider.sql',
   '0012_customer_accounts.sql', '0013_referrals_and_credit.sql', '0014_promotions.sql',
   '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
-  '0019_shared_customer_identity.sql'];
+  '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql'];
 
 function database() {
   const sqlite = new DatabaseSync(':memory:');
@@ -84,7 +84,10 @@ function database() {
   return { sqlite, DB };
 }
 
-/** An active frame with one lens value, a draft concept, an archived product and a second active product. */
+/**
+ * Two active frames sold as one lens value each, with stock on the lens group, a draft concept, an
+ * archived product and an active case without variants.
+ */
 function seed(sqlite) {
   const now = Math.floor(Date.now() / 1000);
   const product = sqlite.prepare(`INSERT INTO _ecommerce_products
@@ -93,9 +96,10 @@ function seed(sqlite) {
   product.run('other', 'Other frame', 'other', 9000, 'active', now, now);
   product.run('concept', 'Concept', 'concept', 0, 'draft', now, now);
   product.run('retired', 'Retired', 'retired', 12000, 'archived', now, now);
+  product.run('case', 'Case', 'case', 2000, 'active', now, now);
   for (const id of ['frame', 'other']) {
-    sqlite.prepare(`INSERT INTO _ecommerce_product_variants (id, product_id, name, created_at, updated_at)
-      VALUES (?, ?, 'Lens', ?, ?)`).run(`${id}-lens`, id, now, now);
+    sqlite.prepare(`INSERT INTO _ecommerce_product_variants (id, product_id, name, inventory_quantity, created_at, updated_at)
+      VALUES (?, ?, 'Lens', 5, ?, ?)`).run(`${id}-lens`, id, now, now);
     sqlite.prepare(`INSERT INTO _ecommerce_product_variant_values (id, product_variant_id, value, created_at, updated_at)
       VALUES (?, ?, 'Amber', ?, ?)`).run(`${id}-amber`, `${id}-lens`, now, now);
   }
@@ -145,7 +149,7 @@ const hostedCheckout = {
 async function placeOrder(DB, sessionToken, adapter = hostedCheckout) {
   const api = bindCommerceApi({ env: { DB }, paymentAdapters: [adapter] });
   const cart = await api.carts.getOrCreate(sessionToken);
-  await api.carts.updateItems(cart.id, [{ productId: 'frame', quantity: 1 }]);
+  await api.carts.updateItems(cart.id, [{ productId: 'frame', variantId: 'frame-amber', quantity: 1 }]);
   const { order } = await api.orders.createFromCart(cart.id, { ...checkoutDetails, providerId: adapter.providerId });
   return { api, cart, order };
 }
@@ -239,7 +243,7 @@ test('the checkout route answers 503 before reading or writing anything while ch
   const { sqlite, DB } = database();
   const api = bindCommerceApi({ env: { DB } });
   const cart = await api.carts.getOrCreate('gated-browser');
-  await api.carts.updateItems(cart.id, [{ productId: 'frame', quantity: 1 }]);
+  await api.carts.updateItems(cart.id, [{ productId: 'frame', variantId: 'frame-amber', quantity: 1 }]);
   const before = sqlite.prepare('SELECT * FROM _ecommerce_carts').all();
 
   for (const settings of disabledSettings) {
@@ -262,7 +266,7 @@ test('with checkout enabled but Stripe unconfigured, the route never falls back 
   const { sqlite, DB } = database();
   const api = bindCommerceApi({ env: { DB } });
   const cart = await api.carts.getOrCreate('enabled-browser');
-  await api.carts.updateItems(cart.id, [{ productId: 'frame', quantity: 1 }]);
+  await api.carts.updateItems(cart.id, [{ productId: 'frame', variantId: 'frame-amber', quantity: 1 }]);
   const response = await call(checkoutRoute, { DB, TALISMAN_COMMERCE_CHECKOUT_ENABLED: 'true' }, {
     path: '/api/ecommerce/checkout', cookies: { [CART_SESSION_COOKIE]: 'enabled-browser' },
     body: { customerEmail: 'owner@example.test', shippingAddress } });
@@ -306,7 +310,7 @@ test('only the basket or signed-in account that placed an order can read or canc
   const { api, order } = await placeOrder(DB, 'owner-browser');
   // A second shopper with a basket of their own.
   const stranger = await api.carts.getOrCreate('stranger-browser');
-  await api.carts.updateItems(stranger.id, [{ productId: 'other', quantity: 1 }]);
+  await api.carts.updateItems(stranger.id, [{ productId: 'other', variantId: 'other-amber', quantity: 1 }]);
   const env = { DB };
   const read = (cookies) => call(orderRoute, env, { method: 'GET', path: `/api/ecommerce/order?order=${order.id}`, cookies });
 
@@ -342,7 +346,7 @@ test('the admin test route settles a simulated order for an admin; public routes
   const { sqlite, DB } = database();
   const api = bindCommerceApi({ env: { DB } });
   const cart = await api.carts.getOrCreate('admin-browser');
-  await api.carts.updateItems(cart.id, [{ productId: 'frame', quantity: 1 }]);
+  await api.carts.updateItems(cart.id, [{ productId: 'frame', variantId: 'frame-amber', quantity: 1 }]);
   const request = { path: '/admin/api/ecommerce/test-checkout', cookies: { [CART_SESSION_COOKIE]: 'admin-browser' },
     body: { customerEmail: 'admin@shop.test', shippingAddress } };
 
@@ -371,14 +375,14 @@ test('the basket owner can cancel a pending simulated order, which unlocks the b
   const { sqlite, DB } = database();
   const { order } = await placeOrder(DB, 'interrupted-browser', new AdminTestPaymentAdapter());
   const cookies = { [CART_SESSION_COOKIE]: 'interrupted-browser' };
-  const locked = await postCart(DB, { items: [{ productId: 'other', quantity: 1 }] }, cookies);
+  const locked = await postCart(DB, { items: [{ productId: 'other', variantId: 'other-amber', quantity: 1 }] }, cookies);
   assert.deepEqual([locked.status, locked.json], [409, { error: 'Checkout already started for this cart' }]);
 
   // The public order route has no simulated provider, and needs none: there is no external session to expire.
   const cancelled = await call(orderRoute, { DB }, { path: '/api/ecommerce/order', cookies, body: { orderId: order.id } });
   assert.deepEqual([cancelled.status, cancelled.json], [200, { orderId: order.id, status: 'cancelled' }]);
-  const edited = await postCart(DB, { items: [{ productId: 'other', quantity: 1 }] }, cookies);
-  assert.deepEqual([edited.status, edited.json.items], [200, [{ productId: 'other', quantity: 1 }]]);
+  const edited = await postCart(DB, { items: [{ productId: 'other', variantId: 'other-amber', quantity: 1 }] }, cookies);
+  assert.deepEqual([edited.status, edited.json.items], [200, [{ productId: 'other', variantId: 'other-amber', quantity: 1 }]]);
   sqlite.close();
 });
 
@@ -430,6 +434,10 @@ test('the cart API refuses too many lines, out-of-range quantities and unknown c
     [{ items: [{ productId: 'retired', quantity: 1 }] }, 'Cart items must be catalog products; retired is not available'],
     [{ items: [{ productId: 'frame', variantId: 'invented', quantity: 1 }] }, /must use a variant of their product; invented/],
     [{ items: [{ productId: 'frame', variantId: 'other-amber', quantity: 1 }] }, /must use a variant of their product; other-amber/],
+    // A product with variant groups is sold only as one of its variants.
+    [{ items: [{ productId: 'frame', quantity: 1 }] }, 'Cart items must choose one of the variants of frame'],
+    [{ items: [{ productId: 'case', quantity: 1 }, { productId: 'other', variantId: '', quantity: 1 }] },
+      'Cart items must choose one of the variants of other'],
   ];
   for (const [body, error] of cases) {
     const response = await postCart(DB, body);
@@ -460,7 +468,7 @@ test('the cart API stores catalog lines, including draft concepts, with only the
   sqlite.prepare("UPDATE _ecommerce_products SET status = 'archived' WHERE id = 'concept'").run();
   const edited = await postCart(DB, { items: [{ productId: 'concept', quantity: 2 }] }, { [CART_SESSION_COOKIE]: token });
   assert.deepEqual([edited.status, edited.json.items], [200, [{ productId: 'concept', quantity: 2 }]]);
-  const readded = await postCart(DB, { items: [{ productId: 'frame', quantity: 1 }, { productId: 'concept', quantity: 2 }] },
+  const readded = await postCart(DB, { items: [{ productId: 'case', quantity: 1 }, { productId: 'concept', quantity: 2 }] },
     { [CART_SESSION_COOKIE]: token });
   assert.equal(readded.status, 200);
   const emptied = await postCart(DB, { items: [] }, { [CART_SESSION_COOKIE]: token });
@@ -504,5 +512,29 @@ test('the cart actions refuse unknown products before creating a basket and neve
     { code: 'BAD_REQUEST', message: /quantity from 1 to 99/ });
   assert.equal((await ecommerceActions.getCart.handler(undefined, again)).cart.items[0].quantity, 2);
   assert.equal(count(sqlite, '_ecommerce_carts'), 1);
+  sqlite.close();
+});
+
+test('checkout refuses a stored line without a variant for a product sold in variants', async () => {
+  const { sqlite, DB } = database();
+  // Stock on the product itself, which checkout used to sell at the base price instead of a variant.
+  sqlite.exec(`UPDATE _ecommerce_products SET inventory_quantity = 5 WHERE id = 'frame'`);
+  const now = Math.floor(Date.now() / 1000);
+  sqlite.prepare(`INSERT INTO _ecommerce_carts (id, session_token, items, created_at, updated_at)
+    VALUES ('legacy', 'legacy-browser', '[{"productId":"frame","quantity":1}]', ?, ?)`).run(now, now);
+  const response = await call(checkoutRoute, { ...stripeEnv(DB), TALISMAN_COMMERCE_CHECKOUT_ENABLED: 'true' }, {
+    path: '/api/ecommerce/checkout', cookies: { [CART_SESSION_COOKIE]: 'legacy-browser' },
+    body: { customerEmail: 'owner@example.test', shippingAddress } });
+  assert.deepEqual([response.status, response.json], [409, { error: 'Select an option for Frame' }]);
+  assert.equal(count(sqlite, '_ecommerce_orders'), 0);
+  assert.equal(sqlite.prepare("SELECT inventory_quantity FROM _ecommerce_products WHERE id = 'frame'").get().inventory_quantity, 5);
+  assert.equal(sqlite.prepare("SELECT checkout_session_id FROM _ecommerce_carts WHERE id = 'legacy'").get().checkout_session_id, null);
+
+  globalThis.workerEnv = { DB };
+  const cookies = cookieJar();
+  await assert.rejects(ecommerceActions.addToCart.handler({ productId: 'frame', quantity: 1 },
+    { cookies, url: new URL(`${ORIGIN}/_actions/cart`) }),
+    { code: 'BAD_REQUEST', message: 'Cart items must choose one of the variants of frame' });
+  assert.deepEqual(cookies.writes, []);
   sqlite.close();
 });

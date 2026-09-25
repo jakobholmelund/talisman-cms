@@ -20,7 +20,7 @@ const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.
   '0008_shared_components.sql', '0010_checkout_inventory.sql', '0011_order_payment_provider.sql',
   '0012_customer_accounts.sql', '0013_referrals_and_credit.sql', '0014_promotions.sql',
   '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
-  '0019_shared_customer_identity.sql'];
+  '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql'];
 
 function database() {
   const sqlite = new DatabaseSync(':memory:');
@@ -209,7 +209,8 @@ test('the purge deletes idle guest baskets and keeps account, locked, checked-ou
     VALUES ('ord_draft', 'stale-ordered', 1000, ?, ?)`).run(seconds - 31 * day, seconds - 31 * day);
 
   const deleted = await purgeStaleCommerceData({ env: { DB }, now });
-  assert.deepEqual(deleted, { carts: 1, customerSessions: 0, authSessions: 0, authRateLimits: 0 });
+  assert.deepEqual(deleted, { carts: 1, customerSessions: 0, signInTokens: 0, unverifiedAccounts: 0, rateLimits: 0,
+    authSessions: 0, authRateLimits: 0 });
   assert.deepEqual(sqlite.prepare('SELECT id FROM _ecommerce_carts ORDER BY id').all().map((row) => row.id),
     ['recent-guest', 'stale-account', 'stale-closed', 'stale-locked', 'stale-ordered']);
   sqlite.close();
@@ -274,17 +275,108 @@ test('the purge removes expired CMS sessions and day-old rate-limit rows in eith
   session.run('expired', seconds - 60, 'token-expired', seconds - day, seconds - day);
   session.run('valid', seconds + 3600, 'token-valid', seconds - 3600, seconds - 3600);
   const limit = sqlite.prepare(`INSERT INTO galaxy_auth_rate_limit (id, key, count, last_request) VALUES (?, ?, 1, ?)`);
-  // better-auth records milliseconds; the shopper sign-in limiter records seconds.
+  // better-auth records milliseconds; shopper counters written before migration 0024 are in seconds.
   limit.run('auth-old', '203.0.113.1/sign-in/email', millis - 25 * 60 * 60 * 1000);
   limit.run('auth-recent', '203.0.113.2/sign-in/email', millis - 60 * 60 * 1000);
   limit.run('shopper-old', 'shopper-email:old', seconds - 25 * 60 * 60);
   limit.run('shopper-recent', 'shopper-email:recent', seconds - 60 * 60);
 
   const deleted = await purgeStaleCommerceData({ env: { DB }, now });
-  assert.deepEqual(deleted, { carts: 0, customerSessions: 0, authSessions: 1, authRateLimits: 2 });
+  assert.deepEqual(deleted, { carts: 0, customerSessions: 0, signInTokens: 0, unverifiedAccounts: 0, rateLimits: 0,
+    authSessions: 1, authRateLimits: 2 });
   assert.deepEqual(sqlite.prepare('SELECT id FROM galaxy_auth_session').all().map((row) => row.id), ['valid']);
   assert.deepEqual(sqlite.prepare('SELECT id FROM galaxy_auth_rate_limit ORDER BY id').all().map((row) => row.id),
     ['auth-recent', 'shopper-recent']);
+  sqlite.close();
+});
+
+test('the purge removes sign-in links, with their address, a day after they expired or were used', async () => {
+  const { sqlite, DB } = database();
+  const now = new Date('2026-09-25T12:00:00Z');
+  const seconds = now.getTime() / 1000;
+  const insert = sqlite.prepare(`INSERT INTO _ecommerce_sign_in_tokens
+    (token_hash, email_normalized, expires_at, created_at, revoked_at) VALUES (?, ?, ?, ?, ?)`);
+  const rows = [
+    ['fresh', seconds + 600, seconds - 300, null],
+    ['used-recently', seconds + 600, seconds - 300, seconds - 200],
+    ['expired-recently', seconds - 3600, seconds - 3600 - 900, null],
+    ['used-long-ago', seconds - 2 * day + 900, seconds - 2 * day, seconds - 2 * day + 60],
+    ['expired-long-ago', seconds - 2 * day + 900, seconds - 2 * day, null],
+  ];
+  for (const [hash, expiresAt, createdAt, revokedAt] of rows) insert.run(hash, `${hash}@example.test`, expiresAt, createdAt, revokedAt);
+
+  const deleted = await purgeStaleCommerceData({ env: { DB }, now });
+  assert.equal(deleted.signInTokens, 2);
+  assert.deepEqual(sqlite.prepare('SELECT token_hash FROM _ecommerce_sign_in_tokens ORDER BY token_hash').all().map((row) => row.token_hash),
+    ['expired-recently', 'fresh', 'used-recently']);
+  sqlite.close();
+});
+
+test('the purge removes day-old shopper counters and keeps current ones', async () => {
+  const { sqlite, DB } = database();
+  const now = new Date('2026-09-25T12:00:00Z');
+  const seconds = now.getTime() / 1000;
+  const insert = sqlite.prepare('INSERT INTO _ecommerce_rate_limits (key, count, window_start) VALUES (?, ?, ?)');
+  insert.run('shopper-email:daily', 150, seconds - 23 * 60 * 60);
+  insert.run('shopper-email:old-ip', 20, seconds - 25 * 60 * 60);
+  insert.run('shopper-preview:recent-ip', 3, seconds - 60);
+  const deleted = await purgeStaleCommerceData({ env: { DB }, now });
+  assert.equal(deleted.rateLimits, 1);
+  assert.deepEqual(sqlite.prepare('SELECT key FROM _ecommerce_rate_limits ORDER BY key').all().map((row) => row.key),
+    ['shopper-email:daily', 'shopper-preview:recent-ip']);
+  sqlite.close();
+});
+
+test('the purge deletes accounts that sign-in requests used to create and keeps every account in use', async () => {
+  const { sqlite, DB } = database();
+  const now = new Date('2026-09-25T12:00:00Z');
+  const seconds = now.getTime() / 1000;
+  const old = seconds - 3 * day;
+  sqlite.prepare(`INSERT INTO galaxy_auth_user (id, name, email, created_at, updated_at, role)
+    VALUES ('cms-user', 'Linked', 'linked@example.test', ?, ?, 'customer')`).run(old, old);
+  const account = sqlite.prepare(`INSERT INTO _ecommerce_customer_accounts
+    (id, email, email_normalized, email_verified_at, cms_user_id, credit_balance, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 0, ?, ?)`);
+  const add = (id, { verifiedAt = null, cmsUserId = null, createdAt = old } = {}) =>
+    account.run(id, `${id}@example.test`, `${id}@example.test`, verifiedAt, cmsUserId, createdAt, createdAt);
+  for (const id of ['requested', 'requested-too', 'with-order', 'with-session', 'with-link', 'with-basket',
+    'with-credit', 'referrer', 'with-discount']) add(id);
+  add('verified', { verifiedAt: old });
+  add('linked', { cmsUserId: 'cms-user' });
+  add('brand-new', { createdAt: seconds - 3600 });
+  sqlite.prepare(`INSERT INTO _ecommerce_orders (id, user_id, status, total_amount, created_at, updated_at)
+    VALUES ('ord_1', 'with-order', 'cancelled', 1000, ?, ?)`).run(old, old);
+  sqlite.prepare(`INSERT INTO _ecommerce_orders (id, user_id, status, total_amount, created_at, updated_at)
+    VALUES ('ord_2', NULL, 'paid', 1000, ?, ?)`).run(old, old);
+  sqlite.prepare(`INSERT INTO _ecommerce_customer_sessions (id, account_id, token_hash, expires_at, created_at, purpose)
+    VALUES ('session', 'with-session', 'hash-session', ?, ?, 'session')`).run(seconds + day, old);
+  sqlite.prepare(`INSERT INTO _ecommerce_customer_sessions (id, account_id, token_hash, expires_at, created_at, purpose)
+    VALUES ('challenge', 'with-link', 'hash-challenge', ?, ?, 'email_challenge')`).run(seconds + 600, seconds - 300);
+  sqlite.prepare(`INSERT INTO _ecommerce_carts (id, user_id, items, created_at, updated_at)
+    VALUES ('basket', 'with-basket', '[]', ?, ?)`).run(old, old);
+  // Credit that was awarded and reversed leaves a zero balance, but the ledger still names the account.
+  const ledger = sqlite.prepare(`INSERT INTO _ecommerce_credit_ledger (id, account_id, order_id, kind, amount_cents, created_at)
+    VALUES (?, 'with-credit', 'ord_2', ?, ?, ?)`);
+  ledger.run('award', 'welcome_award', 500, old);
+  ledger.run('reversal', 'welcome_reversal', -500, old);
+  sqlite.prepare(`INSERT INTO _ecommerce_referral_codes (code, account_id, created_at)
+    VALUES ('REF-00000000000000000001', 'referrer', ?)`).run(old);
+  sqlite.prepare(`INSERT INTO _ecommerce_discount_codes (code, type, value, created_at, updated_at)
+    VALUES ('SAVE5', 'amount', 500, ?, ?)`).run(old, old);
+  sqlite.prepare(`INSERT INTO _ecommerce_orders (id, user_id, status, total_amount, discount_code, discount_amount, subtotal_amount, created_at, updated_at)
+    VALUES ('ord_3', NULL, 'pending', 1000, 'SAVE5', 500, 1500, ?, ?)`).run(old, old);
+  sqlite.prepare(`INSERT INTO _ecommerce_discount_redemptions (id, code, order_id, account_id, email_normalized, amount_cents, created_at, updated_at)
+    VALUES ('dred', 'SAVE5', 'ord_3', 'with-discount', 'with-discount@example.test', 500, ?, ?)`).run(old, old);
+
+  const deleted = await purgeStaleCommerceData({ env: { DB }, now });
+  assert.equal(deleted.unverifiedAccounts, 2);
+  assert.deepEqual(sqlite.prepare('SELECT id FROM _ecommerce_customer_accounts ORDER BY id').all().map((row) => row.id),
+    ['brand-new', 'linked', 'referrer', 'verified', 'with-basket', 'with-credit', 'with-discount', 'with-link',
+      'with-order', 'with-session']);
+  // Once its expired link has been purged, an unverified account with nothing else goes on a later run.
+  sqlite.prepare(`UPDATE _ecommerce_customer_sessions SET expires_at = ? WHERE id = 'challenge'`).run(seconds - 2 * day);
+  assert.equal((await purgeStaleCommerceData({ env: { DB }, now })).unverifiedAccounts, 1);
+  assert.equal(sqlite.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_customer_accounts WHERE id = 'with-link'`).get().count, 0);
   sqlite.close();
 });
 
