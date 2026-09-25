@@ -1,0 +1,6 @@
+---
+interface Props { token: string }
+const { token } = Astro.props;
+if (!/^[a-f0-9]{32}$/i.test(token)) throw new Error('Cloudflare Web Analytics beacon token must be 32 hexadecimal characters.');
+---
+<script is:inline type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon={JSON.stringify({ token })}></script>

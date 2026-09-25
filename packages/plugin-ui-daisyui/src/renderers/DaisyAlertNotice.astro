@@ -1,0 +1,16 @@
+---
+const { title, description, tone = 'info' } = Astro.props;
+const toneClass = ({
+  info: 'alert-info',
+  success: 'alert-success',
+  warning: 'alert-warning',
+  error: 'alert-error',
+} as Record<string, string>)[tone as string] || 'alert-info';
+---
+
+<div role="alert" class={`alert ${toneClass}`}>
+  <div>
+    {title ? <h3 class="font-bold">{title}</h3> : null}
+    {description ? <p class="text-sm">{description}</p> : null}
+  </div>
+</div>

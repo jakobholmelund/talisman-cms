@@ -1,0 +1,19 @@
+---
+const { label, href, tone = 'primary', position = 'bottom-end' } = Astro.props;
+const toneClass = ({
+  primary: 'btn-primary',
+  secondary: 'btn-secondary',
+  accent: 'btn-accent',
+  neutral: 'btn-neutral',
+} as Record<string, string>)[tone as string] || 'btn-primary';
+const positionClass = ({
+  'bottom-end': 'fixed bottom-6 right-6',
+  'bottom-start': 'fixed bottom-6 left-6',
+  'top-end': 'fixed top-6 right-6',
+  'top-start': 'fixed top-6 left-6',
+} as Record<string, string>)[position as string] || 'fixed bottom-6 right-6';
+---
+
+<a href={href || '#'} class={`btn btn-circle shadow-xl ${toneClass} ${positionClass}`} aria-label={label}>
+  <span class="text-xl leading-none">+</span>
+</a>

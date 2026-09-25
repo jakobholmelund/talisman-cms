@@ -1,0 +1,14 @@
+---
+const { label, checked = false, tone = 'primary' } = Astro.props;
+const toneClass = ({
+  primary: 'toggle-primary',
+  secondary: 'toggle-secondary',
+  accent: 'toggle-accent',
+  neutral: 'toggle-neutral',
+} as Record<string, string>)[tone as string] || 'toggle-primary';
+---
+
+<label class="label cursor-pointer justify-start gap-3">
+  <input type="checkbox" class={`toggle ${toneClass}`} checked={checked} />
+  <span class="label-text">{label}</span>
+</label>

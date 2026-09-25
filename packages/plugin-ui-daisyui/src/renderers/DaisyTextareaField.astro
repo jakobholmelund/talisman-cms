@@ -1,0 +1,14 @@
+---
+const { label, placeholder, tone = 'primary', rows = 4 } = Astro.props;
+const toneClass = ({
+  primary: 'textarea-primary',
+  secondary: 'textarea-secondary',
+  accent: 'textarea-accent',
+  neutral: 'textarea-neutral',
+} as Record<string, string>)[tone as string] || 'textarea-primary';
+---
+
+<label class="form-control w-full gap-2">
+  <span class="label-text">{label}</span>
+  <textarea class={`textarea w-full ${toneClass}`} rows={rows} placeholder={placeholder || ''}></textarea>
+</label>

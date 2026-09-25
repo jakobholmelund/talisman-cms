@@ -1,0 +1,7 @@
+---
+const layouts = import.meta.glob('/src/layouts/*.astro', { eager: true });
+const layoutsStr = JSON.stringify(Object.keys(layouts));
+---
+<div>GLOB_START</div>
+<pre>{layoutsStr}</pre>
+<div>GLOB_END</div>

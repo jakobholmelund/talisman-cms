@@ -1,0 +1,139 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1773301460897,
+      "tag": "0000_skinny_odin",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1773365259524,
+      "tag": "0001_abandoned_shotgun",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1773373501760,
+      "tag": "0002_flowery_midnight",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1773499299598,
+      "tag": "0003_content_versioning",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1773499307150,
+      "tag": "0004_ecommerce_plugin",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1773532800000,
+      "tag": "0005_variant_value_images",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1773536400000,
+      "tag": "0006_media_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1789600000000,
+      "tag": "0007_local_auth",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1789600000001,
+      "tag": "0008_shared_components",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1789600000002,
+      "tag": "0009_entry_read_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1789600000003,
+      "tag": "0010_checkout_inventory",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1789600000004,
+      "tag": "0011_order_payment_provider",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1789600000005,
+      "tag": "0012_customer_accounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1789600000006,
+      "tag": "0013_referrals_and_credit",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1789600000007,
+      "tag": "0014_promotions",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1789600000008,
+      "tag": "0015_gift_cards",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1789600000009,
+      "tag": "0016_verified_customer_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1789600000010,
+      "tag": "0017_commerce_fulfillment",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1789600000011,
+      "tag": "0018_entry_revision_integrity",
+      "breakpoints": true
+    }
+  ]
+}

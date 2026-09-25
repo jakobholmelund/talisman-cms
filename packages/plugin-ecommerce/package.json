@@ -1,0 +1,96 @@
+{
+  "name": "@talisman-cms/plugin-ecommerce",
+  "version": "0.0.1",
+  "license": "Apache-2.0",
+  "publishConfig": { "access": "public" },
+  "description": "Native E-Commerce plugin for Talisman CMS",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js"
+    },
+    "./accounts": {
+      "types": "./dist/accounts.d.ts",
+      "import": "./dist/accounts.js"
+    },
+    "./referrals": {
+      "types": "./dist/referrals.d.ts",
+      "import": "./dist/referrals.js"
+    },
+    "./promotions": {
+      "types": "./dist/promotions.d.ts",
+      "import": "./dist/promotions.js"
+    },
+    "./gift-cards": {
+      "types": "./dist/gift-cards.d.ts",
+      "import": "./dist/gift-cards.js"
+    },
+    "./fulfillment": {
+      "types": "./dist/fulfillment.d.ts",
+      "import": "./dist/fulfillment.js"
+    },
+    "./catalog": {
+      "types": "./dist/catalog.d.ts",
+      "import": "./dist/catalog.js"
+    },
+    "./components/*": "./src/components/*",
+    "./api": {
+      "types": "./dist/api.d.ts",
+      "import": "./dist/api.js"
+    },
+    "./adapters/stripe": {
+      "types": "./dist/adapters/stripe.d.ts",
+      "import": "./dist/adapters/stripe.js"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js"
+    },
+    "./actions": {
+      "types": "./dist/actions.d.ts",
+      "import": "./dist/actions.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "import": "./dist/runtime.js"
+    },
+    "./admin/*": "./src/admin/*"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src/components",
+    "src/admin"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts src/browser.ts src/accounts.ts src/referrals.ts src/promotions.ts src/gift-cards.ts src/fulfillment.ts src/catalog.ts src/api.ts src/adapters/stripe.ts src/adapters/admin-test.ts src/schema.ts src/actions.ts src/runtime.ts src/routes/ecommerce-account.ts src/routes/ecommerce-discount.ts src/routes/ecommerce-admin-promotions.ts src/routes/ecommerce-gift-cards.ts src/routes/ecommerce-admin-gift-cards.ts src/routes/ecommerce-cart.ts src/routes/ecommerce-checkout.ts src/routes/ecommerce-admin-test-checkout.ts src/routes/ecommerce-admin-reconcile.ts src/routes/ecommerce-admin-fulfillment.ts src/routes/ecommerce-order.ts src/routes/ecommerce-webhook.ts --format esm,cjs --dts --external cloudflare:workers --external astro:actions --external astro/zod --external astro",
+    "test": "pnpm build && node --experimental-sqlite --test test/*.test.mjs",
+    "dev": "tsup src/index.ts src/browser.ts src/accounts.ts src/referrals.ts src/promotions.ts src/gift-cards.ts src/fulfillment.ts src/catalog.ts src/api.ts src/adapters/stripe.ts src/adapters/admin-test.ts src/schema.ts src/actions.ts src/runtime.ts src/routes/ecommerce-account.ts src/routes/ecommerce-discount.ts src/routes/ecommerce-admin-promotions.ts src/routes/ecommerce-gift-cards.ts src/routes/ecommerce-admin-gift-cards.ts src/routes/ecommerce-cart.ts src/routes/ecommerce-checkout.ts src/routes/ecommerce-admin-test-checkout.ts src/routes/ecommerce-admin-reconcile.ts src/routes/ecommerce-admin-fulfillment.ts src/routes/ecommerce-order.ts src/routes/ecommerce-webhook.ts --format esm,cjs --dts --watch --external cloudflare:workers --external astro:actions --external astro/zod --external astro"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.3",
+    "talisman-cms": "workspace:*",
+    "stripe": "^22.6.2",
+    "zod": "^3.25.76"
+  },
+  "peerDependencies": {
+    "@tanstack/react-router": "^1.170.38",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260921.1",
+    "@tanstack/react-router": "^1.170.38",
+    "@types/react": "^19.3.0",
+    "astro": "^7.3.3",
+    "kysely": "0.29.6",
+    "react": "^19.3.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  }
+}

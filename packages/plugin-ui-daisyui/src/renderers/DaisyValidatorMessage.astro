@@ -1,0 +1,19 @@
+---
+const { label, value = '', state = 'success', message } = Astro.props;
+const inputClass = ({
+  success: 'validator',
+  warning: 'validator',
+  error: 'validator',
+} as Record<string, string>)[state as string] || 'validator';
+const messageClass = ({
+  success: 'text-success',
+  warning: 'text-warning',
+  error: 'text-error',
+} as Record<string, string>)[state as string] || 'text-success';
+---
+
+<label class="form-control w-full max-w-sm gap-2">
+  <span class="label-text">{label}</span>
+  <input type="text" class={`input w-full ${inputClass}`} value={value} />
+  {message ? <p class={`validator-hint text-sm ${messageClass}`}>{message}</p> : null}
+</label>

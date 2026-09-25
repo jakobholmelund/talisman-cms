@@ -1,0 +1,12 @@
+---
+const { label, tone = 'accent' } = Astro.props;
+const toneClass: Record<string, string> = {
+  primary: 'badge-primary',
+  secondary: 'badge-secondary',
+  accent: 'badge-accent',
+  neutral: 'badge-neutral',
+};
+const selectedClass = toneClass[tone as string] || 'badge-accent';
+---
+
+<span class={`badge ${selectedClass}`}>{label}</span>

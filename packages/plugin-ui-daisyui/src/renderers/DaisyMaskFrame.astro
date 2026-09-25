@@ -1,0 +1,14 @@
+---
+const { imageUrl, alt = 'Masked image', shape = 'squircle' } = Astro.props;
+const shapeClass = ({
+  squircle: 'mask-squircle',
+  heart: 'mask-heart',
+  hexagon: 'mask-hexagon',
+  circle: 'rounded-full',
+} as Record<string, string>)[shape as string] || 'mask-squircle';
+const isCircle = shape === 'circle';
+---
+
+{imageUrl ? (
+  <img src={imageUrl} alt={alt} class={`${isCircle ? '' : 'mask'} ${shapeClass} h-40 w-40 object-cover`} />
+) : null}

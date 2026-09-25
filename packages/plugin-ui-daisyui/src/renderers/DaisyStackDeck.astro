@@ -1,0 +1,14 @@
+---
+const { items = [] } = Astro.props;
+---
+
+<div class="stack">
+  {items.map((item: any, index: number) => (
+    <div class={`card border border-base-300 bg-base-100 shadow-sm ${index === 0 ? '' : 'translate-x-2 translate-y-2'}`}>
+      <div class="card-body p-4">
+        <p class="font-medium">{item?.title}</p>
+        {item?.description ? <p class="text-sm text-base-content/60">{item.description}</p> : null}
+      </div>
+    </div>
+  ))}
+</div>

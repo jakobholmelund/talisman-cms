@@ -1,0 +1,14 @@
+---
+const { author, message, side = 'start', tone = 'neutral' } = Astro.props;
+const bubbleClass = ({
+  primary: 'chat-bubble-primary',
+  secondary: 'chat-bubble-secondary',
+  accent: 'chat-bubble-accent',
+  neutral: 'chat-bubble-neutral',
+} as Record<string, string>)[tone as string] || 'chat-bubble-neutral';
+---
+
+<div class={`chat ${side === 'end' ? 'chat-end' : 'chat-start'}`}>
+  {author ? <div class="chat-header">{author}</div> : null}
+  <div class={`chat-bubble ${bubbleClass}`}>{message}</div>
+</div>

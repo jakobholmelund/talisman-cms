@@ -1,0 +1,21 @@
+---
+const { title, content, actionLabel, actionHref, triggerLabel = 'Open dialog' } = Astro.props;
+const modalId = `daisy-modal-${Math.random().toString(36).slice(2, 10)}`;
+---
+
+<>
+  <label for={modalId} class="btn btn-primary">{triggerLabel}</label>
+  <input id={modalId} type="checkbox" class="modal-toggle" />
+  <div class="modal" role="dialog">
+    <div class="modal-box">
+      <h3 class="text-lg font-bold">{title}</h3>
+      <p class="py-4 text-sm text-base-content/70">{content}</p>
+      {actionLabel && actionHref ? (
+        <div class="modal-action justify-start">
+          <a href={actionHref} class="btn btn-primary">{actionLabel}</a>
+        </div>
+      ) : null}
+    </div>
+    <label class="modal-backdrop" for={modalId}>Close</label>
+  </div>
+</>

@@ -1,0 +1,105 @@
+---
+import CartBadge from '@talisman-cms/plugin-ecommerce/components/CartBadge.astro';
+
+const navLinks = [
+  { href: '/', label: 'Home' },
+  { href: '/shop', label: 'Shop' },
+  { href: '/blog', label: 'Blog' },
+];
+
+const currentPath = Astro.url.pathname;
+---
+
+<header class="fixed top-0 inset-x-0 z-50 transition-all duration-300 glass border-b border-white/20">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="flex justify-between items-center h-16">
+      
+      <!-- Logo -->
+      <div class="flex-shrink-0 flex items-center">
+        <a href="/" class="text-xl font-bold text-primary hover:scale-105 transition-transform origin-left">
+          Talisman Showcase
+        </a>
+      </div>
+
+      <!-- Desktop Nav -->
+      <nav class="hidden md:flex space-x-8 items-center">
+        {navLinks.map(link => {
+          const isActive = currentPath === link.href || (link.href !== '/' && currentPath.startsWith(link.href));
+          return (
+            <a 
+              href={link.href} 
+              class={`text-sm font-medium transition-colors hover:text-primary ${isActive ? 'text-primary' : 'text-base-content/70'}`}
+            >
+              {link.label}
+            </a>
+          );
+        })}
+        <CartBadge server:defer>
+          <span slot="fallback" class="inline-flex items-center gap-2 rounded-full border border-base-content/10 bg-base-100/50 px-4 py-2 text-sm font-medium text-base-content/50 animate-pulse">
+            Cart
+            <span class="inline-flex min-w-6 items-center justify-center rounded-full bg-base-300 px-2 py-0.5 text-xs text-transparent">0</span>
+          </span>
+        </CartBadge>
+        <div class="pl-4 border-l border-base-content/10 hidden md:block">
+          <a href="/admin" target="_blank" class="btn btn-outline btn-sm">
+            CMS Admin
+          </a>
+        </div>
+        
+        <button id="theme-toggle" class="btn btn-ghost btn-circle btn-sm" aria-label="Toggle Theme">
+          <!-- Sun Icon (shows in dark mode) -->
+          <svg class="swap-on fill-current w-5 h-5 hidden dark-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5.64,17l-.71.71a1,1,0,0,0,0,1.41,1,1,0,0,0,1.41,0l.71-.71A1,1,0,0,0,5.64,17ZM5,12a1,1,0,0,0-1-1H3a1,1,0,0,0,0,2H4A1,1,0,0,0,5,12Zm7-7a1,1,0,0,0,1-1V3a1,1,0,0,0-2,0V4A1,1,0,0,0,12,5ZM5.64,7.05a1,1,0,0,0,.7.29,1,1,0,0,0,.71-.29,1,1,0,0,0,0-1.41l-.71-.71A1,1,0,0,0,4.93,6.34Zm12,.29a1,1,0,0,0,.7-.29l.71-.71a1,1,0,1,0-1.41-1.41L17,5.64a1,1,0,0,0,0,1.41A1,1,0,0,0,17.66,7.34ZM21,11H20a1,1,0,0,0,0,2h1a1,1,0,0,0,0-2Zm-9,8a1,1,0,0,0-1,1v1a1,1,0,0,0,2,0V20A1,1,0,0,0,12,19ZM18.36,17A1,1,0,0,0,17,18.36l.71.71a1,1,0,0,0,1.41,0,1,1,0,0,0,0-1.41ZM12,6.5A5.5,5.5,0,1,0,17.5,12,5.51,5.51,0,0,0,12,6.5Zm0,9A3.5,3.5,0,1,1,15.5,12,3.5,3.5,0,0,1,12,15.5Z"/></svg>
+          <!-- Moon Icon (shows in light mode) -->
+          <svg class="swap-off fill-current w-5 h-5 hidden light-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21.64,13a1,1,0,0,0-1.05-.14,8.05,8.05,0,0,1-3.37.73A8.15,8.15,0,0,1,9.08,5.49a8.59,8.59,0,0,1,.25-2A1,1,0,0,0,8,2.36,10.14,10.14,0,1,0,22,14.05,1,1,0,0,0,21.64,13Zm-9.5,6.69A8.14,8.14,0,0,1,7.08,5.22v.27A10.15,10.15,0,0,0,17.22,15.63a9.79,9.79,0,0,0,2.1-.22A8.11,8.11,0,0,1,12.14,19.73Z"/></svg>
+        </button>
+      </nav>
+
+    </div>
+  </div>
+</header>
+
+<script is:inline>
+  function setupThemeToggle() {
+    const toggleBtn = document.getElementById('theme-toggle');
+    const lightIcon = toggleBtn?.querySelector('.light-icon');
+    const darkIcon = toggleBtn?.querySelector('.dark-icon');
+    
+    const updateIcon = (themeMode) => {
+      if (themeMode === 'dark') {
+        lightIcon?.classList.add('hidden');
+        darkIcon?.classList.remove('hidden');
+      } else {
+        darkIcon?.classList.add('hidden');
+        lightIcon?.classList.remove('hidden');
+      }
+    };
+
+    if (toggleBtn) {
+      // Initial icon state
+      const savedTheme = localStorage.getItem('talisman-theme');
+      const isDarkOS = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const initialMode = savedTheme === 'dark' || (!savedTheme && isDarkOS) ? 'dark' : 'light';
+      updateIcon(initialMode);
+
+      toggleBtn.onclick = () => {
+        const currentDataTheme = document.documentElement.getAttribute('data-theme');
+        
+        // Determine if currently in dark mode (comparing against the dynamic theme name)
+        const isCurrentlyDark = currentDataTheme === window.talismanThemes?.dark;
+        const newMode = isCurrentlyDark ? 'light' : 'dark';
+        
+        // Apply the new theme string provided by DaisyUiThemeInjector
+        const newThemeName = window.talismanThemes?.[newMode] || newMode;
+        document.documentElement.setAttribute('data-theme', newThemeName);
+        
+        // Save intent to localStorage
+        localStorage.setItem('talisman-theme', newMode);
+        
+        updateIcon(newMode);
+      };
+    }
+  }
+
+  document.addEventListener('astro:page-load', setupThemeToggle);
+  setupThemeToggle();
+</script>

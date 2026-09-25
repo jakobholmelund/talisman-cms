@@ -1,0 +1,8 @@
+packages:
+  - packages/*
+  - playground
+
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+  - workerd

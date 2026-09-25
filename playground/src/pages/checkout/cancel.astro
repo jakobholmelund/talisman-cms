@@ -1,0 +1,31 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { env as cfEnv } from 'cloudflare:workers';
+import { createCommerceApi } from '../../lib/commerce';
+
+const orderId = Astro.url.searchParams.get('order');
+if (orderId) {
+  const api = createCommerceApi(cfEnv as any);
+  await api.orders.cancel(orderId);
+}
+---
+
+<Layout title="Checkout Cancelled | Talisman CMS Showcase" description="Cancelled checkout state for the Talisman storefront demo.">
+  <section class="py-12 animate-fade-in-up">
+    <div class="mx-auto max-w-2xl rounded-[2.5rem] border border-amber-200 bg-amber-50 p-8 text-center shadow-sm">
+      <p class="text-sm font-semibold uppercase tracking-[0.3em] text-amber-700">Checkout cancelled</p>
+      <h1 class="mt-3 text-4xl font-black tracking-tight text-amber-950">Your cart is unlocked again</h1>
+      <p class="mt-3 text-sm text-amber-900">
+        Any pending order for this checkout was marked as cancelled, and you can return to the cart or retry checkout.
+      </p>
+      <div class="mt-8 flex flex-wrap justify-center gap-3">
+        <a href="/checkout?cancelled=1" class="inline-flex h-11 items-center justify-center rounded-full bg-amber-900 px-6 text-sm font-medium text-white transition-colors hover:bg-amber-950">
+          Retry checkout
+        </a>
+        <a href="/cart" class="inline-flex h-11 items-center justify-center rounded-full border border-amber-300 bg-white px-6 text-sm font-medium text-amber-950 transition-colors hover:bg-amber-100">
+          Review cart
+        </a>
+      </div>
+    </div>
+  </section>
+</Layout>

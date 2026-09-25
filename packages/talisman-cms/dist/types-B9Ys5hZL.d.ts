@@ -1,0 +1,49 @@
+import { AstroGlobal } from 'astro';
+
+interface TalismanUser {
+    id: string;
+    email: string;
+    name?: string;
+    avatarUrl?: string;
+    role: 'admin' | 'editor';
+}
+interface TalismanAuthRuntimeDescriptor {
+    /**
+     * Module specifier that can recreate this adapter in the built server runtime.
+     */
+    moduleId: string;
+    /**
+     * Named export to import from `moduleId`.
+     */
+    exportName: string;
+    /**
+     * Whether the export is a ready-to-use adapter value or a factory function.
+     * @default 'factory'
+     */
+    type?: 'factory' | 'value';
+    /** JSON-serializable arguments for a runtime factory. */
+    args?: unknown[];
+}
+interface TalismanAuthAdapter {
+    /**
+     * Evaluates the current incoming request and returns the authenticated user if valid.
+     */
+    getUser(req: Request | AstroGlobal['request']): Promise<TalismanUser | null>;
+    /**
+     * Triggers the sign-in flow. For SSR redirects, this might throw a Response.
+     */
+    signIn(req: Request | AstroGlobal['request']): Promise<Response>;
+    /**
+     * Destroys the current session.
+     */
+    signOut(req: Request | AstroGlobal['request']): Promise<Response>;
+    /** Optional handler for /api/auth/* routes owned by this adapter. */
+    handle?(req: Request | AstroGlobal['request']): Promise<Response>;
+    /**
+     * Optional runtime metadata used by the integration to rehydrate adapters in
+     * built server runtimes where process-local state is not preserved.
+     */
+    __talismanAuthRuntime?: TalismanAuthRuntimeDescriptor;
+}
+
+export type { TalismanAuthAdapter as T, TalismanUser as a };

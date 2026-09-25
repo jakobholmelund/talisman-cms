@@ -1,0 +1,19 @@
+---
+const { title, content, side = 'start', buttonLabel = 'Open drawer' } = Astro.props;
+const drawerId = `daisy-drawer-${Math.random().toString(36).slice(2, 10)}`;
+const endClass = side === 'end' ? 'drawer-end' : '';
+---
+
+<div class={`drawer ${endClass}`}>
+  <input id={drawerId} type="checkbox" class="drawer-toggle" />
+  <div class="drawer-content">
+    <label for={drawerId} class="btn btn-primary">{buttonLabel}</label>
+  </div>
+  <div class="drawer-side z-10">
+    <label for={drawerId} aria-label="close sidebar" class="drawer-overlay"></label>
+    <div class="min-h-full w-80 bg-base-200 p-6 text-base-content">
+      <h3 class="text-lg font-semibold">{title}</h3>
+      <p class="mt-3 text-sm text-base-content/70">{content}</p>
+    </div>
+  </div>
+</div>

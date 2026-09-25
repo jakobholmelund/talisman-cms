@@ -1,0 +1,52 @@
+---
+import { Image } from 'astro:assets';
+
+interface Props {
+  heading: string;
+  subheading?: string;
+  backgroundImage?: string;
+  pillText?: string;
+  className?: string;
+  containerClassName?: string;
+  dataTheme?: string;
+}
+
+const { heading, subheading, backgroundImage, pillText, className, containerClassName, dataTheme } = Astro.props;
+---
+
+<section class={`relative py-20 md:py-32 overflow-hidden rounded-3xl animate-fade-in-up ${className || ''}`} data-theme={dataTheme}>
+  {backgroundImage && (
+    <div class="absolute inset-0 z-0">
+      <Image 
+        src={backgroundImage} 
+        alt={heading ? `${heading} Background` : 'Hero Background'} 
+        width={1920}
+        height={1080}
+        class="w-full h-full object-cover" 
+        loading="eager"
+        fetchpriority="high"
+      />
+      <div class="absolute inset-0 bg-white/70 backdrop-blur-[2px]"></div>
+    </div>
+  )}
+  
+  <div class={`${containerClassName || 'relative z-10 max-w-4xl mx-auto text-center px-4'} ${backgroundImage ? '' : 'bg-gradient-to-br from-brand-50 to-purple-50 rounded-3xl py-16'}`}>
+    {pillText && (
+       <div class="inline-flex items-center rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-sm font-medium text-brand-800 mb-6 shadow-sm">
+         <span class="flex h-2 w-2 rounded-full bg-brand-600 mr-2 animate-pulse"></span>
+         {pillText}
+       </div>
+    )}
+    <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-gray-900 via-brand-900 to-indigo-900 mb-6 drop-shadow-sm">
+      {heading}
+    </h1>
+    {subheading && (
+      <p class="mt-4 text-xl md:text-2xl text-gray-600 max-w-2xl mx-auto leading-relaxed">
+        {subheading}
+      </p>
+    )}
+    <div class="mt-10 flex flex-wrap justify-center gap-4">
+      <slot name="actions" />
+    </div>
+  </div>
+</section>

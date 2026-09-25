@@ -1,0 +1,4891 @@
+{
+  "pluginName": "@talisman-cms/plugin-ui-daisyui",
+  "library": {
+    "id": "daisyui",
+    "name": "daisyUI",
+    "requirements": [
+      {
+        "id": "package",
+        "kind": "package",
+        "label": "Install daisyUI",
+        "value": "daisyui"
+      },
+      {
+        "id": "tailwind",
+        "kind": "tailwind",
+        "label": "Enable daisyUI plugin",
+        "value": "Add daisyUI to your Tailwind or Astro CSS pipeline"
+      },
+      {
+        "id": "theme",
+        "kind": "theme",
+        "label": "Configure a theme",
+        "value": "Set a daisyUI theme or rely on the default theme",
+        "optional": true
+      }
+    ]
+  },
+  "generation": {
+    "generatedFilePath": "src/generated.ts",
+    "importSourcePath": "catalog.upstream.json",
+    "rendererStubTemplate": "astro-component"
+  },
+  "upstreamCatalog": [
+    {
+      "id": "accordion",
+      "name": "Accordion",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "alert",
+      "name": "Alert",
+      "kind": "component",
+      "category": "Feedback",
+      "variants": [
+        "info",
+        "success",
+        "warning",
+        "error"
+      ]
+    },
+    {
+      "id": "avatar",
+      "name": "Avatar",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "circle",
+        "squircle",
+        "rounded"
+      ]
+    },
+    {
+      "id": "badge",
+      "name": "Badge",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ]
+    },
+    {
+      "id": "breadcrumbs",
+      "name": "Breadcrumbs",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "button",
+      "name": "Button",
+      "kind": "component",
+      "category": "Actions",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "ghost"
+      ]
+    },
+    {
+      "id": "calendar",
+      "name": "Calendar",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "highlight"
+      ]
+    },
+    {
+      "id": "card",
+      "name": "Card",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ]
+    },
+    {
+      "id": "carousel",
+      "name": "Carousel",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "chat-bubble",
+      "name": "Chat bubble",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "start",
+        "end"
+      ]
+    },
+    {
+      "id": "checkbox",
+      "name": "Checkbox",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ]
+    },
+    {
+      "id": "collapse",
+      "name": "Collapse",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "arrow",
+        "plus",
+        "default"
+      ]
+    },
+    {
+      "id": "countdown",
+      "name": "Countdown",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "diff",
+      "name": "Diff",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "divider",
+      "name": "Divider",
+      "kind": "component",
+      "category": "Layout",
+      "variants": [
+        "default",
+        "primary",
+        "secondary",
+        "accent"
+      ]
+    },
+    {
+      "id": "dock",
+      "name": "Dock",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "drawer",
+      "name": "Drawer sidebar",
+      "kind": "component",
+      "category": "Layout",
+      "variants": [
+        "start",
+        "end"
+      ]
+    },
+    {
+      "id": "dropdown",
+      "name": "Dropdown",
+      "kind": "component",
+      "category": "Actions",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "ghost"
+      ]
+    },
+    {
+      "id": "fab",
+      "name": "FAB / Speed Dial",
+      "kind": "component",
+      "category": "Actions",
+      "variants": [
+        "bottom-end",
+        "bottom-start",
+        "top-end",
+        "top-start"
+      ]
+    },
+    {
+      "id": "fieldset",
+      "name": "Fieldset",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "file-input",
+      "name": "File Input",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ]
+    },
+    {
+      "id": "filter",
+      "name": "Filter",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "footer",
+      "name": "Footer",
+      "kind": "component",
+      "category": "Layout",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "hero",
+      "name": "Hero",
+      "kind": "block",
+      "category": "Layout",
+      "variants": []
+    },
+    {
+      "id": "hover-3d-card",
+      "name": "Hover 3D Card",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "hover-gallery",
+      "name": "Hover Gallery",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "indicator",
+      "name": "Indicator",
+      "kind": "component",
+      "category": "Layout",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ]
+    },
+    {
+      "id": "input",
+      "name": "Text Input",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ]
+    },
+    {
+      "id": "join",
+      "name": "Join",
+      "kind": "component",
+      "category": "Layout",
+      "variants": [
+        "default",
+        "primary",
+        "secondary",
+        "accent"
+      ]
+    },
+    {
+      "id": "kbd",
+      "name": "Kbd",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "sm",
+        "md",
+        "lg"
+      ]
+    },
+    {
+      "id": "label",
+      "name": "Label",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "link",
+      "name": "Link",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ]
+    },
+    {
+      "id": "list",
+      "name": "List",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "default",
+        "primary",
+        "secondary",
+        "accent"
+      ]
+    },
+    {
+      "id": "loading",
+      "name": "Loading",
+      "kind": "component",
+      "category": "Feedback",
+      "variants": [
+        "spinner",
+        "dots",
+        "ring",
+        "ball",
+        "bars"
+      ]
+    },
+    {
+      "id": "mask",
+      "name": "Mask",
+      "kind": "component",
+      "category": "Layout",
+      "variants": [
+        "squircle",
+        "heart",
+        "hexagon",
+        "circle"
+      ]
+    },
+    {
+      "id": "menu",
+      "name": "Menu",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [
+        "vertical",
+        "horizontal"
+      ]
+    },
+    {
+      "id": "mockup-browser",
+      "name": "Browser",
+      "kind": "component",
+      "category": "Mockup",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "mockup-code",
+      "name": "Code",
+      "kind": "component",
+      "category": "Mockup",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "mockup-phone",
+      "name": "Phone",
+      "kind": "component",
+      "category": "Mockup",
+      "variants": [
+        "image",
+        "content"
+      ]
+    },
+    {
+      "id": "mockup-window",
+      "name": "Window",
+      "kind": "component",
+      "category": "Mockup",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "modal",
+      "name": "Modal",
+      "kind": "component",
+      "category": "Actions",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "navbar",
+      "name": "Navbar",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "pagination",
+      "name": "Pagination",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "progress",
+      "name": "Progress",
+      "kind": "component",
+      "category": "Feedback",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ]
+    },
+    {
+      "id": "radial-progress",
+      "name": "Radial progress",
+      "kind": "component",
+      "category": "Feedback",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "radio",
+      "name": "Radio",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ]
+    },
+    {
+      "id": "range",
+      "name": "Range",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ]
+    },
+    {
+      "id": "rating",
+      "name": "Rating",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ]
+    },
+    {
+      "id": "select",
+      "name": "Select",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ]
+    },
+    {
+      "id": "skeleton",
+      "name": "Skeleton",
+      "kind": "component",
+      "category": "Feedback",
+      "variants": [
+        "rounded",
+        "circle",
+        "square"
+      ]
+    },
+    {
+      "id": "stack",
+      "name": "Stack",
+      "kind": "component",
+      "category": "Layout",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "stat",
+      "name": "Stat",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ]
+    },
+    {
+      "id": "status",
+      "name": "Status",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "success",
+        "warning",
+        "error",
+        "info",
+        "neutral"
+      ]
+    },
+    {
+      "id": "steps",
+      "name": "Steps",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ]
+    },
+    {
+      "id": "swap",
+      "name": "Swap",
+      "kind": "component",
+      "category": "Actions",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ]
+    },
+    {
+      "id": "tabs",
+      "name": "Tab",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [
+        "boxed",
+        "bordered",
+        "lifted"
+      ]
+    },
+    {
+      "id": "table",
+      "name": "Table",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "zebra"
+      ]
+    },
+    {
+      "id": "text-rotate",
+      "name": "Text Rotate",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "default"
+      ]
+    },
+    {
+      "id": "textarea",
+      "name": "Textarea",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ]
+    },
+    {
+      "id": "theme-controller",
+      "name": "Theme Controller",
+      "kind": "component",
+      "category": "Actions",
+      "variants": [
+        "light",
+        "dark",
+        "cupcake",
+        "business"
+      ]
+    },
+    {
+      "id": "timeline",
+      "name": "Timeline",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "vertical"
+      ]
+    },
+    {
+      "id": "toast",
+      "name": "Toast",
+      "kind": "component",
+      "category": "Feedback",
+      "variants": [
+        "top-start",
+        "top-end",
+        "bottom-start",
+        "bottom-end"
+      ]
+    },
+    {
+      "id": "toggle",
+      "name": "Toggle",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ]
+    },
+    {
+      "id": "tooltip",
+      "name": "Tooltip",
+      "kind": "component",
+      "category": "Feedback",
+      "variants": [
+        "top",
+        "bottom",
+        "left",
+        "right"
+      ]
+    },
+    {
+      "id": "validator",
+      "name": "Validator",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "success",
+        "warning",
+        "error"
+      ]
+    }
+  ],
+  "items": [
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "accordion",
+      "upstreamItemName": "Accordion",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a stacked accordion list built from explicit items.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyAccordionList.astro",
+        "localFilePath": "src/renderers/DaisyAccordionList.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyAccordionList",
+        "name": "Accordion List",
+        "description": "Accordion list with item title, content, and default-open state.",
+        "fields": [
+          {
+            "name": "items",
+            "label": "Items",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "title",
+                "label": "Title",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "content",
+                "label": "Content",
+                "type": "textarea",
+                "required": true
+              },
+              {
+                "name": "open",
+                "label": "Open by Default",
+                "type": "boolean",
+                "defaultValue": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "alert",
+      "upstreamItemName": "Alert",
+      "kind": "component",
+      "category": "Feedback",
+      "variants": [
+        "info",
+        "success",
+        "warning",
+        "error"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a standard alert component for status and notice messaging.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyAlertNotice.astro",
+        "localFilePath": "src/renderers/DaisyAlertNotice.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyAlertNotice",
+        "name": "Alert Notice",
+        "description": "Status message banner with tone and optional supporting text.",
+        "fields": [
+          {
+            "name": "title",
+            "label": "Title",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "description",
+            "label": "Description",
+            "type": "textarea"
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "info",
+              "success",
+              "warning",
+              "error"
+            ],
+            "defaultValue": "info",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "avatar",
+      "upstreamItemName": "Avatar",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "circle",
+        "squircle",
+        "rounded"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a lightweight avatar component with image and fallback support.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyAvatarProfile.astro",
+        "localFilePath": "src/renderers/DaisyAvatarProfile.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyAvatarProfile",
+        "name": "Avatar Profile",
+        "description": "Avatar image with selectable size, shape, and fallback initials.",
+        "fields": [
+          {
+            "name": "imageUrl",
+            "label": "Image URL",
+            "type": "text"
+          },
+          {
+            "name": "alt",
+            "label": "Alt Text",
+            "type": "text",
+            "defaultValue": "Avatar"
+          },
+          {
+            "name": "fallback",
+            "label": "Fallback Label",
+            "type": "text",
+            "defaultValue": "?"
+          },
+          {
+            "name": "size",
+            "label": "Size",
+            "type": "select",
+            "options": [
+              "sm",
+              "md",
+              "lg"
+            ],
+            "defaultValue": "md",
+            "required": true
+          },
+          {
+            "name": "shape",
+            "label": "Shape",
+            "type": "select",
+            "options": [
+              "circle",
+              "squircle",
+              "rounded"
+            ],
+            "defaultValue": "circle",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "badge",
+      "upstreamItemName": "Badge",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": [
+          {
+            "itemId": "hero",
+            "slotName": "actions"
+          }
+        ]
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a reusable badge component used on its own and inside the Hero block action slot.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyBadgePill.astro",
+        "localFilePath": "src/renderers/DaisyBadgePill.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyBadgePill",
+        "name": "Badge Pill",
+        "description": "Inline badge for highlights and metadata.",
+        "category": "Feedback",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "accent",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "breadcrumbs",
+      "upstreamItemName": "Breadcrumbs",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a breadcrumb trail with explicit items.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyBreadcrumbTrail.astro",
+        "localFilePath": "src/renderers/DaisyBreadcrumbTrail.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyBreadcrumbTrail",
+        "name": "Breadcrumb Trail",
+        "description": "Breadcrumb navigation with explicit labels and links.",
+        "fields": [
+          {
+            "name": "items",
+            "label": "Items",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "label",
+                "label": "Label",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "href",
+                "label": "URL",
+                "type": "text"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "button",
+      "upstreamItemName": "Button",
+      "kind": "component",
+      "category": "Actions",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "ghost"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": [
+          {
+            "itemId": "hero",
+            "slotName": "actions"
+          }
+        ]
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to the reusable CTA component used in composed Daisy blocks.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyButtonAction.astro",
+        "localFilePath": "src/renderers/DaisyButtonAction.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyButtonAction",
+        "name": "Button Action",
+        "description": "CTA button for hero and promo sections.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "href",
+            "label": "URL",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "style",
+            "label": "Style",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "ghost"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          },
+          {
+            "name": "size",
+            "label": "Size",
+            "type": "select",
+            "options": [
+              "sm",
+              "md",
+              "lg"
+            ],
+            "defaultValue": "md",
+            "required": true
+          }
+        ],
+        "presets": [
+          {
+            "id": "daisy-primary-cta",
+            "label": "Primary CTA",
+            "variant": "primary",
+            "props": {
+              "label": "Get started",
+              "href": "/get-started",
+              "style": "primary",
+              "size": "lg"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "calendar",
+      "upstreamItemName": "Calendar",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "highlight"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a presentational calendar grid with simple day metadata.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyCalendarCard.astro",
+        "localFilePath": "src/renderers/DaisyCalendarCard.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyCalendarCard",
+        "name": "Calendar Card",
+        "description": "Simple calendar card with month heading and day cells.",
+        "fields": [
+          {
+            "name": "month",
+            "label": "Month Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "days",
+            "label": "Days",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "label",
+                "label": "Day Label",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "meta",
+                "label": "Meta",
+                "type": "text"
+              },
+              {
+                "name": "highlight",
+                "label": "Highlight",
+                "type": "boolean",
+                "defaultValue": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "card",
+      "upstreamItemName": "Card",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": [
+          {
+            "itemId": "grid",
+            "slotName": "items"
+          }
+        ]
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to the content card component used directly and in the custom Feature Grid block.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyFeatureCard.astro",
+        "localFilePath": "src/renderers/DaisyFeatureCard.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyFeatureCard",
+        "name": "Feature Card",
+        "description": "Card with icon, title, description, and optional CTA.",
+        "category": "Content",
+        "fields": [
+          {
+            "name": "eyebrow",
+            "label": "Eyebrow",
+            "type": "text"
+          },
+          {
+            "name": "title",
+            "label": "Title",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "description",
+            "label": "Description",
+            "type": "textarea",
+            "required": true
+          },
+          {
+            "name": "href",
+            "label": "URL",
+            "type": "text"
+          },
+          {
+            "name": "ctaLabel",
+            "label": "CTA Label",
+            "type": "text"
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "carousel",
+      "upstreamItemName": "Carousel",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a presentational carousel strip built from explicit items.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyCarouselStrip.astro",
+        "localFilePath": "src/renderers/DaisyCarouselStrip.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyCarouselStrip",
+        "name": "Carousel Strip",
+        "description": "Carousel preview built from explicit slides.",
+        "fields": [
+          {
+            "name": "items",
+            "label": "Slides",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "title",
+                "label": "Title",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "description",
+                "label": "Description",
+                "type": "textarea"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "chat-bubble",
+      "upstreamItemName": "Chat bubble",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "start",
+        "end",
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a single chat bubble with author, side, and tone.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyChatBubble.astro",
+        "localFilePath": "src/renderers/DaisyChatBubble.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyChatBubble",
+        "name": "Chat Bubble",
+        "description": "Single conversation bubble with side alignment and tone.",
+        "fields": [
+          {
+            "name": "author",
+            "label": "Author",
+            "type": "text"
+          },
+          {
+            "name": "message",
+            "label": "Message",
+            "type": "textarea",
+            "required": true
+          },
+          {
+            "name": "side",
+            "label": "Side",
+            "type": "select",
+            "options": [
+              "start",
+              "end"
+            ],
+            "defaultValue": "start",
+            "required": true
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "neutral",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "checkbox",
+      "upstreamItemName": "Checkbox",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a presentational checkbox field with label and tone.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyCheckboxField.astro",
+        "localFilePath": "src/renderers/DaisyCheckboxField.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyCheckboxField",
+        "name": "Checkbox Field",
+        "description": "Checkbox input preview.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "checked",
+            "label": "Checked",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "collapse",
+      "upstreamItemName": "Collapse",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "arrow",
+        "plus",
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a single collapsible panel with selectable indicator style.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyCollapsePanel.astro",
+        "localFilePath": "src/renderers/DaisyCollapsePanel.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyCollapsePanel",
+        "name": "Collapse Panel",
+        "description": "Single disclosure panel with title and content.",
+        "fields": [
+          {
+            "name": "title",
+            "label": "Title",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "content",
+            "label": "Content",
+            "type": "textarea",
+            "required": true
+          },
+          {
+            "name": "open",
+            "label": "Open by Default",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "name": "style",
+            "label": "Style",
+            "type": "select",
+            "options": [
+              "arrow",
+              "plus",
+              "default"
+            ],
+            "defaultValue": "arrow",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "countdown",
+      "upstreamItemName": "Countdown",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a presentational countdown number with optional label.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyCountdownTimer.astro",
+        "localFilePath": "src/renderers/DaisyCountdownTimer.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyCountdownTimer",
+        "name": "Countdown Timer",
+        "description": "Presentational countdown value with optional label.",
+        "fields": [
+          {
+            "name": "value",
+            "label": "Value",
+            "type": "number",
+            "required": true,
+            "defaultValue": 12
+          },
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text"
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "diff",
+      "upstreamItemName": "Diff",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a before/after comparison frame using text content.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyDiffCompare.astro",
+        "localFilePath": "src/renderers/DaisyDiffCompare.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyDiffCompare",
+        "name": "Diff Compare",
+        "description": "Before and after comparison with labels and text content.",
+        "fields": [
+          {
+            "name": "beforeLabel",
+            "label": "Before Label",
+            "type": "text",
+            "defaultValue": "Before"
+          },
+          {
+            "name": "beforeText",
+            "label": "Before Text",
+            "type": "textarea",
+            "required": true
+          },
+          {
+            "name": "afterLabel",
+            "label": "After Label",
+            "type": "text",
+            "defaultValue": "After"
+          },
+          {
+            "name": "afterText",
+            "label": "After Text",
+            "type": "textarea",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "divider",
+      "upstreamItemName": "Divider",
+      "kind": "component",
+      "category": "Layout",
+      "variants": [
+        "default",
+        "primary",
+        "secondary",
+        "accent"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a presentational divider with optional label and orientation.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyDividerRule.astro",
+        "localFilePath": "src/renderers/DaisyDividerRule.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyDividerRule",
+        "name": "Divider Rule",
+        "description": "Visual divider with optional label, tone, and vertical layout.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text"
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "default",
+              "primary",
+              "secondary",
+              "accent"
+            ],
+            "defaultValue": "default",
+            "required": true
+          },
+          {
+            "name": "direction",
+            "label": "Direction",
+            "type": "select",
+            "options": [
+              "horizontal",
+              "vertical"
+            ],
+            "defaultValue": "horizontal",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "dock",
+      "upstreamItemName": "Dock",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a bottom dock nav with explicit items.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyDockNav.astro",
+        "localFilePath": "src/renderers/DaisyDockNav.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyDockNav",
+        "name": "Dock Nav",
+        "description": "Dock navigation with explicit items.",
+        "fields": [
+          {
+            "name": "items",
+            "label": "Items",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "label",
+                "label": "Label",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "href",
+                "label": "URL",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "active",
+                "label": "Active",
+                "type": "boolean",
+                "defaultValue": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "drawer",
+      "upstreamItemName": "Drawer sidebar",
+      "kind": "component",
+      "category": "Layout",
+      "variants": [
+        "start",
+        "end"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a checkbox-driven drawer shell with simple text body content.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyDrawerShell.astro",
+        "localFilePath": "src/renderers/DaisyDrawerShell.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyDrawerShell",
+        "name": "Drawer Shell",
+        "description": "Drawer trigger and side panel with title and body copy.",
+        "fields": [
+          {
+            "name": "buttonLabel",
+            "label": "Button Label",
+            "type": "text",
+            "required": true,
+            "defaultValue": "Open drawer"
+          },
+          {
+            "name": "title",
+            "label": "Title",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "content",
+            "label": "Content",
+            "type": "textarea",
+            "required": true
+          },
+          {
+            "name": "side",
+            "label": "Side",
+            "type": "select",
+            "options": [
+              "start",
+              "end"
+            ],
+            "defaultValue": "start",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "dropdown",
+      "upstreamItemName": "Dropdown",
+      "kind": "component",
+      "category": "Actions",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "ghost"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a dropdown trigger with explicit menu items.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyDropdownMenu.astro",
+        "localFilePath": "src/renderers/DaisyDropdownMenu.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyDropdownMenu",
+        "name": "Dropdown Menu",
+        "description": "Dropdown trigger button with explicit menu items.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "ghost"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          },
+          {
+            "name": "items",
+            "label": "Menu Items",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "label",
+                "label": "Label",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "href",
+                "label": "URL",
+                "type": "text",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "fab",
+      "upstreamItemName": "FAB / Speed Dial",
+      "kind": "component",
+      "category": "Actions",
+      "variants": [
+        "bottom-end",
+        "bottom-start",
+        "top-end",
+        "top-start"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a floating action button preview.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyFabButton.astro",
+        "localFilePath": "src/renderers/DaisyFabButton.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyFabButton",
+        "name": "FAB Button",
+        "description": "Floating action button with tone and position.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "href",
+            "label": "URL",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          },
+          {
+            "name": "position",
+            "label": "Position",
+            "type": "select",
+            "options": [
+              "bottom-end",
+              "bottom-start",
+              "top-end",
+              "top-start"
+            ],
+            "defaultValue": "bottom-end",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "fieldset",
+      "upstreamItemName": "Fieldset",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a fieldset preview with explicit fields and hint text.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyFieldsetGroup.astro",
+        "localFilePath": "src/renderers/DaisyFieldsetGroup.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyFieldsetGroup",
+        "name": "Fieldset Group",
+        "description": "Fieldset with explicit field labels and placeholders.",
+        "fields": [
+          {
+            "name": "legend",
+            "label": "Legend",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "hint",
+            "label": "Hint",
+            "type": "text"
+          },
+          {
+            "name": "fields",
+            "label": "Fields",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "label",
+                "label": "Label",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "placeholder",
+                "label": "Placeholder",
+                "type": "text"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "file-input",
+      "upstreamItemName": "File Input",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a presentational file input.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyFileInputField.astro",
+        "localFilePath": "src/renderers/DaisyFileInputField.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyFileInputField",
+        "name": "File Input Field",
+        "description": "File input preview with label and tone.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "filter",
+      "upstreamItemName": "Filter",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a set of radio-like filter chips.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyFilterChips.astro",
+        "localFilePath": "src/renderers/DaisyFilterChips.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyFilterChips",
+        "name": "Filter Chips",
+        "description": "Filter chip group with active item state.",
+        "fields": [
+          {
+            "name": "items",
+            "label": "Items",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "label",
+                "label": "Label",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "active",
+                "label": "Active",
+                "type": "boolean",
+                "defaultValue": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "footer",
+      "upstreamItemName": "Footer",
+      "kind": "component",
+      "category": "Layout",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a footer with sections and links.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyFooterLinks.astro",
+        "localFilePath": "src/renderers/DaisyFooterLinks.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyFooterLinks",
+        "name": "Footer Links",
+        "description": "Footer with brand title and link sections.",
+        "fields": [
+          {
+            "name": "title",
+            "label": "Title",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "sections",
+            "label": "Sections",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "title",
+                "label": "Section Title",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "links",
+                "label": "Links",
+                "type": "array",
+                "required": true,
+                "fields": [
+                  {
+                    "name": "label",
+                    "label": "Label",
+                    "type": "text",
+                    "required": true
+                  },
+                  {
+                    "name": "href",
+                    "label": "URL",
+                    "type": "text",
+                    "required": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "custom",
+      "upstreamItemId": "grid",
+      "upstreamItemName": "Feature Grid",
+      "kind": "block",
+      "category": "Content",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [
+          {
+            "name": "items",
+            "label": "Feature Cards",
+            "hasMany": true,
+            "componentItemIds": [
+              "card"
+            ],
+            "allowInline": true,
+            "allowReferences": true
+          }
+        ],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Talisman-specific composed block built from the upstream Card adapter.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyFeatureGrid.astro",
+        "localFilePath": "src/renderers/DaisyFeatureGrid.astro"
+      },
+      "adapter": {
+        "kind": "block",
+        "slug": "daisyFeatureGrid",
+        "name": "Feature Grid",
+        "description": "Grid layout composed from reusable feature-card components.",
+        "fields": [
+          {
+            "name": "title",
+            "label": "Title",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "description",
+            "label": "Description",
+            "type": "textarea"
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "hero",
+      "upstreamItemName": "Hero",
+      "kind": "block",
+      "category": "Layout",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [
+          {
+            "name": "actions",
+            "label": "Actions",
+            "description": "Action buttons shown beneath the copy.",
+            "hasMany": true,
+            "componentItemIds": [
+              "button",
+              "badge"
+            ],
+            "allowInline": true,
+            "allowReferences": true
+          }
+        ],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a full-width block because the upstream Hero pattern is section-sized in Talisman.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyHeroBanner.astro",
+        "localFilePath": "src/renderers/DaisyHeroBanner.astro"
+      },
+      "adapter": {
+        "kind": "block",
+        "slug": "daisyHeroBanner",
+        "name": "Hero Banner",
+        "description": "Large hero section with supporting actions slot.",
+        "category": "Hero",
+        "fields": [
+          {
+            "name": "eyebrow",
+            "label": "Eyebrow",
+            "type": "text"
+          },
+          {
+            "name": "title",
+            "label": "Title",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "description",
+            "label": "Description",
+            "type": "textarea",
+            "required": true
+          },
+          {
+            "name": "imageUrl",
+            "label": "Image URL",
+            "type": "text"
+          },
+          {
+            "name": "alignment",
+            "label": "Alignment",
+            "type": "select",
+            "options": [
+              "side-by-side (image right)",
+              "side-by-side (image left)",
+              "centered"
+            ],
+            "defaultValue": "side-by-side (image right)",
+            "required": true
+          },
+          {
+            "name": "overlay",
+            "label": "Image Overlay",
+            "type": "boolean",
+            "defaultValue": false
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "hover-3d-card",
+      "upstreamItemName": "Hover 3D Card",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a simple hover tilt card.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyHoverTiltCard.astro",
+        "localFilePath": "src/renderers/DaisyHoverTiltCard.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyHoverTiltCard",
+        "name": "Hover Tilt Card",
+        "description": "Card preview with title and description.",
+        "fields": [
+          {
+            "name": "title",
+            "label": "Title",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "description",
+            "label": "Description",
+            "type": "textarea",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "hover-gallery",
+      "upstreamItemName": "Hover Gallery",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a simple hover gallery grid.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyHoverGallery.astro",
+        "localFilePath": "src/renderers/DaisyHoverGallery.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyHoverGallery",
+        "name": "Hover Gallery",
+        "description": "Gallery grid built from explicit cards.",
+        "fields": [
+          {
+            "name": "items",
+            "label": "Items",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "title",
+                "label": "Title",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "description",
+                "label": "Description",
+                "type": "textarea"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "indicator",
+      "upstreamItemName": "Indicator",
+      "kind": "component",
+      "category": "Layout",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to an indicator badge layered over a label panel.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyIndicatorBadge.astro",
+        "localFilePath": "src/renderers/DaisyIndicatorBadge.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyIndicatorBadge",
+        "name": "Indicator Badge",
+        "description": "Indicator badge over a simple label panel.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "indicator",
+            "label": "Indicator Text",
+            "type": "text",
+            "required": true,
+            "defaultValue": "New"
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "input",
+      "upstreamItemName": "Text Input",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a presentational text input preview.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyTextInput.astro",
+        "localFilePath": "src/renderers/DaisyTextInput.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyTextInput",
+        "name": "Text Input",
+        "description": "Text input preview with label, placeholder, and tone.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "placeholder",
+            "label": "Placeholder",
+            "type": "text"
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "join",
+      "upstreamItemName": "Join",
+      "kind": "component",
+      "category": "Layout",
+      "variants": [
+        "default",
+        "primary",
+        "secondary",
+        "accent"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a joined button or link group with explicit items.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyJoinGroup.astro",
+        "localFilePath": "src/renderers/DaisyJoinGroup.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyJoinGroup",
+        "name": "Join Group",
+        "description": "Joined actions rendered from explicit item labels and links.",
+        "fields": [
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "default",
+              "primary",
+              "secondary",
+              "accent"
+            ],
+            "defaultValue": "default",
+            "required": true
+          },
+          {
+            "name": "items",
+            "label": "Items",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "label",
+                "label": "Label",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "href",
+                "label": "URL",
+                "type": "text",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "kbd",
+      "upstreamItemName": "Kbd",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "sm",
+        "md",
+        "lg"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a keyboard keycap component for shortcuts and input hints.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyKeycap.astro",
+        "localFilePath": "src/renderers/DaisyKeycap.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyKeycap",
+        "name": "Keycap",
+        "description": "Keyboard shortcut token rendered with daisyUI kbd styles.",
+        "fields": [
+          {
+            "name": "keys",
+            "label": "Keys",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "size",
+            "label": "Size",
+            "type": "select",
+            "options": [
+              "sm",
+              "md",
+              "lg"
+            ],
+            "defaultValue": "md",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "label",
+      "upstreamItemName": "Label",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a presentational field label component.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyFieldLabel.astro",
+        "localFilePath": "src/renderers/DaisyFieldLabel.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyFieldLabel",
+        "name": "Field Label",
+        "description": "Label with optional supporting description.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "description",
+            "label": "Description",
+            "type": "text"
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "link",
+      "upstreamItemName": "Link",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a styled text link component for inline navigation and CTAs.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyTextLink.astro",
+        "localFilePath": "src/renderers/DaisyTextLink.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyTextLink",
+        "name": "Text Link",
+        "description": "Inline text link with daisyUI tone variants.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "href",
+            "label": "URL",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          },
+          {
+            "name": "external",
+            "label": "Open in New Tab",
+            "type": "boolean",
+            "defaultValue": false
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "list",
+      "upstreamItemName": "List",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "default",
+        "primary",
+        "secondary",
+        "accent"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a stylized list row component with title and description items.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyItemList.astro",
+        "localFilePath": "src/renderers/DaisyItemList.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyItemList",
+        "name": "Item List",
+        "description": "List rows with title, description, and tone.",
+        "fields": [
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "default",
+              "primary",
+              "secondary",
+              "accent"
+            ],
+            "defaultValue": "default",
+            "required": true
+          },
+          {
+            "name": "items",
+            "label": "Items",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "title",
+                "label": "Title",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "description",
+                "label": "Description",
+                "type": "textarea"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "loading",
+      "upstreamItemName": "Loading",
+      "kind": "component",
+      "category": "Feedback",
+      "variants": [
+        "spinner",
+        "dots",
+        "ring",
+        "ball",
+        "bars"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a loading indicator component with selectable animation, tone, and size.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyLoadingIndicator.astro",
+        "localFilePath": "src/renderers/DaisyLoadingIndicator.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyLoadingIndicator",
+        "name": "Loading Indicator",
+        "description": "Inline loading state indicator with optional label.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text"
+          },
+          {
+            "name": "style",
+            "label": "Style",
+            "type": "select",
+            "options": [
+              "spinner",
+              "dots",
+              "ring",
+              "ball",
+              "bars"
+            ],
+            "defaultValue": "spinner",
+            "required": true
+          },
+          {
+            "name": "size",
+            "label": "Size",
+            "type": "select",
+            "options": [
+              "sm",
+              "md",
+              "lg"
+            ],
+            "defaultValue": "md",
+            "required": true
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "mask",
+      "upstreamItemName": "Mask",
+      "kind": "component",
+      "category": "Layout",
+      "variants": [
+        "squircle",
+        "heart",
+        "hexagon",
+        "circle"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a masked image frame with a small set of supported shapes.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyMaskFrame.astro",
+        "localFilePath": "src/renderers/DaisyMaskFrame.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyMaskFrame",
+        "name": "Mask Frame",
+        "description": "Masked image using selected daisyUI mask shapes.",
+        "fields": [
+          {
+            "name": "imageUrl",
+            "label": "Image URL",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "alt",
+            "label": "Alt Text",
+            "type": "text",
+            "defaultValue": "Masked image"
+          },
+          {
+            "name": "shape",
+            "label": "Shape",
+            "type": "select",
+            "options": [
+              "squircle",
+              "heart",
+              "hexagon",
+              "circle"
+            ],
+            "defaultValue": "squircle",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "menu",
+      "upstreamItemName": "Menu",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [
+        "vertical",
+        "horizontal"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a standard daisyUI menu list with vertical or horizontal layout.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyMenuList.astro",
+        "localFilePath": "src/renderers/DaisyMenuList.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyMenuList",
+        "name": "Menu List",
+        "description": "Navigation list with explicit menu items and active state.",
+        "fields": [
+          {
+            "name": "direction",
+            "label": "Direction",
+            "type": "select",
+            "options": [
+              "vertical",
+              "horizontal"
+            ],
+            "defaultValue": "vertical",
+            "required": true
+          },
+          {
+            "name": "items",
+            "label": "Items",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "label",
+                "label": "Label",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "href",
+                "label": "URL",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "active",
+                "label": "Active",
+                "type": "boolean",
+                "defaultValue": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "mockup-browser",
+      "upstreamItemName": "Browser",
+      "kind": "component",
+      "category": "Mockup",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a mock browser frame with URL and body content.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyMockupBrowser.astro",
+        "localFilePath": "src/renderers/DaisyMockupBrowser.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyMockupBrowser",
+        "name": "Mockup Browser",
+        "description": "Browser frame with toolbar URL and centered content.",
+        "fields": [
+          {
+            "name": "url",
+            "label": "URL",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "content",
+            "label": "Content",
+            "type": "textarea",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "mockup-code",
+      "upstreamItemName": "Code",
+      "kind": "component",
+      "category": "Mockup",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a code mockup with optional language label.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyMockupCode.astro",
+        "localFilePath": "src/renderers/DaisyMockupCode.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyMockupCode",
+        "name": "Mockup Code",
+        "description": "Code panel with optional language label and code content.",
+        "fields": [
+          {
+            "name": "language",
+            "label": "Language",
+            "type": "text"
+          },
+          {
+            "name": "code",
+            "label": "Code",
+            "type": "textarea",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "mockup-phone",
+      "upstreamItemName": "Phone",
+      "kind": "component",
+      "category": "Mockup",
+      "variants": [
+        "image",
+        "content"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a phone mockup using either an image or text content.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyMockupPhone.astro",
+        "localFilePath": "src/renderers/DaisyMockupPhone.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyMockupPhone",
+        "name": "Mockup Phone",
+        "description": "Phone frame with image preview or fallback content.",
+        "fields": [
+          {
+            "name": "imageUrl",
+            "label": "Image URL",
+            "type": "text"
+          },
+          {
+            "name": "alt",
+            "label": "Alt Text",
+            "type": "text",
+            "defaultValue": "Phone preview"
+          },
+          {
+            "name": "content",
+            "label": "Fallback Content",
+            "type": "textarea"
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "mockup-window",
+      "upstreamItemName": "Window",
+      "kind": "component",
+      "category": "Mockup",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a window mockup with title and body content.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyMockupWindow.astro",
+        "localFilePath": "src/renderers/DaisyMockupWindow.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyMockupWindow",
+        "name": "Mockup Window",
+        "description": "Window frame with title and supporting copy.",
+        "fields": [
+          {
+            "name": "title",
+            "label": "Title",
+            "type": "text"
+          },
+          {
+            "name": "content",
+            "label": "Content",
+            "type": "textarea",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "modal",
+      "upstreamItemName": "Modal",
+      "kind": "component",
+      "category": "Actions",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a checkbox-driven modal dialog with optional CTA.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyModalDialog.astro",
+        "localFilePath": "src/renderers/DaisyModalDialog.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyModalDialog",
+        "name": "Modal Dialog",
+        "description": "Modal dialog with trigger text, body copy, and optional action link.",
+        "fields": [
+          {
+            "name": "triggerLabel",
+            "label": "Trigger Label",
+            "type": "text",
+            "required": true,
+            "defaultValue": "Open dialog"
+          },
+          {
+            "name": "title",
+            "label": "Title",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "content",
+            "label": "Content",
+            "type": "textarea",
+            "required": true
+          },
+          {
+            "name": "actionLabel",
+            "label": "Action Label",
+            "type": "text"
+          },
+          {
+            "name": "actionHref",
+            "label": "Action URL",
+            "type": "text"
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "navbar",
+      "upstreamItemName": "Navbar",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a simple navbar with brand link and explicit nav items.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyNavbarBar.astro",
+        "localFilePath": "src/renderers/DaisyNavbarBar.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyNavbarBar",
+        "name": "Navbar Bar",
+        "description": "Navbar with brand label and inline navigation items.",
+        "fields": [
+          {
+            "name": "brandLabel",
+            "label": "Brand Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "brandHref",
+            "label": "Brand URL",
+            "type": "text",
+            "required": true,
+            "defaultValue": "/"
+          },
+          {
+            "name": "items",
+            "label": "Navigation Items",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "label",
+                "label": "Label",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "href",
+                "label": "URL",
+                "type": "text",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "pagination",
+      "upstreamItemName": "Pagination",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a join-based pagination nav with explicit items.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyPaginationNav.astro",
+        "localFilePath": "src/renderers/DaisyPaginationNav.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyPaginationNav",
+        "name": "Pagination Nav",
+        "description": "Pagination control built from explicit page items.",
+        "fields": [
+          {
+            "name": "items",
+            "label": "Items",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "label",
+                "label": "Label",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "href",
+                "label": "URL",
+                "type": "text"
+              },
+              {
+                "name": "active",
+                "label": "Active",
+                "type": "boolean",
+                "defaultValue": false
+              },
+              {
+                "name": "disabled",
+                "label": "Disabled",
+                "type": "boolean",
+                "defaultValue": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "progress",
+      "upstreamItemName": "Progress",
+      "kind": "component",
+      "category": "Feedback",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a progress bar component for completion and status indicators.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyProgressBar.astro",
+        "localFilePath": "src/renderers/DaisyProgressBar.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyProgressBar",
+        "name": "Progress Bar",
+        "description": "Linear progress bar with configurable value, max, and tone.",
+        "fields": [
+          {
+            "name": "value",
+            "label": "Value",
+            "type": "number",
+            "required": true,
+            "defaultValue": 35
+          },
+          {
+            "name": "max",
+            "label": "Maximum",
+            "type": "number",
+            "required": true,
+            "defaultValue": 100
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "radial-progress",
+      "upstreamItemName": "Radial progress",
+      "kind": "component",
+      "category": "Feedback",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a radial progress preview.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyRadialProgress.astro",
+        "localFilePath": "src/renderers/DaisyRadialProgress.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyRadialProgress",
+        "name": "Radial Progress",
+        "description": "Radial progress preview with optional label.",
+        "fields": [
+          {
+            "name": "value",
+            "label": "Value",
+            "type": "number",
+            "required": true,
+            "defaultValue": 75
+          },
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text"
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "radio",
+      "upstreamItemName": "Radio",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a radio group preview with explicit options.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyRadioGroup.astro",
+        "localFilePath": "src/renderers/DaisyRadioGroup.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyRadioGroup",
+        "name": "Radio Group",
+        "description": "Radio group preview with explicit options.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "value",
+            "label": "Selected Value",
+            "type": "text"
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          },
+          {
+            "name": "options",
+            "label": "Options",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "label",
+                "label": "Label",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "value",
+                "label": "Value",
+                "type": "text",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "range",
+      "upstreamItemName": "Range",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a range slider preview.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyRangeSlider.astro",
+        "localFilePath": "src/renderers/DaisyRangeSlider.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyRangeSlider",
+        "name": "Range Slider",
+        "description": "Range slider preview with label and tone.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "value",
+            "label": "Value",
+            "type": "number",
+            "required": true,
+            "defaultValue": 50
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "rating",
+      "upstreamItemName": "Rating",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a star rating component with value, max, and tone.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyRatingStars.astro",
+        "localFilePath": "src/renderers/DaisyRatingStars.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyRatingStars",
+        "name": "Rating Stars",
+        "description": "Star rating indicator with configurable maximum and tone.",
+        "fields": [
+          {
+            "name": "value",
+            "label": "Value",
+            "type": "number",
+            "required": true,
+            "defaultValue": 3
+          },
+          {
+            "name": "max",
+            "label": "Maximum",
+            "type": "number",
+            "required": true,
+            "defaultValue": 5
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "select",
+      "upstreamItemName": "Select",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a select preview with explicit options.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisySelectField.astro",
+        "localFilePath": "src/renderers/DaisySelectField.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisySelectField",
+        "name": "Select Field",
+        "description": "Select preview with label, options, and tone.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "value",
+            "label": "Selected Value",
+            "type": "text"
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          },
+          {
+            "name": "options",
+            "label": "Options",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "label",
+                "label": "Label",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "value",
+                "label": "Value",
+                "type": "text",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "skeleton",
+      "upstreamItemName": "Skeleton",
+      "kind": "component",
+      "category": "Feedback",
+      "variants": [
+        "rounded",
+        "circle",
+        "square"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a simple skeleton placeholder with configurable size and shape.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisySkeletonBlock.astro",
+        "localFilePath": "src/renderers/DaisySkeletonBlock.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisySkeletonBlock",
+        "name": "Skeleton Block",
+        "description": "Placeholder block for loading states.",
+        "fields": [
+          {
+            "name": "width",
+            "label": "Width",
+            "type": "text",
+            "defaultValue": "100%"
+          },
+          {
+            "name": "height",
+            "label": "Height",
+            "type": "text",
+            "defaultValue": "1rem"
+          },
+          {
+            "name": "shape",
+            "label": "Shape",
+            "type": "select",
+            "options": [
+              "rounded",
+              "circle",
+              "square"
+            ],
+            "defaultValue": "rounded",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "stack",
+      "upstreamItemName": "Stack",
+      "kind": "component",
+      "category": "Layout",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a stack of simple content cards.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyStackDeck.astro",
+        "localFilePath": "src/renderers/DaisyStackDeck.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyStackDeck",
+        "name": "Stack Deck",
+        "description": "Stacked card deck built from explicit items.",
+        "fields": [
+          {
+            "name": "items",
+            "label": "Items",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "title",
+                "label": "Title",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "description",
+                "label": "Description",
+                "type": "textarea"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "stat",
+      "upstreamItemName": "Stat",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a single-stat summary card for compact KPI presentation.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyStatCard.astro",
+        "localFilePath": "src/renderers/DaisyStatCard.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyStatCard",
+        "name": "Stat Card",
+        "description": "Single stat summary with label, value, description, and tone.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "value",
+            "label": "Value",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "description",
+            "label": "Description",
+            "type": "text"
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "status",
+      "upstreamItemName": "Status",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "success",
+        "warning",
+        "error",
+        "info",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a compact status dot with optional label.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyStatusDot.astro",
+        "localFilePath": "src/renderers/DaisyStatusDot.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyStatusDot",
+        "name": "Status Dot",
+        "description": "Status indicator with semantic tone and optional label.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text"
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "success",
+              "warning",
+              "error",
+              "info",
+              "neutral"
+            ],
+            "defaultValue": "success",
+            "required": true
+          },
+          {
+            "name": "size",
+            "label": "Size",
+            "type": "select",
+            "options": [
+              "sm",
+              "md",
+              "lg"
+            ],
+            "defaultValue": "md",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "steps",
+      "upstreamItemName": "Steps",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a multi-step progress list with per-step active state and tone.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyStepsList.astro",
+        "localFilePath": "src/renderers/DaisyStepsList.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyStepsList",
+        "name": "Steps List",
+        "description": "Vertical or responsive step list rendered with daisyUI steps.",
+        "fields": [
+          {
+            "name": "items",
+            "label": "Steps",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "label",
+                "label": "Label",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "active",
+                "label": "Active",
+                "type": "boolean",
+                "defaultValue": false
+              },
+              {
+                "name": "tone",
+                "label": "Tone",
+                "type": "select",
+                "options": [
+                  "primary",
+                  "secondary",
+                  "accent",
+                  "neutral"
+                ],
+                "defaultValue": "primary",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "swap",
+      "upstreamItemName": "Swap",
+      "kind": "component",
+      "category": "Actions",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a swap toggle with simple on and off labels.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisySwapToggle.astro",
+        "localFilePath": "src/renderers/DaisySwapToggle.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisySwapToggle",
+        "name": "Swap Toggle",
+        "description": "Toggle label swap with semantic tone.",
+        "fields": [
+          {
+            "name": "onLabel",
+            "label": "On Label",
+            "type": "text",
+            "required": true,
+            "defaultValue": "On"
+          },
+          {
+            "name": "offLabel",
+            "label": "Off Label",
+            "type": "text",
+            "required": true,
+            "defaultValue": "Off"
+          },
+          {
+            "name": "active",
+            "label": "Active",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "table",
+      "upstreamItemName": "Table",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "zebra"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a simple data table from explicit column and row definitions.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyDataTable.astro",
+        "localFilePath": "src/renderers/DaisyDataTable.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyDataTable",
+        "name": "Data Table",
+        "description": "Table with explicit columns and row objects.",
+        "fields": [
+          {
+            "name": "zebra",
+            "label": "Zebra Rows",
+            "type": "boolean",
+            "defaultValue": true
+          },
+          {
+            "name": "columns",
+            "label": "Columns",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "key",
+                "label": "Key",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "label",
+                "label": "Label",
+                "type": "text",
+                "required": true
+              }
+            ]
+          },
+          {
+            "name": "rows",
+            "label": "Rows",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "name",
+                "label": "Name",
+                "type": "text"
+              },
+              {
+                "name": "role",
+                "label": "Role",
+                "type": "text"
+              },
+              {
+                "name": "email",
+                "label": "Email",
+                "type": "text"
+              },
+              {
+                "name": "status",
+                "label": "Status",
+                "type": "text"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "tabs",
+      "upstreamItemName": "Tab",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [
+        "boxed",
+        "bordered",
+        "lifted"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a presentational tabs row with explicit items and active state.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyTabsNav.astro",
+        "localFilePath": "src/renderers/DaisyTabsNav.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyTabsNav",
+        "name": "Tabs Nav",
+        "description": "Static tabs row built from explicit items.",
+        "fields": [
+          {
+            "name": "style",
+            "label": "Style",
+            "type": "select",
+            "options": [
+              "boxed",
+              "bordered",
+              "lifted"
+            ],
+            "defaultValue": "boxed",
+            "required": true
+          },
+          {
+            "name": "items",
+            "label": "Tabs",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "label",
+                "label": "Label",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "href",
+                "label": "URL",
+                "type": "text"
+              },
+              {
+                "name": "active",
+                "label": "Active",
+                "type": "boolean",
+                "defaultValue": false
+              },
+              {
+                "name": "disabled",
+                "label": "Disabled",
+                "type": "boolean",
+                "defaultValue": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "text-rotate",
+      "upstreamItemName": "Text Rotate",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "default"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a badge-based rotating text approximation using explicit words.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyTextRotate.astro",
+        "localFilePath": "src/renderers/DaisyTextRotate.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyTextRotate",
+        "name": "Text Rotate",
+        "description": "Inline text sequence with prefix, words, and suffix.",
+        "fields": [
+          {
+            "name": "prefix",
+            "label": "Prefix",
+            "type": "text"
+          },
+          {
+            "name": "words",
+            "label": "Words",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "label",
+                "label": "Word",
+                "type": "text",
+                "required": true
+              }
+            ]
+          },
+          {
+            "name": "suffix",
+            "label": "Suffix",
+            "type": "text"
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "textarea",
+      "upstreamItemName": "Textarea",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a textarea preview with tone and rows.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyTextareaField.astro",
+        "localFilePath": "src/renderers/DaisyTextareaField.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyTextareaField",
+        "name": "Textarea Field",
+        "description": "Textarea preview with label and tone.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "placeholder",
+            "label": "Placeholder",
+            "type": "text"
+          },
+          {
+            "name": "rows",
+            "label": "Rows",
+            "type": "number",
+            "required": true,
+            "defaultValue": 4
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "theme-controller",
+      "upstreamItemName": "Theme Controller",
+      "kind": "component",
+      "category": "Actions",
+      "variants": [
+        "light",
+        "dark",
+        "cupcake",
+        "business"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a presentational theme controller radio preview.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyThemeController.astro",
+        "localFilePath": "src/renderers/DaisyThemeController.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyThemeController",
+        "name": "Theme Controller",
+        "description": "Theme preview radio controller with label.",
+        "fields": [
+          {
+            "name": "theme",
+            "label": "Theme",
+            "type": "select",
+            "options": [
+              "light",
+              "dark",
+              "cupcake",
+              "business"
+            ],
+            "defaultValue": "light",
+            "required": true
+          },
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "defaultValue": "Preview theme"
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "timeline",
+      "upstreamItemName": "Timeline",
+      "kind": "component",
+      "category": "Data display",
+      "variants": [
+        "vertical"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a vertical timeline with title, eyebrow, and description items.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyTimelineTrack.astro",
+        "localFilePath": "src/renderers/DaisyTimelineTrack.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyTimelineTrack",
+        "name": "Timeline Track",
+        "description": "Vertical timeline built from explicit milestone items.",
+        "fields": [
+          {
+            "name": "items",
+            "label": "Timeline Items",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "eyebrow",
+                "label": "Eyebrow",
+                "type": "text"
+              },
+              {
+                "name": "title",
+                "label": "Title",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "description",
+                "label": "Description",
+                "type": "textarea"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "toast",
+      "upstreamItemName": "Toast",
+      "kind": "component",
+      "category": "Feedback",
+      "variants": [
+        "top-start",
+        "top-end",
+        "bottom-start",
+        "bottom-end"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a stack of alert-style toast notices with fixed positions.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyToastStack.astro",
+        "localFilePath": "src/renderers/DaisyToastStack.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyToastStack",
+        "name": "Toast Stack",
+        "description": "Toast stack with multiple messages and semantic tones.",
+        "fields": [
+          {
+            "name": "position",
+            "label": "Position",
+            "type": "select",
+            "options": [
+              "top-start",
+              "top-end",
+              "bottom-start",
+              "bottom-end"
+            ],
+            "defaultValue": "top-end",
+            "required": true
+          },
+          {
+            "name": "items",
+            "label": "Toast Items",
+            "type": "array",
+            "required": true,
+            "fields": [
+              {
+                "name": "message",
+                "label": "Message",
+                "type": "text",
+                "required": true
+              },
+              {
+                "name": "tone",
+                "label": "Tone",
+                "type": "select",
+                "options": [
+                  "info",
+                  "success",
+                  "warning",
+                  "error"
+                ],
+                "defaultValue": "info",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "toggle",
+      "upstreamItemName": "Toggle",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a toggle switch preview.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyToggleSwitch.astro",
+        "localFilePath": "src/renderers/DaisyToggleSwitch.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyToggleSwitch",
+        "name": "Toggle Switch",
+        "description": "Toggle switch preview with label and tone.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "checked",
+            "label": "Checked",
+            "type": "boolean",
+            "defaultValue": false
+          },
+          {
+            "name": "tone",
+            "label": "Tone",
+            "type": "select",
+            "options": [
+              "primary",
+              "secondary",
+              "accent",
+              "neutral"
+            ],
+            "defaultValue": "primary",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "tooltip",
+      "upstreamItemName": "Tooltip",
+      "kind": "component",
+      "category": "Feedback",
+      "variants": [
+        "top",
+        "bottom",
+        "left",
+        "right"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a tooltip wrapper component for inline help and short annotations.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyTooltipHint.astro",
+        "localFilePath": "src/renderers/DaisyTooltipHint.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyTooltipHint",
+        "name": "Tooltip Hint",
+        "description": "Inline tooltip trigger with configurable message and position.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "message",
+            "label": "Message",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "position",
+            "label": "Position",
+            "type": "select",
+            "options": [
+              "top",
+              "bottom",
+              "left",
+              "right"
+            ],
+            "defaultValue": "top",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "validator",
+      "upstreamItemName": "Validator",
+      "kind": "component",
+      "category": "Data input",
+      "variants": [
+        "success",
+        "warning",
+        "error"
+      ],
+      "setupRequirements": [
+        "package",
+        "tailwind",
+        "theme"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Mapped to a validator input preview with state and helper message.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyValidatorMessage.astro",
+        "localFilePath": "src/renderers/DaisyValidatorMessage.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "daisyValidatorMessage",
+        "name": "Validator Message",
+        "description": "Input validator preview with semantic message state.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "value",
+            "label": "Value",
+            "type": "text"
+          },
+          {
+            "name": "state",
+            "label": "State",
+            "type": "select",
+            "options": [
+              "success",
+              "warning",
+              "error"
+            ],
+            "defaultValue": "success",
+            "required": true
+          },
+          {
+            "name": "message",
+            "label": "Message",
+            "type": "text"
+          }
+        ]
+      }
+    }
+  ]
+}

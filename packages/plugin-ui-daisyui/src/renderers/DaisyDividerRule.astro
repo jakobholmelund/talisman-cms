@@ -1,0 +1,13 @@
+---
+const { label, tone = 'default', direction = 'horizontal' } = Astro.props;
+const toneClass = ({
+  default: '',
+  primary: 'divider-primary',
+  secondary: 'divider-secondary',
+  accent: 'divider-accent',
+} as Record<string, string>)[tone as string] || '';
+const directionClass = direction === 'vertical' ? 'divider-horizontal' : '';
+const dividerClass = ['divider', toneClass, directionClass].filter(Boolean).join(' ');
+---
+
+<div class={dividerClass}>{label}</div>

@@ -1,0 +1,14 @@
+---
+const { legend, hint, fields = [] } = Astro.props;
+---
+
+<fieldset class="fieldset rounded-box border border-base-300 bg-base-100 p-4">
+  <legend class="fieldset-legend">{legend}</legend>
+  {fields.map((field: any) => (
+    <label class="fieldset-label">
+      <span>{field?.label}</span>
+      <input class="input w-full" placeholder={field?.placeholder || ''} />
+    </label>
+  ))}
+  {hint ? <p class="fieldset-label text-base-content/60">{hint}</p> : null}
+</fieldset>

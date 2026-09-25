@@ -1,0 +1,62 @@
+---
+import Layout from '../layouts/Layout.astro';
+import BlocksRenderer from 'talisman-cms/render/BlocksRenderer.astro';
+import { buildPresetMap } from 'talisman-cms/render';
+import { getClient } from 'talisman-cms/client';
+import { env as cfEnv } from 'cloudflare:workers';
+
+const env = { DB: (cfEnv as any).DB, KV: (cfEnv as any).KV };
+const cms = getClient(env);
+const localBlockModules = import.meta.glob('../components/page-blocks/*.astro', { eager: true }) as Record<string, { default: any }>;
+
+const { slug } = Astro.params;
+
+if (['admin', 'shop', 'blog'].includes(slug || '')) {
+  return new Response(null, { status: 404 });
+}
+
+const page = slug ? await cms.entries.findBySlug('pages', slug, { depth: 0 }).catch(() => null) : null;
+if (!page) {
+  return new Response(null, { status: 404 });
+}
+
+const [allPosts, allProducts, allComponentPresets] = await Promise.all([
+  cms.entries.findMany('posts', { depth: 1 }).catch(() => []),
+  cms.entries.findMany('products', { depth: 0 }).catch(() => []),
+  cms.entries.findMany('_ui_component_presets', { depth: 0 }).catch(() => []),
+]);
+
+const layoutBlocks = Array.isArray(page.data.layout) ? page.data.layout : [];
+const blockRenderers = {
+  hero: localBlockModules['../components/page-blocks/HeroBlock.astro']?.default,
+  featureGrid: localBlockModules['../components/page-blocks/FeatureGridBlock.astro']?.default,
+  callToAction: localBlockModules['../components/page-blocks/CallToActionBlock.astro']?.default,
+  testimonialQuote: localBlockModules['../components/page-blocks/TestimonialQuoteBlock.astro']?.default,
+  featuredPosts: localBlockModules['../components/page-blocks/FeaturedPostsBlock.astro']?.default,
+  ecommerceFeaturedProducts: localBlockModules['../components/page-blocks/EcommerceFeaturedProductsBlock.astro']?.default,
+  ecommerceProductSpotlight: localBlockModules['../components/page-blocks/EcommerceProductSpotlightBlock.astro']?.default,
+};
+const rendererContext = {
+  postsById: Object.fromEntries(allPosts.map((post) => [post.id, post])),
+  productsById: Object.fromEntries(allProducts.map((product) => [product.id, product])),
+};
+const presetsById = buildPresetMap(allComponentPresets);
+---
+
+<Layout title={`${page.data.title} | Talisman CMS Showcase`}>
+  <BlocksRenderer
+    blocks={layoutBlocks}
+    blockRenderers={blockRenderers}
+    presetsById={presetsById}
+    rendererContext={rendererContext}
+  />
+
+  {layoutBlocks.length === 0 && (
+    <div class="py-32 text-center italic text-gray-500">
+      <p>This page has no content blocks yet.</p>
+      <a href={`/admin/collections/pages/edit/${page.id}`} target="_blank" class="mt-4 block text-brand-600 underline hover:text-brand-700">
+        Edit this page in Admin
+      </a>
+    </div>
+  )}
+</Layout>

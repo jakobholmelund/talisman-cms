@@ -1,0 +1,26 @@
+---
+const { label, style = 'spinner', size = 'md', tone = 'primary' } = Astro.props;
+const styleClass = ({
+  spinner: 'loading-spinner',
+  dots: 'loading-dots',
+  ring: 'loading-ring',
+  ball: 'loading-ball',
+  bars: 'loading-bars',
+} as Record<string, string>)[style as string] || 'loading-spinner';
+const sizeClass = ({
+  sm: 'loading-sm',
+  md: 'loading-md',
+  lg: 'loading-lg',
+} as Record<string, string>)[size as string] || 'loading-md';
+const toneClass = ({
+  primary: 'text-primary',
+  secondary: 'text-secondary',
+  accent: 'text-accent',
+  neutral: 'text-neutral',
+} as Record<string, string>)[tone as string] || 'text-primary';
+---
+
+<span class="inline-flex items-center gap-3">
+  <span class={`loading ${styleClass} ${sizeClass} ${toneClass}`}></span>
+  {label ? <span>{label}</span> : null}
+</span>

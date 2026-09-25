@@ -1,0 +1,26 @@
+---
+const { items = [], position = 'top-end' } = Astro.props;
+const positionClass = ({
+  'top-start': 'toast-top toast-start',
+  'top-end': 'toast-top toast-end',
+  'bottom-start': 'toast-bottom toast-start',
+  'bottom-end': 'toast-bottom toast-end',
+} as Record<string, string>)[position as string] || 'toast-top toast-end';
+---
+
+<div class={`toast ${positionClass}`}>
+  {items.map((item: any) => {
+    const alertClass = {
+      info: 'alert-info',
+      success: 'alert-success',
+      warning: 'alert-warning',
+      error: 'alert-error',
+    }[item?.tone] || 'alert-info';
+
+    return (
+      <div class={`alert ${alertClass}`}>
+        <span>{item?.message}</span>
+      </div>
+    );
+  })}
+</div>

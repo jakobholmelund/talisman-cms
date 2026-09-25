@@ -1,0 +1,15 @@
+---
+const { onLabel = 'On', offLabel = 'Off', active = false, tone = 'primary' } = Astro.props;
+const toneClass = ({
+  primary: 'text-primary',
+  secondary: 'text-secondary',
+  accent: 'text-accent',
+  neutral: 'text-neutral',
+} as Record<string, string>)[tone as string] || 'text-primary';
+---
+
+<label class={`swap text-2xl ${toneClass}`}>
+  <input type="checkbox" checked={active} />
+  <span class="swap-on">{onLabel}</span>
+  <span class="swap-off">{offLabel}</span>
+</label>

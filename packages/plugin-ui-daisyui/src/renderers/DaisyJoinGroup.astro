@@ -1,0 +1,15 @@
+---
+const { items = [], tone = 'default' } = Astro.props;
+const toneClass = ({
+  default: '',
+  primary: 'btn-primary',
+  secondary: 'btn-secondary',
+  accent: 'btn-accent',
+} as Record<string, string>)[tone as string] || '';
+---
+
+<div class="join">
+  {items.map((item: any) => (
+    <a href={item?.href || '#'} class={`join-item btn ${toneClass}`.trim()}>{item?.label}</a>
+  ))}
+</div>

@@ -1,0 +1,43 @@
+---
+import { blockRenderers as pluginBlockRenderers } from 'virtual:talisman-cms/block-renderers';
+import { mergeRendererRegistries } from '../render';
+
+const {
+  blocks = [],
+  blockRenderers = {},
+  componentRenderers = {},
+  presetsById = {},
+  rendererContext = {},
+} = Astro.props;
+
+const registry = mergeRendererRegistries(pluginBlockRenderers, blockRenderers);
+---
+
+{blocks.map((block: any, index: number) => {
+  const Renderer = registry[block?.blockType];
+
+  if (!Renderer) {
+    return (
+      <div class="my-8 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        Unknown block type: {block?.blockType || 'missing'}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      data-talisman-block={block?.blockType}
+      data-talisman-block-index={index}
+      class="talisman-block-wrapper relative"
+    >
+      <Renderer
+        key={`${block?.blockType || 'block'}-${index}`}
+        {...block}
+        index={index}
+        componentRenderers={componentRenderers}
+        presetsById={presetsById}
+        rendererContext={rendererContext}
+      />
+    </div>
+  );
+})}

@@ -1,0 +1,10 @@
+---
+const { value = 75, label } = Astro.props;
+---
+
+<div class="flex flex-col items-center gap-3">
+  <div class="radial-progress text-primary" style={`--value:${value};`} aria-valuenow={value} role="progressbar">
+    {value}%
+  </div>
+  {label ? <span class="text-sm text-base-content/70">{label}</span> : null}
+</div>

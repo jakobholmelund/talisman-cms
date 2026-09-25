@@ -1,0 +1,45 @@
+---
+function formatMoney(cents, currency = 'usd') {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: currency.toUpperCase(),
+  }).format((Number(cents || 0)) / 100);
+}
+
+const { item, locked = false } = Astro.props;
+---
+
+<article class="rounded-[2rem] border border-gray-200 bg-white/90 p-5 shadow-sm">
+  <div class="flex flex-col gap-5 sm:flex-row">
+    <a href={item.href} class="block h-28 w-28 min-w-28 max-w-28 shrink-0 overflow-hidden rounded-[1.5rem] bg-gray-100">
+      {item.imageUrl ? (
+        <img src={item.imageUrl} alt={item.productName} class="h-full w-full object-cover" />
+      ) : (
+        <div class="flex h-full w-full items-center justify-center text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">No image</div>
+      )}
+    </a>
+
+    <div class="flex min-w-0 flex-1 flex-col gap-4">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <a href={item.href} class="text-xl font-bold text-gray-900 transition-colors hover:text-brand-600">{item.productName}</a>
+          {item.variantLabel && <p class="mt-1 text-sm text-gray-500">{item.variantLabel}</p>}
+          <p class="mt-2 text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">{item.stockLabel}</p>
+        </div>
+        <p class="text-lg font-bold text-gray-900">{formatMoney(item.lineTotal)}</p>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 p-1">
+          <button type="button" class="h-9 w-9 rounded-full text-lg text-gray-600 transition-colors hover:bg-white" data-cart-action="decrement" data-variant-id={item.variantId ?? ''} data-product-id={item.productId} disabled={locked}>-</button>
+          <span class="min-w-10 px-2 text-center text-sm font-semibold text-gray-900">{item.quantity}</span>
+          <button type="button" class="h-9 w-9 rounded-full text-lg text-gray-600 transition-colors hover:bg-white" data-cart-action="increment" data-variant-id={item.variantId ?? ''} data-product-id={item.productId} disabled={locked}>+</button>
+        </div>
+        <button type="button" class="text-sm font-medium text-gray-500 transition-colors hover:text-red-600" data-cart-action="remove" data-variant-id={item.variantId ?? ''} data-product-id={item.productId} disabled={locked}>
+          Remove
+        </button>
+        <span class="text-sm text-gray-400">{formatMoney(item.unitPrice)} each</span>
+      </div>
+    </div>
+  </div>
+</article>

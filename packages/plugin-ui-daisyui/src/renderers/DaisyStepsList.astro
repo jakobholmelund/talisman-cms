@@ -1,0 +1,18 @@
+---
+const { items = [] } = Astro.props;
+---
+
+<ul class="steps steps-vertical lg:steps-horizontal">
+  {items.map((item: any) => {
+    const toneClass = item?.active
+      ? ({
+          primary: 'step-primary',
+          secondary: 'step-secondary',
+          accent: 'step-accent',
+          neutral: 'step-neutral',
+        }[item?.tone] || 'step-primary')
+      : '';
+
+    return <li class={`step ${toneClass}`}>{item?.label}</li>;
+  })}
+</ul>

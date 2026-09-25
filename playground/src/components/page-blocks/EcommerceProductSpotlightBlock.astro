@@ -1,0 +1,66 @@
+---
+import { getMediaImageSrcSet } from 'talisman-cms/helpers';
+import { getContainerClass, getProductHref, getProductImage, getSectionClass, getTheme } from './shared';
+
+const { rendererContext = {}, productId, mediaPosition = 'right', index = 0 } = Astro.props;
+const product = rendererContext.productsById?.[productId];
+
+if (!product) {
+  return null;
+}
+
+const imageUrl = getProductImage(product);
+const mediaFirst = mediaPosition === 'left';
+const title = Astro.props.title || product.data.name;
+const description = Astro.props.description || product.data.description;
+const ctaHref = Astro.props.ctaHref || getProductHref(product);
+---
+
+<section class={getSectionClass(Astro.props, 'py-20', true, index)} data-theme={getTheme(Astro.props)}>
+  <div class={getContainerClass(Astro.props, 'max-w-7xl mx-auto px-4 sm:px-6 lg:px-8')}>
+    <div class="grid gap-8 lg:grid-cols-2 lg:gap-12">
+      {mediaFirst ? (
+        <div class="overflow-hidden rounded-[2rem] border border-gray-200 bg-gray-100 shadow-xl">
+          {imageUrl ? (
+            <img src={imageUrl} srcset={getMediaImageSrcSet(imageUrl)} sizes="(min-width: 1024px) 50vw, 100vw" alt={product.data.name} width="1000" height="800" loading="lazy" decoding="async" class="h-full w-full object-cover" />
+          ) : (
+            <div class="flex h-full min-h-80 items-center justify-center text-sm font-medium text-gray-400">No image</div>
+          )}
+        </div>
+      ) : (
+        <div class="flex flex-col justify-center">
+          {Astro.props.eyebrow && <p class="text-sm font-semibold uppercase tracking-[0.3em] text-brand-600">{Astro.props.eyebrow}</p>}
+          <h2 class="mt-3 text-4xl font-black tracking-tight text-gray-900">{title}</h2>
+          {description && <p class="mt-5 max-w-xl text-base leading-relaxed text-gray-500">{description}</p>}
+          <div class="mt-8 flex flex-wrap items-center gap-4">
+            <a href={ctaHref} class="inline-flex items-center justify-center rounded-full bg-brand-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-brand-500/20 transition-colors hover:bg-brand-700">
+              {Astro.props.ctaLabel || 'View product'}
+            </a>
+            <span class="text-sm font-semibold uppercase tracking-[0.25em] text-gray-500">${((product.data.basePrice || 0) / 100).toFixed(2)}</span>
+          </div>
+        </div>
+      )}
+      {mediaFirst ? (
+        <div class="flex flex-col justify-center">
+          {Astro.props.eyebrow && <p class="text-sm font-semibold uppercase tracking-[0.3em] text-brand-600">{Astro.props.eyebrow}</p>}
+          <h2 class="mt-3 text-4xl font-black tracking-tight text-gray-900">{title}</h2>
+          {description && <p class="mt-5 max-w-xl text-base leading-relaxed text-gray-500">{description}</p>}
+          <div class="mt-8 flex flex-wrap items-center gap-4">
+            <a href={ctaHref} class="inline-flex items-center justify-center rounded-full bg-brand-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-brand-500/20 transition-colors hover:bg-brand-700">
+              {Astro.props.ctaLabel || 'View product'}
+            </a>
+            <span class="text-sm font-semibold uppercase tracking-[0.25em] text-gray-500">${((product.data.basePrice || 0) / 100).toFixed(2)}</span>
+          </div>
+        </div>
+      ) : (
+        <div class="overflow-hidden rounded-[2rem] border border-gray-200 bg-gray-100 shadow-xl">
+          {imageUrl ? (
+            <img src={imageUrl} srcset={getMediaImageSrcSet(imageUrl)} sizes="(min-width: 1024px) 50vw, 100vw" alt={product.data.name} width="1000" height="800" loading="lazy" decoding="async" class="h-full w-full object-cover" />
+          ) : (
+            <div class="flex h-full min-h-80 items-center justify-center text-sm font-medium text-gray-400">No image</div>
+          )}
+        </div>
+      )}
+    </div>
+  </div>
+</section>

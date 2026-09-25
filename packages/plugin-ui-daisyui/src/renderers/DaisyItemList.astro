@@ -1,0 +1,20 @@
+---
+const { items = [], tone = 'default' } = Astro.props;
+const itemClass = ({
+  default: 'border-base-300',
+  primary: 'border-primary/30 bg-primary/5',
+  secondary: 'border-secondary/30 bg-secondary/5',
+  accent: 'border-accent/30 bg-accent/5',
+} as Record<string, string>)[tone as string] || 'border-base-300';
+---
+
+<ul class="list rounded-box border border-base-300 bg-base-100">
+  {items.map((item: any) => (
+    <li class={`list-row border-b last:border-b-0 ${itemClass}`}>
+      <div>
+        <div class="font-medium">{item?.title}</div>
+        {item?.description ? <div class="text-sm text-base-content/60">{item.description}</div> : null}
+      </div>
+    </li>
+  ))}
+</ul>

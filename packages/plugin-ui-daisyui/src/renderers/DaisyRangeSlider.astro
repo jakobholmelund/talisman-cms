@@ -1,0 +1,14 @@
+---
+const { label, value = 50, tone = 'primary' } = Astro.props;
+const toneClass = ({
+  primary: 'range-primary',
+  secondary: 'range-secondary',
+  accent: 'range-accent',
+  neutral: 'range-neutral',
+} as Record<string, string>)[tone as string] || 'range-primary';
+---
+
+<label class="form-control w-full max-w-sm gap-2">
+  <span class="label-text">{label}</span>
+  <input type="range" min="0" max="100" value={value} class={`range ${toneClass}`} />
+</label>

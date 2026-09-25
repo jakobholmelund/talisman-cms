@@ -1,0 +1,23 @@
+---
+// @ts-expect-error Types will be generated when building inside an actual Astro project
+import type { APIRoute } from 'astro';
+
+// This is the shell for our React SPA
+// In the future, we will render the React App here using a client:only directive or similar
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Talisman CMS</title>
+</head>
+<body class="bg-zinc-950 text-white">
+    <div id="talisman-root"></div>
+    
+    <!-- Vite will bundle this index.tsx and serve the JS to the client -->
+    <script>
+      import "../../ui/index.tsx";
+    </script>
+</body>
+</html>

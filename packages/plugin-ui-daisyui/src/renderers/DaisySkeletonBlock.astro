@@ -1,0 +1,10 @@
+---
+const { width = '100%', height = '1rem', shape = 'rounded' } = Astro.props;
+const shapeClass = ({
+  rounded: 'rounded-md',
+  circle: 'rounded-full',
+  square: 'rounded-none',
+} as Record<string, string>)[shape as string] || 'rounded-md';
+---
+
+<div class={`skeleton ${shapeClass}`} style={`width:${width};height:${height};`}></div>

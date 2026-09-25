@@ -1,0 +1,77 @@
+---
+import { getClient } from 'talisman-cms/client';
+// @ts-ignore
+import { env as cfEnv } from 'cloudflare:workers';
+
+const env = { DB: (cfEnv as any).DB, KV: (cfEnv as any).KV };
+
+let advancedVars = '';
+let lightVars = '';
+let darkVars = '';
+let lightThemeName = 'light';
+let darkThemeName = 'dark';
+
+try {
+  const client = getClient(env as any);
+  const themeGlobal = await client.globals.find('daisyui-theme');
+  
+  let data = themeGlobal?.data || {};
+  if (typeof data === 'string') {
+    try { data = JSON.parse(data); } catch (e) { data = {}; }
+  }
+  
+  const lightColors = data.lightColors || {};
+  const darkColors = data.darkColors || {};
+  lightThemeName = data.lightTheme || 'light';
+  darkThemeName = data.darkTheme || 'dark';
+  const advanced = data.advanced || {};
+
+  const getVars = (colorsObj: Record<string, string>) => {
+    return Object.entries(colorsObj)
+      .map(([key, val]) => `--color-${key}: ${val};`)
+      .join(' ');
+  };
+
+  lightVars = getVars(lightColors);
+  darkVars = getVars(darkColors);
+
+  const advancedMap: Record<string, string> = {
+    'rounded-box': '--radius-box', 'rounded-btn': '--radius-field', 'rounded-badge': '--radius-selector',
+    'animation-btn': '--animation-btn', 'animation-input': '--animation-input', 'btn-focus-scale': '--btn-focus-scale',
+    'border-btn': '--border', 'tab-border': '--tab-border', 'tab-radius': '--tab-radius'
+  };
+
+  advancedVars = Object.keys(advanced)
+    .filter(key => advanced[key] && advancedMap[key])
+    .map(key => `${advancedMap[key]}: ${advanced[key]};`)
+    .join(' ');
+
+} catch (e) {
+  console.error("DaisyUI Theme Injector Error: ", e);
+}
+
+const injectedCss = `
+  :root { ${advancedVars} }
+  [data-theme="${lightThemeName}"] { ${lightVars} }
+  [data-theme="${darkThemeName}"] { ${darkVars} }
+`;
+---
+
+{injectedCss.trim().length > 0 && <style is:inline set:html={injectedCss} />}
+
+<script is:inline define:vars={{ lightThemeName, darkThemeName }}>
+  window.talismanThemes = { light: lightThemeName, dark: darkThemeName };
+  
+  // Set initial theme based on localStorage or OS preference
+  if (!document.documentElement.hasAttribute('data-theme')) {
+    const savedTheme = localStorage.getItem('talisman-theme');
+    if (savedTheme === 'light' || savedTheme === 'dark') {
+      document.documentElement.setAttribute('data-theme', window.talismanThemes[savedTheme]);
+    } else {
+      const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const initialMode = isDark ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', window.talismanThemes[initialMode]);
+      localStorage.setItem('talisman-theme', initialMode);
+    }
+  }
+</script>

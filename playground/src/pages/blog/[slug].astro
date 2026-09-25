@@ -1,0 +1,69 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { getClient } from 'talisman-cms/client';
+import { env as cfEnv } from 'cloudflare:workers';
+
+const env = { DB: (cfEnv as any).DB, KV: (cfEnv as any).KV };
+const cms = getClient(env);
+
+const { slug } = Astro.params;
+const post = slug ? await cms.entries.findBySlug('posts', slug, { depth: 1 }).catch(() => null) : null;
+
+if (!post) return Astro.redirect('/blog');
+
+const authorName = post.data.author?.data?.name || 'Talisman Team';
+const date = post.data.publishedAt ? new Date(post.data.publishedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Recently';
+
+// For RichText rendering, Talisman CMS rich text currently outputs HTML or JSON.
+// Assuming it's HTML string for this showcase, otherwise we render a fallback.
+const contentHtml = typeof post.data.content === 'string' ? post.data.content : JSON.stringify(post.data.content);
+---
+
+<Layout title={`${post.data.title} | Blog`}>
+  <article class="py-16 md:py-24 max-w-3xl mx-auto px-4 sm:px-6 animate-fade-in-up">
+    
+    <div class="text-center mb-12">
+      <a href="/blog" class="inline-flex items-center text-brand-600 hover:text-brand-700 font-medium mb-6 transition-colors">
+        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+        Back to Blog
+      </a>
+      
+      <h1 class="text-4xl md:text-5xl font-extrabold text-gray-900 tracking-tight leading-tight mb-6">
+        {post.data.title}
+      </h1>
+      
+      <div class="flex items-center justify-center space-x-4 text-gray-500">
+        <div class="flex items-center">
+          <div class="h-8 w-8 rounded-full bg-gradient-to-tr from-brand-400 to-purple-500 flex items-center justify-center text-white font-bold text-xs shadow-inner mr-3">
+             {authorName.charAt(0)}
+          </div>
+          <span class="font-medium text-gray-900">{authorName}</span>
+        </div>
+        <span class="text-gray-300">•</span>
+        <time>{date}</time>
+        <span class="text-gray-300">•</span>
+        <span>{post.data.views || 0} views</span>
+      </div>
+    </div>
+
+    <!-- Article Content (Prose) -->
+    <div class="prose prose-lg prose-brand mx-auto prose-img:rounded-2xl prose-img:shadow-lg prose-headings:font-bold prose-headings:tracking-tight prose-a:text-brand-600 hover:prose-a:text-brand-500">
+      {contentHtml ? (
+        <div set:html={contentHtml} />
+      ) : (
+        <p class="text-gray-500 italic text-center py-10">This post has no content.</p>
+      )}
+    </div>
+
+    <div class="mt-16 pt-8 border-t border-gray-100 flex justify-between items-center">
+      <div class="flex gap-2">
+         <span class="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">Talisman CMS</span>
+         <span class="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">Astro</span>
+      </div>
+      
+      <div class="text-sm text-gray-500">
+        Share this article
+      </div>
+    </div>
+  </article>
+</Layout>

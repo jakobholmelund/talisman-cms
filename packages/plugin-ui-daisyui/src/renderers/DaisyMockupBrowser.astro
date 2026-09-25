@@ -1,0 +1,12 @@
+---
+const { url, content } = Astro.props;
+---
+
+<div class="mockup-browser border border-base-300 bg-base-100">
+  <div class="mockup-browser-toolbar">
+    <div class="input border border-base-300">{url}</div>
+  </div>
+  <div class="grid place-content-center border-t border-base-300 px-4 py-10 text-sm text-base-content/70">
+    {content}
+  </div>
+</div>

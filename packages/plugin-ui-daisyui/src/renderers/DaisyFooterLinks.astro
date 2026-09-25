@@ -1,0 +1,17 @@
+---
+const { title, sections = [] } = Astro.props;
+---
+
+<footer class="footer rounded-box border border-base-300 bg-base-200 p-10 text-base-content">
+  <aside>
+    <p class="font-semibold">{title}</p>
+  </aside>
+  {sections.map((section: any) => (
+    <nav>
+      <h6 class="footer-title">{section?.title}</h6>
+      {(section?.links || []).map((link: any) => (
+        <a href={link?.href || '#'} class="link link-hover">{link?.label}</a>
+      ))}
+    </nav>
+  ))}
+</footer>

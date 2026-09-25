@@ -1,0 +1,27 @@
+---
+// LivePreview.astro
+---
+<script>
+  if (import.meta.env.DEV) {
+    const channel = new BroadcastChannel('talisman-cms-preview');
+
+    channel.onmessage = (event) => {
+      if (event.data?.type === 'GALAXY_ENTRY_UPDATED' || event.data?.type === 'GALAXY_ENTRY_SAVED') {
+        console.log('[Talisman CMS] Content update detected, reloading...');
+        
+        // Wait a brief moment to let server persist if needed, then reload
+        setTimeout(() => {
+          // If View Transitions are present, use navigate to preserve state/scroll.
+          const hasTransitions = document.querySelector('meta[name="astro-view-transitions-enabled"]');
+          if (hasTransitions && 'astro:navigate' in window) {
+              (window as any).astro.navigate(window.location.pathname + window.location.search);
+          } else {
+             window.location.reload();
+          }
+        }, 50);
+      }
+    };
+
+    console.log('[Talisman CMS] Live Preview enabled.');
+  }
+</script>

@@ -1,0 +1,49 @@
+---
+import { getClient } from 'talisman-cms/client';
+import { env } from 'cloudflare:workers';
+import { edit } from 'talisman-cms/helpers';
+import LivePreview from 'talisman-cms/components/LivePreview.astro';
+
+// Fetch the strictly typed SDK using the Cloudflare Worker environments
+const cms = getClient(env as any);
+
+// Hit the internal KV read-through cache
+const start = performance.now();
+const globals = await cms.globals.findMany();
+const blogEntries = await cms.entries.findMany('blog', { cache: true });
+const duration = performance.now() - start;
+---
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>KV Caching Test</title>
+    <LivePreview />
+  </head>
+  <body style="font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; background: #fafafa; color: #111;">
+    <h1>Talisman CMS SDK Test</h1>
+    
+    <h2>Globals</h2>
+    {globals.map(g => <div {...edit('globals', g.id, 'name')}>{g.name}</div>)}
+    <pre>{JSON.stringify({
+      envCheck: !!(env as any).DB,
+      globalsCount: globals.length,
+      globals
+    }, null, 2)}</pre>
+
+    <h2>Blog Entries</h2>
+    {blogEntries.map(b => (
+      <div {...edit('blog', b.id)} style="padding: 1rem; border: 1px solid #ccc; margin-bottom: 1rem;">
+         <h3 {...edit('blog', b.id, 'title')}>{b.data?.title || b.slug}</h3>
+      </div>
+    ))}
+
+    <pre>{JSON.stringify({
+      blogsCount: blogEntries.length,
+      blogEntries
+    }, null, 2)}</pre>
+    
+    <h2>Data (Cached via KV)</h2>
+    <p>Fetched <strong>{globals.length}</strong> globals and <strong>{blogEntries.length}</strong> blog entries in {duration.toFixed(2)}ms.</p>
+  </body>
+</html>

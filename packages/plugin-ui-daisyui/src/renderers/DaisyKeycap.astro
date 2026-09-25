@@ -1,0 +1,10 @@
+---
+const { keys, size = 'md' } = Astro.props;
+const sizeClass = ({
+  sm: 'kbd-sm',
+  md: 'kbd-md',
+  lg: 'kbd-lg',
+} as Record<string, string>)[size as string] || 'kbd-md';
+---
+
+<kbd class={`kbd ${sizeClass}`}>{keys}</kbd>

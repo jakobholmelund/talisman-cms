@@ -1,0 +1,693 @@
+[
+  {
+    "id": "accordion",
+    "name": "Accordion",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "alert",
+    "name": "Alert",
+    "kind": "component",
+    "category": "Feedback",
+    "variants": [
+      "info",
+      "success",
+      "warning",
+      "error"
+    ]
+  },
+  {
+    "id": "avatar",
+    "name": "Avatar",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "circle",
+      "squircle",
+      "rounded"
+    ]
+  },
+  {
+    "id": "badge",
+    "name": "Badge",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "neutral"
+    ]
+  },
+  {
+    "id": "breadcrumbs",
+    "name": "Breadcrumbs",
+    "kind": "component",
+    "category": "Navigation",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "button",
+    "name": "Button",
+    "kind": "component",
+    "category": "Actions",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "ghost"
+    ]
+  },
+  {
+    "id": "calendar",
+    "name": "Calendar",
+    "kind": "component",
+    "category": "Data input",
+    "variants": [
+      "highlight"
+    ]
+  },
+  {
+    "id": "card",
+    "name": "Card",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "neutral"
+    ]
+  },
+  {
+    "id": "carousel",
+    "name": "Carousel",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "chat-bubble",
+    "name": "Chat bubble",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "start",
+      "end"
+    ]
+  },
+  {
+    "id": "checkbox",
+    "name": "Checkbox",
+    "kind": "component",
+    "category": "Data input",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "neutral"
+    ]
+  },
+  {
+    "id": "collapse",
+    "name": "Collapse",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "arrow",
+      "plus",
+      "default"
+    ]
+  },
+  {
+    "id": "countdown",
+    "name": "Countdown",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "diff",
+    "name": "Diff",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "divider",
+    "name": "Divider",
+    "kind": "component",
+    "category": "Layout",
+    "variants": [
+      "default",
+      "primary",
+      "secondary",
+      "accent"
+    ]
+  },
+  {
+    "id": "dock",
+    "name": "Dock",
+    "kind": "component",
+    "category": "Navigation",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "drawer",
+    "name": "Drawer sidebar",
+    "kind": "component",
+    "category": "Layout",
+    "variants": [
+      "start",
+      "end"
+    ]
+  },
+  {
+    "id": "dropdown",
+    "name": "Dropdown",
+    "kind": "component",
+    "category": "Actions",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "ghost"
+    ]
+  },
+  {
+    "id": "fab",
+    "name": "FAB / Speed Dial",
+    "kind": "component",
+    "category": "Actions",
+    "variants": [
+      "bottom-end",
+      "bottom-start",
+      "top-end",
+      "top-start"
+    ]
+  },
+  {
+    "id": "fieldset",
+    "name": "Fieldset",
+    "kind": "component",
+    "category": "Data input",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "file-input",
+    "name": "File Input",
+    "kind": "component",
+    "category": "Data input",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "neutral"
+    ]
+  },
+  {
+    "id": "filter",
+    "name": "Filter",
+    "kind": "component",
+    "category": "Data input",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "footer",
+    "name": "Footer",
+    "kind": "component",
+    "category": "Layout",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "hero",
+    "name": "Hero",
+    "kind": "block",
+    "category": "Layout",
+    "variants": []
+  },
+  {
+    "id": "hover-3d-card",
+    "name": "Hover 3D Card",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "hover-gallery",
+    "name": "Hover Gallery",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "indicator",
+    "name": "Indicator",
+    "kind": "component",
+    "category": "Layout",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "neutral"
+    ]
+  },
+  {
+    "id": "input",
+    "name": "Text Input",
+    "kind": "component",
+    "category": "Data input",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "neutral"
+    ]
+  },
+  {
+    "id": "join",
+    "name": "Join",
+    "kind": "component",
+    "category": "Layout",
+    "variants": [
+      "default",
+      "primary",
+      "secondary",
+      "accent"
+    ]
+  },
+  {
+    "id": "kbd",
+    "name": "Kbd",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "sm",
+      "md",
+      "lg"
+    ]
+  },
+  {
+    "id": "label",
+    "name": "Label",
+    "kind": "component",
+    "category": "Data input",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "link",
+    "name": "Link",
+    "kind": "component",
+    "category": "Navigation",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "neutral"
+    ]
+  },
+  {
+    "id": "list",
+    "name": "List",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "default",
+      "primary",
+      "secondary",
+      "accent"
+    ]
+  },
+  {
+    "id": "loading",
+    "name": "Loading",
+    "kind": "component",
+    "category": "Feedback",
+    "variants": [
+      "spinner",
+      "dots",
+      "ring",
+      "ball",
+      "bars"
+    ]
+  },
+  {
+    "id": "mask",
+    "name": "Mask",
+    "kind": "component",
+    "category": "Layout",
+    "variants": [
+      "squircle",
+      "heart",
+      "hexagon",
+      "circle"
+    ]
+  },
+  {
+    "id": "menu",
+    "name": "Menu",
+    "kind": "component",
+    "category": "Navigation",
+    "variants": [
+      "vertical",
+      "horizontal"
+    ]
+  },
+  {
+    "id": "mockup-browser",
+    "name": "Browser",
+    "kind": "component",
+    "category": "Mockup",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "mockup-code",
+    "name": "Code",
+    "kind": "component",
+    "category": "Mockup",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "mockup-phone",
+    "name": "Phone",
+    "kind": "component",
+    "category": "Mockup",
+    "variants": [
+      "image",
+      "content"
+    ]
+  },
+  {
+    "id": "mockup-window",
+    "name": "Window",
+    "kind": "component",
+    "category": "Mockup",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "modal",
+    "name": "Modal",
+    "kind": "component",
+    "category": "Actions",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "navbar",
+    "name": "Navbar",
+    "kind": "component",
+    "category": "Navigation",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "pagination",
+    "name": "Pagination",
+    "kind": "component",
+    "category": "Navigation",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "progress",
+    "name": "Progress",
+    "kind": "component",
+    "category": "Feedback",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "neutral"
+    ]
+  },
+  {
+    "id": "radial-progress",
+    "name": "Radial progress",
+    "kind": "component",
+    "category": "Feedback",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "radio",
+    "name": "Radio",
+    "kind": "component",
+    "category": "Data input",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "neutral"
+    ]
+  },
+  {
+    "id": "range",
+    "name": "Range",
+    "kind": "component",
+    "category": "Data input",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "neutral"
+    ]
+  },
+  {
+    "id": "rating",
+    "name": "Rating",
+    "kind": "component",
+    "category": "Data input",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "neutral"
+    ]
+  },
+  {
+    "id": "select",
+    "name": "Select",
+    "kind": "component",
+    "category": "Data input",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "neutral"
+    ]
+  },
+  {
+    "id": "skeleton",
+    "name": "Skeleton",
+    "kind": "component",
+    "category": "Feedback",
+    "variants": [
+      "rounded",
+      "circle",
+      "square"
+    ]
+  },
+  {
+    "id": "stack",
+    "name": "Stack",
+    "kind": "component",
+    "category": "Layout",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "stat",
+    "name": "Stat",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "neutral"
+    ]
+  },
+  {
+    "id": "status",
+    "name": "Status",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "success",
+      "warning",
+      "error",
+      "info",
+      "neutral"
+    ]
+  },
+  {
+    "id": "steps",
+    "name": "Steps",
+    "kind": "component",
+    "category": "Navigation",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "neutral"
+    ]
+  },
+  {
+    "id": "swap",
+    "name": "Swap",
+    "kind": "component",
+    "category": "Actions",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "neutral"
+    ]
+  },
+  {
+    "id": "tabs",
+    "name": "Tab",
+    "kind": "component",
+    "category": "Navigation",
+    "variants": [
+      "boxed",
+      "bordered",
+      "lifted"
+    ]
+  },
+  {
+    "id": "table",
+    "name": "Table",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "zebra"
+    ]
+  },
+  {
+    "id": "text-rotate",
+    "name": "Text Rotate",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "default"
+    ]
+  },
+  {
+    "id": "textarea",
+    "name": "Textarea",
+    "kind": "component",
+    "category": "Data input",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "neutral"
+    ]
+  },
+  {
+    "id": "theme-controller",
+    "name": "Theme Controller",
+    "kind": "component",
+    "category": "Actions",
+    "variants": [
+      "light",
+      "dark",
+      "cupcake",
+      "business"
+    ]
+  },
+  {
+    "id": "timeline",
+    "name": "Timeline",
+    "kind": "component",
+    "category": "Data display",
+    "variants": [
+      "vertical"
+    ]
+  },
+  {
+    "id": "toast",
+    "name": "Toast",
+    "kind": "component",
+    "category": "Feedback",
+    "variants": [
+      "top-start",
+      "top-end",
+      "bottom-start",
+      "bottom-end"
+    ]
+  },
+  {
+    "id": "toggle",
+    "name": "Toggle",
+    "kind": "component",
+    "category": "Data input",
+    "variants": [
+      "primary",
+      "secondary",
+      "accent",
+      "neutral"
+    ]
+  },
+  {
+    "id": "tooltip",
+    "name": "Tooltip",
+    "kind": "component",
+    "category": "Feedback",
+    "variants": [
+      "top",
+      "bottom",
+      "left",
+      "right"
+    ]
+  },
+  {
+    "id": "validator",
+    "name": "Validator",
+    "kind": "component",
+    "category": "Data input",
+    "variants": [
+      "success",
+      "warning",
+      "error"
+    ]
+  }
+]

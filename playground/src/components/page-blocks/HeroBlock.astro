@@ -1,0 +1,15 @@
+---
+import Hero from '../Hero.astro';
+import { getBlockSettings, getTheme } from './shared';
+
+const { heading, subheading, backgroundImage } = Astro.props;
+---
+
+<Hero
+  heading={heading}
+  subheading={subheading}
+  backgroundImage={backgroundImage}
+  className={getBlockSettings(Astro.props).className}
+  containerClassName={getBlockSettings(Astro.props).containerClassName}
+  dataTheme={getTheme(Astro.props)}
+/>

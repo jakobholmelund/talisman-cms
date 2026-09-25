@@ -1,0 +1,11 @@
+---
+const { prefix, words = [], suffix } = Astro.props;
+---
+
+<p class="text-xl font-semibold">
+  {prefix ? <span>{prefix} </span> : null}
+  <span class="inline-flex flex-wrap gap-2">
+    {words.map((word: any) => <span class="badge badge-outline">{word?.label}</span>)}
+  </span>
+  {suffix ? <span> {suffix}</span> : null}
+</p>

@@ -1,0 +1,22 @@
+---
+const { eyebrow, title, description, href, ctaLabel, tone = 'primary' } = Astro.props;
+const accentClass = ({
+  primary: 'text-primary',
+  secondary: 'text-secondary',
+  accent: 'text-accent',
+  neutral: 'text-neutral',
+} as Record<string, string>)[tone as string] || 'text-primary';
+---
+
+<article class="card border border-base-300 bg-base-100 shadow-xl">
+  <div class="card-body">
+    {eyebrow ? <p class={`text-xs font-semibold uppercase tracking-[0.3em] ${accentClass}`}>{eyebrow}</p> : null}
+    <h3 class="card-title">{title}</h3>
+    <p>{description}</p>
+    {href && ctaLabel ? (
+      <div class="card-actions justify-end">
+        <a href={href} class="btn btn-link px-0">{ctaLabel}</a>
+      </div>
+    ) : null}
+  </div>
+</article>

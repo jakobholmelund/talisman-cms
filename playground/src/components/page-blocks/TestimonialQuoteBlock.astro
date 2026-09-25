@@ -1,0 +1,17 @@
+---
+import { getContainerClass, getSectionClass, getTheme } from './shared';
+
+const { quote, author, role, index = 0 } = Astro.props;
+---
+
+<section class={getSectionClass(Astro.props, 'py-20', true, index)} data-theme={getTheme(Astro.props)}>
+  <div class={getContainerClass(Astro.props, 'max-w-4xl mx-auto px-4 sm:px-6 lg:px-8')}>
+    <figure class="rounded-[2rem] border border-gray-200 bg-white p-10 text-center shadow-xl">
+      <blockquote class="text-2xl font-semibold leading-relaxed text-gray-900">“{quote}”</blockquote>
+      <figcaption class="mt-6">
+        <div class="text-base font-semibold text-gray-900">{author}</div>
+        {role && <div class="mt-1 text-sm text-gray-500">{role}</div>}
+      </figcaption>
+    </figure>
+  </div>
+</section>

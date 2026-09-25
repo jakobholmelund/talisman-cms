@@ -1,0 +1,65 @@
+---
+import { getClient } from 'talisman-cms/client';
+// @ts-ignore
+import { env as cfEnv } from 'cloudflare:workers';
+import DaisyUiPreviewContent from '../components/DaisyUiPreviewContent.astro';
+import DaisyUiThemeInjector from '../components/DaisyUiThemeInjector.astro';
+
+const layouts = import.meta.glob('/src/layouts/*.astro', { eager: true });
+const selectedLayoutPath = Astro.url.searchParams.get('layout');
+const LayoutComponent = selectedLayoutPath && layouts[selectedLayoutPath] ? (layouts[selectedLayoutPath] as any).default : null;
+
+// Determine current mode for the fallback preview layout
+const mode = Astro.url.searchParams.get('mode') || 'light';
+let activeTheme = mode;
+
+try {
+  const env = { DB: (cfEnv as any).DB, KV: (cfEnv as any).KV };
+  const client = getClient(env as any);
+  const themeGlobal = await client.globals.find('daisyui-theme');
+  let data = themeGlobal?.data || {};
+  if (typeof data === 'string') {
+    try { data = JSON.parse(data); } catch (e) { data = {}; }
+  }
+
+  if (mode === 'light') {
+    activeTheme = data.lightTheme || 'light';
+  } else {
+    activeTheme = data.darkTheme || 'dark';
+  }
+} catch (e) {
+  // DB not ready yet, keep defaults
+}
+---
+{LayoutComponent && (
+  <LayoutComponent title="Theme Preview">
+    <DaisyUiThemeInjector />
+    <div class="py-12 w-full max-w-7xl mx-auto px-4">
+      <DaisyUiPreviewContent showAdminButton={true} />
+    </div>
+  </LayoutComponent>
+)}
+
+{!LayoutComponent && (
+  <html lang="en" data-theme={activeTheme}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>DaisyUI Theme Preview</title>
+    <!-- We use CDN for the preview so it works out-of-the-box regardless of host setup -->
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@5.0.0-beta.8/daisyui.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script is:inline set:html={`
+      tailwind.config = {
+        daisyui: {
+          themes: false,
+        }
+      }
+    `}></script>
+    <DaisyUiThemeInjector />
+  </head>
+  <body class="bg-base-100 text-base-content min-h-screen p-8 transition-colors duration-200">
+    <DaisyUiPreviewContent showAdminButton={true} />
+  </body>
+  </html>
+)}

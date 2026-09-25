@@ -1,0 +1,48 @@
+---
+import { getLiveCollection } from 'astro:content';
+
+const { entries: allPages, error: pagesError } = await getLiveCollection('pages');
+const { entries: allPosts, error: postsError } = await getLiveCollection('posts');
+
+// If there's an error, we can log it or display it
+if (pagesError) console.error("Pages error:", pagesError);
+if (postsError) console.error("Posts error:", postsError);
+---
+
+<html>
+  <head>
+    <title>Live Content Collections Test</title>
+  </head>
+  <body style="padding: 2rem; font-family: sans-serif;">
+    <h1>Live Content Collections</h1>
+    <p>This page uses <code>getLiveCollection</code> to fetch content dynamically at request time via Talisman CMS.</p>
+    
+    <h2>Pages</h2>
+    {pagesError ? (
+      <p style="color: red;">Error fetching pages: {pagesError.message}</p>
+    ) : (
+      <ul>
+        {allPages?.map(page => (
+          <li>
+            <strong>{(page.data as any).title || 'Untitled'}</strong> (Slug: {(page.data as any).slug})
+          </li>
+        ))}
+      </ul>
+    )}
+    
+    <h2>Posts</h2>
+    {postsError ? (
+      <p style="color: red;">Error fetching posts: {postsError.message}</p>
+    ) : (
+      <ul>
+        {allPosts?.map(post => (
+          <li>
+            <strong>{post.data.title || 'Untitled'}</strong> 
+            (Status: {post.data.status})
+          </li>
+        ))}
+      </ul>
+    )}
+    
+  </body>
+</html>

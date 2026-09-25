@@ -1,0 +1,16 @@
+---
+const { title, content, open = false, style = 'arrow' } = Astro.props;
+const collapseClass = ({
+  arrow: 'collapse-arrow',
+  plus: 'collapse-plus',
+  default: '',
+} as Record<string, string>)[style as string] || 'collapse-arrow';
+---
+
+<div class={`collapse border border-base-300 bg-base-100 ${collapseClass}`}>
+  <input type="checkbox" checked={open} />
+  <div class="collapse-title font-semibold">{title}</div>
+  <div class="collapse-content text-sm text-base-content/70">
+    <p>{content}</p>
+  </div>
+</div>

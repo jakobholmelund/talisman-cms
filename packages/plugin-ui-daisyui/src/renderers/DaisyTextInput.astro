@@ -1,0 +1,14 @@
+---
+const { label, placeholder, tone = 'primary' } = Astro.props;
+const toneClass = ({
+  primary: 'input-primary',
+  secondary: 'input-secondary',
+  accent: 'input-accent',
+  neutral: 'input-neutral',
+} as Record<string, string>)[tone as string] || 'input-primary';
+---
+
+<label class="form-control w-full max-w-sm gap-2">
+  <span class="label-text">{label}</span>
+  <input type="text" class={`input w-full ${toneClass}`} placeholder={placeholder || ''} />
+</label>

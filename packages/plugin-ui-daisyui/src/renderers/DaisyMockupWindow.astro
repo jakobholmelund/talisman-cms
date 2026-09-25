@@ -1,0 +1,10 @@
+---
+const { title, content } = Astro.props;
+---
+
+<div class="mockup-window border border-base-300 bg-base-100">
+  <div class="border-t border-base-300 px-4 py-8">
+    {title ? <h3 class="font-semibold">{title}</h3> : null}
+    <p class={`text-sm text-base-content/70 ${title ? 'mt-2' : ''}`}>{content}</p>
+  </div>
+</div>

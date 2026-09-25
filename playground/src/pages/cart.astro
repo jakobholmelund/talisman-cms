@@ -1,0 +1,35 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { env as cfEnv } from 'cloudflare:workers';
+import CartView from '@talisman-cms/plugin-ecommerce/components/CartView.astro';
+import {
+  getCartSessionToken,
+  getHydratedCart,
+  getPendingOrderForCart,
+} from '../lib/commerce';
+
+const sessionToken = getCartSessionToken(Astro.cookies, { create: true });
+const cartState = await getHydratedCart(cfEnv as any, sessionToken);
+const pendingOrder = await getPendingOrderForCart(cfEnv as any, cartState.cart?.id);
+---
+
+<Layout title="Cart | Talisman CMS Showcase" description="Review the items in your Talisman storefront cart.">
+  <section class="py-12 animate-fade-in-up">
+    <div class="mb-8 flex items-end justify-between border-b border-gray-100 pb-4">
+      <div>
+        <p class="text-sm font-semibold uppercase tracking-[0.3em] text-brand-600">Cart</p>
+        <h1 class="mt-2 text-4xl font-black tracking-tight text-gray-900">Your shopping cart</h1>
+      </div>
+      <a href="/shop" class="text-sm font-medium text-brand-600 transition-colors hover:text-brand-700">Keep shopping</a>
+    </div>
+
+    <CartView
+      items={cartState.items}
+      locked={cartState.locked}
+      pendingOrderId={pendingOrder?.id ?? null}
+      itemCount={cartState.itemCount}
+      requiresShipping={cartState.requiresShipping}
+      subtotal={cartState.subtotal}
+    />
+  </section>
+</Layout>

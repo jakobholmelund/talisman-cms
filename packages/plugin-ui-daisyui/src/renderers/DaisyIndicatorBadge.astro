@@ -1,0 +1,14 @@
+---
+const { label, indicator = 'New', tone = 'primary' } = Astro.props;
+const toneClass = ({
+  primary: 'badge-primary',
+  secondary: 'badge-secondary',
+  accent: 'badge-accent',
+  neutral: 'badge-neutral',
+} as Record<string, string>)[tone as string] || 'badge-primary';
+---
+
+<div class="indicator">
+  <span class={`indicator-item badge ${toneClass}`}>{indicator}</span>
+  <div class="rounded-box border border-base-300 bg-base-100 px-6 py-4">{label}</div>
+</div>

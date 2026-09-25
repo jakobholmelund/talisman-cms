@@ -1,0 +1,19 @@
+---
+const { label, options = [], value, tone = 'primary' } = Astro.props;
+const toneClass = ({
+  primary: 'radio-primary',
+  secondary: 'radio-secondary',
+  accent: 'radio-accent',
+  neutral: 'radio-neutral',
+} as Record<string, string>)[tone as string] || 'radio-primary';
+---
+
+<fieldset class="fieldset gap-2">
+  <legend class="fieldset-legend">{label}</legend>
+  {options.map((option: any) => (
+    <label class="label cursor-pointer justify-start gap-3">
+      <input type="radio" class={`radio ${toneClass}`} checked={option?.value === value} />
+      <span class="label-text">{option?.label}</span>
+    </label>
+  ))}
+</fieldset>

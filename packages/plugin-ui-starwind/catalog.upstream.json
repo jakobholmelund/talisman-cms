@@ -1,0 +1,324 @@
+[
+  {
+    "id": "accordion",
+    "name": "Accordion",
+    "kind": "component",
+    "category": "Overlay & Disclosure",
+    "variants": []
+  },
+  {
+    "id": "alert",
+    "name": "Alert",
+    "kind": "component",
+    "category": "Feedback & Status",
+    "variants": []
+  },
+  {
+    "id": "alert-dialog",
+    "name": "Alert Dialog",
+    "kind": "component",
+    "category": "Overlay & Disclosure",
+    "variants": []
+  },
+  {
+    "id": "aspect-ratio",
+    "name": "Aspect Ratio",
+    "kind": "component",
+    "category": "Layout & Structure",
+    "variants": []
+  },
+  {
+    "id": "avatar",
+    "name": "Avatar",
+    "kind": "component",
+    "category": "Content & Media",
+    "variants": []
+  },
+  {
+    "id": "badge",
+    "name": "Badge",
+    "kind": "component",
+    "category": "Feedback & Status",
+    "variants": []
+  },
+  {
+    "id": "breadcrumb",
+    "name": "Breadcrumb",
+    "kind": "component",
+    "category": "Navigation",
+    "variants": []
+  },
+  {
+    "id": "button",
+    "name": "Button",
+    "kind": "component",
+    "category": "Form & Input",
+    "variants": []
+  },
+  {
+    "id": "button-group",
+    "name": "Button Group",
+    "kind": "component",
+    "category": "Form & Input",
+    "variants": []
+  },
+  {
+    "id": "card",
+    "name": "Card",
+    "kind": "component",
+    "category": "Layout & Structure",
+    "variants": []
+  },
+  {
+    "id": "carousel",
+    "name": "Carousel",
+    "kind": "component",
+    "category": "Content & Media",
+    "variants": []
+  },
+  {
+    "id": "checkbox",
+    "name": "Checkbox",
+    "kind": "component",
+    "category": "Form & Input",
+    "variants": []
+  },
+  {
+    "id": "collapsible",
+    "name": "Collapsible",
+    "kind": "component",
+    "category": "Overlay & Disclosure",
+    "variants": []
+  },
+  {
+    "id": "combobox",
+    "name": "Combobox",
+    "kind": "component",
+    "category": "Form & Input",
+    "variants": []
+  },
+  {
+    "id": "dialog",
+    "name": "Dialog",
+    "kind": "component",
+    "category": "Overlay & Disclosure",
+    "variants": []
+  },
+  {
+    "id": "dropdown",
+    "name": "Dropdown",
+    "kind": "component",
+    "category": "Overlay & Disclosure",
+    "variants": []
+  },
+  {
+    "id": "dropzone",
+    "name": "Dropzone",
+    "kind": "component",
+    "category": "Form & Input",
+    "variants": []
+  },
+  {
+    "id": "image",
+    "name": "Image",
+    "kind": "component",
+    "category": "Content & Media",
+    "variants": []
+  },
+  {
+    "id": "input",
+    "name": "Input",
+    "kind": "component",
+    "category": "Form & Input",
+    "variants": []
+  },
+  {
+    "id": "input-group",
+    "name": "Input Group",
+    "kind": "component",
+    "category": "Form & Input",
+    "variants": []
+  },
+  {
+    "id": "input-otp",
+    "name": "Input OTP",
+    "kind": "component",
+    "category": "Form & Input",
+    "variants": []
+  },
+  {
+    "id": "item",
+    "name": "Item",
+    "kind": "component",
+    "category": "Navigation",
+    "variants": []
+  },
+  {
+    "id": "kbd",
+    "name": "Kbd",
+    "kind": "component",
+    "category": "Content & Media",
+    "variants": []
+  },
+  {
+    "id": "label",
+    "name": "Label",
+    "kind": "component",
+    "category": "Form & Input",
+    "variants": []
+  },
+  {
+    "id": "native-select",
+    "name": "Native Select",
+    "kind": "component",
+    "category": "Form & Input",
+    "variants": []
+  },
+  {
+    "id": "pagination",
+    "name": "Pagination",
+    "kind": "component",
+    "category": "Navigation",
+    "variants": []
+  },
+  {
+    "id": "popover",
+    "name": "Popover",
+    "kind": "component",
+    "category": "Overlay & Disclosure",
+    "variants": []
+  },
+  {
+    "id": "progress",
+    "name": "Progress",
+    "kind": "component",
+    "category": "Feedback & Status",
+    "variants": []
+  },
+  {
+    "id": "prose",
+    "name": "Prose",
+    "kind": "component",
+    "category": "Content & Media",
+    "variants": []
+  },
+  {
+    "id": "radio-group",
+    "name": "Radio Group",
+    "kind": "component",
+    "category": "Form & Input",
+    "variants": []
+  },
+  {
+    "id": "select",
+    "name": "Select",
+    "kind": "component",
+    "category": "Form & Input",
+    "variants": []
+  },
+  {
+    "id": "separator",
+    "name": "Separator",
+    "kind": "component",
+    "category": "Layout & Structure",
+    "variants": []
+  },
+  {
+    "id": "sheet",
+    "name": "Sheet",
+    "kind": "component",
+    "category": "Overlay & Disclosure",
+    "variants": []
+  },
+  {
+    "id": "sidebar",
+    "name": "Sidebar",
+    "kind": "component",
+    "category": "Navigation",
+    "variants": []
+  },
+  {
+    "id": "skeleton",
+    "name": "Skeleton",
+    "kind": "component",
+    "category": "Feedback & Status",
+    "variants": []
+  },
+  {
+    "id": "slider",
+    "name": "Slider",
+    "kind": "component",
+    "category": "Form & Input",
+    "variants": []
+  },
+  {
+    "id": "spinner",
+    "name": "Spinner",
+    "kind": "component",
+    "category": "Feedback & Status",
+    "variants": []
+  },
+  {
+    "id": "switch",
+    "name": "Switch",
+    "kind": "component",
+    "category": "Form & Input",
+    "variants": []
+  },
+  {
+    "id": "table",
+    "name": "Table",
+    "kind": "component",
+    "category": "Layout & Structure",
+    "variants": []
+  },
+  {
+    "id": "tabs",
+    "name": "Tabs",
+    "kind": "component",
+    "category": "Navigation",
+    "variants": []
+  },
+  {
+    "id": "textarea",
+    "name": "Textarea",
+    "kind": "component",
+    "category": "Form & Input",
+    "variants": []
+  },
+  {
+    "id": "theme-toggle",
+    "name": "Theme Toggle",
+    "kind": "component",
+    "category": "Feedback & Status",
+    "variants": []
+  },
+  {
+    "id": "toast",
+    "name": "Toast",
+    "kind": "component",
+    "category": "Feedback & Status",
+    "variants": []
+  },
+  {
+    "id": "toggle",
+    "name": "Toggle",
+    "kind": "component",
+    "category": "Form & Input",
+    "variants": []
+  },
+  {
+    "id": "tooltip",
+    "name": "Tooltip",
+    "kind": "component",
+    "category": "Overlay & Disclosure",
+    "variants": []
+  },
+  {
+    "id": "video",
+    "name": "Video",
+    "kind": "component",
+    "category": "Content & Media",
+    "variants": []
+  }
+]

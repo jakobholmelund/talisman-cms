@@ -1,0 +1,32 @@
+---
+import { componentRenderers as pluginComponentRenderers } from 'virtual:talisman-cms/component-renderers';
+import { mergeRendererRegistries, resolvePresetComponentValue } from '../render';
+
+const {
+  value,
+  componentRenderers = {},
+  presetsById = {},
+  class: className = '',
+} = Astro.props;
+
+const registry = mergeRendererRegistries(pluginComponentRenderers, componentRenderers);
+const items = Array.isArray(value) ? value : value ? [value] : [];
+---
+
+{items.map((item: any, index: number) => {
+  const resolved = item?.mode === 'preset' ? resolvePresetComponentValue(presetsById[item.presetId]) : {
+    componentType: item?.componentType,
+    props: item,
+  };
+  const Renderer = registry[resolved.componentType];
+
+  if (!Renderer) {
+    return (
+      <div class={`rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 ${className}`}>
+        Unknown component type: {resolved.componentType || 'missing'}
+      </div>
+    );
+  }
+
+  return <Renderer key={`${resolved.componentType}-${index}`} {...resolved.props} componentRenderers={registry} presetsById={presetsById} />;
+})}

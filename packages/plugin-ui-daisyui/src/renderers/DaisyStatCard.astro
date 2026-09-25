@@ -1,0 +1,17 @@
+---
+const { label, value, description, tone = 'primary' } = Astro.props;
+const valueClass = ({
+  primary: 'text-primary',
+  secondary: 'text-secondary',
+  accent: 'text-accent',
+  neutral: 'text-neutral',
+} as Record<string, string>)[tone as string] || 'text-primary';
+---
+
+<div class="stats w-full shadow">
+  <div class="stat">
+    <div class="stat-title">{label}</div>
+    <div class={`stat-value ${valueClass}`}>{value}</div>
+    {description ? <div class="stat-desc">{description}</div> : null}
+  </div>
+</div>

@@ -1,0 +1,33 @@
+---
+import { getClient } from 'talisman-cms/client';
+import { env } from 'cloudflare:workers';
+
+// Fetch the strictly typed SDK
+const cms = getClient(env as any);
+
+// 1. Create a Global document
+await cms.globals.update('site-settings', {
+  title: 'My Awesome Astro Site',
+  theme: 'dark',
+  showBanner: true
+});
+
+// 2. Fetch the newly created Global document
+const siteSettings = await cms.globals.find('site-settings', { cache: false });
+---
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>Globals SDK Test</title>
+  </head>
+  <body style="font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; background: #fafafa; color: #111;">
+    <h1>Globals SDK Test</h1>
+    <p>Created and fetched global <strong>{siteSettings?.name}</strong>.</p>
+    
+    <h2>Data Output</h2>
+    <pre style="background: #111; color: #fff; padding: 20px; border-radius: 8px;">
+{JSON.stringify(siteSettings, null, 2)}
+    </pre>
+  </body>
+</html>

@@ -1,0 +1,20 @@
+---
+const { columns = [], rows = [], zebra = true } = Astro.props;
+---
+
+<div class="overflow-x-auto">
+  <table class={`table ${zebra ? 'table-zebra' : ''}`}>
+    <thead>
+      <tr>
+        {columns.map((column: any) => <th>{column?.label}</th>)}
+      </tr>
+    </thead>
+    <tbody>
+      {rows.map((row: any) => (
+        <tr>
+          {columns.map((column: any) => <td>{row?.[column?.key] ?? ''}</td>)}
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</div>

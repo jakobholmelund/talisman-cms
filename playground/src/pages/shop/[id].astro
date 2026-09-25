@@ -1,0 +1,337 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { createDbClient, getClient } from 'talisman-cms/client';
+import { env as cfEnv } from 'cloudflare:workers';
+import { eq, inArray } from 'drizzle-orm';
+import {
+  productVariants,
+  productVariantValues,
+  stocks,
+  variants as variantDefinitions,
+} from '@talisman-cms/plugin-ecommerce/schema';
+import { getPrimaryProductImage } from '../../lib/product-media';
+import { getMediaImageSrcSet } from 'talisman-cms/helpers';
+
+const { id } = Astro.params;
+if (!id) return Astro.redirect('/shop');
+
+const env = { DB: (cfEnv as any).DB, KV: (cfEnv as any).KV };
+const cms = getClient(env);
+const product = await cms.entries.find('products', id, { depth: 0, cache: false }).catch(() => null);
+
+if (!product) return Astro.redirect('/shop');
+
+const db = createDbClient(cfEnv as any);
+const productVariantGroups = await db.select().from(productVariants).where(eq(productVariants.productId, id));
+const definitionIds = productVariantGroups.map((group) => group.variantId).filter((value): value is string => Boolean(value));
+const variantDefinitionRows = definitionIds.length > 0
+  ? await db.select().from(variantDefinitions).where(inArray(variantDefinitions.id, definitionIds))
+  : [];
+const productVariantIds = productVariantGroups.map((group) => group.id);
+const productVariantValueRows = productVariantIds.length > 0
+  ? await db.select().from(productVariantValues).where(inArray(productVariantValues.productVariantId, productVariantIds))
+  : [];
+const productVariantValueIds = productVariantValueRows.map((row) => row.id);
+const stockRows = productVariantValueIds.length > 0
+  ? await db.select().from(stocks).where(inArray(stocks.productVariantValueId, productVariantValueIds))
+  : [];
+
+const productName = product.data.name ?? product.data.title ?? 'Untitled product';
+const priceCents = product.data.basePrice ?? product.data.price ?? 0;
+const formattedPrice = (priceCents / 100).toFixed(2);
+const imageUrl = getPrimaryProductImage(product.data);
+const inventory = product.data.inventoryQuantity ?? 0;
+const inStock = inventory > 0 || product.data.type === 'digital';
+const variantGroups = productVariantGroups.map((group) => {
+  const definition = variantDefinitionRows.find((row) => row.id === group.variantId);
+  const values = productVariantValueRows
+    .filter((row) => row.productVariantId === group.id)
+    .map((row) => {
+      const stock = stockRows.find((stockRow) => stockRow.productVariantValueId === row.id);
+      const resolvedPrice = row.priceOverride ?? group.priceOverride ?? priceCents;
+      return {
+        id: row.id,
+        label: row.value,
+        sku: row.sku,
+        imageUrl: row.image ?? null,
+        quantity: stock?.quantity ?? group.inventoryQuantity ?? 0,
+        priceCents: resolvedPrice,
+      };
+    });
+
+  return {
+    id: group.id,
+    label: definition?.name ?? group.name,
+    values,
+  };
+}).filter((group) => group.values.length > 0);
+const defaultVariant = variantGroups.flatMap((group) => group.values).find((value) => value.quantity > 0) ?? variantGroups[0]?.values[0] ?? null;
+const initialHeroImageUrl = defaultVariant?.imageUrl ?? imageUrl;
+---
+
+<Layout title={`${productName} | Shop`} description={product.data.description}>
+  <div class="py-12 md:py-20 animate-fade-in-up">
+    <!-- Breadcrumbs -->
+    <nav class="flex mb-8 text-sm text-text-muted" aria-label="Breadcrumb">
+      <ol class="inline-flex items-center space-x-1 md:space-x-3">
+        <li class="inline-flex items-center">
+          <a href="/" class="hover:text-brand-600 transition-colors text-gray-500">Home</a>
+        </li>
+        <li>
+          <div class="flex items-center">
+            <svg class="w-3 h-3 text-gray-400 mx-1" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 6 10">
+              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m1 9 4-4-4-4"/>
+            </svg>
+            <a href="/shop" class="hover:text-brand-600 transition-colors text-gray-500 ml-1 md:ml-2">Shop</a>
+          </div>
+        </li>
+        <li aria-current="page">
+          <div class="flex items-center">
+            <svg class="w-3 h-3 text-gray-400 mx-1" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 6 10">
+              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m1 9 4-4-4-4"/>
+            </svg>
+            <span class="text-gray-900 ml-1 md:ml-2 font-medium">{productName}</span>
+          </div>
+        </li>
+      </ol>
+    </nav>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-12 lg:gap-24">
+      {/* Product Image Area */}
+      <div class="aspect-square bg-gray-100 rounded-[2.5rem] flex items-center justify-center p-8 border border-gray-200 shadow-inner relative overflow-hidden">
+        <div class="absolute inset-0 bg-gradient-to-br from-brand-50 to-transparent opacity-50"></div>
+        <img
+          id="product-hero-image"
+          src={initialHeroImageUrl ?? undefined}
+          srcset={initialHeroImageUrl ? getMediaImageSrcSet(initialHeroImageUrl) : undefined}
+          sizes="(min-width: 768px) 50vw, 100vw"
+          alt={productName}
+          width="800"
+          height="800"
+          loading="eager"
+          fetchpriority="high"
+          transition:name={`product-image-${product.id}`}
+          class:list={[
+            'w-full h-full object-cover rounded-[2rem] shadow-xl -rotate-3 hover:rotate-0 transition-transform duration-500 cursor-crosshair',
+            !initialHeroImageUrl && 'hidden',
+          ]}
+        />
+        <div
+          id="product-hero-fallback"
+          class:list={[
+            'w-full h-full bg-white rounded-[2rem] shadow-xl flex items-center justify-center -rotate-3 hover:rotate-0 transition-transform duration-500 cursor-crosshair',
+            initialHeroImageUrl && 'hidden',
+          ]}
+        >
+          <span class="text-gray-300 font-bold text-3xl">No Image</span>
+        </div>
+      </div>
+
+      {/* Product Details Area */}
+      <div class="flex flex-col justify-center">
+        <div class="mb-2">
+          <span class={`inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ${inStock ? 'bg-green-50 text-green-700 ring-green-600/20' : 'bg-amber-50 text-amber-700 ring-amber-600/20'}`}>
+            {inStock ? 'In Stock' : 'Preorder'}
+          </span>
+        </div>
+        <h1 class="text-4xl sm:text-5xl font-extrabold text-gray-900 tracking-tight mb-4">{productName}</h1>
+        <p class="text-3xl font-black text-brand-600 mb-8">${formattedPrice}</p>
+        
+        <div class="prose prose-lg text-gray-600 mb-10">
+          <p>{product.data.description || 'This premium item does not have a detailed description yet.'}</p>
+        </div>
+
+        {variantGroups.length > 0 && (
+          <div class="mb-10 space-y-6 rounded-[2rem] border border-gray-200 bg-white/80 p-6 shadow-sm">
+            {variantGroups.map((group) => (
+              <section>
+                <div class="mb-3 flex items-center justify-between gap-3">
+                  <h2 class="text-sm font-semibold uppercase tracking-[0.2em] text-gray-500">{group.label}</h2>
+                  <span class="text-xs text-gray-400">{group.values.length} options</span>
+                </div>
+                <div class="flex flex-wrap gap-3">
+                  {group.values.map((value) => (
+                    <button
+                      type="button"
+                      class={`variant-choice rounded-full border px-4 py-2 text-sm font-medium transition-colors ${defaultVariant?.id === value.id ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-200 bg-white text-gray-900 hover:border-brand-300 hover:text-brand-700'}`}
+                      data-variant-id={value.id}
+                      data-price={value.priceCents}
+                      data-stock={value.quantity}
+                      data-label={value.label}
+                      data-sku={value.sku ?? ''}
+                      data-image={value.imageUrl ?? ''}
+                      data-image-srcset={value.imageUrl ? getMediaImageSrcSet(value.imageUrl) : undefined}
+                    >
+                      {value.label}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ))}
+            <div class="grid gap-4 border-t border-gray-100 pt-5 text-sm sm:grid-cols-2">
+              <div>
+                <p class="font-semibold text-gray-900">Selected option</p>
+                <p id="selected-variant-label" class="text-gray-600">{defaultVariant?.label ?? 'Standard product'}</p>
+              </div>
+              <div>
+                <p class="font-semibold text-gray-900">Availability</p>
+                <p id="selected-variant-stock" class="text-gray-600">
+                  {defaultVariant ? `${defaultVariant.quantity} ready to ship` : 'Uses product stock'}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div class="border-t border-gray-200 pt-8 mt-auto flex flex-col sm:flex-row gap-4">
+          <button
+            id="add-to-cart-button"
+            type="button"
+            class="inline-flex h-12 w-full sm:w-auto items-center justify-center rounded-full bg-brand-600 px-8 text-base font-medium text-white shadow-xl shadow-brand-500/30 transition-all hover:-translate-y-0.5 hover:bg-brand-700 hover:shadow-lg"
+            data-product-id={product.id}
+            data-default-variant-id={defaultVariant?.id ?? ''}
+            data-default-variant-label={defaultVariant?.label ?? 'Standard product'}
+            data-default-variant-stock={defaultVariant ? `${defaultVariant.quantity} ready to ship` : 'Uses product stock'}
+            data-default-image-url={imageUrl ?? ''}
+            data-default-image-srcset={imageUrl ? getMediaImageSrcSet(imageUrl) : undefined}
+          >
+            Add to Cart
+          </button>
+          <button id="buy-now-button" type="button" class="inline-flex h-12 w-full sm:w-auto items-center justify-center rounded-full bg-brand-100 px-8 text-base font-medium text-brand-900 shadow-sm transition-all hover:bg-brand-200">
+            Buy Now
+          </button>
+          <a href="/cart" class="inline-flex h-12 w-full sm:w-auto items-center justify-center rounded-full border border-gray-200 bg-white px-8 text-base font-medium text-gray-900 transition-colors hover:border-brand-200 hover:text-brand-700">
+            View Cart
+          </a>
+        </div>
+        <p id="cart-feedback" class="mt-4 text-sm text-gray-500" aria-live="polite"></p>
+        
+        <div class="mt-8 flex items-center text-sm text-gray-500 space-x-4">
+          <div class="flex items-center">
+            <svg class="mr-2 h-5 w-5 text-brand-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clip-rule="evenodd" />
+            </svg>
+            Free shipping
+          </div>
+          <div class="flex items-center">
+            <svg class="mr-2 h-5 w-5 text-brand-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clip-rule="evenodd" />
+            </svg>
+            Secure checkout
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</Layout>
+
+<script>
+  import { actions } from 'astro:actions';
+  import { dispatchCartUpdated } from '@talisman-cms/plugin-ecommerce/browser';
+
+  function initProductPage() {
+    const addToCartButton = document.getElementById('add-to-cart-button');
+    if (!addToCartButton || addToCartButton.dataset.initialized === 'true') return;
+    addToCartButton.dataset.initialized = 'true';
+
+    const buyNowButton = document.getElementById('buy-now-button');
+    const feedbackEl = document.getElementById('cart-feedback');
+    const labelEl = document.getElementById('selected-variant-label');
+    const stockEl = document.getElementById('selected-variant-stock');
+    const priceHeading = document.querySelector('p.text-3xl.font-black.text-brand-600');
+    const heroImage = document.getElementById('product-hero-image');
+    const heroFallback = document.getElementById('product-hero-fallback');
+    const variantButtons = Array.from(document.querySelectorAll('.variant-choice'));
+
+    const productId = addToCartButton.dataset.productId || '';
+    const defaultVariantId = addToCartButton.dataset.defaultVariantId || '';
+    const defaultVariantLabel = addToCartButton.dataset.defaultVariantLabel || 'Standard product';
+    const defaultVariantStock = addToCartButton.dataset.defaultVariantStock || 'Uses product stock';
+    const defaultProductImageUrl = addToCartButton.dataset.defaultImageUrl || '';
+    const defaultProductImageSrcset = addToCartButton.dataset.defaultImageSrcset || '';
+
+    let selectedVariantId = defaultVariantId;
+
+    function setActiveVariant(button: Element | null) {
+      const htmlBtn = button as HTMLElement | null;
+      selectedVariantId = htmlBtn?.dataset.variantId || '';
+      for (const candidate of variantButtons) {
+        const isActive = candidate === button;
+        candidate.classList.toggle('border-brand-600', isActive);
+        candidate.classList.toggle('bg-brand-600', isActive);
+        candidate.classList.toggle('text-white', isActive);
+        candidate.classList.toggle('border-gray-200', !isActive);
+        candidate.classList.toggle('bg-white', !isActive);
+        candidate.classList.toggle('text-gray-900', !isActive);
+      }
+
+      if (labelEl) labelEl.textContent = htmlBtn?.dataset.label || defaultVariantLabel;
+      if (stockEl) {
+        const stock = Number(htmlBtn?.dataset.stock || 0);
+        stockEl.textContent = button ? `${stock} ready to ship` : defaultVariantStock;
+      }
+      if (priceHeading && htmlBtn?.dataset.price) {
+        priceHeading.textContent = `$${(Number(htmlBtn.dataset.price) / 100).toFixed(2)}`;
+      }
+      if (heroImage instanceof HTMLImageElement) {
+        const nextImageUrl = htmlBtn?.dataset.image || defaultProductImageUrl;
+        heroImage.srcset = htmlBtn?.dataset.imageSrcset || defaultProductImageSrcset;
+        heroImage.src = nextImageUrl;
+        heroImage.classList.toggle('hidden', !nextImageUrl);
+        heroFallback?.classList.toggle('hidden', Boolean(nextImageUrl));
+      }
+    }
+
+    for (const button of variantButtons) {
+      button.addEventListener('click', () => setActiveVariant(button));
+    }
+
+    async function handleAddToCart() {
+      if (feedbackEl) feedbackEl.textContent = 'Adding to cart...';
+
+      const { data, error } = await actions.addToCart({
+        productId,
+        variantId: selectedVariantId || undefined,
+        quantity: 1,
+      });
+
+      if (error) {
+        throw new Error(error.message || 'Failed to update cart');
+      }
+
+      const items = data?.cart?.items || [];
+      const itemCount = Array.isArray(items)
+        ? items.reduce((total: number, item: any) => total + Number(item.quantity || 0), 0)
+        : 1;
+
+      dispatchCartUpdated({ itemCount });
+
+      if (feedbackEl) {
+        feedbackEl.textContent = `Cart updated. ${itemCount} item${itemCount === 1 ? '' : 's'} in cart.`;
+      }
+    }
+
+    addToCartButton.addEventListener('click', async () => {
+      try {
+        await handleAddToCart();
+      } catch (error) {
+        if (feedbackEl) feedbackEl.textContent = error instanceof Error ? error.message : 'Failed to update cart';
+      }
+    });
+
+    buyNowButton?.addEventListener('click', async () => {
+      try {
+        await handleAddToCart();
+        window.location.href = '/checkout';
+      } catch (error) {
+        if (feedbackEl) feedbackEl.textContent = error instanceof Error ? error.message : 'Failed to update cart';
+      }
+    });
+
+    const activeButton = variantButtons.find((button) => (button as HTMLElement).dataset.variantId === defaultVariantId) || null;
+    setActiveVariant(activeButton);
+  }
+
+  document.addEventListener('astro:page-load', initProductPage);
+  initProductPage();
+</script>

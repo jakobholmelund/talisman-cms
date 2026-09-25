@@ -1,0 +1,1470 @@
+{
+  "pluginName": "@talisman-cms/plugin-ui-starwind",
+  "library": {
+    "id": "starwind",
+    "name": "Starwind UI",
+    "requirements": [
+      {
+        "id": "package",
+        "kind": "package",
+        "label": "Install Starwind UI",
+        "value": "@starwind/ui",
+        "optional": true
+      },
+      {
+        "id": "css",
+        "kind": "css",
+        "label": "Import Starwind styles",
+        "value": "Ensure the Starwind CSS layer is available to the site",
+        "optional": true
+      }
+    ]
+  },
+  "generation": {
+    "generatedFilePath": "src/generated.ts",
+    "importSourcePath": "catalog.upstream.json",
+    "rendererStubTemplate": "astro-component"
+  },
+  "upstreamCatalog": [
+    {
+      "id": "accordion",
+      "name": "Accordion",
+      "kind": "component",
+      "category": "Overlay & Disclosure",
+      "variants": []
+    },
+    {
+      "id": "alert",
+      "name": "Alert",
+      "kind": "component",
+      "category": "Feedback & Status",
+      "variants": []
+    },
+    {
+      "id": "alert-dialog",
+      "name": "Alert Dialog",
+      "kind": "component",
+      "category": "Overlay & Disclosure",
+      "variants": []
+    },
+    {
+      "id": "aspect-ratio",
+      "name": "Aspect Ratio",
+      "kind": "component",
+      "category": "Layout & Structure",
+      "variants": []
+    },
+    {
+      "id": "avatar",
+      "name": "Avatar",
+      "kind": "component",
+      "category": "Content & Media",
+      "variants": []
+    },
+    {
+      "id": "badge",
+      "name": "Badge",
+      "kind": "component",
+      "category": "Feedback & Status",
+      "variants": []
+    },
+    {
+      "id": "breadcrumb",
+      "name": "Breadcrumb",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": []
+    },
+    {
+      "id": "button",
+      "name": "Button",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": []
+    },
+    {
+      "id": "button-group",
+      "name": "Button Group",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": []
+    },
+    {
+      "id": "card",
+      "name": "Card",
+      "kind": "component",
+      "category": "Layout & Structure",
+      "variants": []
+    },
+    {
+      "id": "carousel",
+      "name": "Carousel",
+      "kind": "component",
+      "category": "Content & Media",
+      "variants": []
+    },
+    {
+      "id": "checkbox",
+      "name": "Checkbox",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": []
+    },
+    {
+      "id": "collapsible",
+      "name": "Collapsible",
+      "kind": "component",
+      "category": "Overlay & Disclosure",
+      "variants": []
+    },
+    {
+      "id": "combobox",
+      "name": "Combobox",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": []
+    },
+    {
+      "id": "dialog",
+      "name": "Dialog",
+      "kind": "component",
+      "category": "Overlay & Disclosure",
+      "variants": []
+    },
+    {
+      "id": "dropdown",
+      "name": "Dropdown",
+      "kind": "component",
+      "category": "Overlay & Disclosure",
+      "variants": []
+    },
+    {
+      "id": "dropzone",
+      "name": "Dropzone",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": []
+    },
+    {
+      "id": "image",
+      "name": "Image",
+      "kind": "component",
+      "category": "Content & Media",
+      "variants": []
+    },
+    {
+      "id": "input",
+      "name": "Input",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": []
+    },
+    {
+      "id": "input-group",
+      "name": "Input Group",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": []
+    },
+    {
+      "id": "input-otp",
+      "name": "Input OTP",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": []
+    },
+    {
+      "id": "item",
+      "name": "Item",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": []
+    },
+    {
+      "id": "kbd",
+      "name": "Kbd",
+      "kind": "component",
+      "category": "Content & Media",
+      "variants": []
+    },
+    {
+      "id": "label",
+      "name": "Label",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": []
+    },
+    {
+      "id": "native-select",
+      "name": "Native Select",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": []
+    },
+    {
+      "id": "pagination",
+      "name": "Pagination",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": []
+    },
+    {
+      "id": "popover",
+      "name": "Popover",
+      "kind": "component",
+      "category": "Overlay & Disclosure",
+      "variants": []
+    },
+    {
+      "id": "progress",
+      "name": "Progress",
+      "kind": "component",
+      "category": "Feedback & Status",
+      "variants": []
+    },
+    {
+      "id": "prose",
+      "name": "Prose",
+      "kind": "component",
+      "category": "Content & Media",
+      "variants": []
+    },
+    {
+      "id": "radio-group",
+      "name": "Radio Group",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": []
+    },
+    {
+      "id": "select",
+      "name": "Select",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": []
+    },
+    {
+      "id": "separator",
+      "name": "Separator",
+      "kind": "component",
+      "category": "Layout & Structure",
+      "variants": []
+    },
+    {
+      "id": "sheet",
+      "name": "Sheet",
+      "kind": "component",
+      "category": "Overlay & Disclosure",
+      "variants": []
+    },
+    {
+      "id": "sidebar",
+      "name": "Sidebar",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": []
+    },
+    {
+      "id": "skeleton",
+      "name": "Skeleton",
+      "kind": "component",
+      "category": "Feedback & Status",
+      "variants": []
+    },
+    {
+      "id": "slider",
+      "name": "Slider",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": []
+    },
+    {
+      "id": "spinner",
+      "name": "Spinner",
+      "kind": "component",
+      "category": "Feedback & Status",
+      "variants": []
+    },
+    {
+      "id": "switch",
+      "name": "Switch",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": []
+    },
+    {
+      "id": "table",
+      "name": "Table",
+      "kind": "component",
+      "category": "Layout & Structure",
+      "variants": []
+    },
+    {
+      "id": "tabs",
+      "name": "Tabs",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": []
+    },
+    {
+      "id": "textarea",
+      "name": "Textarea",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": []
+    },
+    {
+      "id": "theme-toggle",
+      "name": "Theme Toggle",
+      "kind": "component",
+      "category": "Feedback & Status",
+      "variants": []
+    },
+    {
+      "id": "toast",
+      "name": "Toast",
+      "kind": "component",
+      "category": "Feedback & Status",
+      "variants": []
+    },
+    {
+      "id": "toggle",
+      "name": "Toggle",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": []
+    },
+    {
+      "id": "tooltip",
+      "name": "Tooltip",
+      "kind": "component",
+      "category": "Overlay & Disclosure",
+      "variants": []
+    },
+    {
+      "id": "video",
+      "name": "Video",
+      "kind": "component",
+      "category": "Content & Media",
+      "variants": []
+    }
+  ],
+  "items": [
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "accordion",
+      "upstreamItemName": "Accordion",
+      "kind": "component",
+      "category": "Overlay & Disclosure",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "alert",
+      "upstreamItemName": "Alert",
+      "kind": "component",
+      "category": "Feedback & Status",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "alert-dialog",
+      "upstreamItemName": "Alert Dialog",
+      "kind": "component",
+      "category": "Overlay & Disclosure",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "aspect-ratio",
+      "upstreamItemName": "Aspect Ratio",
+      "kind": "component",
+      "category": "Layout & Structure",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "avatar",
+      "upstreamItemName": "Avatar",
+      "kind": "component",
+      "category": "Content & Media",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "badge",
+      "upstreamItemName": "Badge",
+      "kind": "component",
+      "category": "Feedback & Status",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "breadcrumb",
+      "upstreamItemName": "Breadcrumb",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "button",
+      "upstreamItemName": "Button",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "button-group",
+      "upstreamItemName": "Button Group",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "card",
+      "upstreamItemName": "Card",
+      "kind": "component",
+      "category": "Layout & Structure",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "carousel",
+      "upstreamItemName": "Carousel",
+      "kind": "component",
+      "category": "Content & Media",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "checkbox",
+      "upstreamItemName": "Checkbox",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "collapsible",
+      "upstreamItemName": "Collapsible",
+      "kind": "component",
+      "category": "Overlay & Disclosure",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "combobox",
+      "upstreamItemName": "Combobox",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "dialog",
+      "upstreamItemName": "Dialog",
+      "kind": "component",
+      "category": "Overlay & Disclosure",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "dropdown",
+      "upstreamItemName": "Dropdown",
+      "kind": "component",
+      "category": "Overlay & Disclosure",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "dropzone",
+      "upstreamItemName": "Dropzone",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "image",
+      "upstreamItemName": "Image",
+      "kind": "component",
+      "category": "Content & Media",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "input",
+      "upstreamItemName": "Input",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "input-group",
+      "upstreamItemName": "Input Group",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "input-otp",
+      "upstreamItemName": "Input OTP",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "item",
+      "upstreamItemName": "Item",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "kbd",
+      "upstreamItemName": "Kbd",
+      "kind": "component",
+      "category": "Content & Media",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "label",
+      "upstreamItemName": "Label",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "custom",
+      "upstreamItemId": "metric",
+      "upstreamItemName": "Metric Stat",
+      "kind": "component",
+      "category": "Data",
+      "variants": [
+        "growth"
+      ],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": [
+          {
+            "itemId": "split-feature",
+            "slotName": "metrics"
+          },
+          {
+            "itemId": "metrics-band",
+            "slotName": "items"
+          }
+        ]
+      },
+      "coverageStatus": "complete",
+      "notes": "Talisman-specific stat component composed in a Starwind-inspired style.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-starwind/renderers/StarwindMetric.astro",
+        "localFilePath": "src/renderers/StarwindMetric.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "starwindMetric",
+        "name": "Metric Stat",
+        "description": "Compact metric with label and summary.",
+        "fields": [
+          {
+            "name": "value",
+            "label": "Value",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "summary",
+            "label": "Summary",
+            "type": "textarea"
+          }
+        ],
+        "presets": [
+          {
+            "id": "starwind-growth-metric",
+            "label": "Growth Metric",
+            "variant": "growth",
+            "props": {
+              "value": "42%",
+              "label": "Year-over-year growth",
+              "summary": "Used in launch and investor storytelling sections."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "custom",
+      "upstreamItemId": "metrics-band",
+      "upstreamItemName": "Metrics Band",
+      "kind": "block",
+      "category": "Data",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [
+          {
+            "name": "items",
+            "label": "Metric Items",
+            "hasMany": true,
+            "componentItemIds": [
+              "metric"
+            ],
+            "allowInline": true,
+            "allowReferences": true
+          }
+        ],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Talisman-specific composed block for repeated metric stats.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-starwind/renderers/StarwindMetricsBand.astro",
+        "localFilePath": "src/renderers/StarwindMetricsBand.astro"
+      },
+      "adapter": {
+        "kind": "block",
+        "slug": "starwindMetricsBand",
+        "name": "Metrics Band",
+        "description": "Dense metrics row backed by reusable stat components.",
+        "fields": [
+          {
+            "name": "title",
+            "label": "Title",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "description",
+            "label": "Description",
+            "type": "textarea"
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "native-select",
+      "upstreamItemName": "Native Select",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "pagination",
+      "upstreamItemName": "Pagination",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "popover",
+      "upstreamItemName": "Popover",
+      "kind": "component",
+      "category": "Overlay & Disclosure",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "progress",
+      "upstreamItemName": "Progress",
+      "kind": "component",
+      "category": "Feedback & Status",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "prose",
+      "upstreamItemName": "Prose",
+      "kind": "component",
+      "category": "Content & Media",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "radio-group",
+      "upstreamItemName": "Radio Group",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "select",
+      "upstreamItemName": "Select",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "separator",
+      "upstreamItemName": "Separator",
+      "kind": "component",
+      "category": "Layout & Structure",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "sheet",
+      "upstreamItemName": "Sheet",
+      "kind": "component",
+      "category": "Overlay & Disclosure",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "sidebar",
+      "upstreamItemName": "Sidebar",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "skeleton",
+      "upstreamItemName": "Skeleton",
+      "kind": "component",
+      "category": "Feedback & Status",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "slider",
+      "upstreamItemName": "Slider",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "spinner",
+      "upstreamItemName": "Spinner",
+      "kind": "component",
+      "category": "Feedback & Status",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "custom",
+      "upstreamItemId": "split-feature",
+      "upstreamItemName": "Split Feature",
+      "kind": "block",
+      "category": "Feature",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [
+          {
+            "name": "links",
+            "label": "Links",
+            "hasMany": true,
+            "componentItemIds": [
+              "text-link"
+            ],
+            "allowInline": true,
+            "allowReferences": true
+          },
+          {
+            "name": "metrics",
+            "label": "Metrics",
+            "hasMany": true,
+            "componentItemIds": [
+              "metric"
+            ],
+            "allowInline": true,
+            "allowReferences": true
+          }
+        ],
+        "usedIn": []
+      },
+      "coverageStatus": "complete",
+      "notes": "Talisman-specific composed block built from custom Starwind-inspired components.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-starwind/renderers/StarwindSplitFeature.astro",
+        "localFilePath": "src/renderers/StarwindSplitFeature.astro"
+      },
+      "adapter": {
+        "kind": "block",
+        "slug": "starwindSplitFeature",
+        "name": "Split Feature",
+        "description": "Editorial split section with nested links and metrics.",
+        "fields": [
+          {
+            "name": "eyebrow",
+            "label": "Eyebrow",
+            "type": "text"
+          },
+          {
+            "name": "title",
+            "label": "Title",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "description",
+            "label": "Description",
+            "type": "textarea",
+            "required": true
+          },
+          {
+            "name": "mediaUrl",
+            "label": "Media URL",
+            "type": "text"
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "switch",
+      "upstreamItemName": "Switch",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "table",
+      "upstreamItemName": "Table",
+      "kind": "component",
+      "category": "Layout & Structure",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "tabs",
+      "upstreamItemName": "Tabs",
+      "kind": "component",
+      "category": "Navigation",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "custom",
+      "upstreamItemId": "text-link",
+      "upstreamItemName": "Text Link",
+      "kind": "component",
+      "category": "Actions",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": [
+          {
+            "itemId": "split-feature",
+            "slotName": "links"
+          }
+        ]
+      },
+      "coverageStatus": "complete",
+      "notes": "Talisman-specific link row component used by the Split Feature block.",
+      "rendererTarget": {
+        "modulePath": "@talisman-cms/plugin-ui-starwind/renderers/StarwindTextLink.astro",
+        "localFilePath": "src/renderers/StarwindTextLink.astro"
+      },
+      "adapter": {
+        "kind": "component",
+        "slug": "starwindTextLink",
+        "name": "Text Link",
+        "description": "Editorial style text link for nested action rows.",
+        "fields": [
+          {
+            "name": "label",
+            "label": "Label",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "href",
+            "label": "URL",
+            "type": "text",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "textarea",
+      "upstreamItemName": "Textarea",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "theme-toggle",
+      "upstreamItemName": "Theme Toggle",
+      "kind": "component",
+      "category": "Feedback & Status",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "toast",
+      "upstreamItemName": "Toast",
+      "kind": "component",
+      "category": "Feedback & Status",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "toggle",
+      "upstreamItemName": "Toggle",
+      "kind": "component",
+      "category": "Form & Input",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "tooltip",
+      "upstreamItemName": "Tooltip",
+      "kind": "component",
+      "category": "Overlay & Disclosure",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    },
+    {
+      "catalogOrigin": "upstream",
+      "upstreamItemId": "video",
+      "upstreamItemName": "Video",
+      "kind": "component",
+      "category": "Content & Media",
+      "variants": [],
+      "setupRequirements": [
+        "package",
+        "css"
+      ],
+      "relationships": {
+        "slots": [],
+        "usedIn": []
+      },
+      "coverageStatus": "unsupported",
+      "notes": "Catalog entry imported from Starwind. No Talisman adapter is implemented yet.",
+      "rendererTarget": null
+    }
+  ]
+}

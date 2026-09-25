@@ -1,0 +1,17 @@
+---
+const { label, href, style = 'primary', size = 'md' } = Astro.props;
+const styleClass = ({
+  primary: 'btn-primary',
+  secondary: 'btn-secondary',
+  accent: 'btn-accent',
+  ghost: 'btn-ghost',
+} as Record<string, string>)[style as string] || 'btn-primary';
+const sizeClass = ({
+  sm: 'btn-sm',
+  md: 'btn-md',
+  lg: 'btn-lg',
+} as Record<string, string>)[size as string] || 'btn-md';
+const buttonClass = ['btn', styleClass, sizeClass].join(' ');
+---
+
+<a href={href || '#'} class={buttonClass}>{label || 'Action'}</a>

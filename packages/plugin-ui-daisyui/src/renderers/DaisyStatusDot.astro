@@ -1,0 +1,20 @@
+---
+const { label, tone = 'success', size = 'md' } = Astro.props;
+const toneClass = ({
+  success: 'status-success',
+  warning: 'status-warning',
+  error: 'status-error',
+  info: 'status-info',
+  neutral: 'status-neutral',
+} as Record<string, string>)[tone as string] || 'status-success';
+const sizeClass = ({
+  sm: 'status-sm',
+  md: 'status-md',
+  lg: 'status-lg',
+} as Record<string, string>)[size as string] || 'status-md';
+---
+
+<span class="inline-flex items-center gap-2">
+  <span class={`status ${toneClass} ${sizeClass}`}></span>
+  {label ? <span>{label}</span> : null}
+</span>

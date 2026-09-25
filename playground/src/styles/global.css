@@ -1,0 +1,61 @@
+@import "tailwindcss";
+@plugin "daisyui";
+@source "../**/*.{astro,html,js,jsx,md,mdx,svelte,ts,tsx,vue}";
+@source "../../../packages/plugin-ecommerce/src/components/**/*.{astro,html,js,jsx,ts,tsx}";
+@source "../../../packages/plugin-ui-daisyui/**/*.astro";
+
+@theme {
+  --color-brand-50: #f0f9ff;
+  --color-brand-100: #e0f2fe;
+  --color-brand-200: #bae6fd;
+  --color-brand-300: #7dd3fc;
+  --color-brand-400: #38bdf8;
+  --color-brand-500: #0ea5e9;
+  --color-brand-600: #0284c7;
+  --color-brand-700: #0369a1;
+  --color-brand-800: #075985;
+  --color-brand-900: #0c4a6e;
+  --color-brand-950: #082f49;
+
+  --color-background-base: #fafafa;
+  --color-background-elevated: #ffffff;
+  --color-text-base: #171717;
+  --color-text-muted: #525252;
+}
+
+@layer base {
+  body {
+    @apply bg-base-100 text-base-content antialiased min-h-screen selection:bg-primary/20 selection:text-primary;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply bg-base-100/70 backdrop-blur-md border border-base-content/10 shadow-xl;
+  }
+
+  .glass-dark {
+    @apply bg-neutral/80 backdrop-blur-lg border border-neutral-content/10 shadow-2xl;
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary;
+  }
+
+  .animate-fade-in-up {
+    animation: fadeInUp 0.5s ease-out forwards;
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

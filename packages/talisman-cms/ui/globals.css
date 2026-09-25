@@ -1,0 +1,23 @@
+@import "tailwindcss";
+@source ".";
+
+@theme {
+  --color-zinc-950: #09090b;
+  --color-zinc-900: #18181b;
+  --color-zinc-800: #27272a;
+}
+
+/* Custom premium styling for the CMS */
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-zinc-950);
+  background-image: 
+    radial-gradient(ellipse at top, hsla(253, 36%, 12%, 1) 0%, transparent 70%), 
+    radial-gradient(ellipse at bottom left, hsla(225, 49%, 20%, 0.15) 0%, transparent 50%), 
+    radial-gradient(ellipse at bottom right, hsla(339, 49%, 20%, 0.15) 0%, transparent 50%);
+  background-attachment: fixed;
+  color: #fafafa;
+}

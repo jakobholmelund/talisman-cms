@@ -1,0 +1,18 @@
+---
+const { brandLabel, brandHref = '/', items = [] } = Astro.props;
+---
+
+<div class="navbar rounded-box border border-base-300 bg-base-100">
+  <div class="navbar-start">
+    <a href={brandHref} class="btn btn-ghost text-xl">{brandLabel}</a>
+  </div>
+  <div class="navbar-end">
+    <ul class="menu menu-horizontal px-1">
+      {items.map((item: any) => (
+        <li>
+          <a href={item?.href || '#'}>{item?.label}</a>
+        </li>
+      ))}
+    </ul>
+  </div>
+</div>

@@ -1,0 +1,13 @@
+---
+const { label, message, position = 'top' } = Astro.props;
+const positionClass = ({
+  top: 'tooltip-top',
+  bottom: 'tooltip-bottom',
+  left: 'tooltip-left',
+  right: 'tooltip-right',
+} as Record<string, string>)[position as string] || 'tooltip-top';
+---
+
+<div class={`tooltip ${positionClass}`} data-tip={message}>
+  <span class="cursor-help underline decoration-dotted underline-offset-4">{label}</span>
+</div>

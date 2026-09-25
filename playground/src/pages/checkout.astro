@@ -1,0 +1,190 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { env as cfEnv } from 'cloudflare:workers';
+import {
+  formatMoney,
+  getCartSessionToken,
+  getHydratedCart,
+  getPendingOrderForCart,
+} from '../lib/commerce';
+
+const sessionToken = getCartSessionToken(Astro.cookies, { create: true });
+const cartState = await getHydratedCart(cfEnv as any, sessionToken);
+const pendingOrder = await getPendingOrderForCart(cfEnv as any, cartState.cart?.id);
+
+if (cartState.items.length === 0) {
+  return Astro.redirect('/cart');
+}
+
+const cancelled = Astro.url.searchParams.get('cancelled') === '1';
+---
+
+<Layout title="Checkout | Talisman CMS Showcase" description="Complete checkout for the Talisman storefront demo.">
+  <section class="py-12 animate-fade-in-up">
+    <div class="mb-8 flex items-end justify-between border-b border-gray-100 pb-4">
+      <div>
+        <p class="text-sm font-semibold uppercase tracking-[0.3em] text-brand-600">Checkout</p>
+        <h1 class="mt-2 text-4xl font-black tracking-tight text-gray-900">Complete your order</h1>
+      </div>
+      <a href="/cart" class="text-sm font-medium text-brand-600 transition-colors hover:text-brand-700">Back to cart</a>
+    </div>
+
+    {cancelled && (
+      <div class="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
+        The previous checkout session was cancelled. Your cart is unlocked and ready to try again.
+      </div>
+    )}
+
+    {cartState.locked && pendingOrder ? (
+      <div class="rounded-[2rem] border border-amber-200 bg-amber-50 px-8 py-12 text-center shadow-sm">
+        <p class="text-lg font-semibold text-amber-900">This cart is currently locked by an active checkout.</p>
+        <p class="mt-2 text-sm text-amber-800">Cancel that checkout to continue editing the cart.</p>
+        <a href={`/checkout/cancel?order=${pendingOrder.id}`} class="mt-6 inline-flex h-11 items-center justify-center rounded-full bg-amber-900 px-6 text-sm font-medium text-white transition-colors hover:bg-amber-950">
+          Cancel active checkout
+        </a>
+      </div>
+    ) : (
+      <div class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <form
+          id="checkout-form"
+          data-requires-shipping={cartState.requiresShipping ? 'true' : 'false'}
+          class="rounded-[2rem] border border-gray-200 bg-white/90 p-6 shadow-sm"
+        >
+          <div class="grid gap-6">
+            <section>
+              <h2 class="text-sm font-semibold uppercase tracking-[0.25em] text-gray-500">Contact</h2>
+              <div class="mt-4 grid gap-4">
+                <label class="grid gap-2 text-sm font-medium text-gray-700">
+                  Email
+                  <input name="customerEmail" type="email" required class="h-12 rounded-2xl border border-gray-200 bg-white px-4 text-gray-900 outline-none transition-colors focus:border-brand-500" placeholder="you@example.com" />
+                </label>
+              </div>
+            </section>
+
+            {cartState.requiresShipping && (
+              <section class="border-t border-gray-100 pt-6">
+                <h2 class="text-sm font-semibold uppercase tracking-[0.25em] text-gray-500">Shipping</h2>
+                <div class="mt-4 grid gap-4 sm:grid-cols-2">
+                  <label class="grid gap-2 text-sm font-medium text-gray-700 sm:col-span-2">
+                    Full name
+                    <input name="shippingName" required class="h-12 rounded-2xl border border-gray-200 bg-white px-4 text-gray-900 outline-none transition-colors focus:border-brand-500" />
+                  </label>
+                  <label class="grid gap-2 text-sm font-medium text-gray-700 sm:col-span-2">
+                    Address line 1
+                    <input name="shippingLine1" required class="h-12 rounded-2xl border border-gray-200 bg-white px-4 text-gray-900 outline-none transition-colors focus:border-brand-500" />
+                  </label>
+                  <label class="grid gap-2 text-sm font-medium text-gray-700 sm:col-span-2">
+                    Address line 2
+                    <input name="shippingLine2" class="h-12 rounded-2xl border border-gray-200 bg-white px-4 text-gray-900 outline-none transition-colors focus:border-brand-500" />
+                  </label>
+                  <label class="grid gap-2 text-sm font-medium text-gray-700">
+                    City
+                    <input name="shippingCity" required class="h-12 rounded-2xl border border-gray-200 bg-white px-4 text-gray-900 outline-none transition-colors focus:border-brand-500" />
+                  </label>
+                  <label class="grid gap-2 text-sm font-medium text-gray-700">
+                    State / Province
+                    <input name="shippingState" required class="h-12 rounded-2xl border border-gray-200 bg-white px-4 text-gray-900 outline-none transition-colors focus:border-brand-500" />
+                  </label>
+                  <label class="grid gap-2 text-sm font-medium text-gray-700">
+                    Postal code
+                    <input name="shippingPostalCode" required class="h-12 rounded-2xl border border-gray-200 bg-white px-4 text-gray-900 outline-none transition-colors focus:border-brand-500" />
+                  </label>
+                  <label class="grid gap-2 text-sm font-medium text-gray-700">
+                    Country
+                    <input name="shippingCountry" required value="US" class="h-12 rounded-2xl border border-gray-200 bg-white px-4 text-gray-900 outline-none transition-colors focus:border-brand-500" />
+                  </label>
+                </div>
+              </section>
+            )}
+
+            <button type="submit" class="inline-flex h-12 items-center justify-center rounded-full bg-brand-600 px-6 text-sm font-medium text-white shadow-lg shadow-brand-500/20 transition-colors hover:bg-brand-700">
+              Complete checkout
+            </button>
+            <p id="checkout-feedback" class="text-sm text-gray-500" aria-live="polite"></p>
+          </div>
+        </form>
+
+        <aside class="rounded-[2rem] border border-gray-200 bg-white/90 p-6 shadow-sm">
+          <p class="text-sm font-semibold uppercase tracking-[0.25em] text-gray-500">Order summary</p>
+          <div class="mt-6 space-y-4">
+            {cartState.items.map((item) => (
+              <div class="flex items-start justify-between gap-4 border-b border-gray-100 pb-4">
+                <div>
+                  <p class="font-semibold text-gray-900">{item.productName}</p>
+                  {item.variantLabel && <p class="text-sm text-gray-500">{item.variantLabel}</p>}
+                  <p class="text-xs uppercase tracking-[0.2em] text-gray-400">Qty {item.quantity}</p>
+                </div>
+                <span class="text-sm font-semibold text-gray-900">{formatMoney(item.lineTotal)}</span>
+              </div>
+            ))}
+          </div>
+          <div class="mt-4 space-y-3 text-sm">
+            <div class="flex items-center justify-between text-gray-500">
+              <span>Items</span>
+              <span>{cartState.itemCount}</span>
+            </div>
+            <div class="flex items-center justify-between text-gray-500">
+              <span>Shipping</span>
+              <span>{cartState.requiresShipping ? 'Collected next' : 'Not required'}</span>
+            </div>
+            <div class="flex items-center justify-between border-t border-gray-100 pt-4 text-lg font-bold text-gray-900">
+              <span>Total</span>
+              <span>{formatMoney(cartState.subtotal)}</span>
+            </div>
+          </div>
+        </aside>
+      </div>
+    )}
+  </section>
+</Layout>
+
+<script>
+  import { dispatchCartUpdated, startCheckout } from '@talisman-cms/plugin-ecommerce/browser';
+
+  function setupCheckout() {
+    const form = document.getElementById('checkout-form') as HTMLFormElement | null;
+    const feedbackEl = document.getElementById('checkout-feedback');
+    if (!form || form.dataset.bound === 'true') return;
+    form.dataset.bound = 'true';
+
+    const requiresShipping = form.dataset.requiresShipping === 'true';
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const formData = new FormData(form);
+
+      const shippingAddress = requiresShipping ? {
+        name: String(formData.get('shippingName') || ''),
+        line1: String(formData.get('shippingLine1') || ''),
+        line2: String(formData.get('shippingLine2') || ''),
+        city: String(formData.get('shippingCity') || ''),
+        state: String(formData.get('shippingState') || ''),
+        postalCode: String(formData.get('shippingPostalCode') || ''),
+        country: String(formData.get('shippingCountry') || ''),
+      } : undefined;
+
+      try {
+        if (feedbackEl) feedbackEl.textContent = 'Processing checkout...';
+
+        const result = await startCheckout({
+          customerEmail: String(formData.get('customerEmail') || ''),
+          shippingAddress,
+          billingAddress: shippingAddress,
+        });
+
+        if (result.redirectUrl) {
+          dispatchCartUpdated({ itemCount: 0 });
+          window.location.href = result.redirectUrl;
+          return;
+        }
+
+        throw new Error('Checkout did not return a redirect URL');
+      } catch (error) {
+        if (feedbackEl) feedbackEl.textContent = error instanceof Error ? error.message : 'Failed to complete checkout';
+      }
+    });
+  }
+
+  document.addEventListener('astro:page-load', setupCheckout);
+  setupCheckout();
+</script>

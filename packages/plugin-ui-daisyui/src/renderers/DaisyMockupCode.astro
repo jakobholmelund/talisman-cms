@@ -1,0 +1,8 @@
+---
+const { code, language } = Astro.props;
+---
+
+<div class="mockup-code w-full">
+  {language ? <pre data-prefix="$"><code>{language}</code></pre> : null}
+  <pre data-prefix=">"><code>{code}</code></pre>
+</div>

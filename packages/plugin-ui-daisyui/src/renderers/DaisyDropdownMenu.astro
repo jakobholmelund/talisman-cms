@@ -1,0 +1,20 @@
+---
+const { label, tone = 'primary', items = [] } = Astro.props;
+const buttonClass = ({
+  primary: 'btn-primary',
+  secondary: 'btn-secondary',
+  accent: 'btn-accent',
+  ghost: 'btn-ghost',
+} as Record<string, string>)[tone as string] || 'btn-primary';
+---
+
+<details class="dropdown">
+  <summary class={`btn ${buttonClass}`}>{label}</summary>
+  <ul class="menu dropdown-content z-10 mt-2 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow">
+    {items.map((item: any) => (
+      <li>
+        <a href={item?.href || '#'}>{item?.label}</a>
+      </li>
+    ))}
+  </ul>
+</details>

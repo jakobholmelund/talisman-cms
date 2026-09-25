@@ -1,0 +1,10 @@
+---
+const { value = 12, label } = Astro.props;
+---
+
+<div class="inline-flex flex-col items-center gap-2">
+  <span class="countdown font-mono text-4xl">
+    <span style={`--value:${value};`} aria-live="polite" aria-label={String(value)}></span>
+  </span>
+  {label ? <span class="text-xs uppercase tracking-[0.2em] text-base-content/60">{label}</span> : null}
+</div>

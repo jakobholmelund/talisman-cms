@@ -1,0 +1,116 @@
+---
+import CartItemCard from './CartItemCard.astro';
+
+function formatMoney(cents, currency = 'usd') {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: currency.toUpperCase(),
+  }).format((Number(cents || 0)) / 100);
+}
+
+const {
+  items = [],
+  locked = false,
+  pendingOrderId = null,
+  itemCount = 0,
+  requiresShipping = false,
+  subtotal = 0,
+} = Astro.props;
+
+const serializedState = JSON.stringify({
+  items,
+  locked,
+});
+---
+
+<div data-cart-root>
+  <div data-cart-empty-state class:list={['rounded-[2rem] border border-dashed border-gray-200 bg-white/80 px-8 py-20 text-center shadow-sm', items.length > 0 && 'hidden']}>
+    <p class="text-lg font-semibold text-gray-900">Your cart is empty.</p>
+    <p class="mt-2 text-sm text-gray-500">Add a product from the shop to start a checkout session.</p>
+    <a href="/shop" class="mt-6 inline-flex h-11 items-center justify-center rounded-full bg-brand-600 px-6 text-sm font-medium text-white shadow-lg shadow-brand-500/20 transition-colors hover:bg-brand-700">
+      Browse products
+    </a>
+  </div>
+
+  <div data-cart-content class:list={['grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px]', items.length === 0 && 'hidden']}>
+    <div class="space-y-4">
+      {locked && pendingOrderId && (
+        <div class="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
+          Checkout is currently locked for this cart.
+          <a href={`/checkout/cancel?order=${pendingOrderId}`} class="ml-2 font-semibold text-amber-900 underline underline-offset-4">Release this checkout</a>
+        </div>
+      )}
+
+      <div data-cart-items-list class="space-y-4">
+        {items.map((item) => <CartItemCard item={item} locked={locked} />)}
+      </div>
+
+      <p data-cart-feedback class="text-sm text-gray-500" aria-live="polite"></p>
+    </div>
+
+    <aside class="rounded-[2rem] border border-gray-200 bg-white/90 p-6 shadow-sm">
+      <p class="text-sm font-semibold uppercase tracking-[0.25em] text-gray-500">Summary</p>
+      <div class="mt-6 space-y-4">
+        <div class="flex items-center justify-between text-sm text-gray-500">
+          <span>Items</span>
+          <span data-cart-summary-count>{itemCount}</span>
+        </div>
+        <div class="flex items-center justify-between text-sm text-gray-500">
+          <span>Shipping</span>
+          <span data-cart-summary-shipping>{requiresShipping ? 'Calculated at checkout' : 'Not required'}</span>
+        </div>
+        <div class="flex items-center justify-between border-t border-gray-100 pt-4 text-lg font-bold text-gray-900">
+          <span>Subtotal</span>
+          <span data-cart-summary-subtotal>{formatMoney(subtotal)}</span>
+        </div>
+      </div>
+
+      <a
+        href="/checkout"
+        class={`mt-6 inline-flex h-12 w-full items-center justify-center rounded-full px-6 text-sm font-medium transition-colors ${locked ? 'pointer-events-none bg-gray-200 text-gray-500' : 'bg-brand-600 text-white shadow-lg shadow-brand-500/20 hover:bg-brand-700'}`}
+      >
+        Proceed to checkout
+      </a>
+    </aside>
+  </div>
+
+  <template data-cart-item-template>
+    <article class="rounded-[2rem] border border-gray-200 bg-white/90 p-5 shadow-sm">
+      <div class="flex flex-col gap-5 sm:flex-row">
+        <a data-cart-image-link href="#" class="block h-28 w-28 min-w-28 max-w-28 shrink-0 overflow-hidden rounded-[1.5rem] bg-gray-100">
+          <img data-cart-image alt="" class="h-full w-full object-cover hidden" />
+          <div data-cart-image-fallback class="flex h-full w-full items-center justify-center text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">No image</div>
+        </a>
+
+        <div class="flex min-w-0 flex-1 flex-col gap-4">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <a data-cart-name href="#" class="text-xl font-bold text-gray-900 transition-colors hover:text-brand-600"></a>
+              <p data-cart-variant class="mt-1 text-sm text-gray-500 hidden"></p>
+              <p data-cart-stock class="mt-2 text-xs font-semibold uppercase tracking-[0.2em] text-gray-400"></p>
+            </div>
+            <p data-cart-line-total class="text-lg font-bold text-gray-900"></p>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-3">
+            <div class="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 p-1">
+              <button type="button" class="h-9 w-9 rounded-full text-lg text-gray-600 transition-colors hover:bg-white" data-cart-action="decrement">-</button>
+              <span data-cart-quantity class="min-w-10 px-2 text-center text-sm font-semibold text-gray-900"></span>
+              <button type="button" class="h-9 w-9 rounded-full text-lg text-gray-600 transition-colors hover:bg-white" data-cart-action="increment">+</button>
+            </div>
+            <button type="button" class="text-sm font-medium text-gray-500 transition-colors hover:text-red-600" data-cart-action="remove">
+              Remove
+            </button>
+            <span data-cart-unit-price class="text-sm text-gray-400"></span>
+          </div>
+        </div>
+      </div>
+    </article>
+  </template>
+
+  <script type="application/json" data-cart-state set:html={serializedState}></script>
+</div>
+
+<script>
+  import './cart-view';
+</script>

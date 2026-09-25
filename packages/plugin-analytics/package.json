@@ -1,0 +1,31 @@
+{
+  "name": "@talisman-cms/plugin-analytics",
+  "version": "0.0.1",
+  "license": "Apache-2.0",
+  "publishConfig": { "access": "public" },
+  "description": "Cloudflare Web Analytics and optional Commerce reporting for Talisman CMS",
+  "type": "module",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./beacon": "./src/Beacon.astro",
+    "./admin/*": "./src/admin/*"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "src/admin", "src/Beacon.astro"],
+  "scripts": {
+    "build": "tsup src/index.ts src/cloudflare.ts src/commerce.ts src/ask.ts src/routes/analytics-overview.ts src/routes/analytics-commerce.ts src/routes/analytics-ask.ts --format esm --dts --clean --external cloudflare:workers --external astro --external virtual:talisman-cms/config",
+    "test": "pnpm build && node --experimental-sqlite --test test/*.test.mjs"
+  },
+  "dependencies": { "talisman-cms": "workspace:*" },
+  "peerDependencies": { "react": "^19.0.0" },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260921.1",
+    "@types/node": "^26.6.2",
+    "@types/react": "^19.3.0",
+    "astro": "^7.3.3",
+    "react": "^19.3.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  }
+}

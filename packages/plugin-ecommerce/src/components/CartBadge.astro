@@ -1,0 +1,57 @@
+---
+import { env as cfEnv } from 'cloudflare:workers';
+import { bindCommerceApi } from '../api';
+import { CART_UPDATED_EVENT } from '../browser';
+
+const {
+  href = '/cart',
+  label = 'Cart',
+  activePaths = ['/cart', '/checkout'],
+  class: className = '',
+  activeClass = 'border-brand-200 bg-brand-50 text-brand-700',
+  inactiveClass = 'border-gray-200 bg-white text-gray-900 hover:border-brand-200 hover:text-brand-600',
+  badgeClass = 'inline-flex min-w-6 items-center justify-center rounded-full bg-gray-900 px-2 py-0.5 text-xs font-semibold text-white',
+  eventName = CART_UPDATED_EVENT,
+} = Astro.props;
+
+const currentPath = Astro.url.pathname;
+const isActive = activePaths.some((path) => currentPath.startsWith(path));
+const sessionToken = Astro.cookies.get('talisman-cart')?.value;
+
+let itemCount = 0;
+
+if (sessionToken) {
+  const api = bindCommerceApi({ env: cfEnv as any });
+  const cart = await api.carts.getOrCreate(sessionToken);
+  itemCount = cart.items.reduce((total, item) => total + Number(item.quantity || 0), 0);
+}
+---
+
+<a
+  href={href}
+  class={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${isActive ? activeClass : inactiveClass} ${className}`.trim()}
+>
+  {label}
+  <span data-talisman-cart-count class={badgeClass}>
+    {itemCount}
+  </span>
+</a>
+
+<script is:inline define:vars={{ eventName }}>
+  window.TalismanEcommerce = {
+    CART_UPDATED_EVENT: eventName,
+    dispatchCartUpdated(detail) {
+      window.dispatchEvent(new CustomEvent(eventName, { detail }));
+    },
+  };
+
+  function updateCartCountBadges(itemCount) {
+    for (const badge of document.querySelectorAll('[data-talisman-cart-count]')) {
+      badge.textContent = String(Number(itemCount || 0));
+    }
+  }
+
+  window.addEventListener(eventName, (event) => {
+    updateCartCountBadges(event.detail?.itemCount);
+  });
+</script>

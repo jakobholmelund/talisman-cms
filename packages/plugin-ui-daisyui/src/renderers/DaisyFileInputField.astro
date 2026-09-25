@@ -1,0 +1,14 @@
+---
+const { label, tone = 'primary' } = Astro.props;
+const toneClass = ({
+  primary: 'file-input-primary',
+  secondary: 'file-input-secondary',
+  accent: 'file-input-accent',
+  neutral: 'file-input-neutral',
+} as Record<string, string>)[tone as string] || 'file-input-primary';
+---
+
+<label class="form-control w-full max-w-sm gap-2">
+  <span class="label-text">{label}</span>
+  <input type="file" class={`file-input w-full ${toneClass}`} />
+</label>

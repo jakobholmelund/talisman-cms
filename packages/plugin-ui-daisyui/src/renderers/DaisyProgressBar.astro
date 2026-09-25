@@ -1,0 +1,11 @@
+---
+const { value = 0, max = 100, tone = 'primary' } = Astro.props;
+const toneClass = ({
+  primary: 'progress-primary',
+  secondary: 'progress-secondary',
+  accent: 'progress-accent',
+  neutral: 'progress-neutral',
+} as Record<string, string>)[tone as string] || 'progress-primary';
+---
+
+<progress class={`progress ${toneClass} w-full`} value={value} max={max}></progress>

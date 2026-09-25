@@ -1,0 +1,46 @@
+---
+import ComponentSlotRenderer from 'talisman-cms/render/ComponentSlotRenderer.astro';
+
+const { eyebrow, title, description, imageUrl, alignment = 'side-by-side (image right)', overlay = false, actions, componentRenderers, presetsById } = Astro.props;
+
+// Compute classes based on config
+const isOverlay = overlay && imageUrl;
+const isCentered = alignment === 'centered';
+const isLeftImage = alignment === 'side-by-side (image left)';
+
+// Outer container classes
+const heroClasses = isOverlay ? 'hero rounded-box' : 'hero rounded-box bg-base-200 p-8 lg:p-12';
+const overlayStyle = isOverlay ? `background-image: url(${imageUrl});` : '';
+
+// Hero content layout
+let contentLayout = 'hero-content text-center';
+if (!isCentered) {
+  contentLayout = isLeftImage 
+    ? 'hero-content flex-col gap-8 lg:flex-row' 
+    : 'hero-content flex-col gap-8 lg:flex-row-reverse';
+}
+
+// Text color adjustments for overlay
+const titleColor = isOverlay ? '' : 'text-primary';
+const textClasses = isOverlay ? 'text-neutral-content' : '';
+const descriptionClasses = isOverlay ? 'py-6' : 'py-6 text-neutral';
+---
+
+<section class={heroClasses} style={overlayStyle}>
+  {isOverlay && <div class="hero-overlay bg-opacity-60 rounded-box"></div>}
+  
+  <div class={contentLayout}>
+    {imageUrl && !isOverlay && !isCentered ? (
+      <img src={imageUrl} alt={title} class="max-w-sm rounded-2xl shadow-2xl" />
+    ) : null}
+    
+    <div class={`max-w-2xl ${textClasses}`}>
+      {eyebrow ? <p class="text-sm font-semibold uppercase tracking-[0.3em] text-primary">{eyebrow}</p> : null}
+      <h2 class={`mt-3 text-4xl font-bold ${titleColor}`}>{title}</h2>
+      {description && <p class={descriptionClasses}>{description}</p>}
+      <div class={`flex flex-wrap gap-3 mt-6 ${isCentered ? 'justify-center' : ''}`}>
+        <ComponentSlotRenderer value={actions} componentRenderers={componentRenderers} presetsById={presetsById} />
+      </div>
+    </div>
+  </div>
+</section>

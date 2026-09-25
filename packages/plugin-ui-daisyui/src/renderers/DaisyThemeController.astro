@@ -1,0 +1,10 @@
+---
+const { theme = 'light', label = 'Preview theme' } = Astro.props;
+---
+
+<div class="form-control">
+  <label class="label cursor-pointer justify-start gap-3">
+    <input type="radio" name="theme-controller-preview" class="theme-controller radio" value={theme} checked />
+    <span class="label-text">{label}: {theme}</span>
+  </label>
+</div>

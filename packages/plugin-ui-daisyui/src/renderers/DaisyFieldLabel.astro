@@ -1,0 +1,8 @@
+---
+const { label, description } = Astro.props;
+---
+
+<label class="label justify-start gap-3">
+  <span class="label-text font-medium">{label}</span>
+  {description ? <span class="label-text-alt text-base-content/60">{description}</span> : null}
+</label>

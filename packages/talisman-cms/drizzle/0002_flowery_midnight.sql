@@ -1,0 +1,1 @@
+ALTER TABLE `galaxy_collections` ADD `fields` text DEFAULT '[]' NOT NULL;

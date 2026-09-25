@@ -1,0 +1,70 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import Card from '../../components/Card.astro';
+import Hero from '../../components/Hero.astro';
+import { getClient } from 'talisman-cms/client';
+import { env as cfEnv } from 'cloudflare:workers';
+
+const env = { DB: (cfEnv as any).DB, KV: (cfEnv as any).KV };
+const cms = getClient(env);
+
+// Fetch all posts and filter published
+const allPosts = await cms.entries.findMany('posts', { depth: 1, cache: false }).catch(() => []);
+const publishedPosts = allPosts.filter(p => p.data.isPublished);
+---
+
+<Layout title="Blog | Talisman CMS Showcase">
+  <Hero 
+    heading="The Blog" 
+    subheading="Read the latest insights, tutorials, and news about building modern websites." 
+  />
+
+  <div class="py-12">
+    <div class="mb-10 flex justify-between items-end border-b border-gray-100 pb-4">
+      <div>
+        <h2 class="text-3xl font-bold tracking-tight text-gray-900">Latest Articles</h2>
+      </div>
+    </div>
+
+    {publishedPosts.length === 0 ? (
+      <div class="text-center py-24 bg-gray-50 rounded-2xl border border-gray-100 border-dashed">
+        <svg class="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
+        </svg>
+        <h3 class="text-sm font-semibold text-gray-900">No posts published</h3>
+        <p class="mt-1 text-sm text-gray-500">Get started by writing a new blog post in the Admin side.</p>
+        <div class="mt-6">
+          <a href="/admin/collections/posts" target="_blank" class="inline-flex items-center rounded-md bg-brand-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-brand-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600">
+            Write Post
+          </a>
+        </div>
+      </div>
+    ) : (
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        {publishedPosts.map(post => {
+          const authorName = post.data.author?.data?.name || 'Talisman Team';
+          const date = post.data.publishedAt ? new Date(post.data.publishedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Recently';
+          
+          return (
+            <Card href={`/blog/${post.slug}`} class="bg-gradient-to-br from-white to-gray-50/50">
+              <p slot="header" class="text-xs font-semibold uppercase tracking-wider text-purple-600 mb-2">Article</p>
+              <h3 slot="header" class="text-xl font-bold text-gray-900 group-hover:text-purple-600 transition-colors mb-4 leading-tight">
+                {post.data.title}
+              </h3>
+              
+              <div class="mt-auto flex items-center justify-between pt-4 border-t border-gray-100">
+                <div class="flex items-center space-x-3">
+                  <div class="h-8 w-8 rounded-full bg-gradient-to-tr from-brand-400 to-purple-500 flex items-center justify-center text-white font-bold text-xs shadow-inner">
+                    {authorName.charAt(0)}
+                  </div>
+                  <span class="text-sm font-medium text-gray-900">{authorName}</span>
+                </div>
+                <time class="text-xs text-gray-500">{date}</time>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+    )}
+  </div>
+</Layout>

@@ -1,0 +1,39 @@
+.ecom-admin { color: #e4e4e7; font-size: 14px; }
+.ecom-admin__nav { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 28px; padding-bottom: 18px; border-bottom: 1px solid #3f3f46; }
+.ecom-admin__nav a { padding: 8px 12px; border-radius: 8px; color: #a1a1aa; text-decoration: none; }
+.ecom-admin__nav a:first-child { margin-right: auto; color: #c7d2fe; }
+.ecom-admin__nav a:hover, .ecom-admin__nav a[aria-current="page"] { color: #fff; background: #3730a3; }
+.ecom-admin__intro { max-width: 760px; margin-bottom: 24px; color: #a1a1aa; line-height: 1.6; }
+.ecom-admin__stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 20px 0 28px; }
+.ecom-admin__stat { padding: 18px; border: 1px solid #3f3f46; border-radius: 12px; background: #18181b; }
+.ecom-admin__stat span, .ecom-admin__stat small { display: block; color: #a1a1aa; }
+.ecom-admin__stat strong { display: block; margin: 8px 0; font-size: 28px; color: #fff; }
+.ecom-admin__panel { margin: 20px 0; padding: 22px; border: 1px solid #3f3f46; border-radius: 14px; background: #18181b; }
+.ecom-admin__panel h2 { margin: 0 0 18px; font-size: 20px; color: #fff; }
+.ecom-admin__panel h3 { margin: 24px 0 12px; font-size: 16px; color: #fff; }
+.ecom-admin__panel p { line-height: 1.55; }
+.ecom-admin__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
+.ecom-admin__field { display: grid; align-content: start; gap: 6px; color: #d4d4d8; font-size: 13px; }
+.ecom-admin input, .ecom-admin select { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid #52525b; border-radius: 8px; background: #09090b; color: #f4f4f5; font: inherit; }
+.ecom-admin input[type="checkbox"] { width: auto; min-height: 0; }
+.ecom-admin input:disabled, .ecom-admin input:read-only { opacity: .65; }
+.ecom-admin button { width: fit-content; padding: 9px 14px; border: 1px solid #6366f1; border-radius: 8px; background: #4f46e5; color: white; font: inherit; font-weight: 600; cursor: pointer; }
+.ecom-admin button:hover { background: #6366f1; }
+.ecom-admin button:disabled { opacity: .5; cursor: wait; }
+.ecom-admin button.ecom-admin__secondary { border-color: #52525b; background: #27272a; }
+.ecom-admin button.ecom-admin__secondary:hover { background: #3f3f46; }
+.ecom-admin__actions, .ecom-admin__toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin: 16px 0; }
+.ecom-admin__toolbar .ecom-admin__field { min-width: min(320px, 100%); }
+.ecom-admin__feedback { padding: 12px 15px; border-radius: 9px; background: #1e3a36; color: #a7f3d0; }
+.ecom-admin__feedback--error { background: #4c1d25; color: #fecaca; }
+.ecom-admin__row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; padding: 16px 0; border-top: 1px solid #3f3f46; }
+.ecom-admin__row strong, .ecom-admin__row small { display: block; }
+.ecom-admin__row small { margin-top: 5px; color: #a1a1aa; line-height: 1.5; }
+.ecom-admin__row code { overflow-wrap: anywhere; }
+.ecom-admin__muted { color: #a1a1aa; }
+.ecom-admin__notice { padding: 14px 16px; border-left: 3px solid #818cf8; background: #27273a; line-height: 1.5; }
+.ecom-admin__check { display: flex; align-items: center; gap: 8px; }
+.ecom-admin details { margin-top: 18px; }
+.ecom-admin summary { cursor: pointer; font-weight: 600; }
+.ecom-admin address { margin-top: 12px; font-style: normal; line-height: 1.6; }
+@media (max-width: 700px) { .ecom-admin__stats, .ecom-admin__grid { grid-template-columns: 1fr; } .ecom-admin__nav a:first-child { margin-right: 0; width: 100%; } }

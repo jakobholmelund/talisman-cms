@@ -1,0 +1,18 @@
+---
+const { label, href, tone = 'primary', external = false } = Astro.props;
+const toneClass = ({
+  primary: 'link-primary',
+  secondary: 'link-secondary',
+  accent: 'link-accent',
+  neutral: 'link-neutral',
+} as Record<string, string>)[tone as string] || 'link-primary';
+---
+
+<a
+  href={href || '#'}
+  class={`link ${toneClass}`}
+  target={external ? '_blank' : undefined}
+  rel={external ? 'noreferrer noopener' : undefined}
+>
+  {label}
+</a>

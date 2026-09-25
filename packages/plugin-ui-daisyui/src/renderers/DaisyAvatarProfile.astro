@@ -1,0 +1,24 @@
+---
+const { imageUrl, alt = 'Avatar', fallback = '?', size = 'md', shape = 'circle' } = Astro.props;
+const sizeClass = ({
+  sm: 'w-12',
+  md: 'w-16',
+  lg: 'w-24',
+} as Record<string, string>)[size as string] || 'w-16';
+const shapeClass = ({
+  circle: 'rounded-full',
+  squircle: 'mask mask-squircle',
+  rounded: 'rounded-xl',
+} as Record<string, string>)[shape as string] || 'rounded-full';
+const hasImage = typeof imageUrl === 'string' && imageUrl.trim() !== '';
+---
+
+<div class={`avatar ${hasImage ? '' : 'placeholder'}`}>
+  <div class={`${sizeClass} bg-base-300 text-base-content ${shapeClass}`}>
+    {hasImage ? (
+      <img src={imageUrl} alt={alt} />
+    ) : (
+      <span class="text-xl font-semibold uppercase">{fallback}</span>
+    )}
+  </div>
+</div>

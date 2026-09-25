@@ -1,0 +1,20 @@
+---
+const { items = [] } = Astro.props;
+---
+
+<ul class="timeline timeline-vertical">
+  {items.map((item: any, index: number) => (
+    <li>
+      {index > 0 ? <hr /> : null}
+      <div class="timeline-start text-sm text-base-content/70">{item?.eyebrow}</div>
+      <div class="timeline-middle">
+        <div class="badge badge-primary badge-sm"></div>
+      </div>
+      <div class="timeline-end mb-10">
+        <div class="font-semibold">{item?.title}</div>
+        {item?.description ? <p class="mt-1 text-sm text-base-content/70">{item.description}</p> : null}
+      </div>
+      {index < items.length - 1 ? <hr /> : null}
+    </li>
+  ))}
+</ul>

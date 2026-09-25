@@ -1,0 +1,12 @@
+---
+const { items = [], direction = 'vertical' } = Astro.props;
+const menuClass = direction === 'horizontal' ? 'menu-horizontal' : '';
+---
+
+<ul class={`menu rounded-box border border-base-300 bg-base-100 p-2 ${menuClass}`}>
+  {items.map((item: any) => (
+    <li>
+      <a href={item?.href || '#'} class={item?.active ? 'active' : undefined}>{item?.label}</a>
+    </li>
+  ))}
+</ul>

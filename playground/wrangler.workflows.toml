@@ -1,0 +1,19 @@
+name = "talisman-cms-publishing-workflow"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+main = "./src/worker.ts"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "galaxy_cms_local"
+database_id = "local-d1"
+migrations_dir = "../packages/talisman-cms/drizzle"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "local-kv"
+
+[[workflows]]
+binding = "GALAXY_PUBLISH_WORKFLOW"
+name = "talisman-publish-workflow"
+class_name = "TalismanPublishWorkflow"
