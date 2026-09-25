@@ -56,11 +56,17 @@ declare function startCheckout(input?: {
     orderId: string;
     redirectUrl: string;
 }>;
-/** Available only to authenticated CMS administrators. Creates a simulated payment. */
+/**
+ * Available only to authenticated CMS administrators, and only when the site registers
+ * ecommercePlugin({ adminTestCheckout: true }). Creates a simulated payment.
+ * Pass `adminPath` when talismanCms({ adminPath }) is not `/admin`.
+ */
 declare function startAdminTestCheckout(input?: {
     customerEmail?: string;
     shippingAddress?: Record<string, string>;
     billingAddress?: Record<string, string>;
+}, options?: {
+    adminPath?: string;
 }): Promise<{
     orderId: string;
     status: string;

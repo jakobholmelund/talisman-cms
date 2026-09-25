@@ -11,6 +11,15 @@ type RequiredComponent = {
     quantity: number;
     available: number;
 };
+type CartItemInput = {
+    productId: string;
+    variantId?: string;
+    quantity: number;
+};
+/** Most distinct lines one basket can hold. */
+declare const CART_MAX_LINES = 50;
+/** Most units of one line. Checkout still checks stock. */
+declare const CART_MAX_LINE_QUANTITY = 99;
 declare function aggregateComponentDemand(items: Array<{
     quantity: number;
     components: RequiredComponent[];
@@ -84,11 +93,23 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             createdAt: Date;
             updatedAt: Date;
         } | null | undefined>;
-        updateItems(cartId: string, items: Array<{
+        /**
+         * Check an item list against the basket limits and the catalog without writing, for example
+         * before creating a basket for it. Returns the list with only the stored fields.
+         */
+        validateItems(items: unknown, current?: Array<{
             productId: string;
-            variantId?: string;
+            variantId?: string | null;
+        }>): Promise<({
+            productId: string;
+            variantId: string;
             quantity: number;
-        }>): Promise<{
+        } | {
+            productId: string;
+            quantity: number;
+            variantId?: undefined;
+        })[]>;
+        updateItems(cartId: string, items: CartItemInput[]): Promise<{
             id: string;
             sessionToken: string | null;
             userId: string | null;
@@ -575,13 +596,6 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             ignored?: undefined;
         }>;
     };
-    inventory: {
-        reserve(productId: string, variantId: string | undefined, quantity: number): Promise<{
-            success: boolean;
-            reserved: number;
-            pessimistic: boolean;
-        }>;
-    };
 };
 /** Run from a protected admin request or a scheduled Worker to repair missed webhooks. */
 declare function reconcileCommerce(options: CommerceApiOptions, limit?: number): Promise<{
@@ -607,4 +621,4 @@ declare function purgeStaleCommerceData(options: CommercePurgeOptions): Promise<
     authRateLimits: number;
 }>;
 
-export { type CommerceApiOptions, type CommercePurgeOptions, aggregateComponentDemand, bindCommerceApi, purgeStaleCommerceData, reconcileCommerce };
+export { CART_MAX_LINES, CART_MAX_LINE_QUANTITY, type CartItemInput, type CommerceApiOptions, type CommercePurgeOptions, aggregateComponentDemand, bindCommerceApi, purgeStaleCommerceData, reconcileCommerce };

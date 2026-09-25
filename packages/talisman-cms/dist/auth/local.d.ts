@@ -3,7 +3,7 @@ import { TalismanEnv } from '../client.js';
 export { getAccessEmail } from './access.js';
 import 'astro';
 import 'drizzle-orm/d1';
-import '../media-Cfo_aHOS.js';
+import '../media-Cm407HSH.js';
 import 'drizzle-orm/sqlite-core';
 
 type LocalEnv = TalismanEnv & {

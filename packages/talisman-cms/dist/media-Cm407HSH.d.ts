@@ -178,6 +178,25 @@ declare const entries: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
         }, {}, {
             length: number | undefined;
         }>;
+        draftSlug: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "draft_slug";
+            tableName: "galaxy_entries";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
         status: drizzle_orm_sqlite_core.SQLiteColumn<{
             name: "status";
             tableName: "galaxy_entries";

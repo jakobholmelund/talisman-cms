@@ -1,7 +1,6 @@
 import {
   runtimePaymentAdapters
-} from "../chunk-VVBLCUTQ.js";
-import "../chunk-FK3KKBW6.js";
+} from "../chunk-CP2YO37X.js";
 import "../chunk-6LYWG22B.js";
 import {
   giftCardAccessCookie

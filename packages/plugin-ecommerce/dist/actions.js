@@ -1,21 +1,22 @@
 import {
   runtimePaymentAdapters
-} from "./chunk-VVBLCUTQ.js";
-import "./chunk-FK3KKBW6.js";
+} from "./chunk-CP2YO37X.js";
 import "./chunk-6LYWG22B.js";
 import {
   CUSTOMER_SESSION_COOKIE,
   findCustomerSession
 } from "./chunk-2S5ZQZIQ.js";
 import {
+  CART_MAX_LINE_QUANTITY,
   bindCommerceApi
-} from "./chunk-LKTKY5Y7.js";
+} from "./chunk-GXIIVRLB.js";
 import "./chunk-K2FMPEG6.js";
 import {
   REFERRAL_COOKIE
 } from "./chunk-5JBBAHBQ.js";
 import {
-  ensureCartSession
+  ensureCartSession,
+  readCartSessionToken
 } from "./chunk-MDTTSWBR.js";
 import "./chunk-AGAY2N6E.js";
 import "./chunk-4DBNSZO2.js";
@@ -29,16 +30,19 @@ function getOrCreateCartSession(context) {
   if (!context.cookies) return `anon_${crypto.randomUUID()}`;
   return ensureCartSession(context.cookies, context.url?.protocol === "https:");
 }
+async function currentCart(api, context, customerId) {
+  const sessionToken = context.cookies ? readCartSessionToken(context.cookies) : void 0;
+  return (customerId && sessionToken ? await api.carts.claim(sessionToken, customerId) : null) ?? await api.carts.find(sessionToken, customerId);
+}
 var ecommerceActions = {
   getCart: defineAction({
     handler: async (_input, context) => {
-      const sessionToken = getOrCreateCartSession(context);
       try {
         const { env } = await import("cloudflare:workers");
         const api = bindCommerceApi({ env });
         const customer = await findCustomerSession(env, context.cookies?.get?.(CUSTOMER_SESSION_COOKIE)?.value);
-        const cart = await api.carts.getOrCreate(sessionToken, customer?.id);
-        return { success: true, cart };
+        const cart = await currentCart(api, context, customer?.id);
+        return { success: true, cart: cart ?? null };
       } catch (error) {
         throw new ActionError({
           code: "INTERNAL_SERVER_ERROR",
@@ -49,15 +53,16 @@ var ecommerceActions = {
   }),
   addToCart: defineAction({
     input: z.object({
-      productId: z.string(),
-      quantity: z.number().int().positive().default(1),
-      variantId: z.string().optional()
+      productId: z.string().max(128),
+      quantity: z.number().int().positive().max(CART_MAX_LINE_QUANTITY).default(1),
+      variantId: z.string().max(128).optional()
     }),
     handler: async (input, context) => {
-      const sessionToken = getOrCreateCartSession(context);
       try {
         const { env } = await import("cloudflare:workers");
         const api = bindCommerceApi({ env });
+        await api.carts.validateItems([{ productId: input.productId, variantId: input.variantId, quantity: input.quantity }]);
+        const sessionToken = getOrCreateCartSession(context);
         const customer = await findCustomerSession(env, context.cookies?.get?.(CUSTOMER_SESSION_COOKIE)?.value);
         const cart = await api.carts.getOrCreate(sessionToken, customer?.id);
         if (!cart) {
@@ -92,12 +97,11 @@ var ecommerceActions = {
   }),
   clearCart: defineAction({
     handler: async (_input, context) => {
-      const sessionToken = getOrCreateCartSession(context);
       try {
         const { env } = await import("cloudflare:workers");
         const api = bindCommerceApi({ env });
         const customer = await findCustomerSession(env, context.cookies?.get?.(CUSTOMER_SESSION_COOKIE)?.value);
-        const cart = await api.carts.getOrCreate(sessionToken, customer?.id);
+        const cart = await currentCart(api, context, customer?.id);
         if (cart) {
           const updated = await api.carts.updateItems(cart.id, []);
           return { success: true, cart: updated };
@@ -137,12 +141,12 @@ var ecommerceActions = {
       }).passthrough().optional()
     }),
     handler: async (input, context) => {
+      const { env } = await import("cloudflare:workers");
+      if (readSetting(env, "COMMERCE_CHECKOUT_ENABLED") !== "true") {
+        throw new ActionError({ code: "FORBIDDEN", message: "Checkout is disabled" });
+      }
       const sessionToken = getOrCreateCartSession(context);
       try {
-        const { env } = await import("cloudflare:workers");
-        if (readSetting(env, "COMMERCE_CHECKOUT_ENABLED") !== "true") {
-          throw new ActionError({ code: "FORBIDDEN", message: "Checkout is disabled" });
-        }
         const api = bindCommerceApi({
           env,
           paymentAdapters: runtimePaymentAdapters(env)

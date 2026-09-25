@@ -51,9 +51,10 @@ function chooseCustomerBasket(choice) {
 function startCheckout(input = {}) {
   return commerceRequest("/api/ecommerce/checkout", "POST", input);
 }
-function startAdminTestCheckout(input = {}) {
+function startAdminTestCheckout(input = {}, options = {}) {
+  const adminPath = (options.adminPath || "/admin").replace(/\/+$/, "");
   return commerceRequest(
-    "/admin/api/ecommerce/test-checkout",
+    `${adminPath}/api/ecommerce/test-checkout`,
     "POST",
     input
   );

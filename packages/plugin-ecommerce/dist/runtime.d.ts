@@ -1,5 +1,4 @@
 import { StripePaymentAdapter } from './adapters/stripe.js';
-import { AdminTestPaymentAdapter } from './adapters/admin-test.js';
 import 'stripe';
 import './payments-9Bikdd3h.js';
 
@@ -9,6 +8,10 @@ declare function runtimeStripeSecrets(env: Record<string, unknown>): {
     webhookSecret: string;
     mode: string;
 };
-declare function runtimePaymentAdapters(env: Record<string, unknown>): (AdminTestPaymentAdapter | StripePaymentAdapter)[];
+/**
+ * The real payment providers configured in this Worker: Stripe when both secrets match the mode.
+ * The simulated `admin_test` provider is never included; only the opt-in admin test route adds it.
+ */
+declare function runtimePaymentAdapters(env: Record<string, unknown>): StripePaymentAdapter[];
 
 export { runtimePaymentAdapters, runtimeStripeSecrets };

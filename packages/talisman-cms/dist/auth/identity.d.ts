@@ -1,6 +1,6 @@
 import { TalismanEnv } from '../client.js';
 import 'drizzle-orm/d1';
-import '../media-Cfo_aHOS.js';
+import '../media-Cm407HSH.js';
 import 'drizzle-orm/sqlite-core';
 
 /** Call only after proving control of the email address (for example, a consumed one-time link). */

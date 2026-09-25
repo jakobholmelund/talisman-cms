@@ -5,9 +5,11 @@ import {
   StripePaymentAdapter
 } from "./chunk-6LYWG22B.js";
 import {
+  CART_MAX_LINES,
+  CART_MAX_LINE_QUANTITY,
   bindCommerceApi,
   reconcileCommerce
-} from "./chunk-LKTKY5Y7.js";
+} from "./chunk-GXIIVRLB.js";
 import "./chunk-K2FMPEG6.js";
 import "./chunk-5JBBAHBQ.js";
 import "./chunk-AGAY2N6E.js";
@@ -17,78 +19,7 @@ import "./chunk-6RT3KMIV.js";
 // src/index.ts
 import { fileURLToPath } from "url";
 import { existsSync } from "fs";
-
-// src/inventory.ts
-var InventoryDO = class {
-  ctx;
-  env;
-  /**
-   * Maximum allowed reserved stock for the item. In a production scenario, 
-   * this would be initialized from D1, but we cache it in the DO's storage for fast synchronous checks.
-   */
-  totalStock = 0;
-  /**
-   * The currently reserved stock quantity.
-   */
-  reservedStock = 0;
-  isInitialized = false;
-  constructor(ctx, env) {
-    this.ctx = ctx;
-    this.env = env;
-  }
-  /**
-   * Ensures the DO has loaded the stock numbers from storage into memory.
-   */
-  async ensureInitialized() {
-    if (this.isInitialized) return;
-    this.totalStock = await this.ctx.storage.get("totalStock") || 0;
-    this.reservedStock = await this.ctx.storage.get("reservedStock") || 0;
-    this.isInitialized = true;
-  }
-  async fetch(request) {
-    await this.ensureInitialized();
-    const url = new URL(request.url);
-    if (request.method === "POST" && url.pathname === "/reserve") {
-      const data = await request.json();
-      const { quantity } = data;
-      if (typeof quantity !== "number" || quantity <= 0) {
-        return Response.json({ error: "Invalid quantity" }, { status: 400 });
-      }
-      const availableStock = this.totalStock - this.reservedStock;
-      if (availableStock >= quantity) {
-        this.reservedStock += quantity;
-        this.ctx.storage.put("reservedStock", this.reservedStock);
-        return Response.json({
-          success: true,
-          reservedStock: this.reservedStock,
-          remainingStock: this.totalStock - this.reservedStock
-        });
-      }
-      return Response.json({
-        success: false,
-        error: "Insufficient stock",
-        remainingStock: availableStock
-      }, { status: 409 });
-    }
-    if (request.method === "POST" && url.pathname === "/set-stock") {
-      const data = await request.json();
-      this.totalStock = data.totalStock;
-      this.ctx.storage.put("totalStock", this.totalStock);
-      return Response.json({ success: true, totalStock: this.totalStock });
-    }
-    if (request.method === "GET" && url.pathname === "/stock") {
-      const availableStock = this.totalStock - this.reservedStock;
-      return Response.json({
-        totalStock: this.totalStock,
-        reservedStock: this.reservedStock,
-        availableStock
-      });
-    }
-    return new Response("Not found", { status: 404 });
-  }
-};
-
-// src/index.ts
+var ADMIN_OPTIONS_MODULE = "virtual:talisman-cms/ecommerce-admin";
 function resolveCartEndpointPath() {
   return resolveRouteEntrypoint("ecommerce-cart");
 }
@@ -169,9 +100,9 @@ function createEcommerceLayoutBlocks(productsCollectionSlug = "products") {
 var ecommercePlugin = (config) => {
   const productsSlug = config?.productsCollectionSlug || "products";
   const inject = config?.injectCollections !== false;
+  const adminTestCheckout = config?.adminTestCheckout === true;
   const cartEndpointPath = resolveCartEndpointPath();
   const checkoutEndpointPath = resolveCheckoutEndpointPath();
-  const adminTestCheckoutEndpointPath = resolveAdminTestCheckoutEndpointPath();
   const adminReconcileEndpointPath = resolveAdminReconcileEndpointPath();
   const adminFulfillmentEndpointPath = resolveAdminFulfillmentEndpointPath();
   const orderEndpointPath = resolveOrderEndpointPath();
@@ -187,7 +118,7 @@ var ecommercePlugin = (config) => {
     { key: "promotions", path: "commerce-promotions", component: "Promotions", label: "Promotions & referrals", description: "Create discounts and manage referral rewards." },
     { key: "giftCards", path: "commerce-gift-cards", component: "GiftCards", label: "Gift cards", description: "Issue cards, check balances, and manage refunds." },
     { key: "testCheckout", path: "commerce-test-checkout", component: "TestCheckout", label: "Test checkout", description: "Exercise checkout without charging a card." }
-  ];
+  ].filter((page) => page.key !== "testCheckout" || adminTestCheckout);
   return {
     name: "@talisman-cms/plugin-ecommerce",
     adminLinks: adminPageDefinitions.flatMap((page) => {
@@ -201,6 +132,17 @@ var ecommercePlugin = (config) => {
       componentPath: `@talisman-cms/plugin-ecommerce/admin/${page.component}`
     })),
     blocks,
+    vite: {
+      plugins: [{
+        name: "talisman-cms-ecommerce-admin-options",
+        resolveId(id) {
+          if (id === ADMIN_OPTIONS_MODULE) return `\0${ADMIN_OPTIONS_MODULE}`;
+        },
+        load(id) {
+          if (id === `\0${ADMIN_OPTIONS_MODULE}`) return `export const adminTestCheckout = ${adminTestCheckout};`;
+        }
+      }]
+    },
     onInit: (talismanConfig) => {
       const collections = talismanConfig.collections || [];
       const existingProductsCollection = collections.find((c) => c.slug === productsSlug);
@@ -276,7 +218,10 @@ var ecommercePlugin = (config) => {
             { name: "id", label: "ID", type: "text", required: true },
             { name: "productId", label: "Product", type: "relation", relationTo: productsSlug, required: true },
             { name: "variantId", label: "Variant Definition", type: "relation", relationTo: "_ecommerce_variants" },
-            { name: "name", label: "Display Name", type: "text", required: true }
+            { name: "name", label: "Display Name", type: "text", required: true },
+            { name: "sku", label: "SKU", type: "text", defaultValue: null },
+            { name: "priceOverride", label: "Price Override (Cents)", type: "number", defaultValue: null },
+            { name: "inventoryQuantity", label: "Inventory Quantity", type: "number", defaultValue: 0 }
           ],
           nativeSchemaMapping: {
             schemaPath: "@talisman-cms/plugin-ecommerce/schema",
@@ -293,9 +238,9 @@ var ecommercePlugin = (config) => {
             { name: "id", label: "ID", type: "text", required: true },
             { name: "productVariantId", label: "Product Variant Group", type: "relation", relationTo: "_ecommerce_product_variants", required: true },
             { name: "value", label: "Value", type: "text", required: true },
-            { name: "sku", label: "SKU", type: "text" },
+            { name: "sku", label: "SKU", type: "text", defaultValue: null },
             { name: "image", label: "Variant Image URL", type: "media" },
-            { name: "priceOverride", label: "Price Override (Cents)", type: "number" }
+            { name: "priceOverride", label: "Price Override (Cents)", type: "number", defaultValue: null }
           ],
           nativeSchemaMapping: {
             schemaPath: "@talisman-cms/plugin-ecommerce/schema",
@@ -737,10 +682,10 @@ var ecommercePlugin = (config) => {
         entrypoint: checkoutEndpointPath,
         public: true
       },
-      {
+      ...adminTestCheckout ? [{
         path: "/ecommerce/test-checkout",
-        entrypoint: adminTestCheckoutEndpointPath
-      },
+        entrypoint: resolveAdminTestCheckoutEndpointPath()
+      }] : [],
       {
         path: "/ecommerce/reconcile",
         entrypoint: adminReconcileEndpointPath
@@ -764,7 +709,8 @@ var ecommercePlugin = (config) => {
 };
 export {
   AdminTestPaymentAdapter,
-  InventoryDO,
+  CART_MAX_LINES,
+  CART_MAX_LINE_QUANTITY,
   StripePaymentAdapter,
   bindCommerceApi,
   createEcommerceLayoutBlocks,

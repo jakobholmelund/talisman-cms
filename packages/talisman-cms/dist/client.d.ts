@@ -1,5 +1,5 @@
 import * as drizzle_orm_d1 from 'drizzle-orm/d1';
-import { s as schema } from './media-Cfo_aHOS.js';
+import { s as schema } from './media-Cm407HSH.js';
 import 'drizzle-orm/sqlite-core';
 
 type TalismanEnv = {
@@ -7,7 +7,6 @@ type TalismanEnv = {
     STORAGE?: R2Bucket;
     IMAGES?: ImagesBinding;
     KV?: KVNamespace;
-    QUEUE?: Queue;
     [key: string]: unknown;
 };
 declare function createDbClient(env: TalismanEnv): drizzle_orm_d1.DrizzleD1Database<typeof schema> & {
@@ -96,9 +95,6 @@ declare function getClient(env: TalismanEnv, ctx?: CacheContext): {
             updatedAt: any;
         }>;
         delete(collectionSlug: string, id: string): Promise<boolean>;
-    };
-    tasks: {
-        enqueueImageProcessing(mediaId: string): Promise<boolean>;
     };
 };
 

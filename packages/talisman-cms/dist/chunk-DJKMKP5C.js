@@ -24,6 +24,9 @@ var entries = sqliteTable("galaxy_entries", {
   id: text("id").primaryKey(),
   collectionId: text("collection_id").notNull().references(() => collections.id, { onDelete: "cascade" }),
   slug: text("slug").notNull(),
+  // The live URL of a published entry, otherwise the slug being edited
+  draftSlug: text("draft_slug"),
+  // A published entry's pending rename, applied by the next publish
   status: text("status", { enum: ["draft", "published", "archived"] }).notNull().default("draft"),
   data: text("data", { mode: "json" }).notNull(),
   // Draft payload currently being edited

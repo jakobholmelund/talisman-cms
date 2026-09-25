@@ -4,7 +4,7 @@ import {
 } from "../chunk-2S5ZQZIQ.js";
 import {
   bindCommerceApi
-} from "../chunk-LKTKY5Y7.js";
+} from "../chunk-GXIIVRLB.js";
 import "../chunk-K2FMPEG6.js";
 import "../chunk-5JBBAHBQ.js";
 import {
@@ -63,15 +63,17 @@ var ALL = async ({ request, cookies }) => {
       }
       const items = await readCartItems(request);
       if (items instanceof Response) return items;
-      if (!items.length && !await currentCart(api, readCartSessionToken(cookies), customer?.id)) {
+      const existing = await currentCart(api, readCartSessionToken(cookies), customer?.id);
+      if (!items.length && !existing) {
         return Response.json(publicCart(null));
       }
+      const checked = await api.carts.validateItems(items, existing?.items);
       const sessionToken = ensureCartSession(cookies, new URL(request.url).protocol === "https:");
       const cart = await api.carts.getOrCreate(sessionToken, customer?.id);
       if (!cart) {
         return new Response(JSON.stringify({ error: "Failed to find or create cart" }), { status: 500 });
       }
-      const updated = await api.carts.updateItems(cart.id, items);
+      const updated = await api.carts.updateItems(cart.id, checked);
       return new Response(JSON.stringify(publicCart(updated)), {
         status: 200,
         headers: { "Content-Type": "application/json" }

@@ -69,7 +69,7 @@ declare function reconcileGiftCardPurchase(env: TalismanEnv, adapter: PaymentPro
     status: string;
 } | null>;
 declare function getPurchasedGiftCard(env: TalismanEnv, id: string, accessToken: string | undefined): Promise<{
-    status: "paid" | "cancelled" | "pending" | "partially_refunded" | "refunded" | "review";
+    status: "paid" | "pending" | "cancelled" | "partially_refunded" | "refunded" | "review";
     amountCents: number;
     code: string | null;
     balanceCents: number | null;

@@ -1,41 +1,55 @@
 import {
   DEFAULT_PUBLISHING_WORKFLOW_BINDING,
+  EntryNotFoundError,
   RevisionConflictError,
+  SlugConflictError,
   archiveEntry,
+  assertPublishableSlug,
   createDraftEntry,
   getCollectionBySlug,
+  getEntryRevision,
   getLatestRevision,
   getVersionedEntry,
   invalidateEntryCache,
+  isEntryNotFound,
   isRevisionConflict,
+  isSlugConflict,
   listEntryRevisions,
   normalizeEntryDataForRead,
   publishEntry,
   restoreEntryRevision,
   runPublishingTransition,
   saveDraftEntry,
+  toEditableEntry,
   triggerPublishingWorkflow,
   waitForWorkflowCompletion
-} from "./chunk-2KNJPUUL.js";
-import "./chunk-QDILJIDR.js";
+} from "./chunk-QLZSBNTN.js";
+import "./chunk-DJKMKP5C.js";
 import "./chunk-XG3TKNL6.js";
 import "./chunk-MLKGABMK.js";
 export {
   DEFAULT_PUBLISHING_WORKFLOW_BINDING,
+  EntryNotFoundError,
   RevisionConflictError,
+  SlugConflictError,
   archiveEntry,
+  assertPublishableSlug,
   createDraftEntry,
   getCollectionBySlug,
+  getEntryRevision,
   getLatestRevision,
   getVersionedEntry,
   invalidateEntryCache,
+  isEntryNotFound,
   isRevisionConflict,
+  isSlugConflict,
   listEntryRevisions,
   normalizeEntryDataForRead,
   publishEntry,
   restoreEntryRevision,
   runPublishingTransition,
   saveDraftEntry,
+  toEditableEntry,
   triggerPublishingWorkflow,
   waitForWorkflowCompletion
 };

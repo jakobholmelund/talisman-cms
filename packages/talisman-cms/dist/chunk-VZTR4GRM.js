@@ -219,13 +219,25 @@ function sameOrigin(request) {
   return !origin || origin === new URL(request.url).origin;
 }
 var SESSIONS_NOT_ENDED = "The change was saved, but existing sessions for this account could not be ended. Repeat the action to end them.";
-async function revokeSessionsAfterChange(auth, userId, headers) {
+var DISABLED_SESSIONS_NOT_ENDED = "The account was disabled, but its existing sessions could not be ended. They cannot open the CMS while the account is disabled, and they are ended before it is enabled again.";
+var REVOKED_SESSIONS_NOT_ENDED = "CMS access was revoked, but existing sessions for this account could not be ended. They cannot open the CMS without CMS access, and they are ended before access is granted again.";
+var GRANT_NOT_SAVED = "Existing sessions for this account could not be ended, so nothing was changed. Try again.";
+async function revokeSessionsAfterChange(auth, userId, headers, warning = SESSIONS_NOT_ENDED) {
   try {
     await auth.api.revokeUserSessions({ body: { userId }, headers });
     return void 0;
   } catch (error) {
     console.error("[talisman-cms] Could not end CMS sessions after an account change", error);
-    return SESSIONS_NOT_ENDED;
+    return warning;
+  }
+}
+async function endSessionsBeforeGrant(auth, userId, headers) {
+  try {
+    await auth.api.revokeUserSessions({ body: { userId }, headers });
+    return void 0;
+  } catch (error) {
+    console.error("[talisman-cms] Could not end CMS sessions before restoring CMS access", error);
+    return Response.json({ error: GRANT_NOT_SAVED }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
 }
 function LocalAuthAdapter(adminPath = "/admin", options = {}) {
@@ -331,19 +343,21 @@ function LocalAuthAdapter(adminPath = "/admin", options = {}) {
             return Response.json({ error: "This account is disabled. Enable it in the user list before granting CMS access." }, { status: 409 });
           }
           const auth2 = createLocalAuth(request, env, normalizedPath);
+          const notGranted = await endSessionsBeforeGrant(auth2, existing.id, request.headers);
+          if (notGranted) return notGranted;
           if (existing.email !== normalizedEmail) {
             await db.update(user).set({ email: normalizedEmail, updatedAt: /* @__PURE__ */ new Date() }).where(eq(user.id, existing.id));
           }
           await auth2.api.setUserPassword({ body: { userId: existing.id, newPassword: body.password }, headers: request.headers });
           await auth2.api.setRole({ body: { userId: existing.id, role: body.role }, headers: request.headers });
-          const warning = await revokeSessionsAfterChange(auth2, existing.id, request.headers);
           return Response.json(
-            { user: { id: existing.id, email: existing.email, role: body.role }, ...warning ? { warning } : {} },
+            { user: { id: existing.id, email: existing.email, role: body.role } },
             { headers: { "Cache-Control": "no-store" } }
           );
         }
       }
       let revokeUserId;
+      let revokeWarning = SESSIONS_NOT_ENDED;
       let banUserId;
       const resetBody = action === "admin/set-user-password" ? await request.clone().json().catch(() => null) : null;
       if (action === "admin/set-user-password") {
@@ -384,7 +398,15 @@ function LocalAuthAdapter(adminPath = "/admin", options = {}) {
             return Response.json({ error: "At least one active admin account is required" }, { status: 400 });
           }
         }
-        if (action === "admin/set-role") revokeUserId = body.userId;
+        const grantsAccess = target && (action === "admin/unban-user" && target.banned || action === "admin/set-role" && !["admin", "editor"].includes(target.role ?? "") && body.role !== "customer");
+        if (grantsAccess) {
+          const notGranted = await endSessionsBeforeGrant(createLocalAuth(request, env, normalizedPath), body.userId, request.headers);
+          if (notGranted) return notGranted;
+        }
+        if (action === "admin/set-role") {
+          revokeUserId = body.userId;
+          if (body.role === "customer") revokeWarning = REVOKED_SESSIONS_NOT_ENDED;
+        }
         if (action === "admin/ban-user") banUserId = body.userId;
       }
       const auth = createLocalAuth(request, env, normalizedPath);
@@ -403,7 +425,7 @@ function LocalAuthAdapter(adminPath = "/admin", options = {}) {
         return Response.json({ ok: true }, { status: response.status, headers });
       }
       if (revokeUserId && response.ok) {
-        const warning = await revokeSessionsAfterChange(auth, revokeUserId, request.headers);
+        const warning = await revokeSessionsAfterChange(auth, revokeUserId, request.headers, revokeWarning);
         if (warning) {
           const payload = await response.json().catch(() => ({}));
           headers.delete("content-length");
@@ -416,7 +438,7 @@ function LocalAuthAdapter(adminPath = "/admin", options = {}) {
           console.error("[talisman-cms] Could not end CMS sessions after disabling an account");
           headers.delete("content-length");
           headers.set("Content-Type", "application/json");
-          return Response.json({ user: target, warning: SESSIONS_NOT_ENDED }, { status: 200, headers });
+          return Response.json({ user: target, warning: DISABLED_SESSIONS_NOT_ENDED }, { status: 200, headers });
         }
       }
       return new Response(response.body, { status: response.status, statusText: response.statusText, headers });

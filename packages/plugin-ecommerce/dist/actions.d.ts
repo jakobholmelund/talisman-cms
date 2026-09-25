@@ -19,7 +19,7 @@ declare const ecommerceActions: {
             closedAt: Date | null;
             createdAt: Date;
             updatedAt: Date;
-        } | null | undefined;
+        } | null;
     }>>) & {
         orThrow: (input?: any) => Promise<{
             success: boolean;
@@ -38,7 +38,7 @@ declare const ecommerceActions: {
                 closedAt: Date | null;
                 createdAt: Date;
                 updatedAt: Date;
-            } | null | undefined;
+            } | null;
         }>;
     } & string;
     addToCart: ((input: {

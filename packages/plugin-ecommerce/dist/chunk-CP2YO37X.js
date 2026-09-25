@@ -1,7 +1,4 @@
 import {
-  AdminTestPaymentAdapter
-} from "./chunk-FK3KKBW6.js";
-import {
   StripePaymentAdapter
 } from "./chunk-6LYWG22B.js";
 
@@ -17,9 +14,8 @@ function runtimeStripeSecrets(env) {
 }
 function runtimePaymentAdapters(env) {
   const { secretKey, webhookSecret, mode } = runtimeStripeSecrets(env);
-  const adapters = [new AdminTestPaymentAdapter()];
-  if (!secretKey.startsWith(`sk_${mode}_`) || !webhookSecret.startsWith("whsec_") || secretKey === "sk_test_mockkey") return adapters;
-  return [new StripePaymentAdapter({ secretKey, webhookSecret }), ...adapters];
+  if (!secretKey.startsWith(`sk_${mode}_`) || !webhookSecret.startsWith("whsec_") || secretKey === "sk_test_mockkey") return [];
+  return [new StripePaymentAdapter({ secretKey, webhookSecret })];
 }
 
 export {

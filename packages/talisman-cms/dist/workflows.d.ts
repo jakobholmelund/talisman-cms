@@ -2,7 +2,7 @@ import { WorkflowEntrypoint, WorkflowEvent, WorkflowStep } from 'cloudflare:work
 import { TalismanEnv } from './client.js';
 import { PublishWorkflowPayload } from './versioning.js';
 import 'drizzle-orm/d1';
-import './media-Cfo_aHOS.js';
+import './media-Cm407HSH.js';
 import 'drizzle-orm/sqlite-core';
 
 declare class TalismanPublishWorkflow extends WorkflowEntrypoint<TalismanEnv, PublishWorkflowPayload> {

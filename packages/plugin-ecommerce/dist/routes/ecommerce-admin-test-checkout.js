@@ -2,13 +2,15 @@ import {
   checkoutSchema
 } from "../chunk-WVDCIW2W.js";
 import {
+  AdminTestPaymentAdapter
+} from "../chunk-FK3KKBW6.js";
+import {
   runtimePaymentAdapters
-} from "../chunk-VVBLCUTQ.js";
-import "../chunk-FK3KKBW6.js";
+} from "../chunk-CP2YO37X.js";
 import "../chunk-6LYWG22B.js";
 import {
   bindCommerceApi
-} from "../chunk-LKTKY5Y7.js";
+} from "../chunk-GXIIVRLB.js";
 import "../chunk-K2FMPEG6.js";
 import "../chunk-5JBBAHBQ.js";
 import {
@@ -34,7 +36,8 @@ var ALL = async ({ request, cookies }) => {
     const { env } = await import("cloudflare:workers");
     const api = bindCommerceApi({
       env,
-      paymentAdapters: runtimePaymentAdapters(env)
+      // The simulated provider is registered here only, never for public routes.
+      paymentAdapters: [...runtimePaymentAdapters(env), new AdminTestPaymentAdapter()]
     });
     const cart = sessionToken ? await api.carts.find(sessionToken) : null;
     if (request.method === "GET") {

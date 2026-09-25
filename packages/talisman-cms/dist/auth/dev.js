@@ -1,11 +1,20 @@
 import "../chunk-MLKGABMK.js";
 
 // src/auth/dev.ts
+var LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1", "[::1]"];
+function isViteDevServer() {
+  try {
+    return import.meta.env.DEV === true;
+  } catch {
+    return false;
+  }
+}
 function DevAuthAdapter() {
   const adapter = {
     async getUser(req) {
+      if (!isViteDevServer()) return null;
       const hostname = new URL(req.url).hostname;
-      if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(hostname)) {
+      if (!LOOPBACK_HOSTS.includes(hostname)) {
         return null;
       }
       return {

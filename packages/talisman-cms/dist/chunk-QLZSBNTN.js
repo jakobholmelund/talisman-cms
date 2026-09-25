@@ -2,13 +2,13 @@ import {
   entries,
   entryRevisions,
   schema_exports
-} from "./chunk-QDILJIDR.js";
+} from "./chunk-DJKMKP5C.js";
 import {
   readBinding
 } from "./chunk-XG3TKNL6.js";
 
 // src/versioning.ts
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 var DEFAULT_PUBLISHING_WORKFLOW_BINDING = "TALISMAN_PUBLISH_WORKFLOW";
 var REVISION_CONFLICT_MESSAGE = "This entry changed since it was opened. Reload it before saving.";
@@ -21,14 +21,45 @@ var RevisionConflictError = class extends Error {
 function isRevisionConflict(error) {
   return error instanceof RevisionConflictError || error instanceof Error && error.message.includes(REVISION_CONFLICT_MESSAGE);
 }
+var SLUG_CONFLICT_MESSAGE = "Another entry in this collection already uses this slug.";
+var SlugConflictError = class extends Error {
+  constructor() {
+    super(SLUG_CONFLICT_MESSAGE);
+    this.name = "SlugConflictError";
+  }
+};
+function isSlugConflict(error) {
+  return error instanceof SlugConflictError || error instanceof Error && error.message.includes(SLUG_CONFLICT_MESSAGE);
+}
+var EntryNotFoundError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "EntryNotFoundError";
+  }
+};
+function isEntryNotFound(error) {
+  return error instanceof EntryNotFoundError || error instanceof Error && /^(Entry|Revision) .+ not found/.test(error.message);
+}
 function createId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 function normalizeEntryDataForRead(entry, version = "published") {
-  if (version === "published" && entry?.status === "published" && entry?.publishedData !== void 0 && entry?.publishedData !== null) {
-    return { ...entry, data: entry.publishedData };
+  if (!entry) return entry;
+  if (version === "draft") {
+    return entry.draftSlug ? { ...entry, slug: entry.draftSlug } : entry;
   }
-  return entry;
+  const { draftSlug: _draftSlug, ...published } = entry;
+  if (entry.status === "published" && entry.publishedData !== void 0 && entry.publishedData !== null) {
+    return { ...published, data: entry.publishedData };
+  }
+  return published;
+}
+function toEditableEntry(entry) {
+  return {
+    ...entry,
+    slug: entry.draftSlug || entry.slug,
+    publishedSlug: entry.status === "published" ? entry.slug : null
+  };
 }
 function createVersioningDb(env) {
   return drizzle(env.DB, { schema: schema_exports });
@@ -49,17 +80,65 @@ async function getVersionedEntry(db, collectionId, entryId) {
     where: (e, { and: and2, eq: eq2 }) => and2(eq2(e.collectionId, collectionId), eq2(e.id, entryId))
   });
   if (!entry) {
-    throw new Error(`Entry ${entryId} not found`);
+    throw new EntryNotFoundError(`Entry ${entryId} not found`);
   }
   return entry;
 }
-async function listEntryRevisions(db, collectionId, entryId) {
+async function listEntryRevisions(db, collectionId, entryId, opts = {}) {
+  const revisions = entryRevisions;
+  if (opts.includeData === false) {
+    const query = db.select({
+      id: revisions.id,
+      entryId: revisions.entryId,
+      collectionId: revisions.collectionId,
+      revisionNumber: revisions.revisionNumber,
+      type: revisions.type,
+      status: revisions.status,
+      createdAt: revisions.createdAt
+    }).from(revisions).where(and(eq(revisions.collectionId, collectionId), eq(revisions.entryId, entryId))).orderBy(desc(revisions.revisionNumber), desc(revisions.createdAt));
+    return opts.limit === void 0 ? query : query.limit(opts.limit);
+  }
   return db.query.entryRevisions.findMany({
     // @ts-ignore
     where: (r, { and: and2, eq: eq2 }) => and2(eq2(r.collectionId, collectionId), eq2(r.entryId, entryId)),
     // @ts-ignore
-    orderBy: (r, { desc: desc2 }) => [desc2(r.revisionNumber), desc2(r.createdAt)]
+    orderBy: (r, { desc: desc2 }) => [desc2(r.revisionNumber), desc2(r.createdAt)],
+    ...opts.limit === void 0 ? {} : { limit: opts.limit }
   });
+}
+async function getEntryRevision(db, collectionId, entryId, revisionId) {
+  const revision = await db.query.entryRevisions.findFirst({
+    // @ts-ignore
+    where: (r, { and: and2, eq: eq2 }) => and2(eq2(r.collectionId, collectionId), eq2(r.entryId, entryId), eq2(r.id, revisionId))
+  });
+  if (!revision) {
+    throw new EntryNotFoundError(`Revision ${revisionId} not found for entry ${entryId}`);
+  }
+  return revision;
+}
+function editableSlug(entry) {
+  return entry.draftSlug || entry.slug;
+}
+async function assertDraftSlugAvailable(db, collectionId, entryId, slug) {
+  const entries2 = entries;
+  const [holder] = await db.select({ id: entries2.id }).from(entries2).where(and(
+    eq(entries2.collectionId, collectionId),
+    ne(entries2.id, entryId),
+    or(eq(entries2.slug, slug), eq(entries2.draftSlug, slug))
+  )).limit(1);
+  if (holder) throw new SlugConflictError();
+}
+async function assertPublishableSlug(db, entry) {
+  const slug = editableSlug(entry);
+  if (entry.status === "published" && slug === entry.slug) return;
+  const entries2 = entries;
+  const [holder] = await db.select({ id: entries2.id }).from(entries2).where(and(
+    eq(entries2.collectionId, entry.collectionId),
+    ne(entries2.id, entry.id),
+    eq(entries2.status, "published"),
+    eq(entries2.slug, slug)
+  )).limit(1);
+  if (holder) throw new SlugConflictError();
 }
 async function getLatestRevision(db, entryId) {
   const [row] = await db.select({ id: entryRevisions.id, revisionNumber: entryRevisions.revisionNumber }).from(entryRevisions).where(eq(entryRevisions.entryId, entryId)).orderBy(desc(entryRevisions.revisionNumber)).limit(1);
@@ -125,7 +204,8 @@ async function buildRevisionInsert(db, params) {
 async function createDraftEntry(db, collection, data, opts) {
   const now = /* @__PURE__ */ new Date();
   const id = opts?.id || createId("entry");
-  const slug = opts?.slug || id;
+  const slug = opts?.slug?.trim() || id;
+  await assertDraftSlugAvailable(db, collection.id, id, slug);
   const entryInsert = db.insert(entries).values({
     id,
     collectionId: collection.id,
@@ -150,7 +230,18 @@ async function saveDraftEntry(db, collection, entryId, params) {
     updatedAt: /* @__PURE__ */ new Date()
   };
   if (params.data !== void 0) updates.data = params.data;
-  if (params.slug !== void 0) updates.slug = params.slug;
+  const slug = params.slug?.trim();
+  if (slug) {
+    if (slug !== editableSlug(existing)) {
+      await assertDraftSlugAvailable(db, collection.id, entryId, slug);
+    }
+    if (existing.status === "published") {
+      updates.draftSlug = slug === existing.slug ? null : slug;
+    } else {
+      updates.slug = slug;
+      updates.draftSlug = null;
+    }
+  }
   const revision = await buildRevisionInsert(db, {
     entry: existing,
     snapshotData: params.data !== void 0 ? params.data : existing.data,
@@ -172,9 +263,12 @@ async function publishEntry(db, collection, entryId, expectedRevisionId) {
     expectedRevisionId,
     existing: entry
   });
+  await assertPublishableSlug(db, entry);
   const now = /* @__PURE__ */ new Date();
   await writeRevisionBatch(db, [...revision.queries, db.update(entries).set({
     status: "published",
+    slug: editableSlug(entry),
+    draftSlug: null,
     publishedData: entry.data,
     publishedRevisionId: revision.id,
     publishedAt: now,
@@ -204,13 +298,7 @@ async function archiveEntry(db, collection, entryId, expectedRevisionId) {
 }
 async function restoreEntryRevision(db, collection, entryId, revisionId, expectedRevisionId) {
   const entry = await getVersionedEntry(db, collection.id, entryId);
-  const revision = await db.query.entryRevisions.findFirst({
-    // @ts-ignore
-    where: (r, { and: and2, eq: eq2 }) => and2(eq2(r.collectionId, collection.id), eq2(r.entryId, entryId), eq2(r.id, revisionId))
-  });
-  if (!revision) {
-    throw new Error(`Revision ${revisionId} not found for entry ${entryId}`);
-  }
+  const revision = await getEntryRevision(db, collection.id, entryId, revisionId);
   const now = /* @__PURE__ */ new Date();
   const restoredRevision = await buildRevisionInsert(db, {
     entry,
@@ -253,13 +341,17 @@ async function waitForWorkflowCompletion(instance, timeoutMs = 5e3) {
   }
   throw new Error(`Workflow ${instance.id} did not complete within ${timeoutMs}ms`);
 }
+function workflowInstanceId(payload) {
+  const target = `${payload.collectionSlug}-${payload.entryId}`.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 60);
+  return `talisman-${payload.action}-${target}-${Date.now()}`;
+}
 async function triggerPublishingWorkflow(env, payload, bindingName = DEFAULT_PUBLISHING_WORKFLOW_BINDING) {
   const workflow = bindingName === DEFAULT_PUBLISHING_WORKFLOW_BINDING ? readBinding(env, "PUBLISH_WORKFLOW") : env?.[bindingName];
   if (!workflow) {
     return runPublishingTransition(env, payload);
   }
   const instance = await workflow.create({
-    id: `talisman-${payload.action}-${payload.collectionSlug}-${payload.entryId}-${Date.now()}`,
+    id: workflowInstanceId(payload),
     params: payload
   });
   await waitForWorkflowCompletion(instance);
@@ -283,10 +375,17 @@ export {
   DEFAULT_PUBLISHING_WORKFLOW_BINDING,
   RevisionConflictError,
   isRevisionConflict,
+  SlugConflictError,
+  isSlugConflict,
+  EntryNotFoundError,
+  isEntryNotFound,
   normalizeEntryDataForRead,
+  toEditableEntry,
   getCollectionBySlug,
   getVersionedEntry,
   listEntryRevisions,
+  getEntryRevision,
+  assertPublishableSlug,
   getLatestRevision,
   createDraftEntry,
   saveDraftEntry,

@@ -32,7 +32,24 @@ import {
 
 // src/api.ts
 import { createDbClient } from "talisman-cms/client";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+var CART_MAX_LINES = 50;
+var CART_MAX_LINE_QUANTITY = 99;
+var CART_ID_MAX_LENGTH = 128;
+var cartItemKey = (item) => `${item.productId}\0${item.variantId || ""}`;
+function assertCartItems(items) {
+  if (!Array.isArray(items)) throw new Error("Cart items must be an array");
+  if (items.length > CART_MAX_LINES) throw new Error(`Cart items must not exceed ${CART_MAX_LINES} lines`);
+  if (items.some(
+    (item) => !item || typeof item.productId !== "string" || !item.productId.trim() || item.productId.length > CART_ID_MAX_LENGTH || !Number.isSafeInteger(item.quantity) || item.quantity <= 0 || item.quantity > CART_MAX_LINE_QUANTITY || item.variantId !== void 0 && (typeof item.variantId !== "string" || item.variantId.length > CART_ID_MAX_LENGTH)
+  )) {
+    throw new Error(`Cart items must have a product and a whole-number quantity from 1 to ${CART_MAX_LINE_QUANTITY}`);
+  }
+  const itemKeys = items.map(cartItemKey);
+  if (new Set(itemKeys).size !== itemKeys.length) {
+    throw new Error("Duplicate cart items are not allowed");
+  }
+}
 function aggregateComponentDemand(items) {
   const demand = /* @__PURE__ */ new Map();
   for (const item of items) {
@@ -92,6 +109,25 @@ function bindCommerceApi(options) {
       inventoryTarget: { type: "variant", id: legacyVariant.id },
       components: []
     };
+  }
+  async function checkCartItems(items, current = []) {
+    assertCartItems(items);
+    const currentKeys = new Set(current.map(cartItemKey));
+    const added = items.filter((item) => !currentKeys.has(cartItemKey(item)));
+    const productIds = [...new Set(added.map((item) => item.productId))];
+    const available = new Set(productIds.length ? (await db.select({ id: products.id, status: products.status }).from(products).where(inArray(products.id, productIds))).filter((product) => product.status !== "archived").map((product) => product.id) : []);
+    const unknownProduct = added.find((item) => !available.has(item.productId));
+    if (unknownProduct) throw new Error(`Cart items must be catalog products; ${unknownProduct.productId} is not available`);
+    const variantIds = [...new Set(added.flatMap((item) => item.variantId ? [item.variantId] : []))];
+    if (variantIds.length) {
+      const owners = new Map((await db.select({ id: productVariants.id, productId: productVariants.productId }).from(productVariants).where(inArray(productVariants.id, variantIds))).map((variant) => [variant.id, variant.productId]));
+      for (const value of await db.select({ id: productVariantValues.id, productId: productVariants.productId }).from(productVariantValues).innerJoin(productVariants, eq(productVariants.id, productVariantValues.productVariantId)).where(inArray(productVariantValues.id, variantIds))) {
+        owners.set(value.id, value.productId);
+      }
+      const unknownVariant = added.find((item) => item.variantId && owners.get(item.variantId) !== item.productId);
+      if (unknownVariant) throw new Error(`Cart items must use a variant of their product; ${unknownVariant.variantId} is not available`);
+    }
+    return items.map(({ productId, variantId, quantity }) => variantId ? { productId, variantId, quantity } : { productId, quantity });
   }
   async function finalizeOrderPayment(params) {
     const order = await db.select().from(orders).where(eq(orders.id, params.orderId)).get();
@@ -374,16 +410,15 @@ function bindCommerceApi(options) {
         }
         return cart;
       },
+      /**
+       * Check an item list against the basket limits and the catalog without writing, for example
+       * before creating a basket for it. Returns the list with only the stored fields.
+       */
+      async validateItems(items, current = []) {
+        return checkCartItems(items, current);
+      },
       async updateItems(cartId, items) {
-        if (!Array.isArray(items) || items.length > 100 || items.some(
-          (item) => !item || typeof item.productId !== "string" || !item.productId.trim() || item.productId.length > 128 || !Number.isSafeInteger(item.quantity) || item.quantity <= 0 || item.quantity > 99 || item.variantId !== void 0 && (typeof item.variantId !== "string" || item.variantId.length > 128)
-        )) {
-          throw new Error("Cart items must have a product and a positive integer quantity");
-        }
-        const itemKeys = items.map((item) => `${item.productId}\0${item.variantId || ""}`);
-        if (new Set(itemKeys).size !== itemKeys.length) {
-          throw new Error("Duplicate cart items are not allowed");
-        }
+        assertCartItems(items);
         const cart = await db.select().from(carts).where(eq(carts.id, cartId)).get();
         if (!cart) {
           throw new Error("Cart not found");
@@ -394,7 +429,8 @@ function bindCommerceApi(options) {
         if (cart.checkoutSessionId) {
           throw new Error("Checkout already started for this cart");
         }
-        const updated = await db.update(carts).set({ items, updatedAt: /* @__PURE__ */ new Date(), version: sql`${carts.version} + 1` }).where(and(
+        const checked = await checkCartItems(items, cart.items);
+        const updated = await db.update(carts).set({ items: checked, updatedAt: /* @__PURE__ */ new Date(), version: sql`${carts.version} + 1` }).where(and(
           eq(carts.id, cartId),
           eq(carts.closed, false),
           isNull(carts.checkoutSessionId),
@@ -451,6 +487,9 @@ function bindCommerceApi(options) {
           return { status: "paid", paymentUrl: null };
         }
         if (order.paymentProvider === "admin_test") {
+          if (!paymentAdapters.some((candidate) => candidate.providerId === "admin_test")) {
+            return { status: "pending", paymentUrl: null };
+          }
           await finalizeOrderPayment({
             orderId: order.id,
             provider: "admin_test",
@@ -497,7 +536,7 @@ function bindCommerceApi(options) {
         if (cart.checkoutSessionId) {
           throw new Error("Checkout already started for this cart");
         }
-        const defaultAdapter = options2.providerId ? paymentAdapters.find((adapter) => adapter.providerId === options2.providerId) : paymentAdapters.length === 1 ? paymentAdapters[0] : void 0;
+        const defaultAdapter = options2.providerId ? paymentAdapters.find((adapter) => adapter.providerId === options2.providerId) : paymentAdapters.length === 1 && paymentAdapters[0].providerId !== "admin_test" ? paymentAdapters[0] : void 0;
         if (!defaultAdapter) throw new Error("A payment provider must be selected and configured before checkout");
         let requiresShipping = false;
         let totalAmount = 0;
@@ -800,7 +839,7 @@ function bindCommerceApi(options) {
         if (order.status === "cancelled") return order;
         const reservations = await db.select().from(componentReservations).where(eq(componentReservations.orderId, id));
         const inventoryReservations2 = await db.select().from(inventoryReservations).where(eq(inventoryReservations.orderId, id));
-        if (order.checkoutSessionId && !options2.sessionExpired) {
+        if (order.checkoutSessionId && !options2.sessionExpired && order.paymentProvider !== "admin_test") {
           const adapter = paymentAdapters.find((candidate) => candidate.providerId === (order.paymentProvider ?? "stripe"));
           if (!adapter?.expireCheckoutSession) {
             throw new Error("Payment provider must expire the checkout session before stock can be released");
@@ -932,16 +971,6 @@ function bindCommerceApi(options) {
         }
         return { success: true, event: event.type, ignored: true };
       }
-    },
-    // Stub for DO binding
-    inventory: {
-      async reserve(productId, variantId, quantity) {
-        if (!env["INVENTORY_DO"]) {
-          console.warn("[Talisman Commerce] INVENTORY_DO binding not found. Falling back to optimistic reservation.");
-          return { success: true, reserved: quantity, pessimistic: false };
-        }
-        return { success: true, reserved: quantity, pessimistic: true };
-      }
     }
   };
 }
@@ -953,8 +982,14 @@ async function reconcileCommerce(options, limit = 10) {
   const preparations = await env.DB.prepare(`SELECT id FROM _ecommerce_carts
     WHERE checkout_session_id LIKE 'preparing:%' AND updated_at < ?
     ORDER BY updated_at LIMIT ?`).bind(now - 35 * 60, count).all();
+  const settlesAdminTest = options.paymentAdapters?.some((adapter) => adapter.providerId === "admin_test") ?? false;
   const pending = await env.DB.prepare(`SELECT id FROM _ecommerce_orders
-    WHERE status = 'pending' AND created_at < ? ORDER BY created_at LIMIT ?`).bind(now - 15 * 60, count).all();
+    WHERE status = 'pending' AND created_at < ?
+      AND (? = 1 OR COALESCE(payment_provider, 'stripe') <> 'admin_test')
+    ORDER BY created_at LIMIT ?`).bind(now - 15 * 60, settlesAdminTest ? 1 : 0, count).all();
+  const abandonedTests = settlesAdminTest ? { results: [] } : await env.DB.prepare(`SELECT id FROM _ecommerce_orders
+    WHERE status = 'pending' AND payment_provider = 'admin_test' AND created_at < ?
+    ORDER BY created_at LIMIT ?`).bind(now - 15 * 60, count).all();
   const giftPurchases = await env.DB.prepare(`SELECT id FROM _ecommerce_gift_card_purchases
     WHERE status = 'pending' AND provider_session_id IS NOT NULL AND created_at < ?
     ORDER BY created_at LIMIT ?`).bind(now - 15 * 60, count).all();
@@ -971,6 +1006,14 @@ async function reconcileCommerce(options, limit = 10) {
     try {
       const result = await api.orders.reconcilePending(row.id);
       results.push({ id: row.id, status: result?.status ?? "unchanged" });
+    } catch (error) {
+      results.push({ id: row.id, status: "error", error: error instanceof Error ? error.message : "Recovery failed" });
+    }
+  }
+  for (const row of abandonedTests.results ?? []) {
+    try {
+      const cancelled = await api.orders.cancel(row.id);
+      results.push({ id: row.id, status: cancelled?.status ?? "unchanged" });
     } catch (error) {
       results.push({ id: row.id, status: "error", error: error instanceof Error ? error.message : "Recovery failed" });
     }
@@ -1031,6 +1074,8 @@ async function purgeStaleCommerceData(options) {
 }
 
 export {
+  CART_MAX_LINES,
+  CART_MAX_LINE_QUANTITY,
   aggregateComponentDemand,
   bindCommerceApi,
   reconcileCommerce,

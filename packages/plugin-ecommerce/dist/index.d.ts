@@ -1,39 +1,10 @@
 import { BlockDefinition, Plugin } from 'talisman-cms';
-export { bindCommerceApi, reconcileCommerce } from './api.js';
+export { CART_MAX_LINES, CART_MAX_LINE_QUANTITY, bindCommerceApi, reconcileCommerce } from './api.js';
 export { P as PaymentProviderAdapter, V as ValidatedWebhookEvent } from './payments-9Bikdd3h.js';
 export { StripePaymentAdapter } from './adapters/stripe.js';
 export { AdminTestPaymentAdapter } from './adapters/admin-test.js';
 import 'talisman-cms/client';
 import 'stripe';
-
-/**
- * InventoryDO
- *
- * A Cloudflare Durable Object responsible for serializing stock reservation
- * requests to prevent overselling during high-concurrency scenarios (e.g., flash sales).
- *
- * Each Durable Object instance manages the inventory for a single product.
- */
-declare class InventoryDO {
-    ctx: any;
-    env: any;
-    /**
-     * Maximum allowed reserved stock for the item. In a production scenario,
-     * this would be initialized from D1, but we cache it in the DO's storage for fast synchronous checks.
-     */
-    private totalStock;
-    /**
-     * The currently reserved stock quantity.
-     */
-    private reservedStock;
-    private isInitialized;
-    constructor(ctx: any, env: any);
-    /**
-     * Ensures the DO has loaded the stock numbers from storage into memory.
-     */
-    private ensureInitialized;
-    fetch(request: Request): Promise<Response>;
-}
 
 interface EcommercePluginConfig {
     /**
@@ -50,8 +21,15 @@ interface EcommercePluginConfig {
     injectCollections?: boolean;
     /** Optional same-origin link overrides for stores with specialized admin workflows. */
     adminPages?: Partial<Record<'orders' | 'promotions' | 'giftCards' | 'testCheckout', string>>;
+    /**
+     * Adds the admin-only Test checkout screen and `/admin/api/ecommerce/test-checkout`, which place
+     * orders through the simulated `admin_test` payment provider. When false, neither is injected and
+     * the simulated provider is never registered.
+     * @default false
+     */
+    adminTestCheckout?: boolean;
 }
 declare function createEcommerceLayoutBlocks(productsCollectionSlug?: string): BlockDefinition[];
 declare const ecommercePlugin: (config?: EcommercePluginConfig) => Plugin;
 
-export { type EcommercePluginConfig, InventoryDO, createEcommerceLayoutBlocks, ecommercePlugin };
+export { type EcommercePluginConfig, createEcommerceLayoutBlocks, ecommercePlugin };

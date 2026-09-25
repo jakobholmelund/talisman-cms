@@ -4,14 +4,18 @@ import {
   invalidateEntryCache,
   normalizeEntryDataForRead,
   saveDraftEntry,
+  toEditableEntry,
   triggerPublishingWorkflow
-} from "./chunk-2KNJPUUL.js";
+} from "./chunk-QLZSBNTN.js";
 import {
   collections,
   entries,
   globals,
   schema_exports
-} from "./chunk-QDILJIDR.js";
+} from "./chunk-DJKMKP5C.js";
+import {
+  canAccessCollection
+} from "./chunk-7VUPBVR5.js";
 import {
   buildZodSchemaForFields,
   decodeGlobalData,
@@ -22,7 +26,7 @@ import {
   isPolymorphicRelationField,
   isRelationReference,
   prepareNativeWritePayload
-} from "./chunk-Q2KF5FAP.js";
+} from "./chunk-JZDNEAP6.js";
 
 // src/db/client.ts
 import { drizzle } from "drizzle-orm/d1";
@@ -384,9 +388,30 @@ function applyResolvedRelationships(value, fields, docsByRelation) {
     }
   }
 }
+var RELATION_ID_CHUNK_SIZE = 90;
+async function getRelationFields(collection) {
+  const configured = (await getConfiguredCollections()).find((item) => item.slug === collection.slug);
+  if (configured?.fields?.length) return configured.fields;
+  return typeof collection.fields === "string" ? JSON.parse(collection.fields) : collection.fields;
+}
+async function canEmbedRelationTarget(relationSlug) {
+  const configured = (await getConfiguredCollections()).find((item) => item.slug === relationSlug);
+  return !configured || canAccessCollection(configured, { role: "editor" }, "read");
+}
+async function findRelatedEntries(db, targetCollectionId, ids, versionMode) {
+  const chunks = [];
+  for (let index = 0; index < ids.length; index += RELATION_ID_CHUNK_SIZE) {
+    chunks.push(ids.slice(index, index + RELATION_ID_CHUNK_SIZE));
+  }
+  const results = await Promise.all(chunks.map((chunk) => db.query.entries.findMany({
+    where: (e, operators) => versionMode === "published" ? operators.and(operators.eq(e.collectionId, targetCollectionId), operators.inArray(e.id, chunk), operators.eq(e.status, "published")) : operators.and(operators.eq(e.collectionId, targetCollectionId), operators.inArray(e.id, chunk))
+  })));
+  return results.flat();
+}
 async function resolveRelationships(entriesToResolve, collection, db, depth = 1, versionMode = "published") {
-  if (depth <= 0 || !entriesToResolve || entriesToResolve.length === 0 || !collection.fields) return entriesToResolve;
-  const fieldsConfig = typeof collection.fields === "string" ? JSON.parse(collection.fields) : collection.fields;
+  if (depth <= 0 || !entriesToResolve || entriesToResolve.length === 0) return entriesToResolve;
+  const fieldsConfig = await getRelationFields(collection);
+  if (!fieldsConfig) return entriesToResolve;
   const resolvedEntries = entriesToResolve.map((entry) => {
     const normalized = normalizeEntryDataForRead(entry, versionMode);
     return { ...normalized, data: typeof normalized.data === "string" ? JSON.parse(normalized.data) : normalized.data };
@@ -398,6 +423,7 @@ async function resolveRelationships(entriesToResolve, collection, db, depth = 1,
   if (idsByRelation.size === 0) return resolvedEntries;
   const docsByRelation = /* @__PURE__ */ new Map();
   for (const [relationSlug, idsToFetch] of idsByRelation.entries()) {
+    if (!await canEmbedRelationTarget(relationSlug)) continue;
     let targetCollection;
     try {
       targetCollection = await ensureCollection(db, relationSlug);
@@ -406,9 +432,7 @@ async function resolveRelationships(entriesToResolve, collection, db, depth = 1,
       throw error;
     }
     if (idsToFetch.size === 0) continue;
-    let relatedDocs = await db.query.entries.findMany({
-      where: (e, operators) => versionMode === "published" ? operators.and(operators.inArray(e.id, Array.from(idsToFetch)), operators.eq(e.status, "published")) : operators.inArray(e.id, Array.from(idsToFetch))
-    });
+    let relatedDocs = await findRelatedEntries(db, targetCollection.id, Array.from(idsToFetch), versionMode);
     relatedDocs = relatedDocs.map((doc) => normalizeEntryDataForRead(doc, versionMode));
     if (depth > 1) {
       relatedDocs = await resolveRelationships(relatedDocs, targetCollection, db, depth - 1, versionMode);
@@ -623,7 +647,10 @@ function getClient(env, ctx) {
         } else {
           data = await db.query.entries.findFirst({
             // @ts-ignore
-            where: (e, operators) => versionMode === "published" ? operators.and(operators.eq(e.collectionId, collection.id), operators.eq(e.status, "published"), operators.eq(e.slug, slug)) : operators.and(operators.eq(e.collectionId, collection.id), operators.eq(e.slug, slug)),
+            where: (e, operators) => versionMode === "published" ? operators.and(operators.eq(e.collectionId, collection.id), operators.eq(e.status, "published"), operators.eq(e.slug, slug)) : operators.and(operators.eq(e.collectionId, collection.id), operators.or(
+              operators.eq(e.draftSlug, slug),
+              operators.and(operators.isNull(e.draftSlug), operators.eq(e.slug, slug))
+            )),
             orderBy: (e, { desc: desc2 }) => [desc2(e.createdAt)]
           });
           if (data) data = normalizeEntryDataForRead(data, versionMode);
@@ -711,6 +738,7 @@ function getClient(env, ctx) {
               action: opts.status === "archived" ? "archive" : "publish"
             }, DEFAULT_PUBLISHING_WORKFLOW_BINDING);
           }
+          created = toEditableEntry(created);
         }
         await invalidateEntryCache(env, collectionSlug);
         if (nativeTable && !created) {
@@ -743,6 +771,7 @@ function getClient(env, ctx) {
               action: opts.status === "archived" ? "archive" : "publish"
             }, DEFAULT_PUBLISHING_WORKFLOW_BINDING);
           }
+          updated = toEditableEntry(updated);
         }
         await invalidateEntryCache(env, collectionSlug, id);
         return updated;
@@ -767,16 +796,6 @@ function getClient(env, ctx) {
           await env.KV.delete(`talisman:entries:${collectionSlug}:${id}:draft`);
           await env.KV.delete(`talisman:entries:${collectionSlug}:${id}:published`);
         }
-        return true;
-      }
-    },
-    tasks: {
-      async enqueueImageProcessing(mediaId) {
-        if (!env.QUEUE) {
-          console.warn("Queues are not bound. Skiping background image processing.");
-          return false;
-        }
-        await env.QUEUE.send({ type: "process-image", mediaId });
         return true;
       }
     }
