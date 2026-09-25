@@ -1101,3 +1101,57 @@ export async function reconcileCommerce(options: CommerceApiOptions, limit = 10)
     .bind(now - 24 * 60 * 60, now - 30 * 24 * 60 * 60).run();
   return results;
 }
+
+export interface CommercePurgeOptions {
+  env: TalismanEnv;
+  now?: Date;
+  /** Rows deleted per statement. */
+  batchSize?: number;
+}
+
+/** Statements per table and run; a larger backlog is finished by later runs. */
+const PURGE_MAX_BATCHES = 20;
+
+/**
+ * Delete shopper and sign-in data past its retention period. Run it from the scheduled
+ * Worker next to reconcileCommerce; deletes are batched to stay inside D1 and Worker limits.
+ * Every table is attempted, and the run throws afterwards if any of them failed.
+ */
+export async function purgeStaleCommerceData(options: CommercePurgeOptions) {
+  const { env } = options;
+  const batchSize = Math.max(1, Math.min(1000, Math.floor(options.batchSize ?? 500)));
+  const now = Math.floor((options.now ?? new Date()).getTime() / 1000);
+  const day = 24 * 60 * 60;
+  const deleted = { carts: 0, customerSessions: 0, authSessions: 0, authRateLimits: 0 };
+  const steps: Array<[keyof typeof deleted, string, number[]]> = [
+    // Guest baskets untouched for 30 days. Account, checked-out and locked baskets stay.
+    ['carts', `DELETE FROM _ecommerce_carts WHERE id IN (SELECT id FROM _ecommerce_carts
+      WHERE user_id IS NULL AND closed = 0 AND checkout_session_id IS NULL AND updated_at < ?
+        AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders WHERE cart_id = _ecommerce_carts.id)
+      LIMIT ?)`, [now - 30 * day]],
+    // Shopper sessions and email sign-in links a day after they expired, were used or signed out.
+    ['customerSessions', `DELETE FROM _ecommerce_customer_sessions WHERE id IN (SELECT id
+      FROM _ecommerce_customer_sessions WHERE expires_at < ? OR revoked_at < ? LIMIT ?)`, [now - day, now - day]],
+    ['authSessions', `DELETE FROM galaxy_auth_session WHERE id IN (SELECT id FROM galaxy_auth_session
+      WHERE expires_at < ? LIMIT ?)`, [now]],
+    // better-auth records milliseconds; the shopper sign-in limiter records seconds.
+    ['authRateLimits', `DELETE FROM galaxy_auth_rate_limit WHERE id IN (SELECT id FROM galaxy_auth_rate_limit
+      WHERE CASE WHEN last_request >= 100000000000 THEN last_request / 1000 ELSE last_request END < ?
+      LIMIT ?)`, [now - day]],
+  ];
+  const failures: string[] = [];
+  for (const [table, query, params] of steps) {
+    try {
+      for (let batch = 0; batch < PURGE_MAX_BATCHES; batch++) {
+        const result = await env.DB.prepare(query).bind(...params, batchSize).run();
+        const changes = Number(result.meta?.changes ?? 0);
+        deleted[table] += changes;
+        if (changes < batchSize) break;
+      }
+    } catch (error) {
+      failures.push(`${table}: ${error instanceof Error ? error.message : 'cleanup failed'}`);
+    }
+  }
+  if (failures.length) throw new Error(`Commerce data cleanup failed (${failures.join('; ')})`);
+  return deleted;
+}

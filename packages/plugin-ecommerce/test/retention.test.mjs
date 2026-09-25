@@ -1,0 +1,300 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { register } from 'node:module';
+import { DatabaseSync } from 'node:sqlite';
+import { test } from 'node:test';
+import { purgeStaleCommerceData } from '../dist/api.js';
+import { CUSTOMER_SESSION_COOKIE } from '../dist/accounts.js';
+import { CART_SESSION_COOKIE } from '../dist/cookies.js';
+
+// The cart route reads its bindings from cloudflare:workers; serve them from globalThis.workerEnv.
+const workerModule = 'export const env = new Proxy({}, { get: (_, key) => globalThis.workerEnv?.[key] });';
+register(`data:text/javascript,${encodeURIComponent(`
+  export async function resolve(specifier, context, next) {
+    if (specifier !== 'cloudflare:workers') return next(specifier, context);
+    return { shortCircuit: true, url: 'data:text/javascript,' + ${JSON.stringify(encodeURIComponent(workerModule))} };
+  }`)}`);
+
+const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.sql', '0007_local_auth.sql',
+  '0008_shared_components.sql', '0010_checkout_inventory.sql', '0011_order_payment_provider.sql',
+  '0012_customer_accounts.sql', '0013_referrals_and_credit.sql', '0014_promotions.sql',
+  '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
+  '0019_shared_customer_identity.sql'];
+
+function database() {
+  const sqlite = new DatabaseSync(':memory:');
+  sqlite.exec('PRAGMA foreign_keys = ON');
+  for (const migration of migrationFiles) {
+    const sql = readFileSync(new URL(`../../talisman-cms/drizzle/${migration}`, import.meta.url), 'utf8');
+    sqlite.exec(sql.replaceAll('--> statement-breakpoint', ''));
+  }
+  const DB = {
+    prepare(sql) {
+      const prepared = sqlite.prepare(sql);
+      let values = [];
+      return {
+        bind(...params) { values = params; return this; },
+        async all() { return { results: prepared.all(...values) }; },
+        async first() { return prepared.get(...values) ?? null; },
+        async raw() {
+          const raw = sqlite.prepare(sql);
+          raw.setReturnArrays(true);
+          return raw.all(...values);
+        },
+        async run() { return { meta: prepared.run(...values) }; }
+      };
+    }
+  };
+  return { sqlite, DB };
+}
+
+function cookieJar(initial = {}) {
+  const values = new Map(Object.entries(initial));
+  const writes = [];
+  return {
+    values,
+    writes,
+    get(name) { return values.has(name) ? { value: values.get(name) } : undefined; },
+    set(name, value, options) { values.set(name, value); writes.push(['set', name, value, options]); },
+    delete(name, options) { values.delete(name); writes.push(['delete', name, options]); },
+  };
+}
+
+async function cartRoute(DB, method, { cookies = {}, body, raw, headers = {}, origin = 'https://shop.test' } = {}) {
+  globalThis.workerEnv = { DB };
+  const { ALL } = await import('../dist/routes/ecommerce-cart.js');
+  const jar = cookieJar(cookies);
+  const request = new Request('https://shop.test/api/ecommerce/cart', {
+    method, headers: { origin, 'Content-Type': 'application/json', ...headers },
+    body: raw ?? (body === undefined ? undefined : JSON.stringify(body)),
+    ...(raw instanceof ReadableStream ? { duplex: 'half' } : {})
+  });
+  const response = await ALL({ request, cookies: jar });
+  return { status: response.status, json: await response.json(), jar, response };
+}
+
+const cartCount = (sqlite) => sqlite.prepare('SELECT COUNT(*) AS count FROM _ecommerce_carts').get().count;
+const day = 24 * 60 * 60;
+
+test('reading the basket without a cookie creates no cart row and sets no cookie', async () => {
+  const { sqlite, DB } = database();
+  const anonymous = await cartRoute(DB, 'GET');
+  assert.equal(anonymous.status, 200);
+  assert.deepEqual(anonymous.json, { id: null, items: [], locked: false });
+  assert.deepEqual(anonymous.jar.writes, []);
+  assert.equal(anonymous.response.headers.get('Cache-Control'), 'no-store');
+
+  const unknown = await cartRoute(DB, 'GET', { cookies: { [CART_SESSION_COOKIE]: 'anon_unknown' } });
+  assert.deepEqual(unknown.json, { id: null, items: [], locked: false });
+  assert.deepEqual(unknown.jar.writes, []);
+
+  const crossSite = await cartRoute(DB, 'POST', { origin: 'https://evil.test', body: { items: [] } });
+  assert.equal(crossSite.status, 403);
+  assert.deepEqual(crossSite.jar.writes, []);
+  assert.equal(cartCount(sqlite), 0);
+  sqlite.close();
+});
+
+test('the first POST creates the basket, and responses never carry its token', async () => {
+  const { sqlite, DB } = database();
+  const created = await cartRoute(DB, 'POST', { body: { items: [{ productId: 'frame', quantity: 2 }] } });
+  assert.equal(created.status, 200);
+  assert.equal(cartCount(sqlite), 1);
+  const [write] = created.jar.writes;
+  assert.equal(write[0], 'set');
+  assert.equal(write[1], CART_SESSION_COOKIE);
+  const token = write[2];
+  const row = sqlite.prepare('SELECT id, session_token FROM _ecommerce_carts').get();
+  assert.equal(row.session_token, token);
+  assert.deepEqual(created.json, { id: row.id, items: [{ productId: 'frame', quantity: 2 }], locked: false });
+
+  const read = await cartRoute(DB, 'GET', { cookies: { [CART_SESSION_COOKIE]: token } });
+  assert.deepEqual(read.json, created.json);
+  assert.doesNotMatch(JSON.stringify(read.json), new RegExp(token));
+  assert.deepEqual(read.jar.writes, []);
+  assert.equal(cartCount(sqlite), 1);
+  sqlite.close();
+});
+
+test('a POST that adds nothing or is invalid creates no cart row and sets no cookie', async () => {
+  const { sqlite, DB } = database();
+  const empty = await cartRoute(DB, 'POST', { body: { items: [] } });
+  assert.equal(empty.status, 200);
+  assert.deepEqual(empty.json, { id: null, items: [], locked: false });
+  assert.deepEqual(empty.jar.writes, []);
+
+  const unknownCookie = await cartRoute(DB, 'POST', { cookies: { [CART_SESSION_COOKIE]: 'anon_unknown' }, body: { items: [] } });
+  assert.deepEqual(unknownCookie.json, { id: null, items: [], locked: false });
+  assert.deepEqual(unknownCookie.jar.writes, []);
+
+  for (const body of [{}, { items: 'frame' }, null]) {
+    const invalid = await cartRoute(DB, 'POST', { body });
+    assert.equal(invalid.status, 400);
+    assert.deepEqual(invalid.json, { error: 'Cart items must be an array' });
+    assert.deepEqual(invalid.jar.writes, []);
+  }
+  const notJson = await cartRoute(DB, 'POST', { raw: '{"items": [' });
+  assert.equal(notJson.status, 400);
+  assert.deepEqual(notJson.jar.writes, []);
+
+  const declared = await cartRoute(DB, 'POST', { body: { items: [] }, headers: { 'Content-Length': String(64 * 1024 + 1) } });
+  assert.equal(declared.status, 413);
+  assert.deepEqual(declared.jar.writes, []);
+
+  // A streamed body without a Content-Length is cut off at the limit instead of being buffered.
+  let pulled = 0;
+  const streamed = await cartRoute(DB, 'POST', { raw: new ReadableStream({
+    pull(controller) {
+      pulled++;
+      controller.enqueue(new TextEncoder().encode(pulled === 1 ? '{"items":["' : 'x'.repeat(8 * 1024)));
+    }
+  }) });
+  assert.equal(streamed.status, 413);
+  assert.ok(pulled < 20);
+  assert.deepEqual(streamed.jar.writes, []);
+  assert.equal(cartCount(sqlite), 0);
+  sqlite.close();
+});
+
+test('an empty item list still clears an existing basket', async () => {
+  const { sqlite, DB } = database();
+  const created = await cartRoute(DB, 'POST', { body: { items: [{ productId: 'frame', quantity: 1 }] } });
+  const token = created.jar.writes[0][2];
+  const cleared = await cartRoute(DB, 'POST', { cookies: { [CART_SESSION_COOKIE]: token }, body: { items: [] } });
+  assert.equal(cleared.status, 200);
+  assert.deepEqual(cleared.json, { id: created.json.id, items: [], locked: false });
+  assert.deepEqual(cleared.jar.writes, []);
+  assert.equal(sqlite.prepare('SELECT items FROM _ecommerce_carts').get().items, '[]');
+  sqlite.close();
+});
+
+test('a signed-in shopper without a basket cookie reads the account basket without writes', async () => {
+  const { sqlite, DB } = database();
+  const now = Math.floor(Date.now() / 1000);
+  sqlite.prepare(`INSERT INTO _ecommerce_customer_accounts
+    (id, email, email_normalized, email_verified_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run('shopper', 'shopper@example.test', 'shopper@example.test', now, now, now);
+  sqlite.prepare(`INSERT INTO _ecommerce_customer_sessions
+    (id, account_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)`)
+    .run('session', 'shopper', createHash('sha256').update('shopper-token').digest('hex'), now + 3600, now);
+  sqlite.prepare(`INSERT INTO _ecommerce_carts (id, session_token, user_id, items, created_at, updated_at)
+    VALUES ('owned', 'browser', 'shopper', '[{"productId":"frame","quantity":1}]', ?, ?)`).run(now, now);
+  const before = sqlite.prepare('SELECT * FROM _ecommerce_carts').all();
+
+  const read = await cartRoute(DB, 'GET', { cookies: { [CUSTOMER_SESSION_COOKIE]: 'shopper-token' } });
+  assert.deepEqual(read.json, { id: 'owned', items: [{ productId: 'frame', quantity: 1 }], locked: false });
+  assert.deepEqual(read.jar.writes, []);
+  assert.deepEqual(sqlite.prepare('SELECT * FROM _ecommerce_carts').all(), before);
+  sqlite.close();
+});
+
+test('the purge deletes idle guest baskets and keeps account, locked, checked-out and ordered ones', async () => {
+  const { sqlite, DB } = database();
+  const now = new Date('2026-09-25T12:00:00Z');
+  const seconds = now.getTime() / 1000;
+  const insert = sqlite.prepare(`INSERT INTO _ecommerce_carts
+    (id, session_token, user_id, checkout_session_id, closed, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+  insert.run('stale-guest', 'anon_stale', null, null, 0, seconds - 40 * day, seconds - 31 * day);
+  insert.run('recent-guest', 'anon_recent', null, null, 0, seconds - 40 * day, seconds - 29 * day);
+  insert.run('stale-account', null, 'acct_1', null, 0, seconds - 40 * day, seconds - 31 * day);
+  insert.run('stale-locked', 'anon_locked', null, 'cs_locked', 0, seconds - 40 * day, seconds - 31 * day);
+  insert.run('stale-closed', 'anon_closed', null, null, 1, seconds - 40 * day, seconds - 31 * day);
+  insert.run('stale-ordered', 'anon_ordered', null, null, 0, seconds - 40 * day, seconds - 31 * day);
+  sqlite.prepare(`INSERT INTO _ecommerce_orders (id, cart_id, total_amount, created_at, updated_at)
+    VALUES ('ord_draft', 'stale-ordered', 1000, ?, ?)`).run(seconds - 31 * day, seconds - 31 * day);
+
+  const deleted = await purgeStaleCommerceData({ env: { DB }, now });
+  assert.deepEqual(deleted, { carts: 1, customerSessions: 0, authSessions: 0, authRateLimits: 0 });
+  assert.deepEqual(sqlite.prepare('SELECT id FROM _ecommerce_carts ORDER BY id').all().map((row) => row.id),
+    ['recent-guest', 'stale-account', 'stale-closed', 'stale-locked', 'stale-ordered']);
+  sqlite.close();
+});
+
+test('the purge deletes in bounded batches and finishes a backlog on later runs', async () => {
+  const { sqlite, DB } = database();
+  const now = new Date('2026-09-25T12:00:00Z');
+  const seconds = now.getTime() / 1000;
+  const insert = sqlite.prepare(`INSERT INTO _ecommerce_carts (id, session_token, created_at, updated_at)
+    VALUES (?, ?, ?, ?)`);
+  for (let index = 0; index < 25; index++) {
+    insert.run(`cart_${index}`, `anon_${index}`, seconds - 60 * day, seconds - 60 * day);
+  }
+  assert.equal((await purgeStaleCommerceData({ env: { DB }, now, batchSize: 1 })).carts, 20);
+  assert.equal(cartCount(sqlite), 5);
+  assert.equal((await purgeStaleCommerceData({ env: { DB }, now, batchSize: 2 })).carts, 5);
+  assert.equal(cartCount(sqlite), 0);
+  sqlite.close();
+});
+
+test('the purge removes shopper sessions and sign-in links a day after they ended', async () => {
+  const { sqlite, DB } = database();
+  const now = new Date('2026-09-25T12:00:00Z');
+  const seconds = now.getTime() / 1000;
+  sqlite.prepare(`INSERT INTO _ecommerce_customer_accounts
+    (id, email, email_normalized, created_at, updated_at) VALUES ('acct', 'a@example.test', 'a@example.test', ?, ?)`)
+    .run(seconds, seconds);
+  const insert = sqlite.prepare(`INSERT INTO _ecommerce_customer_sessions
+    (id, account_id, token_hash, purpose, expires_at, created_at, revoked_at) VALUES (?, 'acct', ?, ?, ?, ?, ?)`);
+  const rows = [
+    ['active', 'session', seconds + 3600, seconds - 3600, null],
+    ['expired-recently', 'session', seconds - 3600, seconds - 30 * day, null],
+    ['expired-long-ago', 'session', seconds - 2 * day, seconds - 32 * day, null],
+    ['signed-out-long-ago', 'session', seconds + 20 * day, seconds - 10 * day, seconds - 2 * day],
+    ['signed-out-recently', 'session', seconds + 20 * day, seconds - 10 * day, seconds - 3600],
+    ['link-fresh', 'email_challenge', seconds + 600, seconds - 300, null],
+    ['link-used-recently', 'email_challenge', seconds + 600, seconds - 300, seconds - 200],
+    ['link-used-long-ago', 'email_challenge', seconds - 2 * day + 900, seconds - 2 * day, seconds - 2 * day + 60],
+    ['link-expired-long-ago', 'email_challenge', seconds - 2 * day + 900, seconds - 2 * day, null],
+  ];
+  for (const [id, purpose, expiresAt, createdAt, revokedAt] of rows) {
+    insert.run(id, `hash-${id}`, purpose, expiresAt, createdAt, revokedAt);
+  }
+
+  const deleted = await purgeStaleCommerceData({ env: { DB }, now });
+  assert.equal(deleted.customerSessions, 4);
+  assert.deepEqual(sqlite.prepare('SELECT id FROM _ecommerce_customer_sessions ORDER BY id').all().map((row) => row.id),
+    ['active', 'expired-recently', 'link-fresh', 'link-used-recently', 'signed-out-recently']);
+  sqlite.close();
+});
+
+test('the purge removes expired CMS sessions and day-old rate-limit rows in either time unit', async () => {
+  const { sqlite, DB } = database();
+  const now = new Date('2026-09-25T12:00:00Z');
+  const seconds = now.getTime() / 1000;
+  const millis = now.getTime();
+  sqlite.prepare(`INSERT INTO galaxy_auth_user (id, name, email, created_at, updated_at)
+    VALUES ('editor', 'Editor', 'editor@example.test', ?, ?)`).run(seconds, seconds);
+  const session = sqlite.prepare(`INSERT INTO galaxy_auth_session
+    (id, expires_at, token, created_at, updated_at, user_id) VALUES (?, ?, ?, ?, ?, 'editor')`);
+  session.run('expired', seconds - 60, 'token-expired', seconds - day, seconds - day);
+  session.run('valid', seconds + 3600, 'token-valid', seconds - 3600, seconds - 3600);
+  const limit = sqlite.prepare(`INSERT INTO galaxy_auth_rate_limit (id, key, count, last_request) VALUES (?, ?, 1, ?)`);
+  // better-auth records milliseconds; the shopper sign-in limiter records seconds.
+  limit.run('auth-old', '203.0.113.1/sign-in/email', millis - 25 * 60 * 60 * 1000);
+  limit.run('auth-recent', '203.0.113.2/sign-in/email', millis - 60 * 60 * 1000);
+  limit.run('shopper-old', 'shopper-email:old', seconds - 25 * 60 * 60);
+  limit.run('shopper-recent', 'shopper-email:recent', seconds - 60 * 60);
+
+  const deleted = await purgeStaleCommerceData({ env: { DB }, now });
+  assert.deepEqual(deleted, { carts: 0, customerSessions: 0, authSessions: 1, authRateLimits: 2 });
+  assert.deepEqual(sqlite.prepare('SELECT id FROM galaxy_auth_session').all().map((row) => row.id), ['valid']);
+  assert.deepEqual(sqlite.prepare('SELECT id FROM galaxy_auth_rate_limit ORDER BY id').all().map((row) => row.id),
+    ['auth-recent', 'shopper-recent']);
+  sqlite.close();
+});
+
+test('a failing table does not stop the rest of the purge, and the run still fails', async () => {
+  const { sqlite, DB } = database();
+  const now = new Date('2026-09-25T12:00:00Z');
+  const seconds = now.getTime() / 1000;
+  sqlite.prepare(`INSERT INTO _ecommerce_carts (id, session_token, created_at, updated_at) VALUES ('stale', 'anon', ?, ?)`)
+    .run(seconds - 60 * day, seconds - 60 * day);
+  sqlite.prepare(`INSERT INTO galaxy_auth_rate_limit (id, key, count, last_request) VALUES ('old', 'shopper-email:old', 1, ?)`)
+    .run(seconds - 2 * day);
+  sqlite.exec('DROP TABLE _ecommerce_customer_sessions');
+  await assert.rejects(purgeStaleCommerceData({ env: { DB }, now }), /customerSessions/);
+  assert.equal(cartCount(sqlite), 0);
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM galaxy_auth_rate_limit').get().count, 0);
+  sqlite.close();
+});
