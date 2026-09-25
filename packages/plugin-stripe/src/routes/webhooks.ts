@@ -1,11 +1,11 @@
 import type { APIRoute } from 'astro';
 import Stripe from 'stripe';
-import type { StripePluginConfig } from '../types';
-// @ts-ignore - Virtual module provided by plugin
+import { getWorkerEnv, MISSING_WEBHOOK_SECRET, readStripeWebhookSecret } from '../secrets';
+import type { StripeRuntimeConfig } from '../types';
 import { stripeConfig } from 'virtual:talisman-cms/stripe-config';
 
 export const POST: APIRoute = async ({ request }) => {
-  const config = stripeConfig as StripePluginConfig | undefined;
+  const config = stripeConfig as StripeRuntimeConfig | undefined;
   
   if (!config) {
     return new Response(JSON.stringify({ error: 'Stripe plugin config not found in global scope' }), {
@@ -14,11 +14,13 @@ export const POST: APIRoute = async ({ request }) => {
     });
   }
 
-  const { stripeSecretKey, stripeWebhooksEndpointSecret, webhooks, logs } = config;
+  const { webhooks, logs } = config;
+  const webhookSecret = readStripeWebhookSecret(await getWorkerEnv());
 
-  if (!stripeWebhooksEndpointSecret) {
-    return new Response(JSON.stringify({ error: 'Missing stripeWebhooksEndpointSecret configuration' }), {
-        status: 400,
+  if (!webhookSecret) {
+    console.error(MISSING_WEBHOOK_SECRET);
+    return new Response(JSON.stringify({ error: 'Stripe webhook secret is not configured' }), {
+        status: 503,
         headers: { 'Content-Type': 'application/json' }
     });
   }
@@ -34,17 +36,15 @@ export const POST: APIRoute = async ({ request }) => {
 
   // Stripe requires the raw buffer/string to verify signature
   const rawBody = await request.text();
-  const stripe = new Stripe(stripeSecretKey, {
-    apiVersion: '2022-08-01' as any,
-  });
 
   let event: Stripe.Event;
 
   try {
-    event = await stripe.webhooks.constructEventAsync(
+    // Verifying the signature needs only the endpoint's signing secret, not the API key.
+    event = await Stripe.webhooks.constructEventAsync(
       rawBody,
       signature,
-      stripeWebhooksEndpointSecret
+      webhookSecret
     );
   } catch (err: any) {
     if (logs) console.error(`⚠️ Webhook signature verification failed: ${err.message}`);

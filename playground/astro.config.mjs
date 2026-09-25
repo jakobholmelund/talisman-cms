@@ -98,20 +98,8 @@ export default defineConfig({
       daisyUiPlugin(),
       starwindUiPlugin(),
       stripePlugin({
-        stripeSecretKey: 'sk_test_mockkey', // Replace with real key in .env
-        stripeWebhooksEndpointSecret: 'whsec_mockkey',
         rest: false,
-        logs: true,
-        sync: [
-          {
-            collection: 'products',
-            stripeResourceType: 'products',
-            stripeResourceTypeSingular: 'product',
-            fields: [
-              { fieldPath: 'name', stripeProperty: 'name' }
-            ]
-          }
-        ]
+        logs: true
       })
     ],
     collections: [

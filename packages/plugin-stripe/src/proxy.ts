@@ -20,9 +20,10 @@ export const stripeProxy = async (args: StripeProxyArgs): Promise<any> => {
     throw new Error('Stripe secret key must be provided');
   }
 
-  // Use fetch automatically on edge environments as of stripe-node v12
   const stripe = new Stripe(stripeSecretKey, {
     apiVersion: '2022-08-01' as any, // Target recent version per docs, or user can override
+    // fetch works in Workers and Node alike
+    httpClient: Stripe.createFetchHttpClient(),
     appInfo: {
       name: 'Talisman CMS Stripe Plugin',
       version: '0.0.1',

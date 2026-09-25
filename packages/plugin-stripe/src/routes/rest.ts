@@ -1,15 +1,15 @@
 import type { APIRoute } from 'astro';
 import { stripeProxy } from '../proxy';
-import type { StripePluginConfig } from '../types';
+import { getWorkerEnv, MISSING_SECRET_KEY, readStripeSecretKey } from '../secrets';
+import type { StripeRuntimeConfig } from '../types';
 import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
-// @ts-ignore - Virtual module provided by plugin
 import { stripeConfig } from 'virtual:talisman-cms/stripe-config';
 
-export const POST: APIRoute = async ({ request, locals }) => {
+export const POST: APIRoute = async ({ request }) => {
   const authorization = await authorizeCmsRequest(request, 'admin');
   if (authorization.response) return authorization.response;
 
-  const config = stripeConfig as StripePluginConfig | undefined;
+  const config = stripeConfig as StripeRuntimeConfig | undefined;
   
   if (!config) {
     return new Response(JSON.stringify({ error: 'Stripe plugin config not found in global scope' }), {
@@ -41,7 +41,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
       return Response.json({ error: 'Stripe method is not allowed' }, { status: 403 });
     }
 
-    const { stripeSecretKey } = config;
+    const stripeSecretKey = readStripeSecretKey(await getWorkerEnv());
+    if (!stripeSecretKey) {
+      console.error(MISSING_SECRET_KEY);
+      return Response.json({ error: MISSING_SECRET_KEY }, { status: 503 });
+    }
+
     const result = await stripeProxy({
       stripeSecretKey,
       stripeMethod,

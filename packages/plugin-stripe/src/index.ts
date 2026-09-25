@@ -1,65 +1,42 @@
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
-import type { Plugin, CollectionConfig, FieldDefinition } from 'talisman-cms';
-import type { StripePluginConfig } from './types';
+import type { Plugin } from 'talisman-cms';
+import type { StripePluginConfig, StripeRuntimeConfig } from './types';
 
 export * from './types';
 
 function resolveRouteEntrypoint(name: string) {
-  // Use import.meta.url for esm environment, fallback for CJS
-  const isESM = typeof import.meta !== 'undefined' && typeof import.meta.url === 'string';
-  
-  if (!isESM) {
-    // Basic fallback for CJS bundlers 
-    return `../src/routes/${name}.ts`;
-  }
-
   let routePath = fileURLToPath(new URL(`./routes/${name}.js`, import.meta.url));
-
-  if (!existsSync(routePath)) {
-    routePath = fileURLToPath(new URL(`../src/routes/${name}.ts`, import.meta.url));
-  }
-
+  if (!existsSync(routePath)) routePath = fileURLToPath(new URL(`./routes/${name}.ts`, import.meta.url));
   return routePath;
 }
 
-export function stripePlugin(config: StripePluginConfig): Plugin {
+export function stripePlugin(config: StripePluginConfig = {}): Plugin {
   if (config.webhooks && !config.webhooksModule) {
     throw new Error('[plugin-stripe] Inline webhook handlers cannot survive the server build. Provide webhooksModule.');
   }
-  const restEndpointPath = resolveRouteEntrypoint('rest');
-  const webhooksEndpointPath = resolveRouteEntrypoint('webhooks');
+  const ignoredSecrets = (['stripeSecretKey', 'stripeWebhooksEndpointSecret'] as const).filter((key) => config[key] !== undefined);
+  if (ignoredSecrets.length) {
+    console.warn(`[plugin-stripe] ${ignoredSecrets.join(' and ')} in astro.config is ignored. `
+      + 'Set the STRIPE_SECRET_KEY and TALISMAN_STRIPE_WEBHOOK_SECRET Worker secrets instead, and remove the key from your config.');
+  }
+  const webhookEndpoint = config.webhookEndpoint ?? Boolean(config.webhooksModule);
+  // Only these options reach the server bundle; Stripe secrets are read from the Worker per request.
+  const runtimeConfig: Omit<StripeRuntimeConfig, 'webhooks'> = {
+    rest: config.rest === true,
+    restMethods: config.restMethods ?? [],
+    logs: config.logs === true,
+  };
 
   return {
     name: 'stripe-plugin',
     onInit: (cmsConfig) => {
-      // 1. Inject sync fields
+      // The Stripe ID is kept in each record's data (or the native column) but is not a form field,
+      // because the hooks overwrite any value sent by the admin or an API client.
       if (config.sync && cmsConfig.collections) {
         config.sync.forEach((syncOpt: any) => {
           const col = cmsConfig.collections!.find((c: any) => c.slug === syncOpt.collection);
           if (col) {
-            col.fields = col.fields || [];
-            
-            if (!col.fields.some((f: any) => f.name === 'stripeID')) {
-              col.fields.push({
-                name: 'stripeID',
-                label: 'Stripe ID',
-                type: 'text',
-                admin: { hidden: true }
-              } as FieldDefinition); 
-            }
-
-            if (!col.fields.some((f: any) => f.name === 'skipSync')) {
-              col.fields.push({
-                name: 'skipSync',
-                label: 'Skip Stripe Sync',
-                type: 'boolean',
-                defaultValue: false,
-                admin: { hidden: true },
-                description: 'When true, prevents infinite sync loops when webhooks trigger updates'
-              } as FieldDefinition);
-            }
-
             col.runtimeHooks = [
               ...(col.runtimeHooks || []),
               {
@@ -86,11 +63,10 @@ export function stripePlugin(config: StripePluginConfig): Plugin {
           },
           load(id: string) {
             if (id === '\0virtual:talisman-cms/stripe-config') {
-              const { webhooks, ...serializableConfig } = config;
               const handlerImport = config.webhooksModule
                 ? `import { ${config.webhooksModule.exportName} as runtimeWebhooks } from ${JSON.stringify(config.webhooksModule.moduleId)};`
                 : '';
-              return `${handlerImport}\nexport const stripeConfig = { ...${JSON.stringify(serializableConfig)}, webhooks: ${config.webhooksModule ? 'runtimeWebhooks' : 'undefined'} };`;
+              return `${handlerImport}\nexport const stripeConfig = { ...${JSON.stringify(runtimeConfig)}, webhooks: ${config.webhooksModule ? 'runtimeWebhooks' : 'undefined'} };`;
             }
           }
         }
@@ -102,13 +78,13 @@ export function stripePlugin(config: StripePluginConfig): Plugin {
     endpoints: [
       ...(config.rest === true && config.restMethods?.length ? [{
         path: '/stripe/rest',
-        entrypoint: restEndpointPath
+        entrypoint: resolveRouteEntrypoint('rest')
       }] : []),
-      {
+      ...(webhookEndpoint ? [{
         path: '/stripe/webhooks',
-        entrypoint: webhooksEndpointPath,
+        entrypoint: resolveRouteEntrypoint('webhooks'),
         public: true
-      }
+      }] : [])
     ]
   };
 }
