@@ -9,6 +9,9 @@ import {
   evaluateDiscountCode
 } from "../chunk-MQPA2QMJ.js";
 import "../chunk-PRGHPNDB.js";
+import {
+  readCartSessionToken
+} from "../chunk-MDTTSWBR.js";
 import "../chunk-AGAY2N6E.js";
 import {
   evaluateGiftCard
@@ -31,7 +34,7 @@ var POST = async ({ request, cookies }) => {
   if (!parsed.success || !(parsed.data.code || parsed.data.giftCardCode)) {
     return Response.json({ error: "Enter a discount or gift card code" }, { status: 400, headers });
   }
-  const token = cookies.get("talisman-cart")?.value;
+  const token = readCartSessionToken(cookies);
   if (!token) return Response.json({ error: "Basket not found" }, { status: 404, headers });
   try {
     const { env } = await import("cloudflare:workers");

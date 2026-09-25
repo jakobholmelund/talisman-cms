@@ -1,11 +1,4 @@
 import {
-  index,
-  integer,
-  sqliteTable,
-  text,
-  uniqueIndex
-} from "./chunk-VVR3XKHB.js";
-import {
   __export
 } from "./chunk-MLKGABMK.js";
 
@@ -18,6 +11,7 @@ __export(schema_exports, {
   globals: () => globals,
   media: () => media
 });
+import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 var collections = sqliteTable("galaxy_collections", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),

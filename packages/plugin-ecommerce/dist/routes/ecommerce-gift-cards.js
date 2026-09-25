@@ -4,6 +4,9 @@ import {
 import "../chunk-FK3KKBW6.js";
 import "../chunk-6LYWG22B.js";
 import {
+  giftCardAccessCookie
+} from "../chunk-MDTTSWBR.js";
+import {
   getGiftCardBalance,
   startGiftCardPurchase
 } from "../chunk-U46CR236.js";
@@ -32,7 +35,7 @@ var POST = async ({ request, cookies }) => {
       successUrl: `${origin}/gift-cards/success?purchase={PURCHASE_ID}`,
       cancelUrl: `${origin}/gift-cards?cancelled=1`
     });
-    cookies.set(`talisman-gift-${purchase.id}`, purchase.accessToken, {
+    cookies.set(giftCardAccessCookie(purchase.id), purchase.accessToken, {
       httpOnly: true,
       sameSite: "lax",
       secure: new URL(request.url).protocol === "https:",

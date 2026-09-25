@@ -19,12 +19,12 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     expiresAt: z.ZodNullable<z.ZodNumber>;
     active: z.ZodBoolean;
 }, "strict", z.ZodTypeAny, {
-    active: boolean;
     description: string | null;
     type: "amount" | "credit" | "percent";
     value: number;
     expiresAt: number | null;
     code: string;
+    active: boolean;
     minOrderCents: number;
     maxDiscountCents: number | null;
     eligibleProductIds: string[];
@@ -33,12 +33,12 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     firstOrderOnly: boolean;
     startsAt: number | null;
 }, {
-    active: boolean;
     description: string | null;
     type: "amount" | "credit" | "percent";
     value: number;
     expiresAt: number | null;
     code: string;
+    active: boolean;
     minOrderCents: number;
     maxDiscountCents: number | null;
     eligibleProductIds: string[];
@@ -47,12 +47,12 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     firstOrderOnly: boolean;
     startsAt: number | null;
 }>, {
-    active: boolean;
     description: string | null;
     type: "amount" | "credit" | "percent";
     value: number;
     expiresAt: number | null;
     code: string;
+    active: boolean;
     minOrderCents: number;
     maxDiscountCents: number | null;
     eligibleProductIds: string[];
@@ -61,12 +61,12 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     firstOrderOnly: boolean;
     startsAt: number | null;
 }, {
-    active: boolean;
     description: string | null;
     type: "amount" | "credit" | "percent";
     value: number;
     expiresAt: number | null;
     code: string;
+    active: boolean;
     minOrderCents: number;
     maxDiscountCents: number | null;
     eligibleProductIds: string[];

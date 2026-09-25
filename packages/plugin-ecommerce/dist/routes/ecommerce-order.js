@@ -1,24 +1,27 @@
 import {
   runtimePaymentAdapters
 } from "../chunk-WXEFSKPU.js";
+import "../chunk-FK3KKBW6.js";
+import "../chunk-6LYWG22B.js";
 import {
   CUSTOMER_SESSION_COOKIE,
   findCustomerSession
 } from "../chunk-OM7CZNWS.js";
-import "../chunk-FK3KKBW6.js";
-import "../chunk-6LYWG22B.js";
 import {
   bindCommerceApi
 } from "../chunk-4B5ROQI2.js";
 import "../chunk-MQPA2QMJ.js";
 import "../chunk-PRGHPNDB.js";
+import {
+  readCartSessionToken
+} from "../chunk-MDTTSWBR.js";
 import "../chunk-AGAY2N6E.js";
 import "../chunk-U46CR236.js";
 import "../chunk-6RT3KMIV.js";
 
 // src/routes/ecommerce-order.ts
 var ALL = async ({ request, cookies }) => {
-  const sessionToken = cookies.get("talisman-cart")?.value;
+  const sessionToken = readCartSessionToken(cookies);
   if (request.method !== "GET" && request.method !== "POST") {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
   }

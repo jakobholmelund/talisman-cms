@@ -1,12 +1,12 @@
 import {
   runtimePaymentAdapters
 } from "./chunk-WXEFSKPU.js";
+import "./chunk-FK3KKBW6.js";
+import "./chunk-6LYWG22B.js";
 import {
   CUSTOMER_SESSION_COOKIE,
   findCustomerSession
 } from "./chunk-OM7CZNWS.js";
-import "./chunk-FK3KKBW6.js";
-import "./chunk-6LYWG22B.js";
 import {
   bindCommerceApi
 } from "./chunk-4B5ROQI2.js";
@@ -14,6 +14,9 @@ import "./chunk-MQPA2QMJ.js";
 import {
   REFERRAL_COOKIE
 } from "./chunk-PRGHPNDB.js";
+import {
+  ensureCartSession
+} from "./chunk-MDTTSWBR.js";
 import "./chunk-AGAY2N6E.js";
 import "./chunk-U46CR236.js";
 import "./chunk-6RT3KMIV.js";
@@ -22,18 +25,8 @@ import "./chunk-6RT3KMIV.js";
 import { defineAction, ActionError } from "astro:actions";
 import { z } from "astro/zod";
 function getOrCreateCartSession(context) {
-  let sessionToken = context.cookies?.get?.("talisman-cart")?.value;
-  if (!sessionToken) {
-    sessionToken = `anon_${crypto.randomUUID()}`;
-    context.cookies?.set?.("talisman-cart", sessionToken, {
-      path: "/",
-      httpOnly: true,
-      sameSite: "lax",
-      secure: context.url?.protocol === "https:",
-      maxAge: 60 * 60 * 24 * 30
-    });
-  }
-  return sessionToken;
+  if (!context.cookies) return `anon_${crypto.randomUUID()}`;
+  return ensureCartSession(context.cookies, context.url?.protocol === "https:");
 }
 var ecommerceActions = {
   getCart: defineAction({

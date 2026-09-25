@@ -4,12 +4,12 @@ import {
 import {
   runtimePaymentAdapters
 } from "../chunk-WXEFSKPU.js";
+import "../chunk-FK3KKBW6.js";
+import "../chunk-6LYWG22B.js";
 import {
   CUSTOMER_SESSION_COOKIE,
   findCustomerSession
 } from "../chunk-OM7CZNWS.js";
-import "../chunk-FK3KKBW6.js";
-import "../chunk-6LYWG22B.js";
 import {
   bindCommerceApi
 } from "../chunk-4B5ROQI2.js";
@@ -17,6 +17,9 @@ import "../chunk-MQPA2QMJ.js";
 import {
   REFERRAL_COOKIE
 } from "../chunk-PRGHPNDB.js";
+import {
+  readCartSessionToken
+} from "../chunk-MDTTSWBR.js";
 import "../chunk-AGAY2N6E.js";
 import "../chunk-U46CR236.js";
 import "../chunk-6RT3KMIV.js";
@@ -26,7 +29,7 @@ var POST = async ({ request, cookies }) => {
   if (request.headers.get("origin") !== new URL(request.url).origin) {
     return Response.json({ error: "Same-origin request required" }, { status: 403 });
   }
-  const sessionToken = cookies.get("talisman-cart")?.value;
+  const sessionToken = readCartSessionToken(cookies);
   if (!sessionToken) {
     return new Response(JSON.stringify({ error: "No cart session found" }), {
       status: 400,

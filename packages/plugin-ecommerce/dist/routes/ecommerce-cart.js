@@ -7,23 +7,16 @@ import {
 } from "../chunk-4B5ROQI2.js";
 import "../chunk-MQPA2QMJ.js";
 import "../chunk-PRGHPNDB.js";
+import {
+  ensureCartSession
+} from "../chunk-MDTTSWBR.js";
 import "../chunk-AGAY2N6E.js";
 import "../chunk-U46CR236.js";
 import "../chunk-6RT3KMIV.js";
 
 // src/routes/ecommerce-cart.ts
 var ALL = async ({ request, cookies }) => {
-  let sessionToken = cookies.get("talisman-cart")?.value;
-  if (!sessionToken) {
-    sessionToken = `anon_${crypto.randomUUID()}`;
-    cookies.set("talisman-cart", sessionToken, {
-      path: "/",
-      httpOnly: true,
-      sameSite: "lax",
-      secure: new URL(request.url).protocol === "https:",
-      maxAge: 60 * 60 * 24 * 30
-    });
-  }
+  const sessionToken = ensureCartSession(cookies, new URL(request.url).protocol === "https:");
   try {
     const { env } = await import("cloudflare:workers");
     const api = bindCommerceApi({ env });

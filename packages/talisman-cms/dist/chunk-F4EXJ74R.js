@@ -2,17 +2,6 @@ import {
   getAccessEmail
 } from "./chunk-XMM5SQBN.js";
 import {
-  and,
-  drizzle,
-  eq
-} from "./chunk-ACDUZVLI.js";
-import {
-  integer,
-  sql,
-  sqliteTable,
-  text
-} from "./chunk-VVR3XKHB.js";
-import {
   __export
 } from "./chunk-MLKGABMK.js";
 
@@ -21,11 +10,8 @@ import { betterAuth } from "better-auth/minimal";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { admin } from "better-auth/plugins/admin";
 import { hashPassword } from "better-auth/crypto";
-
-// ../../node_modules/.pnpm/drizzle-orm@0.45.3_@cloudflare+workers-types@5.20260921.1_kysely@0.29.6/node_modules/drizzle-orm/sql/functions/aggregate.js
-function count(expression) {
-  return sql`count(${expression || sql.raw("*")})`.mapWith(Number);
-}
+import { drizzle } from "drizzle-orm/d1";
+import { and, eq, ne, count, sql } from "drizzle-orm";
 
 // src/auth/local-schema.ts
 var local_schema_exports = {};
@@ -36,6 +22,7 @@ __export(local_schema_exports, {
   user: () => user,
   verification: () => verification
 });
+import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 var user = sqliteTable("galaxy_auth_user", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -133,7 +120,10 @@ function createLocalAuth(request, env, adminPath = "/admin") {
     },
     advanced: {
       cookiePrefix: "talisman-cms",
-      useSecureCookies: new URL(request.url).protocol === "https:"
+      useSecureCookies: new URL(request.url).protocol === "https:",
+      // Cloudflare sets CF-Connecting-IP itself; X-Forwarded-For is client-controlled there,
+      // and an unresolvable IP would put every sign-in into one shared rate-limit bucket.
+      ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] }
     }
   });
 }
@@ -168,31 +158,34 @@ async function signInCloudflareAdmin(request, adminPath = "/admin") {
   if (account2.email !== email) {
     await db.update(user).set({ email, updatedAt: /* @__PURE__ */ new Date() }).where(eq(user.id, account2.id));
   }
-  const credential = await db.query.account.findFirst({ where: and(eq(account.userId, account2.id), eq(account.providerId, "credential")) });
-  const hashed = await hashPassword(password);
-  if (credential) {
-    await db.update(account).set({ password: hashed, updatedAt: /* @__PURE__ */ new Date() }).where(eq(account.id, credential.id));
-  } else {
-    await db.insert(account).values({
-      id: crypto.randomUUID(),
-      accountId: account2.id,
-      providerId: "credential",
-      userId: account2.id,
-      password: hashed,
-      createdAt: /* @__PURE__ */ new Date(),
-      updatedAt: /* @__PURE__ */ new Date()
-    });
-  }
   if (account2.role !== "admin") {
     await db.update(user).set({ role: "admin", emailVerified: true, updatedAt: /* @__PURE__ */ new Date() }).where(eq(user.id, account2.id));
   }
-  await db.delete(session).where(eq(session.userId, account2.id));
-  const url = new URL(`${normalizedPath === "/" ? "" : normalizedPath}/api/auth/sign-in/email`, request.url);
-  const signIn = await auth.handler(new Request(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Origin: new URL(request.url).origin },
-    body: JSON.stringify({ email, password })
-  }));
+  const signInHeaders = new Headers({ "Content-Type": "application/json" });
+  for (const name of ["cf-connecting-ip", "user-agent"]) {
+    const value = request.headers.get(name);
+    if (value) signInHeaders.set(name, value);
+  }
+  const signInAdmin = () => auth.api.signInEmail({ body: { email, password }, headers: signInHeaders, asResponse: true });
+  let signIn = await signInAdmin();
+  if (signIn.status === 401) {
+    const credential = await db.query.account.findFirst({ where: and(eq(account.userId, account2.id), eq(account.providerId, "credential")) });
+    const hashed = await hashPassword(password);
+    if (credential) {
+      await db.update(account).set({ password: hashed, updatedAt: /* @__PURE__ */ new Date() }).where(eq(account.id, credential.id));
+    } else {
+      await db.insert(account).values({
+        id: crypto.randomUUID(),
+        accountId: account2.id,
+        providerId: "credential",
+        userId: account2.id,
+        password: hashed,
+        createdAt: /* @__PURE__ */ new Date(),
+        updatedAt: /* @__PURE__ */ new Date()
+      });
+    }
+    signIn = await signInAdmin();
+  }
   if (!signIn.ok) return Response.json({ error: "Cloudflare admin sign-in failed" }, { status: 503 });
   const signedIn = await signIn.clone().json().catch(() => null);
   if (typeof signedIn?.token !== "string") return Response.json({ error: "Cloudflare admin session failed" }, { status: 503 });
@@ -201,6 +194,7 @@ async function signInCloudflareAdmin(request, adminPath = "/admin") {
   if (issuedSession?.authMethod !== "cloudflare" || issuedSession.userId !== account2.id) {
     return Response.json({ error: "Cloudflare admin session failed" }, { status: 503 });
   }
+  await db.delete(session).where(and(eq(session.userId, account2.id), ne(session.token, signedIn.token)));
   const headers = new Headers({ Location: normalizedPath, "Cache-Control": "no-store" });
   for (const cookie of signIn.headers.getSetCookie()) headers.append("Set-Cookie", cookie);
   return new Response(null, { status: 303, headers });
@@ -208,6 +202,12 @@ async function signInCloudflareAdmin(request, adminPath = "/admin") {
 async function createInitialAdmin(request, env, adminPath, details) {
   const auth = createLocalAuth(request, env, adminPath);
   await auth.api.createUser({ body: { ...details, role: "admin" } });
+}
+function invalidCredentials() {
+  return Response.json(
+    { message: "Invalid email or password", code: "INVALID_EMAIL_OR_PASSWORD" },
+    { status: 401, statusText: "UNAUTHORIZED", headers: { "Cache-Control": "no-store" } }
+  );
 }
 function sameOrigin(request) {
   const origin = request.headers.get("origin");
@@ -278,16 +278,6 @@ function LocalAuthAdapter(adminPath = "/admin", options = {}) {
       }
       if (action === "sign-in/email") {
         if (request.method !== "POST") return new Response(null, { status: 405 });
-        if (options.editorOnly) {
-          const body = await request.clone().json().catch(() => null);
-          if (typeof body?.email === "string") {
-            const db = drizzle(env.DB, { schema: local_schema_exports });
-            const target = await db.query.user.findFirst({ where: eq(user.email, body.email.trim().toLowerCase()) });
-            if (target && target.role !== "editor") {
-              return Response.json({ error: "This account does not have editor password access" }, { status: 403 });
-            }
-          }
-        }
         if (accessEmail !== void 0) {
           const body = await request.clone().json().catch(() => null);
           if (typeof body?.email !== "string" || body.email.toLowerCase() !== accessEmail) {
@@ -303,7 +293,7 @@ function LocalAuthAdapter(adminPath = "/admin", options = {}) {
       }
       if (action === "admin/create-user") {
         const body = await request.clone().json().catch(() => null);
-        if (!body || !["admin", "editor"].includes(String(body.role)) || options.editorOnly && body.role !== "editor" || typeof body.password !== "string" || body.password.length < 12 || typeof body.email !== "string") {
+        if (!body || typeof body.role !== "string" || !["admin", "editor"].includes(body.role) || options.editorOnly && body.role !== "editor" || typeof body.password !== "string" || body.password.length < 12 || typeof body.email !== "string") {
           return Response.json({ error: "Choose an admin or editor role and a password of at least 12 characters" }, { status: 400 });
         }
         if (typeof body.email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email.trim())) {
@@ -330,7 +320,10 @@ function LocalAuthAdapter(adminPath = "/admin", options = {}) {
         }
       }
       const resetBody = action === "admin/set-user-password" ? await request.clone().json().catch(() => null) : null;
-      if (typeof resetBody?.userId === "string") {
+      if (action === "admin/set-user-password") {
+        if (typeof resetBody?.userId !== "string" || !resetBody.userId) {
+          return Response.json({ error: "Choose a valid user" }, { status: 400 });
+        }
         const db = drizzle(env.DB, { schema: local_schema_exports });
         const target = await db.query.user.findFirst({ where: eq(user.id, resetBody.userId) });
         if (target?.role === "admin" && options.editorOnly) {
@@ -339,7 +332,7 @@ function LocalAuthAdapter(adminPath = "/admin", options = {}) {
       }
       if (["admin/set-role", "admin/ban-user", "admin/unban-user", "admin/remove-user"].includes(action)) {
         const body = await request.clone().json().catch(() => null);
-        if (typeof body?.userId !== "string" || !body.userId || action === "admin/set-role" && !(options.editorOnly ? ["editor", "customer"] : ["admin", "editor"]).includes(String(body.role))) {
+        if (typeof body?.userId !== "string" || !body.userId || action === "admin/set-role" && (typeof body.role !== "string" || !(options.editorOnly ? ["editor", "customer"] : ["admin", "editor"]).includes(body.role))) {
           return Response.json({ error: "Choose a valid user and role" }, { status: 400 });
         }
         const actor = await adapter.getUser(request);
@@ -370,6 +363,13 @@ function LocalAuthAdapter(adminPath = "/admin", options = {}) {
       const headers = new Headers(response.headers);
       headers.set("Cache-Control", "no-store");
       if (action === "sign-in/email" && response.ok) {
+        const signedIn = await response.clone().json().catch(() => null);
+        const db = drizzle(env.DB, { schema: local_schema_exports });
+        const [issued] = typeof signedIn?.token === "string" ? await db.select({ role: user.role }).from(session).innerJoin(user, eq(user.id, session.userId)).where(eq(session.token, signedIn.token)).limit(1) : [];
+        if (!issued || !(options.editorOnly ? ["editor"] : ["admin", "editor"]).includes(issued.role)) {
+          if (typeof signedIn?.token === "string") await db.delete(session).where(eq(session.token, signedIn.token));
+          return invalidCredentials();
+        }
         headers.delete("content-length");
         return Response.json({ ok: true }, { status: response.status, headers });
       }

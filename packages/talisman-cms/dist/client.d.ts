@@ -13,7 +13,12 @@ type TalismanEnv = {
 declare function createDbClient(env: TalismanEnv): drizzle_orm_d1.DrizzleD1Database<typeof schema> & {
     $client: D1Database;
 };
-declare function getClient(env: TalismanEnv): {
+type CacheContext = Pick<ExecutionContext, 'waitUntil'>;
+/**
+ * Pass the request's execution context (Workers `ctx`, Astro `locals.cfContext`) so KV cache
+ * fills run after the response; inside Workers it is otherwise taken from `cloudflare:workers`.
+ */
+declare function getClient(env: TalismanEnv, ctx?: CacheContext): {
     collections: {
         findMany(opts?: {
             cache?: boolean;

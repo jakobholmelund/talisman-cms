@@ -11,6 +11,9 @@ import {
 } from "../chunk-4B5ROQI2.js";
 import "../chunk-MQPA2QMJ.js";
 import "../chunk-PRGHPNDB.js";
+import {
+  readCartSessionToken
+} from "../chunk-MDTTSWBR.js";
 import "../chunk-AGAY2N6E.js";
 import "../chunk-U46CR236.js";
 import "../chunk-6RT3KMIV.js";
@@ -27,7 +30,7 @@ var ALL = async ({ request, cookies }) => {
     return Response.json({ error: "Same-origin request required" }, { status: 403 });
   }
   try {
-    const sessionToken = cookies.get("talisman-cart")?.value;
+    const sessionToken = readCartSessionToken(cookies);
     const { env } = await import("cloudflare:workers");
     const api = bindCommerceApi({
       env,

@@ -5,18 +5,13 @@ import {
   normalizeEntryDataForRead,
   saveDraftEntry,
   triggerPublishingWorkflow
-} from "./chunk-M47S7VHS.js";
-import {
-  and,
-  drizzle,
-  eq
-} from "./chunk-ACDUZVLI.js";
+} from "./chunk-WQX4F4NG.js";
 import {
   collections,
   entries,
   globals,
   schema_exports
-} from "./chunk-MR6IJMXT.js";
+} from "./chunk-QDILJIDR.js";
 import {
   buildZodSchemaForFields,
   generateFieldsFromDrizzle,
@@ -28,6 +23,8 @@ import {
 } from "./chunk-JCYUX5UW.js";
 
 // src/db/client.ts
+import { drizzle } from "drizzle-orm/d1";
+import { eq, and, gte, lte } from "drizzle-orm";
 var _nativeSchemas = null;
 var _nativeSchemaConfig = null;
 var _configGlobals = null;
@@ -185,6 +182,49 @@ function createDbClient(env) {
     throw new Error('Talisman CMS requires a D1 database bound to the "DB" environment variable.');
   }
   return drizzle(env.DB, { schema: schema_exports });
+}
+var CACHE_TTL_SECONDS = 3600;
+var _workerCacheContext = null;
+function getWorkerCacheContext() {
+  _workerCacheContext ??= import("cloudflare:workers").then(({ waitUntil }) => typeof waitUntil === "function" ? { waitUntil: (promise) => waitUntil(promise) } : null).catch(() => null);
+  return _workerCacheContext;
+}
+async function readCache(kv, key) {
+  try {
+    return await kv.get(key, "json");
+  } catch (error) {
+    console.warn(`[Talisman] KV cache read failed for ${key}`, error);
+    return null;
+  }
+}
+async function writeCache(kv, key, value, ctx, changedSinceRead) {
+  const write = (async () => {
+    try {
+      await kv.put(key, JSON.stringify(value), { expirationTtl: CACHE_TTL_SECONDS });
+      if (changedSinceRead && await changedSinceRead()) {
+        await kv.delete(key);
+      }
+    } catch (error) {
+      console.warn(`[Talisman] KV cache write failed for ${key}`, error);
+    }
+  })();
+  const context = ctx ?? await getWorkerCacheContext();
+  if (context) {
+    try {
+      context.waitUntil(write);
+      return;
+    } catch {
+    }
+  }
+  await write;
+}
+var CONCURRENT_WRITE_WINDOW_MS = 5 * 6e4;
+function rowsUpdatedSince(db, table, since, where) {
+  return async () => {
+    const latest = new Date(Date.now() + CONCURRENT_WRITE_WINDOW_MS);
+    const rows = await db.select({ id: table.id }).from(table).where(and(gte(table.updatedAt, since), lte(table.updatedAt, latest), where)).limit(1);
+    return rows.length > 0;
+  };
 }
 function isRelationshipFieldType(type) {
   return type === "relationship" || type === "relation";
@@ -374,14 +414,14 @@ async function resolveRelationships(entriesToResolve, collection, db, depth = 1,
   }
   return resolvedEntries;
 }
-function getClient(env) {
+function getClient(env, ctx) {
   const db = createDbClient(env);
   return {
     collections: {
       async findMany(opts) {
         const cacheKey = "talisman:collections:all";
         if (opts?.cache !== false && env.KV) {
-          const cached = await env.KV.get(cacheKey, "json");
+          const cached = await readCache(env.KV, cacheKey);
           if (cached) return cached;
         }
         for (const config of await getConfiguredCollections()) {
@@ -389,7 +429,7 @@ function getClient(env) {
         }
         const data = await db.query.collections.findMany();
         if (opts?.cache !== false && env.KV) {
-          await env.KV.put(cacheKey, JSON.stringify(data), { expirationTtl: 3600 });
+          await writeCache(env.KV, cacheKey, data, ctx);
         }
         return data;
       }
@@ -398,9 +438,10 @@ function getClient(env) {
       async findMany(opts) {
         const cacheKey = "talisman:globals:all";
         if (opts?.cache !== false && env.KV) {
-          const cached = await env.KV.get(cacheKey, "json");
+          const cached = await readCache(env.KV, cacheKey);
           if (cached) return cached;
         }
+        const readStartedAt = /* @__PURE__ */ new Date();
         const configuredGlobals = await syncConfiguredGlobals(db);
         const allGlobals = await db.query.globals.findMany();
         const configuredOrder = new Map(configuredGlobals.map((globalConfig, index) => [globalConfig.slug, index]));
@@ -415,19 +456,26 @@ function getClient(env) {
           return left.name.localeCompare(right.name);
         });
         if (opts?.cache !== false && env.KV) {
-          await env.KV.put(cacheKey, JSON.stringify(data), { expirationTtl: 3600 });
+          await writeCache(env.KV, cacheKey, data, ctx, rowsUpdatedSince(db, globals, readStartedAt));
         }
         return data;
       },
       async find(slug, opts) {
         const cacheKey = `talisman:globals:${slug}`;
         if (opts?.cache !== false && env.KV) {
-          const cached = await env.KV.get(cacheKey, "json");
+          const cached = await readCache(env.KV, cacheKey);
           if (cached) return cached;
         }
+        const readStartedAt = /* @__PURE__ */ new Date();
         const { globalRecord: data } = await resolveGlobalContext(db, slug);
         if (opts?.cache !== false && env.KV && data) {
-          await env.KV.put(cacheKey, JSON.stringify(data), { expirationTtl: 3600 });
+          await writeCache(
+            env.KV,
+            cacheKey,
+            data,
+            ctx,
+            rowsUpdatedSince(db, globals, readStartedAt, eq(globals.slug, slug))
+          );
         }
         return data;
       },
@@ -508,9 +556,10 @@ function getClient(env) {
         const limit = opts?.limit;
         const useCache = opts?.cache !== false && limit === void 0 && (opts?.depth ?? 1) === 0 && Boolean(env.KV);
         if (useCache && env.KV) {
-          const cached = await env.KV.get(cacheKey, "json");
+          const cached = await readCache(env.KV, cacheKey);
           if (cached) return cached;
         }
+        const readStartedAt = /* @__PURE__ */ new Date();
         const collection = await ensureCollection(db, collectionSlug);
         const { nativeSchemas, nativeSchemaConfig } = await getNativeSchemaModule();
         const nativeTable = nativeSchemas?.[collectionSlug];
@@ -534,7 +583,13 @@ function getClient(env) {
         }
         data = await resolveRelationships(data, collection, db, opts?.depth ?? 1, versionMode);
         if (useCache && env.KV) {
-          await env.KV.put(cacheKey, JSON.stringify(data), { expirationTtl: 3600 });
+          await writeCache(
+            env.KV,
+            cacheKey,
+            data,
+            ctx,
+            nativeTable ? void 0 : rowsUpdatedSince(db, entries, readStartedAt, eq(entries.collectionId, collection.id))
+          );
         }
         return data;
       },
@@ -569,9 +624,10 @@ function getClient(env) {
         const cacheKey = `talisman:entries:${collectionSlug}:${id}:${versionMode}`;
         const useCache = opts?.cache !== false && (opts?.depth ?? 1) === 0 && Boolean(env.KV);
         if (useCache && env.KV) {
-          const cached = await env.KV.get(cacheKey, "json");
+          const cached = await readCache(env.KV, cacheKey);
           if (cached) return cached;
         }
+        const readStartedAt = /* @__PURE__ */ new Date();
         const collection = await ensureCollection(db, collectionSlug);
         const { nativeSchemas, nativeSchemaConfig } = await getNativeSchemaModule();
         const nativeTable = nativeSchemas?.[collectionSlug];
@@ -599,7 +655,13 @@ function getClient(env) {
           data = resolved[0];
         }
         if (useCache && env.KV && data) {
-          await env.KV.put(cacheKey, JSON.stringify(data), { expirationTtl: 3600 });
+          await writeCache(
+            env.KV,
+            cacheKey,
+            data,
+            ctx,
+            nativeTable ? void 0 : rowsUpdatedSince(db, entries, readStartedAt, eq(entries.id, id))
+          );
         }
         return data;
       },

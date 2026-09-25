@@ -1,16 +1,12 @@
 import {
-  and,
-  desc,
-  drizzle,
-  eq
-} from "./chunk-ACDUZVLI.js";
-import {
   entries,
   entryRevisions,
   schema_exports
-} from "./chunk-MR6IJMXT.js";
+} from "./chunk-QDILJIDR.js";
 
 // src/versioning.ts
+import { and, desc, eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/d1";
 var DEFAULT_PUBLISHING_WORKFLOW_BINDING = "GALAXY_PUBLISH_WORKFLOW";
 var REVISION_CONFLICT_MESSAGE = "This entry changed since it was opened. Reload it before saving.";
 var RevisionConflictError = class extends Error {
