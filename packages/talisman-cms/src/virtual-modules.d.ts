@@ -4,18 +4,31 @@ declare module 'virtual:talisman-cms/auth' {
   export const authAdapter: TalismanAuthAdapter | null;
 }
 
+/**
+ * Server code gets the full configuration. The admin SPA's browser bundle is public, so there
+ * `collections` and `globals` are a client-safe projection (no `runtimeHooks`, and nothing that looks
+ * like a secret) and `publishing` is not exported.
+ */
 declare module 'virtual:talisman-cms/config' {
   import type { CollectionConfig, GlobalConfig, UiLibraryDefinition } from './types';
   export const adminPath: string;
   export const collections: CollectionConfig[];
   export const globals: GlobalConfig[];
+  export const adminLinks: { section: 'collections' | 'commerce'; label: string; description: string; href: string }[];
   export const uiLibraries: Array<Pick<UiLibraryDefinition, 'id' | 'name' | 'requirements' | 'presets'> & {
     blockSlugs: string[];
     componentSlugs: string[];
   }>;
+  /** Server only. */
   export const publishing: {
     workflowBinding: string;
   };
+}
+
+declare module 'virtual:talisman-cms/protected-routes' {
+  export const adminPath: string;
+  /** Route patterns of plugin endpoints and admin-path pages that require a CMS session. */
+  export const protectedRoutes: Record<string, 'endpoint' | 'page'>;
 }
 
 declare module 'virtual:talisman-cms/email' {

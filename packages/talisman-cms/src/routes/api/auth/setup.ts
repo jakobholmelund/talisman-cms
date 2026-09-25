@@ -3,7 +3,7 @@ import { drizzle } from 'drizzle-orm/d1';
 import { createInitialAdmin, getAccessEmail, getLocalAuthEnv } from '../../../auth/local';
 import { user } from '../../../auth/local-schema';
 import { readSetting } from '../../../env';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { adminPath } from 'virtual:talisman-cms/config';
 import { authAdapter } from 'virtual:talisman-cms/auth';
 
@@ -58,6 +58,24 @@ export const POST: APIRoute = async ({ request }) => {
     return Response.json({ error: 'Account must match Cloudflare Access identity' }, { status: 403 });
   }
 
-  await createInitialAdmin(request, state.env!, adminPath, { email, name, password });
+  // Shoppers share the account table, so the email may already belong to a customer identity.
+  const existingAccount = () => drizzle(state.env!.DB).select({ role: user.role }).from(user)
+    .where(sql`lower(${user.email}) = ${email}`).limit(1).then(rows => rows[0]);
+  const conflict = (account: { role: string | null }) => Response.json({
+    error: account.role === 'customer'
+      ? 'This email belongs to a shopper account. Use a different email for the first admin.'
+      : 'This email already has an account. Use a different email for the first admin.',
+  }, { status: 409, headers: { 'Cache-Control': 'no-store' } });
+  const existing = await existingAccount();
+  if (existing) return conflict(existing);
+
+  try {
+    await createInitialAdmin(request, state.env!, adminPath, { email, name, password });
+  } catch (error) {
+    // A shopper sign-in or another setup request can claim the email between the check above and the insert.
+    const claimed = await existingAccount();
+    if (claimed) return conflict(claimed);
+    throw error;
+  }
   return Response.json({ created: true }, { status: 201, headers: { 'Cache-Control': 'no-store' } });
 };

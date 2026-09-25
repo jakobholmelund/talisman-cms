@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { authorizeCmsRequestWithAdapter } from '../dist/auth/authorize.js';
 import { DevAuthAdapter } from '../dist/auth/dev.js';
@@ -26,10 +27,23 @@ test('private CMS requests fail closed and reject cross-origin changes', async (
   assert.equal((await authorizeCmsRequestWithAdapter(request, editorAdapter, true)).user.role, 'editor');
 });
 
-test('development auth grants access only on local hosts', async () => {
-  const adapter = DevAuthAdapter();
-  assert.equal((await adapter.getUser(new Request('http://localhost:4321/admin')))?.role, 'admin');
-  assert.equal(await adapter.getUser(new Request('https://example.test/admin')), null);
+test('development auth grants access only under the Vite dev server and on local hosts', async () => {
+  // Outside Vite, as in a build where Vite replaced import.meta.env.DEV with false, nobody is signed in.
+  assert.equal(await DevAuthAdapter().getUser(new Request('http://localhost:4321/admin')), null);
+
+  // Stand in for Vite's replacement of import.meta.env.DEV. The copy loads from a data: URL, so its
+  // relative chunk imports are pointed at dist.
+  const moduleUrl = new URL('../dist/auth/dev.js', import.meta.url);
+  const source = readFileSync(moduleUrl, 'utf8')
+    .replace(/(["'])(\.\.?\/[^"']+)\1/g, (_, quote, specifier) => `${quote}${new URL(specifier, moduleUrl).href}${quote}`);
+  assert.match(source, /import\.meta\.env\.DEV/);
+  const underVite = async (dev) => (await import(`data:text/javascript,${encodeURIComponent(
+    source.replaceAll('import.meta.env.DEV', String(dev)))}`)).DevAuthAdapter();
+  const devServer = await underVite(true);
+  assert.equal((await devServer.getUser(new Request('http://localhost:4321/admin')))?.role, 'admin');
+  assert.equal((await devServer.getUser(new Request('http://[::1]:4321/admin')))?.role, 'admin');
+  assert.equal(await devServer.getUser(new Request('https://example.test/admin')), null);
+  assert.equal(await (await underVite(false)).getUser(new Request('http://localhost:4321/admin')), null);
 });
 
 test('local auth preserves its runtime path and requires both Access settings', async () => {

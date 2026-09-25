@@ -120,6 +120,136 @@ function buildAuthVirtualModule(
   `;
 }
 
+const DEV_AUTH_MODULE_ID = 'talisman-cms/auth/dev';
+const LOOPBACK_DEV_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+/** DevAuthAdapter signs every request in as an admin, so it may only back a dev server bound to loopback. */
+function assertDevAuthAllowed(authAdapter: TalismanAuthAdapter | undefined, command: string | undefined, serverHost: unknown) {
+  if (authAdapter?.__talismanAuthRuntime?.moduleId !== DEV_AUTH_MODULE_ID) return;
+  if (command === 'build' || command === 'preview') {
+    throw new Error(`[talisman-cms] DevAuthAdapter signs every request in as an admin and only runs under \`astro dev\`. Configure LocalAuthAdapter, HybridAuthAdapter or AccessAuthAdapter for \`astro ${command}\`.`);
+  }
+  if (command === 'dev' && serverHost !== undefined && serverHost !== false &&
+      !(typeof serverHost === 'string' && LOOPBACK_DEV_HOSTS.has(serverHost))) {
+    throw new Error('[talisman-cms] DevAuthAdapter signs every request in as an admin, so the dev server must listen on loopback only. Remove --host (server.host) or configure LocalAuthAdapter.');
+  }
+}
+
+/** Astro's `routePattern` for an injected route: the pattern without empty or trailing segments. */
+function routePatternKey(pattern: string) {
+  return `/${pattern.split('/').filter(Boolean).join('/')}`;
+}
+
+type ProtectedRouteKind = 'endpoint' | 'page';
+
+/**
+ * Plugin endpoints (all of which live under the admin path unless marked `public`) and plugin pages under
+ * the admin path require a CMS session. The route guard middleware checks the matched route pattern.
+ */
+function collectProtectedPluginRoutes(plugins: Plugin[], adminPath: string, adminPathPrefix: string) {
+  const routes: Record<string, ProtectedRouteKind> = {};
+  for (const plugin of plugins) {
+    for (const endpoint of plugin.endpoints || []) {
+      if (endpoint.public) continue;
+      routes[routePatternKey(`${adminPathPrefix}/api/${endpoint.path.replace(/^\//, '')}`)] = 'endpoint';
+    }
+    for (const route of plugin.routes || []) {
+      const key = routePatternKey(route.path);
+      const underAdminPath = adminPath === '/' || key === adminPath || key.startsWith(`${adminPath}/`);
+      if (!underAdminPath || (route as { public?: boolean }).public === true) continue;
+      if (route.prerender) {
+        throw new Error(`[talisman-cms] ${plugin.name}: ${route.path} is under the admin path, so it needs a CMS session and cannot be prerendered. Set prerender: false, or public: true if anyone may see it.`);
+      }
+      if (routes[key] !== 'endpoint') routes[key] = 'page';
+    }
+  }
+  return routes;
+}
+
+const SECRET_LOOKING_KEY = /secret|token|passw(?:or)?d|api[-_]?key|private[-_]?key|credential/i;
+// Common API key and signing secret prefixes.
+const SECRET_LOOKING_VALUE = /^(?:re_|sk_|rk_|whsec_|xkeysib-|SG\.)/;
+
+/** Drop secret-looking keys and values from data bound for the browser, reporting each path once. */
+function withoutSecretLookingValues(value: unknown, path: string, dropped: string[]): unknown {
+  if (typeof value === 'string') {
+    if (!SECRET_LOOKING_VALUE.test(value)) return value;
+    dropped.push(path);
+    return undefined;
+  }
+  if (Array.isArray(value)) return value.map((item, index) => withoutSecretLookingValues(item, `${path}[${index}]`, dropped));
+  if (!value || typeof value !== 'object') return value;
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (SECRET_LOOKING_KEY.test(key)) {
+      dropped.push(`${path}.${key}`);
+      continue;
+    }
+    result[key] = withoutSecretLookingValues(item, `${path}.${key}`, dropped);
+  }
+  return result;
+}
+
+/**
+ * The admin SPA imports virtual:talisman-cms/config in the browser, and its bundle is a public static asset.
+ * The client copy keeps only what the admin navigation and globals editor read: never runtimeHooks (whose
+ * factory args are server configuration), publishing bindings, or anything that looks like a secret.
+ */
+function buildClientConfigModule(options: TalismanCmsOptions, adminPath: string) {
+  const collections = (options.collections || []).map((collection) => ({
+    name: collection.name,
+    slug: collection.slug,
+    description: collection.description,
+    fields: collection.fields,
+    adminSection: collection.adminSection,
+    readOnly: collection.readOnly,
+    access: collection.access,
+    nativeSchemaMapping: collection.nativeSchemaMapping && {
+      schemaPath: collection.nativeSchemaMapping.schemaPath,
+      exportName: collection.nativeSchemaMapping.exportName,
+      idColumn: collection.nativeSchemaMapping.idColumn,
+    },
+  }));
+  const globals = (options.globals || []).map((globalConfig) => ({
+    name: globalConfig.name,
+    slug: globalConfig.slug,
+    description: globalConfig.description,
+    fields: globalConfig.fields,
+  }));
+  const adminLinks = (options.plugins || []).flatMap((plugin) => plugin.adminLinks || [])
+    .map(({ section, label, description, href }) => ({ section, label, description, href }));
+  const dropped: string[] = [];
+  const safe = withoutSecretLookingValues({
+    collections,
+    globals,
+    adminLinks,
+    uiLibraries: getPluginUiLibraryMetadata(options.plugins || []),
+  }, 'config', dropped) as Record<string, unknown>;
+  if (dropped.length) {
+    console.warn(`[talisman-cms] Left out of the public admin bundle because they look like secrets: ${dropped.join(', ')}. Read secrets from Worker env bindings at request time.`);
+  }
+  return `
+    export const adminPath = ${JSON.stringify(adminPath)};
+    export const collections = ${JSON.stringify(safe.collections)};
+    export const adminLinks = ${JSON.stringify(safe.adminLinks)};
+    export const globals = ${JSON.stringify(safe.globals)};
+    export const uiLibraries = ${JSON.stringify(safe.uiLibraries)};
+  `;
+}
+
+function buildServerConfigModule(options: TalismanCmsOptions, adminPath: string) {
+  return `
+    export const adminPath = ${JSON.stringify(adminPath)};
+    export const collections = ${JSON.stringify(options.collections || [])};
+    export const adminLinks = ${JSON.stringify((options.plugins || []).flatMap(plugin => plugin.adminLinks || []))};
+    export const globals = ${JSON.stringify(options.globals || [])};
+    export const uiLibraries = ${JSON.stringify(getPluginUiLibraryMetadata(options.plugins || []))};
+    export const publishing = ${JSON.stringify({
+      workflowBinding: options.publishing?.workflowBinding || 'TALISMAN_PUBLISH_WORKFLOW'
+    })};
+  `;
+}
+
 function ensureSystemCollections(collections: CollectionConfig[]) {
   if (!collections.some((collection) => collection.slug === 'media')) {
     collections.push({
@@ -303,6 +433,7 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
 
   const adminPath = normalizeAdminPath(finalOptions?.adminPath);
   const adminPathPrefix = adminPath === '/' ? '' : adminPath;
+  const protectedPluginRoutes = collectProtectedPluginRoutes(finalOptions.plugins, adminPath, adminPathPrefix);
 
   // Astro compiles injected .astro and .ts routes from package source.
   const adminRoutePath = fileURLToPath(new URL('../src/routes/admin.astro', import.meta.url));
@@ -311,6 +442,7 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
   const apiAuthLocalRoutePath = fileURLToPath(new URL('../src/routes/api/auth/local.ts', import.meta.url));
   const apiAuthSetupRoutePath = fileURLToPath(new URL('../src/routes/api/auth/setup.ts', import.meta.url));
   const apiAuthSsoRoutePath = fileURLToPath(new URL('../src/routes/api/auth/sso.ts', import.meta.url));
+  const pluginRouteGuardPath = fileURLToPath(new URL('../src/routes/plugin-route-guard.ts', import.meta.url));
 
   let runtimeConfigPath = fileURLToPath(new URL('./runtime-config.js', import.meta.url));
   if (!existsSync(runtimeConfigPath)) {
@@ -323,8 +455,9 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
   return {
     name: 'talisman-cms',
     hooks: {
-      'astro:config:setup': ({ injectRoute, updateConfig, addDevToolbarApp }) => {
-        
+      'astro:config:setup': ({ injectRoute, updateConfig, addDevToolbarApp, addMiddleware, command, config }) => {
+        assertDevAuthAllowed(finalOptions.auth, command, config?.server?.host);
+
         console.log('[talisman-cms] Injecting admin route from:', adminRoutePath);
 
         // 0. Register the Astro Dev Toolbar App
@@ -406,7 +539,11 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
           prerender: false
         });
 
-        // 3.8. Inject Plugin API Endpoints BEFORE wildcard
+        // 3.8. Inject Plugin API Endpoints BEFORE wildcard. Those without `public: true`, and plugin pages
+        // under the admin path, pass through the route guard, which requires a CMS session.
+        if (Object.keys(protectedPluginRoutes).length > 0) {
+          addMiddleware({ order: 'post', entrypoint: pluginRouteGuardPath });
+        }
         if (finalOptions?.plugins) {
           for (const plugin of finalOptions.plugins) {
             if (plugin.endpoints) {
@@ -484,17 +621,27 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
                 resolveId(id) {
                   if (id === 'virtual:talisman-cms/config') return '\0virtual:talisman-cms/config';
                 },
-                load(id) {
+                load(id, loadOptions) {
                   if (id === '\0virtual:talisman-cms/config') {
+                    // The admin SPA bundle is public, so the browser build gets a client-safe projection.
+                    const environment = (this as { environment?: { config: { consumer: string } } } | undefined)?.environment;
+                    const forBrowser = environment ? environment.config.consumer === 'client' : !loadOptions?.ssr;
+                    return forBrowser
+                      ? buildClientConfigModule(finalOptions, adminPath)
+                      : buildServerConfigModule(finalOptions, adminPath);
+                  }
+                }
+              },
+              {
+                name: 'vite-plugin-talisman-cms-protected-routes',
+                resolveId(id) {
+                  if (id === 'virtual:talisman-cms/protected-routes') return '\0virtual:talisman-cms/protected-routes';
+                },
+                load(id) {
+                  if (id === '\0virtual:talisman-cms/protected-routes') {
                     return `
                       export const adminPath = ${JSON.stringify(adminPath)};
-                      export const collections = ${JSON.stringify(finalOptions?.collections || [])};
-                      export const adminLinks = ${JSON.stringify((finalOptions?.plugins || []).flatMap(plugin => plugin.adminLinks || []))};
-                      export const globals = ${JSON.stringify(finalOptions?.globals || [])};
-                      export const uiLibraries = ${JSON.stringify(getPluginUiLibraryMetadata(finalOptions?.plugins || []))};
-                      export const publishing = ${JSON.stringify({
-                        workflowBinding: finalOptions?.publishing?.workflowBinding || 'TALISMAN_PUBLISH_WORKFLOW'
-                      })};
+                      export const protectedRoutes = ${JSON.stringify(protectedPluginRoutes)};
                     `;
                   }
                 }

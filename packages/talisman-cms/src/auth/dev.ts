@@ -1,14 +1,30 @@
 import type { TalismanAuthAdapter, TalismanUser } from './types';
 
+const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '::1', '[::1]'];
+
 /**
- * A mock adapter used strictly for local development.
- * Automatically authenticates any request as a super-admin.
+ * Vite replaces `import.meta.env.DEV` with `true` under `astro dev` and with `false` in every build,
+ * so a DevAuthAdapter that reaches a deployed Worker never signs anyone in. Outside Vite it is unset.
+ */
+function isViteDevServer(): boolean {
+  try {
+    return (import.meta as ImportMeta & { env: { DEV?: unknown } }).env.DEV === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A mock adapter for `astro dev` on a loopback address only. It signs every request in as an admin.
+ * The integration refuses it for `astro build` and for a dev server exposed with `--host`, and it
+ * authenticates nothing outside the Vite dev server, whatever the request's Host header says.
  */
 export function DevAuthAdapter(): TalismanAuthAdapter {
   const adapter: TalismanAuthAdapter = {
     async getUser(req) {
+      if (!isViteDevServer()) return null;
       const hostname = new URL(req.url).hostname;
-      if (!['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname)) {
+      if (!LOOPBACK_HOSTS.includes(hostname)) {
         return null;
       }
       return {
@@ -16,7 +32,7 @@ export function DevAuthAdapter(): TalismanAuthAdapter {
         email: 'admin@talisman-cms.local',
         name: 'Local Developer',
         role: 'admin'
-      };
+      } satisfies TalismanUser;
     },
     async signIn() {
       // In a real adapter, we'd initiate OAuth or magic rings

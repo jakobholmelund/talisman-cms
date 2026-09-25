@@ -170,19 +170,37 @@ function sameOrigin(request: Request): boolean {
 }
 
 const SESSIONS_NOT_ENDED = 'The change was saved, but existing sessions for this account could not be ended. Repeat the action to end them.';
+const DISABLED_SESSIONS_NOT_ENDED = 'The account was disabled, but its existing sessions could not be ended. They cannot open the CMS while the account is disabled, and they are ended before it is enabled again.';
+const REVOKED_SESSIONS_NOT_ENDED = 'CMS access was revoked, but existing sessions for this account could not be ended. They cannot open the CMS without CMS access, and they are ended before access is granted again.';
+const GRANT_NOT_SAVED = 'Existing sessions for this account could not be ended, so nothing was changed. Try again.';
 
 /**
  * End a user's sessions after an account change has been saved. A failure is returned as a warning,
  * since reporting an error would hide the committed change. getUser re-reads the role and ban on every
  * request, so leftover sessions lose CMS access at once after a role change or ban, but not after a password reset.
  */
-async function revokeSessionsAfterChange(auth: ReturnType<typeof createLocalAuth>, userId: string, headers: Headers): Promise<string | undefined> {
+async function revokeSessionsAfterChange(auth: ReturnType<typeof createLocalAuth>, userId: string, headers: Headers,
+  warning = SESSIONS_NOT_ENDED): Promise<string | undefined> {
   try {
     await auth.api.revokeUserSessions({ body: { userId }, headers });
     return undefined;
   } catch (error) {
     console.error('[talisman-cms] Could not end CMS sessions after an account change', error);
-    return SESSIONS_NOT_ENDED;
+    return warning;
+  }
+}
+
+/**
+ * End a user's sessions before enabling the account or granting it a CMS role. Sessions left behind by a
+ * failed revocation would otherwise regain CMS access with the grant, so a failure here changes nothing.
+ */
+async function endSessionsBeforeGrant(auth: ReturnType<typeof createLocalAuth>, userId: string, headers: Headers): Promise<Response | undefined> {
+  try {
+    await auth.api.revokeUserSessions({ body: { userId }, headers });
+    return undefined;
+  } catch (error) {
+    console.error('[talisman-cms] Could not end CMS sessions before restoring CMS access', error);
+    return Response.json({ error: GRANT_NOT_SAVED }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
   }
 }
 
@@ -292,20 +310,22 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
             return Response.json({ error: 'This account is disabled. Enable it in the user list before granting CMS access.' }, { status: 409 });
           }
           const auth = createLocalAuth(request, env, normalizedPath);
+          const notGranted = await endSessionsBeforeGrant(auth, existing.id, request.headers);
+          if (notGranted) return notGranted;
           if (existing.email !== normalizedEmail) {
             await db.update(schema.user).set({ email: normalizedEmail, updatedAt: new Date() }).where(eq(schema.user.id, existing.id));
           }
           await auth.api.setUserPassword({ body: { userId: existing.id, newPassword: body.password }, headers: request.headers });
           // Better Auth's public type only lists its built-in roles; this installation uses editor/customer too.
           await auth.api.setRole({ body: { userId: existing.id, role: body.role as 'admin' }, headers: request.headers });
-          const warning = await revokeSessionsAfterChange(auth, existing.id, request.headers);
-          return Response.json({ user: { id: existing.id, email: existing.email, role: body.role }, ...(warning ? { warning } : {}) },
+          return Response.json({ user: { id: existing.id, email: existing.email, role: body.role } },
             { headers: { 'Cache-Control': 'no-store' } });
         }
       }
       // Better Auth's handler consumes the request body, so the validated target is kept here for the
       // session revocation that follows a password or role change.
       let revokeUserId: string | undefined;
+      let revokeWarning = SESSIONS_NOT_ENDED;
       let banUserId: string | undefined;
       const resetBody = action === 'admin/set-user-password'
         ? await request.clone().json().catch(() => null) as { userId?: unknown } | null
@@ -354,7 +374,16 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
             return Response.json({ error: 'At least one active admin account is required' }, { status: 400 });
           }
         }
-        if (action === 'admin/set-role') revokeUserId = body.userId;
+        const grantsAccess = target && ((action === 'admin/unban-user' && target.banned) ||
+          (action === 'admin/set-role' && !['admin', 'editor'].includes(target.role ?? '') && body.role !== 'customer'));
+        if (grantsAccess) {
+          const notGranted = await endSessionsBeforeGrant(createLocalAuth(request, env, normalizedPath), body.userId, request.headers);
+          if (notGranted) return notGranted;
+        }
+        if (action === 'admin/set-role') {
+          revokeUserId = body.userId;
+          if (body.role === 'customer') revokeWarning = REVOKED_SESSIONS_NOT_ENDED;
+        }
         if (action === 'admin/ban-user') banUserId = body.userId;
       }
       const auth = createLocalAuth(request, env, normalizedPath);
@@ -379,7 +408,7 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
         return Response.json({ ok: true }, { status: response.status, headers });
       }
       if (revokeUserId && response.ok) {
-        const warning = await revokeSessionsAfterChange(auth, revokeUserId, request.headers);
+        const warning = await revokeSessionsAfterChange(auth, revokeUserId, request.headers, revokeWarning);
         if (warning) {
           const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
           headers.delete('content-length');
@@ -394,7 +423,7 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
           console.error('[talisman-cms] Could not end CMS sessions after disabling an account');
           headers.delete('content-length');
           headers.set('Content-Type', 'application/json');
-          return Response.json({ user: target, warning: SESSIONS_NOT_ENDED }, { status: 200, headers });
+          return Response.json({ user: target, warning: DISABLED_SESSIONS_NOT_ENDED }, { status: 200, headers });
         }
       }
       return new Response(response.body, { status: response.status, statusText: response.statusText, headers });

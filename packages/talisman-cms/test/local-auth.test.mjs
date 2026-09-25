@@ -519,3 +519,160 @@ test('CMS sessions end seven days after sign-in even while they are in use', asy
     assert.equal((await cmsUser(adapter, cookieOf(await sso(await accessToken()))))?.id, admin.id);
   } finally { sqlite.close(); }
 });
+
+test('enabling an account never revives sessions a failed Disable left behind', async () => {
+  const sqlite = setup();
+  try {
+    const adapter = HybridAuthAdapter('/admin');
+    const adminCookie = cookieOf(await sso(await accessToken()));
+    await addUser(sqlite, { id: 'editor-1', email: 'editor@example.test', role: 'editor', password: EDITOR_PASSWORD });
+    const editorCookie = cookieOf(await signIn(adapter, 'editor@example.test', EDITOR_PASSWORD));
+    sqlite.exec(`CREATE TRIGGER keep_sessions BEFORE DELETE ON galaxy_auth_session WHEN OLD.user_id = 'editor-1'
+      BEGIN SELECT RAISE(ABORT, 'unavailable'); END`);
+    const disabled = await adminAction(adapter, adminCookie, 'admin/ban-user', { userId: 'editor-1' });
+    assert.equal(disabled.status, 200);
+    const { warning } = await disabled.json();
+    assert.match(warning, /could not be ended.*cannot open the CMS while the account is disabled/);
+    assert.doesNotMatch(warning, /Repeat/, 'the Users screen offers Enable, not Disable, after a ban');
+
+    // While the stale session cannot be ended, Enable changes nothing.
+    const refused = await adminAction(adapter, adminCookie, 'admin/unban-user', { userId: 'editor-1' });
+    assert.equal(refused.status, 503);
+    assert.match((await refused.json()).error, /nothing was changed/);
+    assert.equal(sqlite.prepare(`SELECT banned FROM galaxy_auth_user WHERE id = 'editor-1'`).get().banned, 1);
+    assert.equal(await cmsUser(adapter, editorCookie), null);
+
+    sqlite.exec('DROP TRIGGER keep_sessions');
+    const enabled = await adminAction(adapter, adminCookie, 'admin/unban-user', { userId: 'editor-1' });
+    assert.equal(enabled.status, 200);
+    assert.equal((await enabled.json()).user.banned, false);
+    assert.equal(sessionsOf(sqlite, 'editor-1').length, 0);
+    assert.equal(await cmsUser(adapter, editorCookie), null, 'the pre-Disable session stays dead');
+    const again = await signIn(adapter, 'editor@example.test', EDITOR_PASSWORD);
+    assert.equal((await cmsUser(adapter, cookieOf(again)))?.id, 'editor-1');
+
+    // Enabling an account that is not disabled leaves its sessions alone.
+    assert.equal((await adminAction(adapter, adminCookie, 'admin/unban-user', { userId: 'editor-1' })).status, 200);
+    assert.equal((await cmsUser(adapter, cookieOf(again)))?.id, 'editor-1');
+  } finally { sqlite.close(); }
+});
+
+test('granting CMS access again never revives sessions a failed revocation left behind', async () => {
+  const sqlite = setup();
+  try {
+    const hybrid = HybridAuthAdapter('/admin');
+    const adminCookie = cookieOf(await sso(await accessToken()));
+    await addUser(sqlite, { id: 'editor-1', email: 'editor@example.test', role: 'editor', password: EDITOR_PASSWORD });
+    const editorCookie = cookieOf(await signIn(hybrid, 'editor@example.test', EDITOR_PASSWORD));
+    sqlite.exec(`CREATE TRIGGER keep_sessions BEFORE DELETE ON galaxy_auth_session WHEN OLD.user_id = 'editor-1'
+      BEGIN SELECT RAISE(ABORT, 'unavailable'); END`);
+    const revoked = await adminAction(hybrid, adminCookie, 'admin/set-role', { userId: 'editor-1', role: 'customer' });
+    assert.equal(revoked.status, 200);
+    const { warning } = await revoked.json();
+    assert.match(warning, /could not be ended.*ended before access is granted again/);
+    assert.doesNotMatch(warning, /Repeat/);
+
+    const password = 'returning-editor-password';
+    const addEditor = () => adminAction(hybrid, adminCookie, 'admin/create-user',
+      { email: 'editor@example.test', name: 'Editor', password, role: 'editor' });
+    const refused = await addEditor();
+    assert.equal(refused.status, 503);
+    assert.equal(sqlite.prepare(`SELECT role FROM galaxy_auth_user WHERE id = 'editor-1'`).get().role, 'customer');
+    assert.equal((await signIn(hybrid, 'editor@example.test', password)).status, 401, 'the new password was not stored');
+
+    sqlite.exec('DROP TRIGGER keep_sessions');
+    const granted = await addEditor();
+    assert.equal(granted.status, 200);
+    assert.equal((await granted.json()).warning, undefined);
+    assert.equal(await cmsUser(hybrid, editorCookie), null, 'the session from before the revocation stays dead');
+    assert.equal((await cmsUser(hybrid, cookieOf(await signIn(hybrid, 'editor@example.test', password))))?.role, 'editor');
+
+    // Local mode grants a CMS role with set-role, which ends leftover sessions first in the same way.
+    const local = LocalAuthAdapter('/admin', { requireAccess: false });
+    await addUser(sqlite, { id: 'local-admin', email: 'local@example.test', role: 'admin', password: 'local-admin-password' });
+    await addUser(sqlite, { id: 'former', email: 'former@example.test', role: 'editor', password: EDITOR_PASSWORD });
+    const localAdminCookie = cookieOf(await signIn(local, 'local@example.test', 'local-admin-password'));
+    const formerCookie = cookieOf(await signIn(local, 'former@example.test', EDITOR_PASSWORD));
+    sqlite.prepare(`UPDATE galaxy_auth_user SET role = 'customer' WHERE id = 'former'`).run();
+    sqlite.exec(`CREATE TRIGGER keep_sessions BEFORE DELETE ON galaxy_auth_session WHEN OLD.user_id = 'former'
+      BEGIN SELECT RAISE(ABORT, 'unavailable'); END`);
+    assert.equal((await adminAction(local, localAdminCookie, 'admin/set-role', { userId: 'former', role: 'editor' })).status, 503);
+    assert.equal(sqlite.prepare(`SELECT role FROM galaxy_auth_user WHERE id = 'former'`).get().role, 'customer');
+    sqlite.exec('DROP TRIGGER keep_sessions');
+    assert.equal((await adminAction(local, localAdminCookie, 'admin/set-role', { userId: 'former', role: 'editor' })).status, 200);
+    assert.equal(await cmsUser(local, formerCookie), null);
+    assert.equal(sessionsOf(sqlite, 'former').length, 0);
+  } finally { sqlite.close(); }
+});
+
+test('the auth proxy answers only its allowlisted actions, for signed-in same-origin callers', async () => {
+  const sqlite = setup();
+  try {
+    const adapter = HybridAuthAdapter('/admin');
+    const adminCookie = cookieOf(await sso(await accessToken()));
+    await addUser(sqlite, { id: 'editor-1', email: 'editor@example.test', role: 'editor', password: EDITOR_PASSWORD });
+    const editorCookie = cookieOf(await signIn(adapter, 'editor@example.test', EDITOR_PASSWORD));
+
+    for (const action of ['sign-up/email', 'admin/impersonate-user', 'admin/list-user-sessions', 'update-user', 'get-session']) {
+      assert.equal((await adminAction(adapter, adminCookie, action, {})).status, 404, action);
+    }
+    assert.equal((await adminAction(adapter, '', 'admin/list-users', {})).status, 401);
+    assert.equal((await adminAction(adapter, editorCookie, 'admin/list-users', {})).status, 403);
+    assert.equal((await adminAction(adapter, editorCookie, 'admin/create-user',
+      { email: 'new@example.test', name: 'New', password: 'new-editor-password', role: 'editor' })).status, 403);
+    const crossOrigin = await adapter.handle(new Request(`${ORIGIN}/admin/api/auth/admin/set-role`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'https://attacker.test', Cookie: adminCookie },
+      body: JSON.stringify({ userId: 'editor-1', role: 'customer' }),
+    }));
+    assert.equal(crossOrigin.status, 403);
+    assert.equal(sqlite.prepare(`SELECT role FROM galaxy_auth_user WHERE id = 'editor-1'`).get().role, 'editor');
+
+    // SSO admins change their credentials in Access; editors keep a working change-password.
+    assert.equal((await adminAction(adapter, adminCookie, 'change-password',
+      { currentPassword: 'unknown-password', newPassword: 'another-password-123' })).status, 403);
+    assert.equal((await adminAction(adapter, editorCookie, 'change-password',
+      { currentPassword: EDITOR_PASSWORD, newPassword: 'another-password-123' })).status, 200);
+    assert.equal((await adminAction(adapter, adminCookie, 'admin/remove-user', { userId: 'editor-1' })).status, 400,
+      'hybrid mode revokes CMS access instead of deleting the shared identity');
+    assert.equal(sqlite.prepare(`SELECT count(*) AS total FROM galaxy_auth_user WHERE id = 'editor-1'`).get().total, 1);
+  } finally { sqlite.close(); }
+});
+
+test('local mode keeps at least one active admin', async () => {
+  const sqlite = setup();
+  try {
+    const local = LocalAuthAdapter('/admin', { requireAccess: false });
+    await addUser(sqlite, { id: 'admin-1', email: 'first@example.test', role: 'admin', password: 'first-admin-password' });
+    await addUser(sqlite, { id: 'admin-2', email: 'second@example.test', role: 'admin', password: 'second-admin-password' });
+    const firstCookie = cookieOf(await signIn(local, 'first@example.test', 'first-admin-password'));
+
+    for (const [action, body] of [
+      ['admin/set-role', { userId: 'admin-1', role: 'editor' }],
+      ['admin/ban-user', { userId: 'admin-1' }],
+      ['admin/remove-user', { userId: 'admin-1' }],
+    ]) {
+      const response = await adminAction(local, firstCookie, action, body);
+      assert.equal(response.status, 400, action);
+      assert.match((await response.json()).error, /your own access/);
+    }
+
+    // An acting admin whose ban has expired still has CMS access but is not an active admin, so the
+    // only other admin is the last active one and cannot be demoted, disabled or removed.
+    sqlite.prepare(`UPDATE galaxy_auth_user SET banned = 1, ban_expires = ? WHERE id = 'admin-1'`).run(Math.floor(Date.now() / 1000) - 60);
+    assert.equal((await cmsUser(local, firstCookie))?.role, 'admin');
+    for (const [action, body] of [
+      ['admin/set-role', { userId: 'admin-2', role: 'editor' }],
+      ['admin/ban-user', { userId: 'admin-2' }],
+      ['admin/remove-user', { userId: 'admin-2' }],
+    ]) {
+      const response = await adminAction(local, firstCookie, action, body);
+      assert.equal(response.status, 400, action);
+      assert.match((await response.json()).error, /At least one active admin/);
+    }
+    assert.deepEqual({ ...sqlite.prepare(`SELECT role, banned FROM galaxy_auth_user WHERE id = 'admin-2'`).get() }, { role: 'admin', banned: 0 });
+
+    sqlite.prepare(`UPDATE galaxy_auth_user SET banned = 0, ban_expires = NULL WHERE id = 'admin-1'`).run();
+    assert.equal((await adminAction(local, firstCookie, 'admin/set-role', { userId: 'admin-2', role: 'editor' })).status, 200);
+  } finally { sqlite.close(); }
+});
