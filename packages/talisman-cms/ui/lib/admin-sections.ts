@@ -1,13 +1,24 @@
 import { collections as configuredCollections } from 'virtual:talisman-cms/config';
+// @ts-ignore Virtual module is provided by the CMS integration.
+import { adminLinks } from 'virtual:talisman-cms/config';
 
 export type AdminSection = 'collections' | 'commerce';
 
 type CollectionLike = {
   slug: string;
   adminSection?: AdminSection;
+  access?: Partial<Record<'read' | 'create' | 'update' | 'delete', 'admin' | 'editor'>>;
   nativeSchemaMapping?: {
     schemaPath?: string;
   };
+};
+
+type AdminUserLike = { role?: string } | null | undefined;
+
+type AdminExtensionLike = {
+  path: string;
+  section?: AdminSection | null;
+  access?: 'admin' | 'editor';
 };
 
 export function getAdminSection(collection: CollectionLike): AdminSection {
@@ -31,6 +42,33 @@ export function filterCollectionsBySection<T extends CollectionLike>(collections
 
 export function hasSection(section: AdminSection) {
   return configuredCollections.some((collection: any) => getAdminSection(collection) === section);
+}
+
+/** Mirrors the server's collection read check, so the admin only links to collections the user can open. */
+export function canReadCollection(collection: Pick<CollectionLike, 'access'>, user: AdminUserLike) {
+  return collection.access?.read !== 'admin' || user?.role === 'admin';
+}
+
+export function getReadableSectionCollections(section: AdminSection, user: AdminUserLike) {
+  return configuredCollections.filter((collection: any) =>
+    getAdminSection(collection) === section && canReadCollection(collection, user)
+  ) as Array<CollectionLike & { name: string }>;
+}
+
+/**
+ * Commerce tools call admin-only endpoints: an extension is admin-only when it declares so, sits in the
+ * commerce section, or is linked from the commerce section's tools.
+ */
+export function isAdminOnlyExtension(extension: AdminExtensionLike) {
+  if (extension.access === 'admin' || extension.section === 'commerce') return true;
+  return (adminLinks as Array<{ section?: string; href?: string }>).some((link) =>
+    link.section === 'commerce' &&
+    /^\/(?:[^/?#]+\/)*extensions\/([^/?#]+)$/.exec(link.href || '')?.[1] === extension.path
+  );
+}
+
+export function canOpenAdminExtension(extension: AdminExtensionLike, user: AdminUserLike) {
+  return user?.role === 'admin' || !isAdminOnlyExtension(extension);
 }
 
 export function hasMediaCollection() {

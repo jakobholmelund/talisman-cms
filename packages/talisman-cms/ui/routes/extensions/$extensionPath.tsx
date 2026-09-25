@@ -1,7 +1,8 @@
 import React from 'react';
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, useRouter } from '@tanstack/react-router';
 // @ts-ignore
 import { adminExtensions } from 'virtual:talisman-cms/admin-extensions';
+import { canOpenAdminExtension } from '../../lib/admin-sections';
 
 export const Route = createFileRoute('/extensions/$extensionPath')({
   component: ExtensionRoute,
@@ -9,6 +10,7 @@ export const Route = createFileRoute('/extensions/$extensionPath')({
 
 function ExtensionRoute() {
   const { extensionPath } = Route.useParams();
+  const { context } = useRouter().options;
   const extension = adminExtensions.find((ext: any) => ext.path === extensionPath);
 
   if (!extension) {
@@ -16,6 +18,15 @@ function ExtensionRoute() {
       <div className="flex flex-col items-center justify-center p-12 text-zinc-400">
         <h2 className="text-xl font-medium text-white mb-2">Extension Not Found</h2>
         <p>The extension "{extensionPath}" could not be found or is not properly registered.</p>
+      </div>
+    );
+  }
+
+  if (!canOpenAdminExtension(extension, context.user)) {
+    return (
+      <div className="flex flex-col items-center justify-center p-12 text-zinc-400">
+        <h2 className="text-xl font-medium text-white mb-2">Admin access required</h2>
+        <p>{extension.label} is available to admins only.</p>
       </div>
     );
   }

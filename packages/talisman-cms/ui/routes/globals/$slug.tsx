@@ -55,6 +55,11 @@ type RelationOptionRecord = {
 
 type RelationSupportEntries = Record<string, any[]>;
 
+type FieldErrors = Record<string, string[]>;
+
+// A stable empty schema: a fresh [] per render would re-run the reset effect below on every keystroke.
+const EMPTY_FIELDS: any[] = [];
+
 function mergeStoredValues(defaults: any, stored: any): any {
   if (Array.isArray(stored)) return stored;
   if (!stored || typeof stored !== 'object') return stored ?? defaults;
@@ -68,18 +73,35 @@ function mergeStoredValues(defaults: any, stored: any): any {
   return merged;
 }
 
-function parseGlobalData(data: GlobalRecord['data'], fields?: any[]) {
-  if (!data) return {};
-
-  if (typeof data === 'string') {
+/** Global data is a JSON object; tolerate rows that still hold it as (doubly) encoded JSON text. */
+function decodeGlobalData(data: unknown): Record<string, any> {
+  let value = data;
+  for (let depth = 0; typeof value === 'string' && depth < 3; depth += 1) {
     try {
-      return normalizeStoredFieldData(fields, JSON.parse(data));
+      value = JSON.parse(value);
     } catch {
       return {};
     }
   }
 
-  return normalizeStoredFieldData(fields, data);
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
+}
+
+function parseGlobalData(data: GlobalRecord['data'] | undefined, fields?: any[]) {
+  return normalizeStoredFieldData(fields, decodeGlobalData(data));
+}
+
+function getFieldErrorLabel(fields: any[], name: string) {
+  return fields.find((field: any) => field.name === name)?.label || name;
+}
+
+function formatFieldErrors(messages: unknown) {
+  return Array.isArray(messages) ? messages.join(', ') : String(messages);
+}
+
+/** Show (or clear) a server validation message on a configured field. */
+function setServerFieldError(formApi: any, name: string, message: string | undefined) {
+  formApi.setFieldMeta(name, (meta: any) => ({ ...meta, errorMap: { ...meta?.errorMap, onServer: message } }));
 }
 
 
@@ -1092,13 +1114,17 @@ function GlobalEditorRoute() {
     relationOptions,
     relationSupportEntries,
   } = Route.useLoaderData();
-  const schemaFields = globalConfig?.fields || [];
+  const schemaFields = globalConfig?.fields || EMPTY_FIELDS;
   const hasConfiguredFields = schemaFields.length > 0;
-  const computedDefaults = mergeStoredValues(buildDefaultValues(schemaFields), parseGlobalData(global.data, schemaFields));
+  // The last stored record: the loader's copy goes stale after a save, and building the form defaults
+  // from it would put the old values back on the next render.
+  const [storedGlobal, setStoredGlobal] = useState<GlobalRecord>(global);
+  const computedDefaults = mergeStoredValues(buildDefaultValues(schemaFields), parseGlobalData(storedGlobal.data, schemaFields));
   const [rawJsonValue, setRawJsonValue] = useState(() => JSON.stringify(parseGlobalData(global.data, schemaFields), null, 2));
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const collapseStorageKey = `talisman-cms:collapsed:global:${global.slug}`;
 
   const form = useForm({
@@ -1107,26 +1133,56 @@ function GlobalEditorRoute() {
       ? {
           onChange: getZodClientSchemaForFields(schemaFields) as any
         }
-      : undefined
+      : undefined,
+    listeners: {
+      // A server error stops applying once its field, or anything inside it, is edited.
+      onChange: ({ formApi, fieldApi }: any) => {
+        const name = String(fieldApi.name).split(/[.[]/)[0];
+        if (formApi.getFieldMeta(name)?.errorMap?.onServer) setServerFieldError(formApi, name, undefined);
+        setFieldErrors((current) => {
+          if (!(name in current)) return current;
+          const { [name]: _fixed, ...rest } = current;
+          return rest;
+        });
+      },
+    },
   });
 
+  // Reset only when a different global or a newer stored version is loaded; loader reruns return new
+  // objects for unchanged data, which must not discard what the user is typing.
   useEffect(() => {
     const nextValues = mergeStoredValues(buildDefaultValues(schemaFields), parseGlobalData(global.data, schemaFields));
+    setStoredGlobal(global);
     form.reset(nextValues);
     setRawJsonValue(JSON.stringify(parseGlobalData(global.data, schemaFields), null, 2));
     setSaveError('');
     setSaveMessage('');
-  }, [form, global.data, schemaFields]);
+    setFieldErrors({});
+  }, [form, global.slug, global.updatedAt, schemaFields]);
+
+  function showFieldErrors(nextFieldErrors: FieldErrors) {
+    setFieldErrors(nextFieldErrors);
+    for (const [name, messages] of Object.entries(nextFieldErrors)) {
+      if (schemaFields.some((field: any) => field.name === name)) setServerFieldError(form, name, formatFieldErrors(messages));
+    }
+  }
 
   async function handleSave() {
     setIsSaving(true);
     setSaveError('');
     setSaveMessage('');
+    setFieldErrors({});
+    for (const field of schemaFields) {
+      if (form.getFieldMeta(field.name)?.errorMap?.onServer) setServerFieldError(form, field.name, undefined);
+    }
 
     try {
       const payload = hasConfiguredFields
         ? form.state.values
         : (rawJsonValue.trim() ? JSON.parse(rawJsonValue) : {});
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        throw new Error('The JSON document must be an object, for example {"title": "Hello"}.');
+      }
 
       const res = await fetch(`${adminBasePath}/api/globals/${global.slug}`, {
         method: 'POST',
@@ -1136,12 +1192,20 @@ function GlobalEditorRoute() {
         body: JSON.stringify(payload),
       });
 
-      const result = await res.json() as { error?: string; message?: string; data: GlobalRecord['data'] };
+      const result = await res.json().catch(() => ({})) as Partial<GlobalRecord> & {
+        error?: string;
+        message?: string;
+        fieldErrors?: FieldErrors;
+        details?: { fieldErrors?: FieldErrors };
+      };
       if (!res.ok) {
+        const nextFieldErrors = result.fieldErrors || result.details?.fieldErrors;
+        if (nextFieldErrors && typeof nextFieldErrors === 'object') showFieldErrors(nextFieldErrors);
         throw new Error(result.error || result.message || 'Failed to save global');
       }
 
       const nextValues = mergeStoredValues(buildDefaultValues(schemaFields), parseGlobalData(result.data, schemaFields));
+      setStoredGlobal((current) => ({ ...current, ...result }));
       form.reset(nextValues);
       setRawJsonValue(JSON.stringify(parseGlobalData(result.data, schemaFields), null, 2));
       setSaveMessage('Saved');
@@ -1179,7 +1243,7 @@ function GlobalEditorRoute() {
         </div>
 
         <div className="flex items-center gap-3">
-          {saveMessage ? <p className="text-sm text-emerald-400">{saveMessage}</p> : null}
+          {saveMessage ? <p role="status" className="text-sm text-emerald-400">{saveMessage}</p> : null}
           <Button className="gap-2" onClick={handleSave} disabled={isSaving}>
             <Save size={16} />
             {isSaving ? 'Saving...' : 'Save'}
@@ -1228,11 +1292,20 @@ function GlobalEditorRoute() {
             </>
           )}
 
-          {saveError ? <p className="text-sm text-red-400">{saveError}</p> : null}
+          {saveError ? <p role="alert" className="text-sm text-red-400">{saveError}</p> : null}
+          {Object.keys(fieldErrors).length > 0 ? (
+            <ul className="space-y-1 text-sm text-red-400">
+              {Object.entries(fieldErrors).map(([name, messages]) => (
+                <li key={name}>
+                  <span className="font-medium">{getFieldErrorLabel(schemaFields, name)}</span>: {formatFieldErrors(messages)}
+                </li>
+              ))}
+            </ul>
+          ) : null}
 
           <div className="grid gap-3 text-xs text-zinc-500 sm:grid-cols-2">
-            <p>Created: {new Date(global.createdAt).toLocaleString()}</p>
-            <p>Updated: {new Date(global.updatedAt).toLocaleString()}</p>
+            <p>Created: {new Date(storedGlobal.createdAt).toLocaleString()}</p>
+            <p>Updated: {new Date(storedGlobal.updatedAt).toLocaleString()}</p>
           </div>
         </CardContent>
       </Card>

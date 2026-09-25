@@ -35,9 +35,9 @@ export default function TestCheckout() {
     <Feedback message={message} error />
     {!summary && !message && <p className="ecom-admin__muted">Loading basket…</p>}
     {summary && !summary.cart?.items.length && <Panel title="Your basket is empty"><p>Add a product on the storefront first, then return here. <a href="/cart">Open basket</a></p></Panel>}
-    {summary?.cart?.items.length && summary.quoteError && <Panel title="Basket needs attention"><p>{summary.quoteError}</p><p><a href="/cart">Review basket</a> before placing a test order.</p></Panel>}
+    {!!summary?.cart?.items.length && summary.quoteError && <Panel title="Basket needs attention"><p>{summary.quoteError}</p><p><a href="/cart">Review basket</a> before placing a test order.</p></Panel>}
     {summary?.cart?.checkoutSessionId && <Panel title="A checkout is already open"><p>Continue or cancel the current payment session from the storefront basket.</p></Panel>}
-    {summary?.cart?.items.length && !summary.cart.checkoutSessionId && summary.quote && <div className="ecom-admin__grid">
+    {!!summary?.cart?.items.length && !summary.cart.checkoutSessionId && summary.quote && <div className="ecom-admin__grid">
       <Panel title="Test order details"><form onSubmit={event => void submit(event)}>
         <Field label="Email"><input name="customerEmail" type="email" autoComplete="email" defaultValue={summary.adminEmail} required /></Field>
         {summary.quote.requiresShipping && <div className="ecom-admin__grid">

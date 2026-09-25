@@ -25,7 +25,10 @@ export const Route = createFileRoute('/globals/')({
 
 function GlobalsIndexRoute() {
   const globals = Route.useLoaderData();
-  const adminBasePath = Route.useRouteContext().adminBasePath || '/admin';
+  const routeContext = Route.useRouteContext();
+  const adminBasePath = routeContext.adminBasePath || '/admin';
+  // Creating a global is admin-only on the server; editors edit the existing ones.
+  const canCreateGlobal = routeContext.user?.role === 'admin';
 
   return (
     <div className="space-y-6">
@@ -34,15 +37,17 @@ function GlobalsIndexRoute() {
           <h1 className="text-3xl font-semibold tracking-tight">Globals</h1>
           <p className="text-zinc-400 mt-1">Manage global site settings and single-document singletons.</p>
         </div>
-        <Button
-          type="button"
-          className="gap-2"
-          onClick={() => {
-            window.location.assign(`${adminBasePath}/globals/new`);
-          }}
-        >
-          <Plus size={16} /> New Global
-        </Button>
+        {canCreateGlobal ? (
+          <Button
+            type="button"
+            className="gap-2"
+            onClick={() => {
+              window.location.assign(`${adminBasePath}/globals/new`);
+            }}
+          >
+            <Plus size={16} /> New Global
+          </Button>
+        ) : null}
       </div>
 
       <Card className="overflow-hidden">

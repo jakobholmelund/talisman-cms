@@ -17,7 +17,8 @@ function slugify(value: string) {
 }
 
 function NewGlobalRoute() {
-  const adminBasePath = Route.useRouteContext().adminBasePath || '/admin';
+  const routeContext = Route.useRouteContext();
+  const adminBasePath = routeContext.adminBasePath || '/admin';
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [description, setDescription] = useState('');
@@ -43,7 +44,7 @@ function NewGlobalRoute() {
         }),
       });
 
-      const result = await res.json() as { error?: string; message?: string; slug?: string };
+      const result = await res.json().catch(() => ({})) as { error?: string; message?: string; slug?: string };
       if (!res.ok) {
         throw new Error(result.error || result.message || 'Failed to create global');
       }
@@ -55,6 +56,21 @@ function NewGlobalRoute() {
     } finally {
       setIsSaving(false);
     }
+  }
+
+  if (routeContext.user?.role !== 'admin') {
+    return (
+      <div className="space-y-3">
+        <a
+          href={`${adminBasePath}/globals`}
+          className="inline-flex items-center gap-2 text-sm text-zinc-400 transition-colors hover:text-zinc-100"
+        >
+          <ArrowLeft size={14} />
+          Back to Globals
+        </a>
+        <p className="text-zinc-400">Admin access required to create globals.</p>
+      </div>
+    );
   }
 
   return (
