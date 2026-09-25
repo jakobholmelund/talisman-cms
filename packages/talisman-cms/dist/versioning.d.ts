@@ -11,7 +11,8 @@ interface PublishWorkflowPayload {
     collectionSlug: string;
     entryId: string;
     action: PublishWorkflowAction;
-    expectedRevisionId?: string;
+    /** The latest revision the editor loaded, or null for an entry loaded without revisions. */
+    expectedRevisionId?: string | null;
 }
 declare class RevisionConflictError extends Error {
     constructor();
@@ -76,7 +77,7 @@ declare function createDraftEntry(db: ReturnType<typeof createVersioningDb>, col
 declare function saveDraftEntry(db: ReturnType<typeof createVersioningDb>, collection: CollectionRecord, entryId: string, params: {
     data?: any;
     slug?: string;
-    expectedRevisionId?: string;
+    expectedRevisionId?: string | null;
 }): Promise<{
     id: string;
     slug: string;
@@ -90,7 +91,7 @@ declare function saveDraftEntry(db: ReturnType<typeof createVersioningDb>, colle
     publishedAt: Date | null;
     archivedAt: Date | null;
 }>;
-declare function publishEntry(db: ReturnType<typeof createVersioningDb>, collection: CollectionRecord, entryId: string, expectedRevisionId?: string): Promise<{
+declare function publishEntry(db: ReturnType<typeof createVersioningDb>, collection: CollectionRecord, entryId: string, expectedRevisionId?: string | null): Promise<{
     id: string;
     slug: string;
     data: unknown;
@@ -103,7 +104,7 @@ declare function publishEntry(db: ReturnType<typeof createVersioningDb>, collect
     publishedAt: Date | null;
     archivedAt: Date | null;
 }>;
-declare function archiveEntry(db: ReturnType<typeof createVersioningDb>, collection: CollectionRecord, entryId: string, expectedRevisionId?: string): Promise<{
+declare function archiveEntry(db: ReturnType<typeof createVersioningDb>, collection: CollectionRecord, entryId: string, expectedRevisionId?: string | null): Promise<{
     id: string;
     slug: string;
     data: unknown;
@@ -116,7 +117,7 @@ declare function archiveEntry(db: ReturnType<typeof createVersioningDb>, collect
     publishedAt: Date | null;
     archivedAt: Date | null;
 }>;
-declare function restoreEntryRevision(db: ReturnType<typeof createVersioningDb>, collection: CollectionRecord, entryId: string, revisionId: string, expectedRevisionId?: string): Promise<{
+declare function restoreEntryRevision(db: ReturnType<typeof createVersioningDb>, collection: CollectionRecord, entryId: string, revisionId: string, expectedRevisionId?: string | null): Promise<{
     id: string;
     slug: string;
     data: unknown;

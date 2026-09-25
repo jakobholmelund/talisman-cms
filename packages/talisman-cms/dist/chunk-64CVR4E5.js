@@ -5,7 +5,7 @@ import {
   normalizeEntryDataForRead,
   saveDraftEntry,
   triggerPublishingWorkflow
-} from "./chunk-QZQ5NXCV.js";
+} from "./chunk-2KNJPUUL.js";
 import {
   collections,
   entries,
@@ -14,17 +14,19 @@ import {
 } from "./chunk-QDILJIDR.js";
 import {
   buildZodSchemaForFields,
+  decodeGlobalData,
   generateFieldsFromDrizzle,
   getRelationTargets,
+  isGlobalData,
   isInlineComponentValue,
   isPolymorphicRelationField,
   isRelationReference,
   prepareNativeWritePayload
-} from "./chunk-JCYUX5UW.js";
+} from "./chunk-Q2KF5FAP.js";
 
 // src/db/client.ts
 import { drizzle } from "drizzle-orm/d1";
-import { eq, and, gte, lte } from "drizzle-orm";
+import { eq, and, gte, lte, count } from "drizzle-orm";
 var _nativeSchemas = null;
 var _nativeSchemaConfig = null;
 var _configGlobals = null;
@@ -122,7 +124,7 @@ async function syncConfiguredGlobals(db) {
         name: globalConfig.name,
         slug: globalConfig.slug,
         description: globalConfig.description || null,
-        data: "{}",
+        data: {},
         createdAt: now,
         updatedAt: now
       });
@@ -153,7 +155,7 @@ async function resolveGlobalContext(db, slug) {
       name: globalConfig.name,
       slug: globalConfig.slug,
       description: globalConfig.description || null,
-      data: "{}",
+      data: {},
       createdAt: now,
       updatedAt: now
     });
@@ -219,12 +221,18 @@ async function writeCache(kv, key, value, ctx, changedSinceRead) {
   await write;
 }
 var CONCURRENT_WRITE_WINDOW_MS = 5 * 6e4;
-function rowsUpdatedSince(db, table, since, where) {
+function rowsUpdatedSince(db, table, since, where, stillPresent) {
   return async () => {
     const latest = new Date(Date.now() + CONCURRENT_WRITE_WINDOW_MS);
     const rows = await db.select({ id: table.id }).from(table).where(and(gte(table.updatedAt, since), lte(table.updatedAt, latest), where)).limit(1);
-    return rows.length > 0;
+    if (rows.length > 0) return true;
+    if (!stillPresent) return false;
+    const [present] = await db.select({ total: count() }).from(table).where(stillPresent.where);
+    return (present?.total ?? 0) !== stillPresent.count;
   };
+}
+function withDecodedGlobalData(record) {
+  return record ? { ...record, data: decodeGlobalData(record.data) } : record;
 }
 function isRelationshipFieldType(type) {
   return type === "relationship" || type === "relation";
@@ -464,10 +472,11 @@ function getClient(env, ctx) {
         const cacheKey = `talisman:globals:${slug}`;
         if (opts?.cache !== false && env.KV) {
           const cached = await readCache(env.KV, cacheKey);
-          if (cached) return cached;
+          if (cached) return withDecodedGlobalData(cached);
         }
         const readStartedAt = /* @__PURE__ */ new Date();
-        const { globalRecord: data } = await resolveGlobalContext(db, slug);
+        const { globalRecord } = await resolveGlobalContext(db, slug);
+        const data = withDecodedGlobalData(globalRecord);
         if (opts?.cache !== false && env.KV && data) {
           await writeCache(
             env.KV,
@@ -497,7 +506,7 @@ function getClient(env, ctx) {
           name: input.name?.trim() || slug,
           slug,
           description: input.description?.trim() || null,
-          data: JSON.stringify(input.data && typeof input.data === "object" ? input.data : {}),
+          data: isGlobalData(input.data) ? input.data : {},
           createdAt: now,
           updatedAt: now
         };
@@ -524,7 +533,7 @@ function getClient(env, ctx) {
           name: globalConfig?.name || existing?.name || slug,
           slug,
           description: globalConfig?.description || existing?.description || null,
-          data: JSON.stringify(data),
+          data,
           createdAt: existing?.createdAt || now,
           updatedAt: now
         }).onConflictDoUpdate({
@@ -532,7 +541,7 @@ function getClient(env, ctx) {
           set: {
             name: globalConfig?.name || existing?.name || slug,
             description: globalConfig?.description || existing?.description || null,
-            data: JSON.stringify(data),
+            data,
             updatedAt: now
           }
         });
@@ -540,10 +549,10 @@ function getClient(env, ctx) {
           await env.KV.delete("talisman:globals:all");
           await env.KV.delete(`talisman:globals:${slug}`);
         }
-        return await db.query.globals.findFirst({
+        return withDecodedGlobalData(await db.query.globals.findFirst({
           // @ts-ignore
           where: (g, { eq: eq2 }) => eq2(g.slug, slug)
-        });
+        }));
       }
     },
     entries: {
@@ -583,12 +592,16 @@ function getClient(env, ctx) {
         }
         data = await resolveRelationships(data, collection, db, opts?.depth ?? 1, versionMode);
         if (useCache && env.KV) {
+          const inCollection = eq(entries.collectionId, collection.id);
           await writeCache(
             env.KV,
             cacheKey,
             data,
             ctx,
-            nativeTable ? void 0 : rowsUpdatedSince(db, entries, readStartedAt, eq(entries.collectionId, collection.id))
+            nativeTable ? void 0 : rowsUpdatedSince(db, entries, readStartedAt, inCollection, {
+              where: versionMode === "published" ? and(inCollection, eq(entries.status, "published")) : inCollection,
+              count: data.length
+            })
           );
         }
         return data;
@@ -660,7 +673,13 @@ function getClient(env, ctx) {
             cacheKey,
             data,
             ctx,
-            nativeTable ? void 0 : rowsUpdatedSince(db, entries, readStartedAt, eq(entries.id, id))
+            nativeTable ? void 0 : rowsUpdatedSince(
+              db,
+              entries,
+              readStartedAt,
+              eq(entries.id, id),
+              { where: eq(entries.id, id), count: 1 }
+            )
           );
         }
         return data;

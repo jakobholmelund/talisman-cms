@@ -589,5 +589,22 @@ declare function reconcileCommerce(options: CommerceApiOptions, limit?: number):
     status: string;
     error?: string;
 }[]>;
+interface CommercePurgeOptions {
+    env: TalismanEnv;
+    now?: Date;
+    /** Rows deleted per statement. */
+    batchSize?: number;
+}
+/**
+ * Delete shopper and sign-in data past its retention period. Run it from the scheduled
+ * Worker next to reconcileCommerce; deletes are batched to stay inside D1 and Worker limits.
+ * Every table is attempted, and the run throws afterwards if any of them failed.
+ */
+declare function purgeStaleCommerceData(options: CommercePurgeOptions): Promise<{
+    carts: number;
+    customerSessions: number;
+    authSessions: number;
+    authRateLimits: number;
+}>;
 
-export { type CommerceApiOptions, aggregateComponentDemand, bindCommerceApi, reconcileCommerce };
+export { type CommerceApiOptions, type CommercePurgeOptions, aggregateComponentDemand, bindCommerceApi, purgeStaleCommerceData, reconcileCommerce };

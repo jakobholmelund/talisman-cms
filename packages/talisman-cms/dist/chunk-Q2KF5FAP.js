@@ -351,6 +351,44 @@ function extendBlockSchemaWithComponentSlots(block, baseSchema) {
   }
   return Object.keys(slotShape).length === 0 ? baseSchema : baseSchema.extend(slotShape);
 }
+var RICH_TEXT_WRAPPER_NODES = /* @__PURE__ */ new Set([
+  "doc",
+  "paragraph",
+  "heading",
+  "blockquote",
+  "bulletList",
+  "orderedList",
+  "listItem",
+  "codeBlock",
+  "hardBreak",
+  "text"
+]);
+function isEmptyRichText(value) {
+  if (value === void 0 || value === null) return true;
+  if (typeof value === "string") return value.replace(/<[^>]*>/g, "").replace(/&nbsp;/gi, " ").trim() === "";
+  if (typeof value !== "object" || Array.isArray(value) || value.type !== "doc") return false;
+  const hasContent = (node) => {
+    if (!node || typeof node !== "object") return false;
+    if (typeof node.text === "string" && node.text.trim()) return true;
+    if (typeof node.type === "string" && !RICH_TEXT_WRAPPER_NODES.has(node.type)) return true;
+    return Array.isArray(node.content) && node.content.some(hasContent);
+  };
+  return !hasContent(value);
+}
+var REQUIRED_MESSAGE = "Required";
+var isBlankString = (value) => typeof value === "string" && value.trim() === "";
+function requireValue(field, schema) {
+  if (field.type === "richtext") {
+    return schema.refine((value) => !isEmptyRichText(value), { message: REQUIRED_MESSAGE });
+  }
+  if (["group", "array", "blocks", "number", "boolean"].includes(field.type) || isRelationshipFieldType(field.type) && (field.hasMany || isPolymorphicRelationField(field))) {
+    return schema;
+  }
+  return schema.refine((value) => !isBlankString(value), { message: REQUIRED_MESSAGE });
+}
+function isRelationshipFieldType(type) {
+  return type === "relationship" || type === "relation";
+}
 function buildZodSchemaForFields(fields) {
   const shape = {};
   if (!fields) return z.object({});
@@ -410,12 +448,24 @@ function buildZodSchemaForFields(fields) {
         fieldSchema = z.string();
         break;
     }
-    if (!field.required) {
-      fieldSchema = fieldSchema.optional().nullable();
-    }
+    fieldSchema = field.required ? requireValue(field, fieldSchema) : fieldSchema.optional().nullable();
     shape[field.name] = fieldSchema;
   }
   return z.object(shape).passthrough();
+}
+function isGlobalData(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function decodeGlobalData(value) {
+  let data = value;
+  for (let depth = 0; typeof data === "string" && depth < 3; depth += 1) {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      return {};
+    }
+  }
+  return isGlobalData(data) ? data : {};
 }
 function getPluginUiLibraries(plugins = []) {
   return plugins.flatMap((plugin) => plugin.uiLibraries || []);
@@ -446,7 +496,8 @@ function generateFieldsFromDrizzle(table) {
       name: colName,
       label: key.charAt(0).toUpperCase() + key.slice(1),
       type,
-      required: column.notNull === true
+      // A NOT NULL column with a database default can be left out; the default fills it.
+      required: column.notNull === true && column.hasDefault !== true
     });
   }
   return fields;
@@ -460,6 +511,8 @@ export {
   resolveFieldDefinitions,
   prepareNativeWritePayload,
   buildZodSchemaForFields,
+  isGlobalData,
+  decodeGlobalData,
   getPluginUiLibraryMetadata,
   generateFieldsFromDrizzle
 };

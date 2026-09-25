@@ -26,6 +26,19 @@ function activateNewCustomerAccount(orderId) {
 function requestCustomerEmailSignIn(email) {
   return commerceRequest("/api/ecommerce/account", "POST", { email });
 }
+function readCustomerSignInToken(loc = typeof window === "undefined" ? void 0 : window.location, hist = typeof window === "undefined" ? void 0 : window.history) {
+  if (!loc) return null;
+  const hash = new URLSearchParams(loc.hash.replace(/^#/, ""));
+  const query = new URLSearchParams(loc.search);
+  const token = hash.get("token") || query.get("token");
+  if (!token) return null;
+  hash.delete("token");
+  query.delete("token");
+  const search = query.toString();
+  const fragment = hash.toString();
+  hist?.replaceState(hist.state, "", `${loc.pathname}${search ? `?${search}` : ""}${fragment ? `#${fragment}` : ""}`);
+  return token;
+}
 function verifyCustomerEmailSignIn(token) {
   return commerceRequest("/api/ecommerce/account", "POST", { token });
 }
@@ -70,6 +83,7 @@ export {
   getCustomerAccount,
   getOrderStatus,
   installTalismanEcommerceBrowserHelpers,
+  readCustomerSignInToken,
   requestCustomerEmailSignIn,
   signOutCustomerAccount,
   startAdminTestCheckout,

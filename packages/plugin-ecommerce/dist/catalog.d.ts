@@ -83,8 +83,9 @@ interface CommerceCatalogSeed {
     }>;
 }
 /**
- * Generate an idempotent first-run D1/SQLite catalog import. Every row uses
- * INSERT OR IGNORE, so editors own subsequent changes in Commerce.
+ * Generate an idempotent first-run D1/SQLite catalog import. Every row is inserted
+ * only when missing, so editors own subsequent changes in Commerce. Content entries
+ * start with a published baseline revision, like entries created in the editor.
  * Apply Talisman CMS migrations before running the generated SQL.
  */
 declare function createCommerceCatalogSeedSql(seed: CommerceCatalogSeed): string;

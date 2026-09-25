@@ -1,5 +1,6 @@
 import { AstroIntegration } from 'astro';
 import { T as TalismanAuthAdapter } from './types-B9Ys5hZL.js';
+import { E as EmailRuntimeDescriptor } from './types-CqOBvOgc.js';
 import { C as CollectionConfig, G as GlobalConfig, P as Plugin } from './types-ENgZDEOO.js';
 export { B as BlockDefinition, a as CollectionHookArgs, b as CollectionHooks, c as ComponentDefinition, d as ComponentSlotDefinition, F as FieldDefinition, e as FieldType, f as RuntimeCollectionHooks, U as UiComponentPresetDefinition, g as UiLibraryBlockAdapter, h as UiLibraryComponentAdapter, i as UiLibraryDefinition } from './types-ENgZDEOO.js';
 
@@ -27,6 +28,12 @@ interface TalismanCmsOptions {
      */
     plugins?: Plugin[];
     /**
+     * A custom email provider, loaded in the Worker from `customEmail({ moduleId, exportName, args })`
+     * (`talisman-cms/email`). It is used when `TALISMAN_EMAIL_PROVIDER` is unset or `custom`.
+     * Without it, email goes through the `[[send_email]]` binding named `EMAIL`.
+     */
+    email?: EmailRuntimeDescriptor;
+    /**
      * Optional Cloudflare Workflow binding used for publish/archive transitions.
      */
     publishing?: {
@@ -39,4 +46,4 @@ interface TalismanCmsOptions {
 }
 declare function talismanCms(options?: TalismanCmsOptions): AstroIntegration;
 
-export { CollectionConfig, GlobalConfig, Plugin, TalismanAuthAdapter, type TalismanCmsOptions, talismanCms as default };
+export { CollectionConfig, EmailRuntimeDescriptor, GlobalConfig, Plugin, TalismanAuthAdapter, type TalismanCmsOptions, talismanCms as default };

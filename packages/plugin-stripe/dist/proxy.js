@@ -1,6 +1,6 @@
 import {
   stripeProxy
-} from "./chunk-Q4AUFOYH.js";
+} from "./chunk-3PUM3JYR.js";
 export {
   stripeProxy
 };

@@ -27,6 +27,14 @@ declare function activateNewCustomerAccount(orderId: string): Promise<{
 declare function requestCustomerEmailSignIn(email: string): Promise<{
     accepted: true;
 }>;
+type SignInLocation = Pick<Location, 'pathname' | 'search' | 'hash'>;
+type SignInHistory = Pick<History, 'replaceState' | 'state'>;
+/**
+ * Reads the one-time token on the page a sign-in link opens, then removes it from the address bar.
+ * Links carry it in the fragment (`/account/verify#token=...`), which browsers never send to the
+ * server. `?token=` links sent before that change are still read. Returns null without a token.
+ */
+declare function readCustomerSignInToken(loc?: SignInLocation | undefined, hist?: SignInHistory | undefined): string | null;
 declare function verifyCustomerEmailSignIn(token: string): Promise<{
     account: CustomerAccountSummary;
 }>;
@@ -81,4 +89,4 @@ declare function cancelCheckout(orderId: string): Promise<{
 }>;
 declare function installTalismanEcommerceBrowserHelpers(target?: Window): TalismanEcommerceBrowserHelpers;
 
-export { CART_UPDATED_EVENT, type CartUpdatedDetail, type CustomerAccountSummary, type TalismanEcommerceBrowserHelpers, activateNewCustomerAccount, cancelCheckout, chooseCustomerBasket, dispatchCartUpdated, getCustomerAccount, getOrderStatus, installTalismanEcommerceBrowserHelpers, requestCustomerEmailSignIn, signOutCustomerAccount, startAdminTestCheckout, startCheckout, verifyCustomerEmailSignIn };
+export { CART_UPDATED_EVENT, type CartUpdatedDetail, type CustomerAccountSummary, type TalismanEcommerceBrowserHelpers, activateNewCustomerAccount, cancelCheckout, chooseCustomerBasket, dispatchCartUpdated, getCustomerAccount, getOrderStatus, installTalismanEcommerceBrowserHelpers, readCustomerSignInToken, requestCustomerEmailSignIn, signOutCustomerAccount, startAdminTestCheckout, startCheckout, verifyCustomerEmailSignIn };

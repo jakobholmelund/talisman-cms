@@ -1,9 +1,24 @@
 import {
   stripeProxy
-} from "./chunk-Q4AUFOYH.js";
+} from "./chunk-3PUM3JYR.js";
+import {
+  MISSING_SECRET_KEY,
+  getWorkerEnv,
+  readStripeSecretKey
+} from "./chunk-W7JZMBL7.js";
+
+// src/runtime-hooks.ts
+import { authorizeCmsRequest } from "talisman-cms/auth/guard";
+import { nativeSchemas } from "virtual:talisman-cms/native-schemas";
+import { stripeConfig } from "virtual:talisman-cms/stripe-config";
 
 // src/sync/hooks.ts
-function createSyncHooks(pluginConfig, syncConfig) {
+var DEFAULT_STRIPE_ID_FIELD = "stripeID";
+function createSyncHooks(pluginConfig, syncConfig, runtime) {
+  const idField = syncConfig.stripeIdField || DEFAULT_STRIPE_ID_FIELD;
+  const resource = syncConfig.stripeResourceTypeSingular;
+  const idColumn = runtime.nativeTable?.[idField];
+  const missingColumn = runtime.nativeTable && !(idColumn && typeof idColumn === "object" && "dataType" in idColumn) ? `[plugin-stripe] ${syncConfig.collection} is a native table without a "${idField}" column, so the Stripe ${resource} ID cannot be stored. Add a text column with that property name to the table, or set stripeIdField to an existing column.` : null;
   const mapDataToStripe = (cmsData) => {
     const payload = {};
     if (syncConfig.fields) {
@@ -15,71 +30,99 @@ function createSyncHooks(pluginConfig, syncConfig) {
     }
     return payload;
   };
-  const stripeIdOf = (doc) => doc?.data?.stripeID || doc?.stripeID;
+  const storedStripeId = (doc) => {
+    const value = doc?.data?.[idField];
+    return typeof value === "string" && value ? value : void 0;
+  };
+  const requireSecretKey = async () => {
+    const secretKey = readStripeSecretKey(await runtime.getEnv());
+    if (!secretKey) throw new Error(MISSING_SECRET_KEY);
+    return secretKey;
+  };
+  const adminChecks = /* @__PURE__ */ new WeakMap();
+  const isAdmin = (request) => {
+    let check = adminChecks.get(request);
+    if (!check) {
+      check = runtime.isAdmin(request);
+      adminChecks.set(request, check);
+    }
+    return check;
+  };
   return {
     beforeChange: [
-      async ({ data, operation, originalDoc }) => {
-        if (data.skipSync) {
-          return { ...data, skipSync: false };
-        }
+      async ({ data, originalDoc }) => {
+        if (missingColumn) throw new Error(missingColumn);
+        const stripeId = storedStripeId(originalDoc);
+        const trusted = { ...data, [idField]: stripeId, skipSync: void 0 };
         const stripePayload = mapDataToStripe(data);
-        if (Object.keys(stripePayload).length === 0 && !stripeIdOf(originalDoc)) {
-          return data;
+        if (Object.keys(stripePayload).length === 0) {
+          return trusted;
         }
+        const stripeSecretKey = await requireSecretKey();
         try {
-          if (operation === "create" || !stripeIdOf(originalDoc) && !data.stripeID) {
-            const response = await stripeProxy({
-              stripeSecretKey: pluginConfig.stripeSecretKey,
+          if (!stripeId) {
+            const response2 = await stripeProxy({
+              stripeSecretKey,
               stripeMethod: `${syncConfig.stripeResourceType}.create`,
               stripeArgs: [stripePayload]
             });
-            if (response.status !== 200) {
-              console.error(`[plugin-stripe] Failed to create ${syncConfig.stripeResourceTypeSingular} in Stripe:`, response);
-              return data;
+            if (response2.status !== 200) {
+              console.error(`[plugin-stripe] Failed to create ${resource} in Stripe:`, response2);
+              return trusted;
             }
             if (pluginConfig.logs) {
-              console.log(`[plugin-stripe] Created new ${syncConfig.stripeResourceTypeSingular} in Stripe:`, response.data.id);
+              console.log(`[plugin-stripe] Created new ${resource} in Stripe:`, response2.data.id);
             }
-            return { ...data, stripeID: response.data.id };
-          } else if (operation === "update") {
-            const idToUpdate = data.stripeID || stripeIdOf(originalDoc);
-            if (idToUpdate && Object.keys(stripePayload).length > 0) {
-              const response = await stripeProxy({
-                stripeSecretKey: pluginConfig.stripeSecretKey,
-                stripeMethod: `${syncConfig.stripeResourceType}.update`,
-                stripeArgs: [idToUpdate, stripePayload]
-              });
-              if (response.status !== 200) {
-                console.error(`[plugin-stripe] Failed to update ${syncConfig.stripeResourceTypeSingular} in Stripe:`, response);
-                return data;
-              }
-              if (pluginConfig.logs) {
-                console.log(`[plugin-stripe] Updated ${syncConfig.stripeResourceTypeSingular} in Stripe:`, idToUpdate);
-              }
-            }
-            return data;
+            return { ...trusted, [idField]: response2.data.id };
+          }
+          const response = await stripeProxy({
+            stripeSecretKey,
+            stripeMethod: `${syncConfig.stripeResourceType}.update`,
+            stripeArgs: [stripeId, stripePayload]
+          });
+          if (response.status !== 200) {
+            console.error(`[plugin-stripe] Failed to update ${resource} in Stripe:`, response);
+          } else if (pluginConfig.logs) {
+            console.log(`[plugin-stripe] Updated ${resource} in Stripe:`, stripeId);
           }
         } catch (error) {
-          console.error(`[plugin-stripe] Failed to sync ${syncConfig.stripeResourceTypeSingular} to Stripe:`, error.message);
+          console.error(`[plugin-stripe] Failed to sync ${resource} to Stripe:`, error.message);
         }
-        return data;
+        return trusted;
+      }
+    ],
+    beforeDelete: [
+      // Refuse before the CMS record is removed, so it cannot outlive its Stripe resource unnoticed.
+      async ({ req, originalDoc }) => {
+        if (!storedStripeId(originalDoc)) return;
+        if (!await isAdmin(req)) {
+          throw new Error(`[plugin-stripe] Only CMS admins can delete records linked to a Stripe ${resource}.`);
+        }
+        await requireSecretKey();
       }
     ],
     afterDelete: [
-      async ({ doc }) => {
-        const stripeId = stripeIdOf(doc);
+      async ({ req, doc }) => {
+        const stripeId = storedStripeId(doc);
         if (!stripeId) return;
+        if (!await isAdmin(req)) {
+          console.error(`[plugin-stripe] Kept ${resource} ${stripeId} in Stripe: the delete was not made by a CMS admin.`);
+          return;
+        }
+        const stripeSecretKey = readStripeSecretKey(await runtime.getEnv());
+        if (!stripeSecretKey) {
+          console.error(MISSING_SECRET_KEY);
+          return;
+        }
         try {
-          await stripeProxy({
-            stripeSecretKey: pluginConfig.stripeSecretKey,
-            stripeMethod: `${syncConfig.stripeResourceType}.del`,
-            stripeArgs: [stripeId]
-          });
-          if (pluginConfig.logs) {
-            console.log(`[plugin-stripe] Deleted ${syncConfig.stripeResourceTypeSingular} from Stripe:`, stripeId);
+          const response = await stripeProxy(syncConfig.stripeResourceType === "customers" ? { stripeSecretKey, stripeMethod: "customers.del", stripeArgs: [stripeId] } : { stripeSecretKey, stripeMethod: `${syncConfig.stripeResourceType}.update`, stripeArgs: [stripeId, { active: false }] });
+          if (response.status !== 200) {
+            console.error(`[plugin-stripe] Failed to remove ${resource} from Stripe:`, response);
+          } else if (pluginConfig.logs) {
+            console.log(`[plugin-stripe] Removed ${resource} from Stripe:`, stripeId);
           }
         } catch (error) {
-          console.error(`[plugin-stripe] Failed to delete ${syncConfig.stripeResourceTypeSingular} from Stripe:`, error.message);
+          console.error(`[plugin-stripe] Failed to remove ${resource} from Stripe:`, error.message);
         }
       }
     ]
@@ -87,9 +130,12 @@ function createSyncHooks(pluginConfig, syncConfig) {
 }
 
 // src/runtime-hooks.ts
-import { stripeConfig } from "virtual:talisman-cms/stripe-config";
 function createStripeRuntimeHooks(syncConfig) {
-  return createSyncHooks(stripeConfig, syncConfig);
+  return createSyncHooks(stripeConfig, syncConfig, {
+    getEnv: getWorkerEnv,
+    nativeTable: nativeSchemas[syncConfig.collection] ?? null,
+    isAdmin: async (request) => !(await authorizeCmsRequest(request, "admin")).response
+  });
 }
 export {
   createStripeRuntimeHooks

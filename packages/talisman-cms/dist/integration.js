@@ -1,7 +1,11 @@
 import {
+  buildEmailVirtualModule
+} from "./chunk-ELO2IWIG.js";
+import {
   getPluginUiLibraryMetadata,
   resolveFieldDefinitions
-} from "./chunk-JCYUX5UW.js";
+} from "./chunk-Q2KF5FAP.js";
+import "./chunk-XG3TKNL6.js";
 import {
   registerAuthAdapter
 } from "./chunk-UKQJWUX7.js";
@@ -170,6 +174,7 @@ function talismanCms(options) {
   if (finalOptions.auth && !finalOptions.auth.__talismanAuthRuntime) {
     throw new Error("[talisman-cms] Auth adapters must provide __talismanAuthRuntime so the Worker can load them.");
   }
+  const emailVirtualModule = buildEmailVirtualModule(finalOptions.email);
   finalOptions.collections = ensureSystemCollections(finalOptions.collections || []);
   for (const collection of finalOptions.collections) {
     if ("hooks" in collection && collection.hooks) {
@@ -324,6 +329,15 @@ function talismanCms(options) {
                   if (id === "\0virtual:talisman-cms/auth") {
                     return buildAuthVirtualModule(finalOptions?.auth, authAdapterKey, runtimeConfigPath);
                   }
+                }
+              },
+              {
+                name: "vite-plugin-talisman-cms-email",
+                resolveId(id) {
+                  if (id === "virtual:talisman-cms/email") return "\0virtual:talisman-cms/email";
+                },
+                load(id) {
+                  if (id === "\0virtual:talisman-cms/email") return emailVirtualModule;
                 }
               },
               {

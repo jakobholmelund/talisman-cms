@@ -1,44 +1,78 @@
 import {
   CUSTOMER_SESSION_COOKIE,
   findCustomerSession
-} from "../chunk-OM7CZNWS.js";
+} from "../chunk-2S5ZQZIQ.js";
 import {
   bindCommerceApi
-} from "../chunk-65BIYSUK.js";
+} from "../chunk-LKTKY5Y7.js";
 import "../chunk-K2FMPEG6.js";
 import "../chunk-5JBBAHBQ.js";
 import {
-  ensureCartSession
+  ensureCartSession,
+  readCartSessionToken
 } from "../chunk-MDTTSWBR.js";
 import "../chunk-AGAY2N6E.js";
 import "../chunk-4DBNSZO2.js";
 import "../chunk-6RT3KMIV.js";
 
 // src/routes/ecommerce-cart.ts
+function publicCart(cart) {
+  return { id: cart?.id ?? null, items: cart?.items ?? [], locked: Boolean(cart?.checkoutSessionId) };
+}
+async function currentCart(api, sessionToken, customerId) {
+  return (customerId && sessionToken ? await api.carts.claim(sessionToken, customerId) : null) ?? await api.carts.find(sessionToken, customerId);
+}
+var MAX_CART_BODY_BYTES = 64 * 1024;
+async function readCartItems(request) {
+  const tooLarge = () => Response.json({ error: "Basket request is too large" }, { status: 413 });
+  if (Number(request.headers.get("content-length") || 0) > MAX_CART_BODY_BYTES) return tooLarge();
+  const reader = request.body?.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  let size = 0;
+  while (reader) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    size += chunk.value.byteLength;
+    if (size > MAX_CART_BODY_BYTES) {
+      await reader.cancel();
+      return tooLarge();
+    }
+    text += decoder.decode(chunk.value, { stream: true });
+  }
+  let items;
+  try {
+    items = JSON.parse(text + decoder.decode())?.items;
+  } catch {
+    return Response.json({ error: "Cart request must be JSON" }, { status: 400 });
+  }
+  return Array.isArray(items) ? items : Response.json({ error: "Cart items must be an array" }, { status: 400 });
+}
 var ALL = async ({ request, cookies }) => {
-  const sessionToken = ensureCartSession(cookies, new URL(request.url).protocol === "https:");
   try {
     const { env } = await import("cloudflare:workers");
     const api = bindCommerceApi({ env });
     const customer = await findCustomerSession(env, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
     if (request.method === "GET") {
-      const cart = await api.carts.getOrCreate(sessionToken, customer?.id);
-      return new Response(JSON.stringify(cart), {
-        status: 200,
-        headers: { "Content-Type": "application/json" }
-      });
+      const cart = await currentCart(api, readCartSessionToken(cookies), customer?.id);
+      return Response.json(publicCart(cart), { headers: { "Cache-Control": "no-store" } });
     }
     if (request.method === "POST") {
       if (request.headers.get("origin") !== new URL(request.url).origin) {
         return Response.json({ error: "Same-origin request required" }, { status: 403 });
       }
-      const body = await request.json();
+      const items = await readCartItems(request);
+      if (items instanceof Response) return items;
+      if (!items.length && !await currentCart(api, readCartSessionToken(cookies), customer?.id)) {
+        return Response.json(publicCart(null));
+      }
+      const sessionToken = ensureCartSession(cookies, new URL(request.url).protocol === "https:");
       const cart = await api.carts.getOrCreate(sessionToken, customer?.id);
       if (!cart) {
         return new Response(JSON.stringify({ error: "Failed to find or create cart" }), { status: 500 });
       }
-      const updated = await api.carts.updateItems(cart.id, body.items);
-      return new Response(JSON.stringify(updated), {
+      const updated = await api.carts.updateItems(cart.id, items);
+      return new Response(JSON.stringify(publicCart(updated)), {
         status: 200,
         headers: { "Content-Type": "application/json" }
       });

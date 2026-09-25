@@ -8,6 +8,8 @@ var stripeProxy = async (args) => {
   const stripe = new Stripe(stripeSecretKey, {
     apiVersion: "2022-08-01",
     // Target recent version per docs, or user can override
+    // fetch works in Workers and Node alike
+    httpClient: Stripe.createFetchHttpClient(),
     appInfo: {
       name: "Talisman CMS Stripe Plugin",
       version: "0.0.1"

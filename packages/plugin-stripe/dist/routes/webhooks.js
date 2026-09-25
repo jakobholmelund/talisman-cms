@@ -1,3 +1,9 @@
+import {
+  MISSING_WEBHOOK_SECRET,
+  getWorkerEnv,
+  readStripeWebhookSecret
+} from "../chunk-W7JZMBL7.js";
+
 // src/routes/webhooks.ts
 import Stripe from "stripe";
 import { stripeConfig } from "virtual:talisman-cms/stripe-config";
@@ -9,10 +15,12 @@ var POST = async ({ request }) => {
       headers: { "Content-Type": "application/json" }
     });
   }
-  const { stripeSecretKey, stripeWebhooksEndpointSecret, webhooks, logs } = config;
-  if (!stripeWebhooksEndpointSecret) {
-    return new Response(JSON.stringify({ error: "Missing stripeWebhooksEndpointSecret configuration" }), {
-      status: 400,
+  const { webhooks, logs } = config;
+  const webhookSecret = readStripeWebhookSecret(await getWorkerEnv());
+  if (!webhookSecret) {
+    console.error(MISSING_WEBHOOK_SECRET);
+    return new Response(JSON.stringify({ error: "Stripe webhook secret is not configured" }), {
+      status: 503,
       headers: { "Content-Type": "application/json" }
     });
   }
@@ -24,15 +32,12 @@ var POST = async ({ request }) => {
     });
   }
   const rawBody = await request.text();
-  const stripe = new Stripe(stripeSecretKey, {
-    apiVersion: "2022-08-01"
-  });
   let event;
   try {
-    event = await stripe.webhooks.constructEventAsync(
+    event = await Stripe.webhooks.constructEventAsync(
       rawBody,
       signature,
-      stripeWebhooksEndpointSecret
+      webhookSecret
     );
   } catch (err) {
     if (logs) console.error(`\u26A0\uFE0F Webhook signature verification failed: ${err.message}`);

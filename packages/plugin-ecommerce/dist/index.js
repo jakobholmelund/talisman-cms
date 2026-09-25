@@ -7,7 +7,7 @@ import {
 import {
   bindCommerceApi,
   reconcileCommerce
-} from "./chunk-65BIYSUK.js";
+} from "./chunk-LKTKY5Y7.js";
 import "./chunk-K2FMPEG6.js";
 import "./chunk-5JBBAHBQ.js";
 import "./chunk-AGAY2N6E.js";
@@ -422,7 +422,7 @@ var ecommercePlugin = (config) => {
         collections.push({
           name: "Shopper Accounts",
           slug: "_ecommerce_customer_accounts",
-          description: "Accounts created after confirmed shopper payments",
+          description: "Shopper accounts from email sign-in or a confirmed payment. A verified shopper shares the CMS user for that email, shown in Users with the customer role.",
           adminSection: "commerce",
           readOnly: true,
           fields: [

@@ -1,11 +1,16 @@
 import {
   stripeProxy
-} from "../chunk-Q4AUFOYH.js";
+} from "../chunk-3PUM3JYR.js";
+import {
+  MISSING_SECRET_KEY,
+  getWorkerEnv,
+  readStripeSecretKey
+} from "../chunk-W7JZMBL7.js";
 
 // src/routes/rest.ts
 import { authorizeCmsRequest } from "talisman-cms/auth/guard";
 import { stripeConfig } from "virtual:talisman-cms/stripe-config";
-var POST = async ({ request, locals }) => {
+var POST = async ({ request }) => {
   const authorization = await authorizeCmsRequest(request, "admin");
   if (authorization.response) return authorization.response;
   const config = stripeConfig;
@@ -33,7 +38,11 @@ var POST = async ({ request, locals }) => {
     if (typeof stripeMethod !== "string" || !config.restMethods?.includes(stripeMethod)) {
       return Response.json({ error: "Stripe method is not allowed" }, { status: 403 });
     }
-    const { stripeSecretKey } = config;
+    const stripeSecretKey = readStripeSecretKey(await getWorkerEnv());
+    if (!stripeSecretKey) {
+      console.error(MISSING_SECRET_KEY);
+      return Response.json({ error: MISSING_SECRET_KEY }, { status: 503 });
+    }
     const result = await stripeProxy({
       stripeSecretKey,
       stripeMethod,

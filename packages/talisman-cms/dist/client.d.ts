@@ -41,7 +41,7 @@ declare function getClient(env: TalismanEnv, ctx?: CacheContext): {
             name: string;
             slug: string;
             description: string | null;
-            data: string;
+            data: Record<string, any>;
             createdAt: Date;
             updatedAt: Date;
         }>;
