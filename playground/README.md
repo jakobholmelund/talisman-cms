@@ -1,46 +1,31 @@
-# Astro Starter Kit: Basics
+# Talisman CMS playground
+
+A local Astro site that runs Talisman CMS from this repository's source with every first-party plugin: ecommerce, Stripe sync, analytics, daisyUI and Starwind. Use it to develop the packages and as a worked example. It is not a production template: `wrangler.toml` uses placeholder D1 and KV IDs.
+
+## Run it
+
+From the repository root:
 
 ```sh
-pnpm create astro@latest -- --template basics
+pnpm install
+cp playground/.dev.vars.example playground/.dev.vars   # then fill in both values
+pnpm --filter talisman-cms db:migrate:local             # applies packages/talisman-cms/drizzle to the local D1
+pnpm dev                                                # astro dev for the playground
 ```
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+Open `http://localhost:4321/admin`, enter `TALISMAN_AUTH_SETUP_TOKEN` from `.dev.vars`, and create the first admin. `pnpm --filter talisman-cms db:seed:ecommerce:local` adds demo products.
 
-## 🚀 Project Structure
+## What to look at
 
-Inside of your Astro project, you'll see the following folders and files:
+| Path | Shows |
+| --- | --- |
+| `astro.config.mjs` | The integration with collections, globals, blocks and all plugins. |
+| `src/pages/[slug].astro` | Page-builder blocks rendered with `talisman-cms/render/BlocksRenderer.astro`. |
+| `src/pages/blog/[slug].astro` | Rich text rendered with `renderRichText` from `talisman-cms/richtext`. |
+| `src/pages/shop`, `cart.astro`, `checkout.astro` | Storefront pages on `@talisman-cms/plugin-ecommerce`. Checkout stays off unless `TALISMAN_COMMERCE_CHECKOUT_ENABLED=true`. |
+| `src/lib/commerce.ts` | Cart helpers; the basket token comes from the plugin's HttpOnly cookie helper. |
+| `src/live.config.ts` | Live content collections through `talismanLiveLoader`. |
 
-```text
-/
-├── public/
-│   └── favicon.svg
-├── src
-│   ├── assets
-│   │   └── astro.svg
-│   ├── components
-│   │   └── Welcome.astro
-│   ├── layouts
-│   │   └── Layout.astro
-│   └── pages
-│       └── index.astro
-└── package.json
-```
+## Rendering CMS content safely
 
-To learn more about the folder structure of an Astro project, refer to [our guide on project structure](https://docs.astro.build/en/basics/project-structure/).
-
-## 🧞 Commands
-
-All commands are run from the root of the project, from a terminal:
-
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `pnpm install`             | Installs dependencies                            |
-| `pnpm dev`             | Starts local dev server at `localhost:4321`      |
-| `pnpm build`           | Build your production site to `./dist/`          |
-| `pnpm preview`         | Preview your build locally, before deploying     |
-| `pnpm astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `pnpm astro -- --help` | Get help using the Astro CLI                     |
-
-## 👀 Want to learn more?
-
-Feel free to check [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+Editors control everything stored in the CMS. Render `richtext` fields with `renderRichText()`, which escapes all text, keeps only the editor's own markup and drops unsafe links. Never pass a stored value to `set:html` yourself. The config also enables Astro's `security.csp`, so a built site blocks injected inline scripts as a second line of defence (`astro dev` does not apply the policy). Keep it on in sites built from this example.

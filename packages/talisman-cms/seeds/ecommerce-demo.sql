@@ -79,8 +79,8 @@ VALUES
     (SELECT `id` FROM `galaxy_collections` WHERE `slug` = 'posts'),
     'first-storefront-pass',
     'published',
-    '{"title":"Building the First Storefront Pass","author":"demo_author_galaxy_team","content":"<p>The ecommerce plugin now ships with a seeded storefront, normalized variants, and stock-aware checkout hooks.</p><p>Use this demo post to verify standard collection entries render next to the native ecommerce catalog.</p>","views":128,"isPublished":true,"publishedAt":"2026-03-14T00:00:00.000Z"}',
-    '{"title":"Building the First Storefront Pass","author":"demo_author_galaxy_team","content":"<p>The ecommerce plugin now ships with a seeded storefront, normalized variants, and stock-aware checkout hooks.</p><p>Use this demo post to verify standard collection entries render next to the native ecommerce catalog.</p>","views":128,"isPublished":true,"publishedAt":"2026-03-14T00:00:00.000Z"}',
+    '{"title":"Building the First Storefront Pass","author":"demo_author_galaxy_team","content":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"The ecommerce plugin now ships with a seeded storefront, normalized variants, and stock-aware checkout hooks."}]},{"type":"paragraph","content":[{"type":"text","text":"Use this demo post to verify standard collection entries render next to the native ecommerce catalog."}]}]},"views":128,"isPublished":true,"publishedAt":"2026-03-14T00:00:00.000Z"}',
+    '{"title":"Building the First Storefront Pass","author":"demo_author_galaxy_team","content":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"The ecommerce plugin now ships with a seeded storefront, normalized variants, and stock-aware checkout hooks."}]},{"type":"paragraph","content":[{"type":"text","text":"Use this demo post to verify standard collection entries render next to the native ecommerce catalog."}]}]},"views":128,"isPublished":true,"publishedAt":"2026-03-14T00:00:00.000Z"}',
     (strftime('%s','now') * 1000),
     (strftime('%s','now') * 1000),
     (strftime('%s','now') * 1000)
@@ -90,8 +90,8 @@ VALUES
     (SELECT `id` FROM `galaxy_collections` WHERE `slug` = 'posts'),
     'local-d1-seeding-notes',
     'published',
-    '{"title":"Local D1 Seeding Notes","author":"demo_author_jakob","content":"<p>Local development uses the D1 database bound in Wrangler, so migrations and seeds need to be applied there before the playground can read them.</p><p>If the page looks empty after reseeding, restart the dev server so the worker reloads the latest config and bindings.</p>","views":87,"isPublished":true,"publishedAt":"2026-03-13T00:00:00.000Z"}',
-    '{"title":"Local D1 Seeding Notes","author":"demo_author_jakob","content":"<p>Local development uses the D1 database bound in Wrangler, so migrations and seeds need to be applied there before the playground can read them.</p><p>If the page looks empty after reseeding, restart the dev server so the worker reloads the latest config and bindings.</p>","views":87,"isPublished":true,"publishedAt":"2026-03-13T00:00:00.000Z"}',
+    '{"title":"Local D1 Seeding Notes","author":"demo_author_jakob","content":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Local development uses the D1 database bound in Wrangler, so migrations and seeds need to be applied there before the playground can read them."}]},{"type":"paragraph","content":[{"type":"text","text":"If the page looks empty after reseeding, restart the dev server so the worker reloads the latest config and bindings."}]}]},"views":87,"isPublished":true,"publishedAt":"2026-03-13T00:00:00.000Z"}',
+    '{"title":"Local D1 Seeding Notes","author":"demo_author_jakob","content":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Local development uses the D1 database bound in Wrangler, so migrations and seeds need to be applied there before the playground can read them."}]},{"type":"paragraph","content":[{"type":"text","text":"If the page looks empty after reseeding, restart the dev server so the worker reloads the latest config and bindings."}]}]},"views":87,"isPublished":true,"publishedAt":"2026-03-13T00:00:00.000Z"}',
     (strftime('%s','now') * 1000),
     (strftime('%s','now') * 1000),
     (strftime('%s','now') * 1000)

@@ -1,6 +1,7 @@
 ---
 import Layout from '../../layouts/Layout.astro';
 import { getClient } from 'talisman-cms/client';
+import { renderRichText } from 'talisman-cms/richtext';
 import { env as cfEnv } from 'cloudflare:workers';
 
 const env = { DB: (cfEnv as any).DB, KV: (cfEnv as any).KV };
@@ -14,9 +15,9 @@ if (!post) return Astro.redirect('/blog');
 const authorName = post.data.author?.data?.name || 'Talisman Team';
 const date = post.data.publishedAt ? new Date(post.data.publishedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Recently';
 
-// For RichText rendering, Talisman CMS rich text currently outputs HTML or JSON.
-// Assuming it's HTML string for this showcase, otherwise we render a fallback.
-const contentHtml = typeof post.data.content === 'string' ? post.data.content : JSON.stringify(post.data.content);
+// Rich text is stored as Tiptap JSON and editors control it, so never pass it to set:html as is.
+// renderRichText escapes all text and keeps only the editor's own markup and safe links.
+const contentHtml = renderRichText(post.data.content, { headingOffset: 1 });
 ---
 
 <Layout title={`${post.data.title} | Blog`}>

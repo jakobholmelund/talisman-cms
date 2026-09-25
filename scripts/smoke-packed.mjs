@@ -1,12 +1,13 @@
 // Installs the packed packages into throwaway Astro projects outside the workspace, as a consumer
 // would, and checks that they import, dedupe React, build, and serve a working /admin in
-// `astro dev`. The workspace hides these failures: it links core as source and hoists shared deps.
+// `astro dev`; the projects with plugins also serve plugin-stripe's signed webhook route. The
+// workspace hides these failures: it links core as source and hoists shared deps.
 // Needs built dist/ folders (release:verify builds first) and the npm registry. npm uses its
 // default cache; point npm_config_cache at a writable folder if ~/.npm is not writable. The temp
 // projects are kept when a check fails, or always with TALISMAN_SMOKE_KEEP=1.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { copyFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -62,7 +63,11 @@ const coreConfig = readmeBlock('Basic Setup', 'ts').replace('cloudflare()', noIn
 assert.ok(coreConfig.includes(noInspector), 'README: Basic Setup no longer uses `adapter: cloudflare()`');
 const wranglerToml = readmeBlock('Worker bindings', 'toml').replace(/<[^>]+>/g, 'local');
 
-const fullConfig = `import { defineConfig } from 'astro/config';
+// The full project also turns on plugin-stripe's runtime hooks (a synced collection) and its opt-in
+// webhook route with a handler module, as the plugin README shows. Stripe secrets are Worker
+// settings, never plugin options.
+const fullConfig = `import { fileURLToPath } from 'node:url';
+import { defineConfig } from 'astro/config';
 import talismanCms from 'talisman-cms';
 import { LocalAuthAdapter } from 'talisman-cms/auth/local';
 import { analyticsPlugin } from '@talisman-cms/plugin-analytics';
@@ -78,16 +83,35 @@ export default defineConfig({
   integrations: [
     talismanCms({
       auth: LocalAuthAdapter(),
+      collections: [
+        { name: 'Members', slug: 'members', fields: [{ name: 'email', label: 'Email', type: 'text', required: true }] },
+      ],
       plugins: [
         analyticsPlugin(),
         ecommercePlugin(),
-        stripePlugin({ stripeSecretKey: 'sk_test_smoke' }),
+        stripePlugin({
+          sync: [{
+            collection: 'members',
+            stripeResourceType: 'customers',
+            stripeResourceTypeSingular: 'customer',
+            fields: [{ fieldPath: 'email', stripeProperty: 'email' }],
+          }],
+          webhooksModule: {
+            moduleId: fileURLToPath(new URL('./src/stripe-webhooks.ts', import.meta.url)),
+            exportName: 'stripeWebhooks',
+          },
+        }),
         daisyUiPlugin(),
         starwindUiPlugin(),
       ],
     }),
   ],
 });
+`;
+const stripeWebhooksModule = `export const stripeWebhooks = {
+  'smoke.ok': async () => {},
+  'smoke.fail': async () => { throw new Error('smoke handler ran'); },
+};
 `;
 
 const astroRange = JSON.parse(readFileSync(join(root, 'playground/package.json'), 'utf8')).dependencies.astro;
@@ -237,6 +261,41 @@ async function crawlAdminModules(url) {
   return problems;
 }
 
+// POSTs to plugin-stripe's public webhook route: unsigned and forged requests are refused, a
+// signed event reaches the project's handler module, and a throwing handler asks Stripe to retry.
+async function checkStripeWebhook(url, secret) {
+  const endpoint = new URL('api/stripe/webhooks', url);
+  const event = (type) => JSON.stringify({ id: `evt_smoke_${type.replace('.', '_')}`, object: 'event', type, data: { object: {} } });
+  const sign = (payload) => {
+    const timestamp = Math.floor(Date.now() / 1000);
+    return `t=${timestamp},v1=${createHmac('sha256', secret).update(`${timestamp}.${payload}`).digest('hex')}`;
+  };
+  const post = (payload, signature) => fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(signature ? { 'Stripe-Signature': signature } : {}) },
+    body: payload,
+  });
+  const expectResponse = async (label, response, status, check) => {
+    const text = await response.text();
+    assert.equal(response.status, status, `${label}: expected HTTP ${status}, got ${response.status} ${text.slice(0, 300)}`);
+    check?.(JSON.parse(text));
+  };
+
+  // The first request compiles the route; a cold dev server may answer 5xx while it reloads.
+  let unsigned;
+  for (const started = Date.now(); Date.now() - started < 60_000;) {
+    unsigned = await post(event('smoke.ok'));
+    if (unsigned.status < 500 || unsigned.status === 503) break;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 2000));
+  }
+  await expectResponse('unsigned event', unsigned, 400);
+  await expectResponse('event signed for another payload', await post(event('smoke.ok'), sign(event('smoke.other'))), 400);
+  await expectResponse('signed event', await post(event('smoke.ok'), sign(event('smoke.ok'))), 200,
+    (body) => assert.deepEqual(body, { received: true }));
+  await expectResponse('signed event whose handler throws', await post(event('smoke.fail'), sign(event('smoke.fail'))), 500,
+    (body) => assert.equal(body.message, 'smoke handler ran'));
+}
+
 async function withDevServer(dir, log, port, check) {
   const out = createWriteStream(log, { flags: 'a' });
   // Astro moves `astro dev` into the background when it detects a coding agent; --ignore-lock keeps
@@ -318,8 +377,14 @@ async function smokeProject(project, port, packages, browserReady) {
   writeFileSync(join(dir, 'package.json'), `${JSON.stringify({ name: `talisman-smoke-${project.name}`, private: true, type: 'module', dependencies }, null, 2)}\n`);
   writeFileSync(join(dir, 'astro.config.mjs'), project.plugins ? fullConfig : coreConfig);
   writeFileSync(join(dir, 'wrangler.toml'), wranglerToml);
-  writeFileSync(join(dir, '.dev.vars'), `TALISMAN_AUTH_SECRET=${randomBytes(32).toString('hex')}\nTALISMAN_AUTH_SETUP_TOKEN=${randomBytes(32).toString('hex')}\n`);
+  const stripeWebhookSecret = `whsec_${randomBytes(24).toString('hex')}`;
+  writeFileSync(join(dir, '.dev.vars'), [
+    `TALISMAN_AUTH_SECRET=${randomBytes(32).toString('hex')}`,
+    `TALISMAN_AUTH_SETUP_TOKEN=${randomBytes(32).toString('hex')}`,
+    ...(project.plugins ? [`TALISMAN_STRIPE_WEBHOOK_SECRET=${stripeWebhookSecret}`] : []),
+  ].join('\n') + '\n');
   writeFileSync(join(dir, 'src', 'pages', 'index.astro'), '<h1>Talisman smoke test</h1>\n');
+  if (project.plugins) writeFileSync(join(dir, 'src', 'stripe-webhooks.ts'), stripeWebhooksModule);
   for (const file of ['import-entries.mjs', 'stub-virtual-modules.mjs']) copyFileSync(join(fixtures, file), join(dir, file));
 
   // Keep the pinned React when the README install line also names react or react-dom; a bare
@@ -354,6 +419,16 @@ async function smokeProject(project, port, packages, browserReady) {
     const browser = await browserReady;
     await withDevServer(dir, log, port, async (url, serverOutput) => {
       const problems = browser ? await loadAdminInBrowser(browser, url) : await crawlAdminModules(url);
+      if (project.plugins) {
+        await step('astro dev: plugin-stripe webhook route checks signatures and runs handlers', async () => {
+          try {
+            await checkStripeWebhook(url, stripeWebhookSecret);
+          } catch (error) {
+            error.message += `\n--- astro dev output ---\n${lastLines(serverOutput(), 20)}`;
+            throw error;
+          }
+        });
+      }
       assert.ok(!problems.length, `${[...new Set(problems)].join('\n')}\n--- astro dev output ---\n${lastLines(serverOutput(), 20)}`);
     });
   });

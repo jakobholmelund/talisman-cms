@@ -1,5 +1,6 @@
 ---
 import { getCollectionRepeaterViewModel } from 'talisman-cms/helpers';
+import { richTextToPlainText } from 'talisman-cms/richtext';
 import { getContainerClass, getSectionClass, getTheme } from './shared';
 
 const { rendererContext = {}, items, index = 0 } = Astro.props;
@@ -36,9 +37,7 @@ const isListLayout = repeater.layout === 'list';
           const publishDate = post.data.publishedAt
             ? new Date(post.data.publishedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
             : 'Recently';
-          const contentPreview = typeof post.data.content === 'string'
-            ? post.data.content.replace(/<[^>]+>/g, '').slice(0, 140)
-            : '';
+          const contentPreview = richTextToPlainText(post.data.content).slice(0, 140);
 
           return (
             <a

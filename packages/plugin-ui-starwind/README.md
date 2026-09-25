@@ -1,19 +1,24 @@
 # @talisman-cms/plugin-ui-starwind
 
-Manifest-first Starwind library adapters for Talisman CMS.
+Four page-builder blocks and components for Talisman CMS, registered as the `starwind` UI library. They are Talisman's own Astro components written with Tailwind utility classes; they do not use `@starwind/ui` components. The package also keeps a snapshot of the upstream Starwind UI catalog, so future adapters can be tracked against it. No upstream component is mapped yet.
 
 ## What It Adds
 
-This plugin registers a `starwind` UI library in Talisman and ships:
+`starwindUiPlugin()` (plugin name `@talisman-cms/plugin-ui-starwind`) registers one UI library and nothing else: no global, admin screen, endpoint or page.
 
-- A full checked-in upstream Starwind component catalog snapshot
-- Generated library registration from `catalog.manifest.json`
-- Four Talisman-specific composed adapters that preserve the current runtime behavior:
-  `starwindMetric`, `starwindTextLink`, `starwindSplitFeature`, and `starwindMetricsBand`
+| Kind | Name | Fields |
+| --- | --- | --- |
+| UI library | `starwind` ("Starwind UI") | |
+| Block | `starwindSplitFeature` ("Split Feature") | `eyebrow`, `title`, `description`, `mediaUrl`; slots `links` (`starwindTextLink`) and `metrics` (`starwindMetric`) |
+| Block | `starwindMetricsBand` ("Metrics Band") | `title`, `description`; slot `items` (`starwindMetric`) |
+| Component | `starwindMetric` ("Metric Stat") | `value`, `label`, `summary`; preset `starwind-growth-metric` |
+| Component | `starwindTextLink` ("Text Link") | `label`, `href` |
+
+Add the block slugs to a `blocks` field's `blocksFromPlugins`, and render entries with `talisman-cms/render/BlocksRenderer.astro`, which finds the plugin's renderers in `@talisman-cms/plugin-ui-starwind/renderers/*`. The renderers use fixed slate and cyan Tailwind colours, so the site's Tailwind build must scan them; with Tailwind v4, add an `@source` line that points at `node_modules/@talisman-cms/plugin-ui-starwind/src/renderers`. Links pass through `safeHref`, which is also exported: relative, `http(s)`, `mailto` and `tel` URLs are kept and anything else becomes `#`.
 
 ## Setup
 
-Install the plugin and make sure the site has the Starwind styles it needs.
+Install the plugin. The renderers need only Tailwind CSS.
 
 ```bash
 pnpm add @talisman-cms/plugin-ui-starwind
@@ -28,7 +33,7 @@ talismanCms({
 });
 ```
 
-The checked-in manifest tracks these requirements:
+The checked-in manifest lists two optional requirements for future upstream adapters; the current components need neither:
 
 - Install `@starwind/ui` when you want the upstream package available
 - Import the Starwind CSS layer used by your site
@@ -50,7 +55,7 @@ Coverage is audited against the upstream snapshot.
 - Unsupported: 46
 - Custom Talisman items: 4
 
-This is still full catalog coverage because every official Starwind item is explicitly classified in the manifest. The plugin keeps its current runtime behavior through the custom composed adapters until direct upstream mappings are added.
+Every upstream item is classified in the manifest, but none is implemented: the 46 upstream items are `unsupported`, and the plugin's four items are the `custom` Talisman components above.
 
 ## Known Limitations
 

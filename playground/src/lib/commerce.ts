@@ -10,6 +10,7 @@ import {
   variants as variantDefinitions,
 } from '@talisman-cms/plugin-ecommerce/schema';
 import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
+import { ensureCartSession, readCartSessionToken, type CookieJar } from '@talisman-cms/plugin-ecommerce/cookies';
 import { getPrimaryProductImage } from './product-media';
 
 type RuntimeEnv = TalismanEnv & Record<string, unknown>;
@@ -52,13 +53,13 @@ export function createCommerceApi(env: RuntimeEnv) {
   });
 }
 
-export function getCartSessionToken(cookies: any, options?: { create?: boolean }) {
-  let sessionToken = cookies.get('talisman-cart')?.value ?? null;
-  if (!sessionToken && options?.create) {
-    sessionToken = `anon_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    cookies.set('talisman-cart', sessionToken, { path: '/', sameSite: 'lax' });
-  }
-  return sessionToken;
+/**
+ * The basket token gates cart and order access, so it comes from the plugin's helper: a random UUID
+ * in an HttpOnly cookie (Secure on https) that page scripts cannot read.
+ */
+export function getCartSessionToken(cookies: CookieJar, options?: { create?: boolean; secure?: boolean }) {
+  if (options?.create) return ensureCartSession(cookies, options.secure ?? true);
+  return readCartSessionToken(cookies) ?? null;
 }
 
 export function formatMoney(cents: number, currency = 'usd') {

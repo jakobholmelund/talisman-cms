@@ -32,7 +32,8 @@
     "src",
     "ui",
     "drizzle",
-    "seeds"
+    "seeds",
+    "NOTICE"
   ],
   "exports": {
     ".": {
@@ -72,6 +73,10 @@
       "import": "./dist/render.js"
     },
     "./render/*": "./src/render/*",
+    "./richtext": {
+      "types": "./dist/richtext.d.ts",
+      "import": "./dist/richtext.js"
+    },
     "./loader": {
       "types": "./dist/loader.d.ts",
       "import": "./dist/loader.js"
@@ -114,7 +119,6 @@
     "test": "pnpm run build:ts && node --experimental-sqlite --test ./test/*.test.mjs",
     "dev:ts": "tsup --watch",
     "dev": "pnpm run build:ts && pnpm run dev:ts",
-    "db:generate": "drizzle-kit generate",
     "db:migrate:list:local": "pnpm exec wrangler d1 migrations list DB --local --config ../../playground/wrangler.toml",
     "db:migrate:local": "pnpm exec wrangler d1 migrations apply DB --local --config ../../playground/wrangler.toml",
     "db:seed:ecommerce:local": "pnpm exec wrangler d1 execute DB --local --config ../../playground/wrangler.toml --file ./seeds/ecommerce-demo.sql",

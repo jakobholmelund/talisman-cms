@@ -15,7 +15,8 @@ Talisman CMS integrates directly with Astro. Configure the backend in your `astr
 
 ### 🛠️ Talisman CMS Dev Toolbar App
 Astro 7's Dev Toolbar is extended natively by Talisman CMS during development:
-- **1-Click Admin Launch**: Jump straight into `/admin` or the Pages collection without memorizing endpoints.
+- **1-Click Admin Launch**: Open the admin at your configured `adminPath`, or jump to any configured collection or global.
+- **Config at a Glance**: See the collections, globals and UI libraries from your config, and whether the `DB` binding answers the CMS health check.
 - **Route Context**: See the path of the page you're viewing next to the admin shortcuts.
 - **Layout Block Inspector**: Outline every rendered block marked with `data-talisman-block` and label it with its block type and position.
 
@@ -40,13 +41,13 @@ Use `getLiveCollection()` in server-rendered pages. For `defineCollection()` and
 E-commerce interactions (`addToCart`, `getCart`, `clearCart`, `checkout`) are exposed as type-safe Astro actions via `@talisman-cms/plugin-ecommerce/actions`. Eliminate manual `fetch()` endpoints and enjoy end-to-end type safety, Zod input validation, and automatic CSRF protection.
 
 ### 📝 Next-Gen Drizzle Native Schemas
-Native Schema Mapping lets you attach Drizzle ORM tables to the CMS UI while retaining control of your schema and migrations. The current runtime targets Cloudflare D1.
+Native Schema Mapping lets you attach your own Drizzle ORM tables to the CMS UI. You keep writing the migrations for those tables; the CMS ships its own numbered migrations, and the [migrations guide](packages/talisman-cms/README.md#database-migrations) shows how to apply both to one D1 database. The current runtime targets Cloudflare D1.
 
 ### 🧩 Polymorphic Layouts & Complex Fields
 Talisman provides a comprehensive set of highly customizable fields designed for demanding modern marketing and editorial pages:
 - **Core Types**: `text`, `textarea`, `number`, `boolean`, `date`
 - **Relationships**: Create 1:1 and 1:N relations across internal collections and mapped Drizzle tables.
-- **Rich Text**: Fully customizable WYSIWYG editing powered by robust **Tiptap** integrations.
+- **Rich Text**: Fully customizable WYSIWYG editing powered by robust **Tiptap** integrations, rendered safely on the site with `renderRichText` from `talisman-cms/richtext`.
 - **Repeater Arrays**: Build flexible, repeatable list structures (`array` fields).
 - **Polymorphic Blocks**: Create dynamic page layouts by composing arbitrary `blocks` like Hero Sections, Feature Grids, Testimonials, and plugin-provided blocks. Block fields can also attach shared presentation settings such as `className`, theme hooks, or UI-kit specific variants.
 
@@ -137,4 +138,10 @@ This repeater helper follows the same practical pattern used in systems like Pay
 
 ---
 
-*Open source under Apache-2.0.* 🚀
+## Security
+
+Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.md), not in public issues.
+
+---
+
+*Open source under Apache-2.0.* Third-party notices are in [NOTICE](NOTICE). 🚀

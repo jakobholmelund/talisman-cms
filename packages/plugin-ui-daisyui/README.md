@@ -4,11 +4,43 @@ Manifest-first daisyUI library adapters for Talisman CMS.
 
 ## What It Adds
 
-This plugin registers a `daisyui` UI library in Talisman and ships:
+`daisyUiPlugin()` (plugin name `@talisman-cms/plugin-ui-daisyui`) registers the following. Paths use the default `adminPath` of `/admin`; the admin screen and endpoints move with a custom `adminPath`.
 
-- Source-mapped adapters for every upstream daisyUI catalog item in the checked-in manifest
-- One Talisman-specific composed block, `daisyFeatureGrid`, built from the upstream Card adapter
-- Renderer wiring and preset exports generated from `catalog.manifest.json`
+| Kind | Name or path | Who can use it |
+| --- | --- | --- |
+| UI library | `daisyui` ("daisyUI"): 64 component adapters and the blocks `daisyHeroBanner` and `daisyFeatureGrid`, listed under [Mapping](#mapping) | Editors pick them in `blocks` fields that list them in `blocksFromPlugins`, or in component slots |
+| Global | `daisyui-theme` ("DaisyUI Theme Settings"): base light and dark theme names, colour overrides and radius, border and animation values | Any CMS user, in **Globals** or the Theme Builder |
+| Admin screen | **DaisyUI Theme** (the Theme Builder) at `/admin/extensions/daisyui-theme` | Any CMS user |
+| Endpoint | `GET /admin/api/daisyui/theme` returns the saved theme settings | Any CMS user; `401` without a session |
+| Endpoint | `POST /admin/api/daisyui/theme` saves them. It takes a JSON body only and rejects values outside the allowlist below with `400` | Any CMS user; `401` without a session |
+| Endpoint | `GET /admin/api/daisyui/layouts` lists the site's `src/layouts/*.astro` files for the preview | Any CMS user; `401` without a session |
+| Page | `/admin/daisyui-preview` renders the saved theme inside one of those layouts, with `Cache-Control: private, no-store` and `noindex` | Any CMS user; others are redirected to the admin sign-in. The path stays `/admin/daisyui-preview` even with a custom `adminPath` |
+
+Editors and admins can both change the theme, just as both can edit any global. The plugin adds no public route.
+
+### Theme injector
+
+The site applies the saved theme with `DaisyUiThemeInjector`. Put it in the `<head>` of each layout:
+
+```astro
+---
+import DaisyUiThemeInjector from '@talisman-cms/plugin-ui-daisyui/components/DaisyUiThemeInjector.astro';
+---
+<head>
+  <DaisyUiThemeInjector />
+</head>
+```
+
+It reads the `daisyui-theme` global through the CMS client (the `DB` and optional `KV` bindings) on each render and outputs a `<style>` element with the theme's CSS variables, plus a short inline script that sets `data-theme` from the visitor's saved choice or the OS colour scheme.
+
+The injector treats the stored theme as untrusted, because any CMS user can write the global through the Theme Builder or the core globals API. The endpoint validates values on save, and the injector validates them again on render. Theme names must match `[a-z0-9_-]`. Colours must be hex values, named colours, or `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()` or `color()` with plain arguments. Radius, border, scale and animation values must be plain CSS numbers, optionally with a unit such as `px`, `rem` or `s`. Anything else is dropped, so a stored value cannot close the `<style>` element or inject other CSS. `buildThemeCss()` and `sanitizeThemeSettings()` are exported for sites that render the theme themselves.
+
+### Other exports
+
+- `daisyUiLibrary()`: the UI library definition without the global, admin screen and routes.
+- `safeHref`, `cssUrl`, `safeCssLength`, `clampInteger`: the checks the renderers apply to block and component values.
+- `@talisman-cms/plugin-ui-daisyui/generator`: manifest types and paths for the catalog scripts.
+- Source paths for Astro and React: `renderers/*`, `components/*`, `admin/*` and `routes/*`.
 
 ## Setup
 

@@ -94,7 +94,8 @@
   "files": [
     "dist",
     "src/components",
-    "src/admin"
+    "src/admin",
+    "NOTICE"
   ],
   "scripts": {
     "build": "tsup src/index.ts src/browser.ts src/accounts.ts src/referrals.ts src/promotions.ts src/gift-cards.ts src/fulfillment.ts src/catalog.ts src/api.ts src/adapters/stripe.ts src/adapters/admin-test.ts src/schema.ts src/actions.ts src/runtime.ts src/cookies.ts src/routes/ecommerce-account.ts src/routes/ecommerce-discount.ts src/routes/ecommerce-admin-promotions.ts src/routes/ecommerce-gift-cards.ts src/routes/ecommerce-admin-gift-cards.ts src/routes/ecommerce-cart.ts src/routes/ecommerce-checkout.ts src/routes/ecommerce-admin-test-checkout.ts src/routes/ecommerce-admin-reconcile.ts src/routes/ecommerce-admin-fulfillment.ts src/routes/ecommerce-order.ts src/routes/ecommerce-webhook.ts --format esm --dts --clean --external cloudflare:workers --external astro:actions --external astro/zod --external astro",

@@ -9,7 +9,7 @@ Drop in a beautifully designed, premium React dashboard directly into your Astro
 ## Features
 
 - **Astro integration:** Admin routes, an Astro content loader, a Dev Toolbar app, and Cloudflare Worker support. Astro 7 with `@astrojs/cloudflare` v14 is covered by the release build.
-- **Built-In Dev Toolbar App:** Injected automatically into the Astro Dev Toolbar during local development with 1-click admin navigation, the current route path, and an inspector that outlines layout blocks marked with `data-talisman-block`.
+- **Built-In Dev Toolbar App:** Added to the Astro Dev Toolbar under `astro dev`. It links to the admin at the configured `adminPath` and to each configured collection and global, lists the registered UI libraries, checks the `DB` binding through the CMS health route, shows the current route path, and has an inspector that outlines layout blocks marked with `data-talisman-block`.
 - **Astro content loaders:** `talismanLiveLoader({ collection })` reads Cloudflare data at request time. Build-time `talismanLoader()` requires a `buildEntries` callback available in Node.
 - **Deep Cloudflare Integration:** Uses D1 for relational queries, R2 for Media Storage, and KV for lightning fast read-through caching.
 - **Authentication:** Local email/password accounts on D1 with admin/editor roles, Cloudflare Access sign-in (alone or for admins alongside local editors), or a custom runtime adapter. Private routes reject requests when no adapter is configured.
@@ -77,9 +77,10 @@ binding = "IMAGES"
 - `STORAGE` (R2, required for media): uploads return HTTP 503 without it.
 - `KV` (optional): read-through cache for collection, global, and `depth: 0` entry reads. Without it, reads go to D1.
 - `IMAGES` (optional): responsive WebP variants; see [Public site performance](#public-site-performance).
-- `QUEUE` (optional Queue producer): used only by `getClient(env).tasks.enqueueImageProcessing()`. The CMS does not include a queue consumer.
 - `TALISMAN_PUBLISH_WORKFLOW` (optional Workflow binding): runs publish and archive transitions. Change the name with the integration's `publishing.workflowBinding` option. Without it, transitions run in the request.
 - `EMAIL` (optional `[[send_email]]` binding): sends transactional email, such as the ecommerce plugin's shopper sign-in links. See [Email](#email).
+
+The CMS reads no other binding. It uses no Queue, so a `QUEUE` producer added for an earlier version can be removed. `@astrojs/cloudflare` may ask for a `SESSION` KV namespace for Astro's own sessions; the CMS does not use it.
 
 The Worker must use the `nodejs_compat` flag with a compatibility date of at least `2024-09-23`.
 
@@ -89,11 +90,42 @@ Talisman settings and the default Workflow binding use the `TALISMAN_` prefix. P
 
 The `galaxy_` prefix on CMS database tables, such as `galaxy_entries` and `galaxy_auth_user`, is internal and permanent. Migrations keep these names; do not rename the tables.
 
+### Settings reference
+
+Set secrets with `wrangler secret put` in production and in `.dev.vars` locally, and other settings under `[vars]`. Every `TALISMAN_` name below is also read under its old `GALAXY_` name; the `STRIPE_` and `CLOUDFLARE_ANALYTICS_` names have no other form.
+
+| Setting | Secret | Read by | Purpose |
+| --- | --- | --- | --- |
+| `TALISMAN_AUTH_SECRET` | yes | core: local and hybrid auth | Signs CMS sessions. At least 32 random characters; keep it stable across deploys. See [Secrets and first admin](#secrets-and-first-admin). |
+| `TALISMAN_AUTH_SETUP_TOKEN` | yes | core: local auth | One-time token for creating the first admin. Remove it after setup. |
+| `TALISMAN_ACCESS_TEAM_DOMAIN`, `TALISMAN_ACCESS_AUDIENCE` | no | core: Access gate, Access and hybrid auth | The Cloudflare Access team URL and application AUD tag. Set both or neither. See [Optional Cloudflare Access gate](#optional-cloudflare-access-gate). |
+| `TALISMAN_ACCESS_ADMIN_EMAILS` | no | core: Access and hybrid auth | Comma-separated admin allowlist. |
+| `TALISMAN_ACCESS_EDITOR_EMAILS` | no | core: Access auth | Optional comma-separated editor allowlist. |
+| `TALISMAN_EMAIL_PROVIDER` | no | core: email | `cloudflare`, `custom`, `console` or `none`. See [Email](#email). |
+| `TALISMAN_EMAIL_BINDING` | no | core: email | Name of the `send_email` binding when it is not `EMAIL`. |
+| `TALISMAN_EMAIL_FROM`, `TALISMAN_EMAIL_REPLY_TO` | no | core: email | Default sender and optional Reply-To. |
+| `TALISMAN_PUBLIC_ORIGIN` | no | core: email; ecommerce | The site's public origin, used to build links. |
+| `TALISMAN_COMMERCE_CHECKOUT_ENABLED` | no | ecommerce | `true` turns checkout on. Off by default. |
+| `TALISMAN_COMMERCE_STRIPE_MODE` | no | ecommerce | `test` (default) or `live`. |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | yes | ecommerce; the key also plugin-stripe | Stripe API key and the signing secret of the ecommerce webhook endpoint. |
+| `TALISMAN_COMMERCE_LOCAL_STRIPE_SECRET_KEY`, `TALISMAN_COMMERCE_LOCAL_STRIPE_WEBHOOK_SECRET` | yes | ecommerce | Test-mode fallbacks for local development, used only when the mode is `test` and the plain Stripe secrets are unset. |
+| `TALISMAN_COMMERCE_EMAIL_FROM`, `TALISMAN_COMMERCE_PUBLIC_ORIGIN` | no | ecommerce | Override `TALISMAN_EMAIL_FROM` and `TALISMAN_PUBLIC_ORIGIN` for shopper email. |
+| `TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT` | no | ecommerce | Store-wide cap on sign-in emails per 24 hours (default 200). |
+| `TALISMAN_COMMERCE_GIFT_CARDS_ENABLED` | no | ecommerce | `true` turns gift card purchases on, together with checkout. |
+| `TALISMAN_COMMERCE_GIFT_CARD_KEY` | yes | ecommerce | 64 hex characters that encrypt gift card codes. Keep it stable and backed up. |
+| `TALISMAN_COMMERCE_REFERRAL_REWARD_CENTS`, `TALISMAN_COMMERCE_REFERRAL_MIN_ORDER_CENTS` | no | ecommerce | Referral defaults; settings saved in the admin override them. |
+| `TALISMAN_STRIPE_SECRET_KEY` | yes | plugin-stripe | Optional restricted key that takes precedence over `STRIPE_SECRET_KEY`. |
+| `TALISMAN_STRIPE_WEBHOOK_SECRET` | yes | plugin-stripe | Signing secret of the `/api/stripe/webhooks` endpoint. |
+| `CLOUDFLARE_ANALYTICS_ACCOUNT_ID`, `CLOUDFLARE_ANALYTICS_SITE_TAG` | no | plugin-analytics | Web Analytics account and site. |
+| `CLOUDFLARE_ANALYTICS_API_TOKEN` | yes | plugin-analytics | API token with Account Analytics: Read. |
+
+The plugin READMEs describe their settings in full: [ecommerce](https://github.com/jakobholmelund/talisman-cms/blob/main/packages/plugin-ecommerce/README.md), [Stripe sync](https://github.com/jakobholmelund/talisman-cms/blob/main/packages/plugin-stripe/README.md) and [analytics](https://github.com/jakobholmelund/talisman-cms/blob/main/packages/plugin-analytics/README.md).
+
 ### Email
 
 The CMS sends no email itself. Plugins send transactional email through `talisman-cms/email/runtime`, which picks the provider with the `TALISMAN_EMAIL_PROVIDER` setting:
 
-- `cloudflare`: [Cloudflare Email Service](https://developers.cloudflare.com/email-service/) through a `[[send_email]]` binding named `EMAIL`, or the name in `TALISMAN_EMAIL_BINDING`. It must be a `send_email` binding; `DB`, `KV`, `QUEUE` and the other CMS binding names are refused. Email Sending needs the Workers Paid plan and a sending domain on Cloudflare DNS.
+- `cloudflare`: [Cloudflare Email Service](https://developers.cloudflare.com/email-service/) through a `[[send_email]]` binding named `EMAIL`, or the name in `TALISMAN_EMAIL_BINDING`. It must be a `send_email` binding; the names of other common bindings, such as `DB`, `KV`, `STORAGE`, `SESSION` and `QUEUE`, are refused. Email Sending needs the Workers Paid plan and a sending domain on Cloudflare DNS.
 - `custom`: the provider registered with the integration's `email` option (below).
 - `console`: prints each message, links included, to the Worker log instead of sending it. It runs only when `TALISMAN_PUBLIC_ORIGIN` is a `localhost` origin.
 - `none`: email is off.
@@ -157,7 +189,7 @@ talismanCms({
 
 ### Database migrations
 
-`migrations_dir` points at the SQL migrations shipped in the installed package, relative to `wrangler.toml`. The folder also creates the tables used by `@talisman-cms/plugin-ecommerce`, so apply all of it even if the site does not register that plugin. Apply the migrations through `0019_shared_customer_identity.sql` to the D1 database before deploying the matching Worker:
+`migrations_dir` points at the SQL migrations shipped in the installed package, relative to `wrangler.toml`. The folder holds one numbered set for the whole CMS: besides the CMS tables it creates the tables and triggers of `@talisman-cms/plugin-ecommerce`, which ships no migrations of its own, and `0019` links CMS users to ecommerce shoppers. Apply all of it, even if the site does not register that plugin. Before deploying a new version of the package, apply every migration that version ships to the D1 database:
 
 ```sh
 pnpm exec wrangler d1 migrations apply DB --local   # local development
@@ -191,7 +223,9 @@ GROUP BY lower(email)
 HAVING COUNT(*) > 1;
 ```
 
-Migration `0019` adds the session column the local and hybrid adapters now read, so their sign-ins fail until it is applied. It also lowercases stored CMS emails and links verified ecommerce shoppers to the shared user identity described below.
+Migration `0019` adds the session column the local and hybrid adapters now read, so their sign-ins fail until it is applied. It also lowercases stored CMS emails and links verified ecommerce shoppers to the shared user identity described below. Migration `0020` needs no check: it records a baseline revision for entries that have none, such as seeded rows, and unwraps globals stored as double-encoded JSON.
+
+The migrations are hand-written SQL; the package does not use `drizzle-kit` to generate them. The Drizzle table definitions in the core and the ecommerce plugin describe the columns the runtime queries, not the triggers, CHECK constraints or partial indexes, so they cannot produce a migration. To change the schema in this repository, add the next numbered `.sql` file to `drizzle/` and its entry to `drizzle/meta/_journal.json`; never edit a migration that has shipped. `test/migrations.test.mjs` applies the whole chain to an empty database and to one holding data from earlier releases, and checks the resulting schema.
 
 ### Secrets and first admin
 
@@ -245,6 +279,22 @@ const posts = {
 ```
 
 The hook module is imported only into the server bundle. A hook factory can set `factory: true` and receive JSON-serializable `args`.
+
+## Rendering rich text
+
+`richtext` fields store the admin editor's Tiptap JSON, and editors control what is stored. Render them with `renderRichText` from `talisman-cms/richtext`, and never pass a stored value to `set:html` yourself:
+
+```astro
+---
+import { renderRichText } from 'talisman-cms/richtext';
+const html = renderRichText(post.data.content, { headingOffset: 1 });
+---
+<article set:html={html} />
+```
+
+`renderRichText` escapes all text and outputs only the editor's nodes and marks: paragraphs, headings, lists, blockquotes, code, horizontal rules, line breaks, bold, italic, underline, strike and links. Links keep relative, `http(s)`, `mailto` and `tel` targets and are dropped otherwise. A string value is shown as plain text, never as HTML. `headingOffset: 1` renders the editor's Heading 1 as `<h2>` under the page's own `<h1>`. `richTextToPlainText` returns the text on one line for excerpts and meta descriptions. Astro's `security.csp` option is a useful second layer on public pages.
+
+Content stored as an HTML string, such as the posts from `seeds/ecommerce-demo.sql` before this release, is therefore shown with its tags as literal text. The admin editor displays such a string formatted but saves it back unchanged: it becomes Tiptap JSON only when someone edits that rich text field and saves. Opening and saving the entry, or changing only other fields, keeps the string. An edited field is stored whole as Tiptap JSON, with only the formatting the editor supports. Saving changes the draft, so publish the entry to update the live page. To fix the demo posts, rerun `pnpm --filter talisman-cms db:seed:ecommerce:local`, which replaces them. Convert other HTML-string content by editing each rich text field, or by rewriting the stored values as Tiptap JSON.
 
 ## Public site performance
 

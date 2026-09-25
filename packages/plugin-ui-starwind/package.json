@@ -45,7 +45,8 @@
     "dist",
     "src/renderers",
     "catalog.manifest.json",
-    "catalog.upstream.json"
+    "catalog.upstream.json",
+    "NOTICE"
   ],
   "scripts": {
     "generate": "node ./scripts/catalog.mjs generate",

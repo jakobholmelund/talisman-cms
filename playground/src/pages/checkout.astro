@@ -8,7 +8,7 @@ import {
   getPendingOrderForCart,
 } from '../lib/commerce';
 
-const sessionToken = getCartSessionToken(Astro.cookies, { create: true });
+const sessionToken = getCartSessionToken(Astro.cookies, { create: true, secure: Astro.url.protocol === 'https:' });
 const cartState = await getHydratedCart(cfEnv as any, sessionToken);
 const pendingOrder = await getPendingOrderForCart(cfEnv as any, cartState.cart?.id);
 

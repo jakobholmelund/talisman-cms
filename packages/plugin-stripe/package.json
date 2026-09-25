@@ -48,7 +48,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "NOTICE"
   ],
   "scripts": {
     "build": "tsup src/index.ts src/proxy.ts src/runtime-hooks.ts src/routes/rest.ts src/routes/webhooks.ts --format esm --dts --clean --external cloudflare:workers --external virtual:talisman-cms/stripe-config --external virtual:talisman-cms/native-schemas",

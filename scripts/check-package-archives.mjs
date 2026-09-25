@@ -7,6 +7,8 @@ import { join, resolve } from 'node:path';
 const root = resolve(import.meta.dirname, '..');
 const archiveDir = mkdtempSync(join(tmpdir(), 'talisman-release-'));
 const licenseText = readFileSync(join(root, 'LICENSE.md'), 'utf8');
+// Each package keeps a copy of the root NOTICE, because pnpm packs only files inside the package.
+const noticeText = readFileSync(join(root, 'NOTICE'), 'utf8');
 assert.equal(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).license, 'Apache-2.0');
 assert.match(licenseText, /Apache License\s+Version 2\.0, January 2004/);
 
@@ -35,6 +37,9 @@ try {
     }
     const packedLicense = execFileSync('tar', ['-xOzf', archive, 'package/LICENSE.md'], { encoding: 'utf8' });
     assert.equal(packedLicense, licenseText, `${manifest.name}: packed license differs from repository license`);
+    assert.ok(entries.has('package/NOTICE'), `${manifest.name}: missing NOTICE (add "NOTICE" to files and copy the root NOTICE)`);
+    const packedNotice = execFileSync('tar', ['-xOzf', archive, 'package/NOTICE'], { encoding: 'utf8' });
+    assert.equal(packedNotice, noticeText, `${manifest.name}: packed NOTICE differs from the root NOTICE; copy it again`);
     for (const rawTarget of [...targets(manifest.exports), manifest.main, manifest.types].filter(Boolean)) {
       const target = rawTarget.startsWith('./') ? rawTarget.slice(2) : rawTarget;
       assert.ok(!target.startsWith('/') && !target.includes('..'), `${manifest.name}: unexpected export target ${rawTarget}`);
