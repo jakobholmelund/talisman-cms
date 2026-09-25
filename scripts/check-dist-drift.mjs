@@ -2,36 +2,17 @@
 // stale dist/. Run it after `pnpm build` (release:verify builds) on a checkout whose sources are
 // committed; CI does. Checks every package's dist/ and the UI plugins' generated src/generated.ts.
 //
-// tsup's declaration build is not deterministic: from one run to the next, TypeScript may print
-// union members and object properties of an inferred type in another order. A changed .d.ts file
-// therefore only counts when its tokens differ, not just their order. Other files must match exactly.
-import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+// A rebuilt .d.ts file whose members only changed order within one union or one `{ … }` block passes
+// (see dist-drift.mjs). The check lists it and puts back its committed copy, so pnpm publish, which
+// refuses a working tree with changes, can run next. It does this even when other files fail the
+// check, leaving only real differences to commit.
+import { findDistDrift, reportDrift, restoreReordered } from './dist-drift.mjs';
 
-const root = resolve(import.meta.dirname, '..');
-const pathspecs = [':(glob)packages/*/dist/**', ':(glob)packages/*/src/generated.ts'];
-const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-const lines = (text) => text.split('\n').filter(Boolean);
-
-const tokens = (text) => (text.match(/[A-Za-z0-9_$]+|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\S/g) ?? []).sort().join('\n');
-
-const drift = [];
-for (const path of lines(git('ls-files', '--others', '--exclude-standard', '--', ...pathspecs))) {
-  drift.push(`${path}: new file, not committed`);
-}
-for (const path of lines(git('diff', '--name-only', '--diff-filter=D', '--', ...pathspecs))) {
-  drift.push(`${path}: committed, but the build no longer creates it`);
-}
-for (const path of lines(git('diff', '--name-only', '--diff-filter=M', '--', ...pathspecs))) {
-  if (path.endsWith('.d.ts') && tokens(git('show', `:${path}`)) === tokens(readFileSync(resolve(root, path), 'utf8'))) continue;
-  drift.push(`${path}: differs from the committed file`);
-}
+const { drift, reordered } = findDistDrift();
+restoreReordered(reordered);
 
 if (drift.length) {
-  console.error(`The committed build output is stale (${drift.length} file${drift.length === 1 ? '' : 's'}):`);
-  for (const line of drift) console.error(`  ${line}`);
-  console.error('\nRun `pnpm build` and commit packages/*/dist (and src/generated.ts of the UI plugins).');
+  reportDrift(drift);
   process.exit(1);
 }
 console.log('Committed build output matches the build.');

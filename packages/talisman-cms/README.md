@@ -207,7 +207,7 @@ migrations_dir = "migrations"
 migrations_table = "app_migrations"
 ```
 
-When upgrading an existing database, run these checks before applying the new migrations. Each must return no rows; resolve any duplicates first. Migration `0018` adds a unique revision-number index, and `0019` allows only one CMS user per email regardless of letter case.
+When upgrading an existing database, run these checks before applying the new migrations. Each must return no rows; resolve any duplicates first. Migration `0018` adds a unique revision-number index, `0019` allows only one CMS user per email regardless of letter case, and `0023` allows only one published entry per slug in a collection.
 
 ```sql
 -- Before 0018_entry_revision_integrity.sql
@@ -221,9 +221,16 @@ SELECT lower(email) AS email, COUNT(*) AS copies
 FROM galaxy_auth_user
 GROUP BY lower(email)
 HAVING COUNT(*) > 1;
+
+-- Before 0023_published_slug_unique.sql
+SELECT collection_id, slug, COUNT(*) AS copies
+FROM galaxy_entries
+WHERE status = 'published'
+GROUP BY collection_id, slug
+HAVING COUNT(*) > 1;
 ```
 
-Migration `0019` adds the session column the local and hybrid adapters now read, so their sign-ins fail until it is applied. It also lowercases stored CMS emails and links verified ecommerce shoppers to the shared user identity described below. Migration `0020` needs no check: it records a baseline revision for entries that have none, such as seeded rows, and unwraps globals stored as double-encoded JSON.
+Version 0.1.0 adds `0019_shared_customer_identity.sql` through `0024_shopper_sign_in_tokens.sql`. Migration `0019` adds the session column the local and hybrid adapters now read, so their sign-ins fail until it is applied. It also lowercases stored CMS emails and links verified ecommerce shoppers to the shared user identity described below. Migration `0020` needs no check: it records a baseline revision for entries that have none, such as seeded rows, and unwraps globals stored as double-encoded JSON. `0021` adds the draft slug column that every entry read and save needs. `0022` keeps global data that is not a JSON object, such as a list, under a `value` key, so code that reads such a global reads `data.value`. For each slug the `0023` check lists, rename all but one of the entries and publish them again, or unpublish them. `0024` adds the ecommerce plugin's sign-in link and rate-limit tables; shopper sign-in fails without it. The [release checklist](https://github.com/jakobholmelund/talisman-cms/blob/main/RELEASE.md#deployment-gate) describes each migration.
 
 The migrations are hand-written SQL; the package does not use `drizzle-kit` to generate them. The Drizzle table definitions in the core and the ecommerce plugin describe the columns the runtime queries, not the triggers, CHECK constraints or partial indexes, so they cannot produce a migration. To change the schema in this repository, add the next numbered `.sql` file to `drizzle/` and its entry to `drizzle/meta/_journal.json`; never edit a migration that has shipped. `test/migrations.test.mjs` applies the whole chain to an empty database and to one holding data from earlier releases, and checks the resulting schema.
 

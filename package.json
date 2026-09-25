@@ -8,11 +8,11 @@
     "build": "pnpm -r --filter=!playground build",
     "build:all": "pnpm -r build",
     "dev": "pnpm --filter playground dev",
-    "test": "pnpm -r test",
+    "test": "pnpm -r test && node --test scripts/test/*.test.mjs",
     "release:check:archives": "node scripts/check-package-archives.mjs",
     "release:smoke": "node scripts/smoke-packed.mjs",
     "release:verify": "node scripts/verify-release.mjs",
-    "release:publish": "pnpm -r --filter './packages/*' publish"
+    "release:publish": "node scripts/publish-packages.mjs"
   },
   "keywords": [],
   "author": "",

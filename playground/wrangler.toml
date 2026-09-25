@@ -18,7 +18,3 @@ binding = "IMAGES"
 [[kv_namespaces]]
 binding = "KV"
 id = "local-kv"
-
-[[queues.producers]]
-binding = "QUEUE"
-queue = "talisman-cms-queue"
