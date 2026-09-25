@@ -1,4 +1,115 @@
-# Code-first catalog, then Commerce editing
+# @talisman-cms/plugin-ecommerce
+
+Commerce for Talisman CMS: a product catalog in D1, a cookie-keyed basket, hosted Stripe Checkout, shopper accounts, promotions, gift cards and order fulfillment. It all runs in the site's own Cloudflare Worker. Public checkout is off until you enable it; read [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) before taking live orders. Prices, credit and payments are USD only.
+
+## Quick start
+
+### 1. Install
+
+```bash
+pnpm add talisman-cms @talisman-cms/plugin-ecommerce @astrojs/cloudflare react react-dom @tanstack/react-router drizzle-orm
+pnpm add -D wrangler
+```
+
+`react`, `react-dom`, `@tanstack/react-router` and `drizzle-orm` are peer dependencies. The commerce admin screens run inside the CMS admin with the app's copies, so list them in the app's own `package.json`.
+
+### 2. Register the plugin
+
+```js
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import cloudflare from '@astrojs/cloudflare';
+import talismanCms from 'talisman-cms';
+import { LocalAuthAdapter } from 'talisman-cms/auth/local';
+import { ecommercePlugin } from '@talisman-cms/plugin-ecommerce';
+
+export default defineConfig({
+  output: 'server',
+  adapter: cloudflare(),
+  integrations: [
+    talismanCms({
+      auth: LocalAuthAdapter(),
+      plugins: [ecommercePlugin()]
+    })
+  ]
+});
+```
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `productsCollectionSlug` | `'products'` | The collection shown as Products. The plugin creates it, mapped to the native `_ecommerce_products` table, unless the site defines one with this slug. Baskets and checkout always read `_ecommerce_products`. |
+| `injectCollections` | `true` | Registers the native commerce tables (variants, stock, carts, orders, shoppers, promotions, gift cards) as admin-only collections under **Commerce**. With `false` the tables still exist but are hidden from the admin. |
+| `adminPages` | none | Same-origin overrides for the Orders, Promotions, Gift cards and Test checkout links. |
+| `adminTestCheckout` | `false` | Adds the admin-only **Test checkout** screen and `/admin/api/ecommerce/test-checkout`, which place orders with a simulated payment. See [Admin test checkout](#admin-test-checkout). |
+
+### 3. Bindings and migrations
+
+The plugin uses the CMS's Worker bindings (see the Talisman CMS README): `DB` (D1, required) holds the commerce tables, and `EMAIL` (a `[[send_email]]` binding) sends shopper sign-in links. It adds no binding of its own.
+
+The commerce tables are created by the migrations that ship in `talisman-cms`, not in this package. With `migrations_dir = "node_modules/talisman-cms/drizzle"` on the `DB` binding, apply every migration in that folder before deploying the Worker:
+
+```bash
+pnpm exec wrangler d1 migrations apply DB --local   # local development
+pnpm exec wrangler d1 migrations apply DB --remote  # production database
+```
+
+The plugin needs at least `0019_shared_customer_identity.sql`; shopper account reads fail without it. Run the duplicate checks under [Hosted Stripe checkout](#hosted-stripe-checkout) first when upgrading an existing database.
+
+### 4. Worker settings
+
+Settings are read at request time with `readSetting` from `talisman-cms/env`. Put secrets in Worker secrets or `.dev.vars`, never in `astro.config`, CMS globals or browser code.
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `TALISMAN_COMMERCE_CHECKOUT_ENABLED` | off | `true` enables the public checkout route and action. Otherwise the route answers HTTP 503 "Checkout is disabled" and the action refuses with `FORBIDDEN`, before the basket is read. |
+| `TALISMAN_COMMERCE_STRIPE_MODE` | `test` | `live` accepts real payments and requires an `sk_live_...` key. |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | none | Stripe secret key for the mode (`sk_test_...` or `sk_live_...`) and the webhook signing secret (`whsec_...`). Stripe is unavailable unless both are set. |
+| `TALISMAN_COMMERCE_LOCAL_STRIPE_SECRET_KEY`, `TALISMAN_COMMERCE_LOCAL_STRIPE_WEBHOOK_SECRET` | none | Test-mode fallbacks for local development. Ignored in live mode. |
+| `TALISMAN_COMMERCE_GIFT_CARDS_ENABLED` | off | `true` enables gift card sales. They also need checkout enabled and the key below. |
+| `TALISMAN_COMMERCE_GIFT_CARD_KEY` | none | 64 hex characters that encrypt gift card codes. Keep it stable and backed up. |
+| `TALISMAN_COMMERCE_REFERRAL_REWARD_CENTS`, `TALISMAN_COMMERCE_REFERRAL_MIN_ORDER_CENTS` | `1000`, `5000` | Referral defaults until an admin saves referral settings. |
+| `TALISMAN_EMAIL_FROM`, `TALISMAN_PUBLIC_ORIGIN` | none | Sender and storefront origin for sign-in links. `TALISMAN_COMMERCE_EMAIL_FROM` and `TALISMAN_COMMERCE_PUBLIC_ORIGIN` override them for shopper mail. |
+| `TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT` | `200` | Store-wide cap on sign-in emails per 24 hours. |
+
+Deployments configured before the rename can keep the `GALAXY_` names of these settings; a `GALAXY_` value is read when the `TALISMAN_` one is missing or blank.
+
+### 5. Storefront pages
+
+The plugin injects the API routes below; the site renders its own pages. Stripe returns shoppers to `/checkout/success?order=<id>` and `/checkout/cancel?order=<id>` on the request origin, so provide both. Email sign-in links open `/account/verify`, gift card buyers return to `/gift-cards/success`, and `CartView` links to `/shop`, `/checkout` and `/checkout/cancel`.
+
+| Route | Access | Purpose |
+| --- | --- | --- |
+| `GET`, `POST /api/ecommerce/cart` | public | Read or replace the basket. See [Basket limits](#basket-limits). |
+| `POST /api/ecommerce/checkout` | public, enable flag | Start or resume hosted Stripe Checkout. |
+| `GET`, `POST /api/ecommerce/order` | the placing basket or account | Order status, or release an open payment session. |
+| `POST /api/ecommerce/webhooks/stripe` | Stripe-signed | Payment completion, expiry and refunds. |
+| `/api/ecommerce/account`, `/api/ecommerce/discount`, `/api/ecommerce/gift-cards` | public | Shopper sign-in, discount preview, gift card purchase and balance. |
+| `/admin/api/ecommerce/fulfillment`, `reconcile`, `promotions`, `gift-cards-admin` | CMS admin | The commerce admin screens. `test-checkout` is added with `adminTestCheckout: true`. |
+
+### 6. Components and helpers
+
+```astro
+---
+import CartBadge from '@talisman-cms/plugin-ecommerce/components/CartBadge.astro';
+---
+<CartBadge server:defer />
+```
+
+- **`CartBadge.astro`** links to the basket and shows its item count. Props: `href` (`/cart`), `label`, `activePaths`, `class`, `activeClass`, `inactiveClass`, `badgeClass` and `eventName`. It reads the basket and shopper cookies and never creates or changes a basket. Rendered as a server island, it sends `Cache-Control: private, no-store`. It updates when the page dispatches `CART_UPDATED_EVENT`.
+- **`CartView.astro`** is an editable basket. Props: `items`, `locked`, `pendingOrderId`, `itemCount`, `requiresShipping` and `subtotal`. The page builds `items` from the basket and catalog. Each item has `key`, `productId`, `variantId`, `quantity`, `productName`, `variantLabel`, `imageUrl`, `unitPrice`, `lineTotal`, `type`, `stockLabel` and `href`. Quantity changes are posted to `/api/ecommerce/cart`.
+- **`CartItemCard.astro`** renders one server-side line (`item`, `locked`).
+- `@talisman-cms/plugin-ecommerce/browser`: `startCheckout`, `getOrderStatus`, `cancelCheckout`, the shopper account helpers, `CART_UPDATED_EVENT` and `dispatchCartUpdated`. `startAdminTestCheckout(input, { adminPath })` needs `adminTestCheckout: true`; pass `adminPath` when the CMS is not at `/admin`.
+- `@talisman-cms/plugin-ecommerce/cookies`: the basket and gift card cookie names, `readCartSessionToken` and `ensureCartSession`.
+- `@talisman-cms/plugin-ecommerce/actions`: the `getCart`, `addToCart`, `clearCart` and `checkout` Astro actions.
+- `@talisman-cms/plugin-ecommerce/api`: `bindCommerceApi({ env, paymentAdapters })`, `reconcileCommerce` and `purgeStaleCommerceData` for server code and the scheduled Worker.
+
+The components use Tailwind utility classes, including `brand-*` colors, and `CartBadge` reads Worker bindings from `cloudflare:workers`. Code that only renders must read a basket with `api.carts.find`, never `api.carts.getOrCreate`: `getOrCreate` creates a basket for a new token and moves a signed-in shopper's basket to it.
+
+### Basket limits
+
+A basket holds at most 50 lines (`CART_MAX_LINES`) of 1 to 99 units each (`CART_MAX_LINE_QUANTITY`); `bindCommerceApi().carts.updateItems` enforces this for every caller. The cart route answers HTTP 413 to a request body over 64 KB and HTTP 400 to other violations; the actions answer `BAD_REQUEST`. A line must name a product in `_ecommerce_products` that is not archived, so draft products can go in a concept basket. Its `variantId` must be a variant value of that product, or a legacy variant group of it. Lines already in the basket are not checked again, so a shopper can still change or remove a product that was archived later. Only `productId`, `variantId` and `quantity` are stored. A rejected request creates no basket and sets no cookie, and reading never creates one. The cart API needs no sign-in, so also rate-limit `/api/ecommerce/*` and `/_actions/*` per IP address with a Cloudflare rate limiting rule.
+
+## Code-first catalog, then Commerce editing
 
 Use `@talisman-cms/plugin-ecommerce/catalog` when a site starts with product data in code. It exports two reusable helpers:
 
@@ -27,15 +138,13 @@ Product image URLs are stored as a string array. The Commerce editor presents ea
 
 ## Commerce admin workspace
 
-The plugin groups native records under **Commerce**: products and catalog setup, shoppers and carts, promotions and referrals, gift card activity, and audit records. It also provides four task-focused screens inside the Talisman CMS admin shell: orders and fulfillment, promotions, gift cards, and test checkout. Registering `ecommercePlugin()` adds them to the Commerce workspace. The site still provides its public storefront, basket, checkout, and account pages.
+The plugin groups native records under **Commerce**: products and catalog setup, shoppers and carts, promotions and referrals, gift card activity, and audit records. It also provides task-focused screens inside the Talisman CMS admin shell: orders and fulfillment, promotions, and gift cards. Registering `ecommercePlugin()` adds them to the Commerce workspace; `ecommercePlugin({ adminTestCheckout: true })` adds the Test checkout screen as well. The site still provides its public storefront, basket, checkout, and account pages.
 
 ```js
 ecommercePlugin()
 ```
 
-The default paths are `/admin/extensions/commerce-orders`, `/admin/extensions/commerce-promotions`, `/admin/extensions/commerce-gift-cards`, and `/admin/extensions/commerce-test-checkout`. A store can override task links with same-origin `adminPages` paths when it has a genuinely store-specific workflow. The plugin owns the protected commerce APIs and shared operation screens. No database migration is needed for this UI change.
-
-# Shared component inventory
+The default paths are `/admin/extensions/commerce-orders`, `/admin/extensions/commerce-promotions`, and `/admin/extensions/commerce-gift-cards`, plus `/admin/extensions/commerce-test-checkout` when enabled. A store can override task links with same-origin `adminPages` paths when it has a genuinely store-specific workflow. The plugin owns the protected commerce APIs and shared operation screens. No database migration is needed for this UI change.
 
 ## Hosted Stripe checkout
 
@@ -114,13 +223,17 @@ Checkout accepts one gift card alongside one promotion code and earned shopper c
 
 Gift card purchases cannot use promotions, gift cards, or referral credit, which prevents circular funding. Currency is fixed at USD. Automated recipient email, multiple gift cards on one order, and market-specific tax treatment are outside this implementation.
 
-## Admin test provider
+## Admin test checkout
+
+The admin test checkout is off by default. Enable it with `ecommercePlugin({ adminTestCheckout: true })` on a site whose administrators need to exercise checkout without charging a card. It adds the **Test checkout** screen and the protected `/admin/api/ecommerce/test-checkout` route. Without the option, neither is injected and the simulated provider is never registered.
 
 The `admin_test` adapter simulates a successful payment without contacting Stripe. The protected `GET /admin/api/ecommerce/test-checkout` returns the current basket quote for the CMS screen. `POST` requires a Talisman CMS administrator, a same-origin request, and the current basket cookie. It uses the same product validation, basket lock, order creation, and payment finalization as Stripe checkout. Orders and payment rows identify `admin_test` as the provider. No card is charged, sellable stock is not reduced, and test orders cannot be fulfilled. The endpoint works even when public Stripe checkout is disabled.
 
-`PaymentProviderAdapter` handles provider session creation, expiry, and optional webhook validation. `createFromCart` selects an adapter by `providerId` and stores that choice on the order; cancellation and resumption use the stored provider. A second real payment provider can be registered alongside Stripe, but it still needs its own authenticated webhook route and shopper checkout route or provider selector. `runtimePaymentAdapters(env)` always includes `admin_test` for the protected test checkout; the public checkout route and action always request `stripe`. Never expose the admin test provider through a public checkout route.
+`PaymentProviderAdapter` handles provider session creation, expiry, and optional webhook validation. `createFromCart` selects an adapter by `providerId` and stores that choice on the order; cancellation and resumption use the stored provider. Without a `providerId` it uses the only registered adapter, but never `admin_test`. A second real payment provider can be registered alongside Stripe, but it still needs its own authenticated webhook route and shopper checkout route or provider selector. `runtimePaymentAdapters(env)` returns only real providers (Stripe when configured). The admin test route adds `AdminTestPaymentAdapter` itself, and the public checkout route and action always request `stripe`. Public order status checks never settle a pending `admin_test` order. Placing the test order again from the same basket completes an interrupted one, and the basket's owner can cancel it with `cancelCheckout`. Unless the caller registered `AdminTestPaymentAdapter`, `reconcileCommerce` cancels one left pending for 15 minutes, which unlocks the basket, and it keeps reconciling the real orders behind it. Never register it for a public route.
 
 Products must be active, have a positive price, and have available stock before checkout. For physical products, the checkout request must include a shipping address with name, line 1, city, postal code, and two-letter country code. Shipping is currently included in the item price. Configure taxes, shipping policy, refunds, and fulfillment before enabling live sales.
+
+## Shared component inventory
 
 The commerce plugin can stock physical components that are used by more than one sellable variant. Apply the Talisman CMS migrations through `0008_shared_components.sql` before using this feature.
 

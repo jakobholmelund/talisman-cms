@@ -1,5 +1,4 @@
 import { StripePaymentAdapter } from './adapters/stripe';
-import { AdminTestPaymentAdapter } from './adapters/admin-test';
 import { readSetting } from 'talisman-cms/env';
 
 /** Worker secrets are read at request time, never serialized into the Astro build. */
@@ -14,9 +13,12 @@ export function runtimeStripeSecrets(env: Record<string, unknown>) {
   return { secretKey, webhookSecret, mode };
 }
 
-export function runtimePaymentAdapters(env: Record<string, unknown>) {
+/**
+ * The real payment providers configured in this Worker: Stripe when both secrets match the mode.
+ * The simulated `admin_test` provider is never included; only the opt-in admin test route adds it.
+ */
+export function runtimePaymentAdapters(env: Record<string, unknown>): StripePaymentAdapter[] {
   const { secretKey, webhookSecret, mode } = runtimeStripeSecrets(env);
-  const adapters = [new AdminTestPaymentAdapter()];
-  if (!secretKey.startsWith(`sk_${mode}_`) || !webhookSecret.startsWith('whsec_') || secretKey === 'sk_test_mockkey') return adapters;
-  return [new StripePaymentAdapter({ secretKey, webhookSecret }), ...adapters];
+  if (!secretKey.startsWith(`sk_${mode}_`) || !webhookSecret.startsWith('whsec_') || secretKey === 'sk_test_mockkey') return [];
+  return [new StripePaymentAdapter({ secretKey, webhookSecret })];
 }

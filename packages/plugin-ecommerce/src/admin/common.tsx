@@ -1,5 +1,6 @@
 import React, { type ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
+import { adminTestCheckout } from 'virtual:talisman-cms/ecommerce-admin';
 import './commerce-admin.css';
 
 export type CommerceTool = 'orders' | 'promotions' | 'gift-cards' | 'test-checkout';
@@ -35,7 +36,8 @@ const tools: Array<{ key: CommerceTool; label: string }> = [
   { key: 'orders', label: 'Orders' },
   { key: 'promotions', label: 'Promotions' },
   { key: 'gift-cards', label: 'Gift cards' },
-  { key: 'test-checkout', label: 'Test checkout' },
+  // Registered only with ecommercePlugin({ adminTestCheckout: true }).
+  ...(adminTestCheckout ? [{ key: 'test-checkout' as const, label: 'Test checkout' }] : []),
 ];
 
 export function CommerceAdmin({ current, children }: { current: CommerceTool; children: ReactNode }) {

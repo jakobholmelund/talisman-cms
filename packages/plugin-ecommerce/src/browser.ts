@@ -101,14 +101,19 @@ export function startCheckout(input: {
   return commerceRequest<{ orderId: string; redirectUrl: string }>('/api/ecommerce/checkout', 'POST', input);
 }
 
-/** Available only to authenticated CMS administrators. Creates a simulated payment. */
+/**
+ * Available only to authenticated CMS administrators, and only when the site registers
+ * ecommercePlugin({ adminTestCheckout: true }). Creates a simulated payment.
+ * Pass `adminPath` when talismanCms({ adminPath }) is not `/admin`.
+ */
 export function startAdminTestCheckout(input: {
   customerEmail?: string;
   shippingAddress?: Record<string, string>;
   billingAddress?: Record<string, string>;
-} = {}) {
+} = {}, options: { adminPath?: string } = {}) {
+  const adminPath = (options.adminPath || '/admin').replace(/\/+$/, '');
   return commerceRequest<{ orderId: string; status: string; paymentProvider: 'admin_test'; redirectUrl: string }>(
-    '/admin/api/ecommerce/test-checkout', 'POST', input);
+    `${adminPath}/api/ecommerce/test-checkout`, 'POST', input);
 }
 
 export function getOrderStatus(orderId: string) {

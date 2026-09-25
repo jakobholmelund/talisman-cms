@@ -122,6 +122,10 @@ test('the cart badge counts a signed-in basket without detaching or creating car
   sqlite.prepare(`INSERT INTO _ecommerce_customer_sessions
     (id, account_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)`)
     .run('session', 'shopper', createHash('sha256').update('shopper-token').digest('hex'), now + 3600, now);
+  for (const id of ['mycelium', 'forrest']) {
+    sqlite.prepare(`INSERT INTO _ecommerce_products (id, name, slug, base_price, status, created_at, updated_at)
+      VALUES (?, ?, ?, 12000, 'active', ?, ?)`).run(id, id, id, now, now);
+  }
   const api = bindCommerceApi({ env: { DB } });
   const owned = await api.carts.getOrCreate('browser', 'shopper');
   await api.carts.updateItems(owned.id, [{ productId: 'mycelium', quantity: 2 }]);

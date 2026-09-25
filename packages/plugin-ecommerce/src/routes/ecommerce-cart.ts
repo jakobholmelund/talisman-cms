@@ -16,7 +16,7 @@ async function currentCart(api: ReturnType<typeof bindCommerceApi>, sessionToken
     await api.carts.find(sessionToken, customerId);
 }
 
-/** Well above the largest valid basket: 100 items with 128-character ids is about 30 KB of JSON. */
+/** Well above the largest valid basket: 50 lines with 128-character ids is about 15 KB of JSON. */
 const MAX_CART_BODY_BYTES = 64 * 1024;
 
 /** Read the posted item list before anything is written, bounding the body even without a Content-Length. */
@@ -65,10 +65,13 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
       }
       const items = await readCartItems(request);
       if (items instanceof Response) return items;
+      const existing = await currentCart(api, readCartSessionToken(cookies), customer?.id);
       // Emptying a basket that does not exist yet writes nothing: no row and no cookie.
-      if (!items.length && !(await currentCart(api, readCartSessionToken(cookies), customer?.id))) {
+      if (!items.length && !existing) {
         return Response.json(publicCart(null));
       }
+      // Limits and catalog ids are checked before a basket or its cookie is created.
+      const checked = await api.carts.validateItems(items, existing?.items);
       // Reuse the basket cookie, adopting one set under the legacy name, or mint a new one
       const sessionToken = ensureCartSession(cookies, new URL(request.url).protocol === 'https:');
 
@@ -77,7 +80,7 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
          return new Response(JSON.stringify({ error: 'Failed to find or create cart' }), { status: 500 });
       }
       
-      const updated = await api.carts.updateItems(cart.id, items as Parameters<typeof api.carts.updateItems>[1]);
+      const updated = await api.carts.updateItems(cart.id, checked);
       
       return new Response(JSON.stringify(publicCart(updated)), {
         status: 200,

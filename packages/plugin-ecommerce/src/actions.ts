@@ -1,10 +1,10 @@
 import { defineAction, ActionError } from 'astro:actions';
 import { z } from 'astro/zod';
-import { bindCommerceApi } from './api';
+import { bindCommerceApi, CART_MAX_LINE_QUANTITY } from './api';
 import { runtimePaymentAdapters } from './runtime';
 import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from './accounts';
 import { REFERRAL_COOKIE } from './referrals';
-import { ensureCartSession } from './cookies';
+import { ensureCartSession, readCartSessionToken } from './cookies';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { readSetting } from 'talisman-cms/env';
 
@@ -13,17 +13,23 @@ function getOrCreateCartSession(context: any): string {
   return ensureCartSession(context.cookies, context.url?.protocol === 'https:');
 }
 
+/** The shopper's open basket, linking a browser basket to a signed-in account. Never creates one. */
+async function currentCart(api: ReturnType<typeof bindCommerceApi>, context: any, customerId?: string) {
+  const sessionToken = context.cookies ? readCartSessionToken(context.cookies) : undefined;
+  return (customerId && sessionToken ? await api.carts.claim(sessionToken, customerId) : null) ??
+    await api.carts.find(sessionToken, customerId);
+}
+
 export const ecommerceActions = {
   getCart: defineAction({
     handler: async (_input: any, context: any) => {
-      const sessionToken = getOrCreateCartSession(context);
-
       try {
         const { env } = await import('cloudflare:workers');
         const api = bindCommerceApi({ env: env as unknown as TalismanEnv });
         const customer = await findCustomerSession(env as unknown as TalismanEnv, context.cookies?.get?.(CUSTOMER_SESSION_COOKIE)?.value);
-        const cart = await api.carts.getOrCreate(sessionToken, customer?.id);
-        return { success: true, cart };
+        // Reading never creates a basket or its cookie; the first addToCart does.
+        const cart = await currentCart(api, context, customer?.id);
+        return { success: true, cart: cart ?? null };
       } catch (error: any) {
         throw new ActionError({
           code: 'INTERNAL_SERVER_ERROR',
@@ -35,16 +41,17 @@ export const ecommerceActions = {
 
   addToCart: defineAction({
     input: z.object({
-      productId: z.string(),
-      quantity: z.number().int().positive().default(1),
-      variantId: z.string().optional(),
+      productId: z.string().max(128),
+      quantity: z.number().int().positive().max(CART_MAX_LINE_QUANTITY).default(1),
+      variantId: z.string().max(128).optional(),
     }),
     handler: async (input: any, context: any) => {
-      const sessionToken = getOrCreateCartSession(context);
-
       try {
         const { env } = await import('cloudflare:workers');
         const api = bindCommerceApi({ env: env as unknown as TalismanEnv });
+        // A product that is not in the catalog is refused before a basket or cookie is created.
+        await api.carts.validateItems([{ productId: input.productId, variantId: input.variantId, quantity: input.quantity }]);
+        const sessionToken = getOrCreateCartSession(context);
         const customer = await findCustomerSession(env as unknown as TalismanEnv, context.cookies?.get?.(CUSTOMER_SESSION_COOKIE)?.value);
         const cart = await api.carts.getOrCreate(sessionToken, customer?.id);
         if (!cart) {
@@ -83,13 +90,12 @@ export const ecommerceActions = {
 
   clearCart: defineAction({
     handler: async (_input: any, context: any) => {
-      const sessionToken = getOrCreateCartSession(context);
-
       try {
         const { env } = await import('cloudflare:workers');
         const api = bindCommerceApi({ env: env as unknown as TalismanEnv });
         const customer = await findCustomerSession(env as unknown as TalismanEnv, context.cookies?.get?.(CUSTOMER_SESSION_COOKIE)?.value);
-        const cart = await api.carts.getOrCreate(sessionToken, customer?.id);
+        // Clearing a basket that does not exist writes nothing.
+        const cart = await currentCart(api, context, customer?.id);
         if (cart) {
           const updated = await api.carts.updateItems(cart.id, []);
           return { success: true, cart: updated };
@@ -130,13 +136,14 @@ export const ecommerceActions = {
       }).passthrough().optional(),
     }),
     handler: async (input: any, context: any) => {
+      const { env } = await import('cloudflare:workers');
+      // Checked before the basket cookie is touched: a disabled checkout writes nothing.
+      if (readSetting(env, 'COMMERCE_CHECKOUT_ENABLED') !== 'true') {
+        throw new ActionError({ code: 'FORBIDDEN', message: 'Checkout is disabled' });
+      }
       const sessionToken = getOrCreateCartSession(context);
 
       try {
-        const { env } = await import('cloudflare:workers');
-        if (readSetting(env, 'COMMERCE_CHECKOUT_ENABLED') !== 'true') {
-          throw new ActionError({ code: 'FORBIDDEN', message: 'Checkout is disabled' });
-        }
         const api = bindCommerceApi({
           env: env as unknown as TalismanEnv,
           paymentAdapters: runtimePaymentAdapters(env as Record<string, unknown>),

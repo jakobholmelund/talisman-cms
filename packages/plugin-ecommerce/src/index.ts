@@ -1,8 +1,7 @@
 import { Plugin, CollectionConfig, FieldDefinition, BlockDefinition } from 'talisman-cms'
 import { fileURLToPath } from 'url';
 import { existsSync } from 'node:fs';
-export { InventoryDO } from './inventory';
-export { bindCommerceApi, reconcileCommerce } from './api';
+export { bindCommerceApi, reconcileCommerce, CART_MAX_LINES, CART_MAX_LINE_QUANTITY } from './api';
 export type { PaymentProviderAdapter, ValidatedWebhookEvent } from './payments';
 export { StripePaymentAdapter } from './adapters/stripe';
 export { AdminTestPaymentAdapter } from './adapters/admin-test';
@@ -23,7 +22,17 @@ export interface EcommercePluginConfig {
   injectCollections?: boolean;
   /** Optional same-origin link overrides for stores with specialized admin workflows. */
   adminPages?: Partial<Record<'orders' | 'promotions' | 'giftCards' | 'testCheckout', string>>;
+  /**
+   * Adds the admin-only Test checkout screen and `/admin/api/ecommerce/test-checkout`, which place
+   * orders through the simulated `admin_test` payment provider. When false, neither is injected and
+   * the simulated provider is never registered.
+   * @default false
+   */
+  adminTestCheckout?: boolean;
 }
+
+/** Tells the shared admin screens which optional tools this site registered. */
+const ADMIN_OPTIONS_MODULE = 'virtual:talisman-cms/ecommerce-admin';
 
 function resolveCartEndpointPath() {
   return resolveRouteEntrypoint('ecommerce-cart');
@@ -123,9 +132,9 @@ export const ecommercePlugin = (
 ): Plugin => {
   const productsSlug = config?.productsCollectionSlug || 'products';
   const inject = config?.injectCollections !== false;
+  const adminTestCheckout = config?.adminTestCheckout === true;
   const cartEndpointPath = resolveCartEndpointPath();
   const checkoutEndpointPath = resolveCheckoutEndpointPath();
-  const adminTestCheckoutEndpointPath = resolveAdminTestCheckoutEndpointPath();
   const adminReconcileEndpointPath = resolveAdminReconcileEndpointPath();
   const adminFulfillmentEndpointPath = resolveAdminFulfillmentEndpointPath();
   const orderEndpointPath = resolveOrderEndpointPath();
@@ -136,12 +145,12 @@ export const ecommercePlugin = (
   const adminPromotionsEndpointPath = resolveAdminPromotionsEndpointPath();
   const webhookEndpointPath = resolveWebhookEndpointPath();
   const blocks = createEcommerceLayoutBlocks(productsSlug);
-  const adminPageDefinitions = [
+  const adminPageDefinitions = ([
     { key: 'orders', path: 'commerce-orders', component: 'Orders', label: 'Orders & fulfillment', description: 'Review paid orders and record shipments.' },
     { key: 'promotions', path: 'commerce-promotions', component: 'Promotions', label: 'Promotions & referrals', description: 'Create discounts and manage referral rewards.' },
     { key: 'giftCards', path: 'commerce-gift-cards', component: 'GiftCards', label: 'Gift cards', description: 'Issue cards, check balances, and manage refunds.' },
     { key: 'testCheckout', path: 'commerce-test-checkout', component: 'TestCheckout', label: 'Test checkout', description: 'Exercise checkout without charging a card.' }
-  ] as const;
+  ] as const).filter(page => page.key !== 'testCheckout' || adminTestCheckout);
 
   return {
     name: '@talisman-cms/plugin-ecommerce',
@@ -156,6 +165,17 @@ export const ecommercePlugin = (
       componentPath: `@talisman-cms/plugin-ecommerce/admin/${page.component}`
     })),
     blocks,
+    vite: {
+      plugins: [{
+        name: 'talisman-cms-ecommerce-admin-options',
+        resolveId(id: string) {
+          if (id === ADMIN_OPTIONS_MODULE) return `\0${ADMIN_OPTIONS_MODULE}`;
+        },
+        load(id: string) {
+          if (id === `\0${ADMIN_OPTIONS_MODULE}`) return `export const adminTestCheckout = ${adminTestCheckout};`;
+        }
+      }]
+    },
     onInit: (talismanConfig: any) => {
       // 1. Initialize our array if it doesn't exist
       const collections: CollectionConfig[] = talismanConfig.collections || [];
@@ -245,7 +265,10 @@ export const ecommercePlugin = (
             { name: 'id', label: 'ID', type: 'text', required: true },
             { name: 'productId', label: 'Product', type: 'relation', relationTo: productsSlug, required: true },
             { name: 'variantId', label: 'Variant Definition', type: 'relation', relationTo: '_ecommerce_variants' },
-            { name: 'name', label: 'Display Name', type: 'text', required: true }
+            { name: 'name', label: 'Display Name', type: 'text', required: true },
+            { name: 'sku', label: 'SKU', type: 'text', defaultValue: null },
+            { name: 'priceOverride', label: 'Price Override (Cents)', type: 'number', defaultValue: null },
+            { name: 'inventoryQuantity', label: 'Inventory Quantity', type: 'number', defaultValue: 0 }
           ],
           nativeSchemaMapping: {
              schemaPath: '@talisman-cms/plugin-ecommerce/schema',
@@ -264,9 +287,9 @@ export const ecommercePlugin = (
             { name: 'id', label: 'ID', type: 'text', required: true },
             { name: 'productVariantId', label: 'Product Variant Group', type: 'relation', relationTo: '_ecommerce_product_variants', required: true },
             { name: 'value', label: 'Value', type: 'text', required: true },
-            { name: 'sku', label: 'SKU', type: 'text' },
+            { name: 'sku', label: 'SKU', type: 'text', defaultValue: null },
             { name: 'image', label: 'Variant Image URL', type: 'media' },
-            { name: 'priceOverride', label: 'Price Override (Cents)', type: 'number' }
+            { name: 'priceOverride', label: 'Price Override (Cents)', type: 'number', defaultValue: null }
           ],
           nativeSchemaMapping: {
              schemaPath: '@talisman-cms/plugin-ecommerce/schema',
@@ -708,10 +731,10 @@ export const ecommercePlugin = (
         entrypoint: checkoutEndpointPath,
         public: true
       },
-      {
+      ...(adminTestCheckout ? [{
         path: '/ecommerce/test-checkout',
-        entrypoint: adminTestCheckoutEndpointPath
-      },
+        entrypoint: resolveAdminTestCheckoutEndpointPath()
+      }] : []),
       {
         path: '/ecommerce/reconcile',
         entrypoint: adminReconcileEndpointPath

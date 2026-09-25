@@ -1,6 +1,6 @@
 import { TalismanEnv, createDbClient } from 'talisman-cms/client';
 import * as schema from './schema';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import type { PaymentProviderAdapter } from './payments';
 import { findReferralCode, getReferralPolicy } from './referrals';
@@ -16,6 +16,32 @@ export interface CommerceApiOptions {
 
 type RequiredComponent = { id: string; name: string; quantity: number; available: number };
 type InventoryTarget = { type: 'product' | 'variant' | 'stock'; id: string; quantity: number };
+export type CartItemInput = { productId: string; variantId?: string; quantity: number };
+
+/** Most distinct lines one basket can hold. */
+export const CART_MAX_LINES = 50;
+/** Most units of one line. Checkout still checks stock. */
+export const CART_MAX_LINE_QUANTITY = 99;
+const CART_ID_MAX_LENGTH = 128;
+
+const cartItemKey = (item: { productId: string; variantId?: string | null }) => `${item.productId}\0${item.variantId || ''}`;
+
+/** Reject a malformed or oversized item list before the catalog is read. */
+function assertCartItems(items: unknown): asserts items is CartItemInput[] {
+  if (!Array.isArray(items)) throw new Error('Cart items must be an array');
+  if (items.length > CART_MAX_LINES) throw new Error(`Cart items must not exceed ${CART_MAX_LINES} lines`);
+  if (items.some((item) =>
+    !item || typeof item.productId !== 'string' || !item.productId.trim() || item.productId.length > CART_ID_MAX_LENGTH ||
+    !Number.isSafeInteger(item.quantity) || item.quantity <= 0 || item.quantity > CART_MAX_LINE_QUANTITY ||
+    (item.variantId !== undefined && (typeof item.variantId !== 'string' || item.variantId.length > CART_ID_MAX_LENGTH))
+  )) {
+    throw new Error(`Cart items must have a product and a whole-number quantity from 1 to ${CART_MAX_LINE_QUANTITY}`);
+  }
+  const itemKeys = items.map(cartItemKey);
+  if (new Set(itemKeys).size !== itemKeys.length) {
+    throw new Error('Duplicate cart items are not allowed');
+  }
+}
 
 export function aggregateComponentDemand(items: Array<{ quantity: number; components: RequiredComponent[] }>) {
   const demand = new Map<string, { name: string; quantity: number; available: number }>();
@@ -93,6 +119,40 @@ export function bindCommerceApi(options: CommerceApiOptions) {
       inventoryTarget: { type: 'variant' as const, id: legacyVariant.id },
       components: [] as RequiredComponent[],
     };
+  }
+
+  /**
+   * Check the lines a request adds against the catalog; lines already in the basket were checked when
+   * they were added. Draft products are accepted so a concept basket works; archived ones are not.
+   * Stores only the known fields.
+   */
+  async function checkCartItems(items: unknown, current: Array<{ productId: string; variantId?: string | null }> = []) {
+    assertCartItems(items);
+    const currentKeys = new Set(current.map(cartItemKey));
+    const added = items.filter((item) => !currentKeys.has(cartItemKey(item)));
+    const productIds = [...new Set(added.map((item) => item.productId))];
+    const available = new Set(productIds.length ? (await db.select({ id: schema.products.id, status: schema.products.status })
+      .from(schema.products).where(inArray(schema.products.id, productIds)))
+      .filter((product) => product.status !== 'archived').map((product) => product.id) : []);
+    const unknownProduct = added.find((item) => !available.has(item.productId));
+    if (unknownProduct) throw new Error(`Cart items must be catalog products; ${unknownProduct.productId} is not available`);
+
+    const variantIds = [...new Set(added.flatMap((item) => item.variantId ? [item.variantId] : []))];
+    if (variantIds.length) {
+      // Like checkout: a purchasable value of one of the product's variant groups, or a legacy variant group.
+      const owners = new Map((await db.select({ id: schema.productVariants.id, productId: schema.productVariants.productId })
+        .from(schema.productVariants).where(inArray(schema.productVariants.id, variantIds)))
+        .map((variant) => [variant.id, variant.productId]));
+      for (const value of await db.select({ id: schema.productVariantValues.id, productId: schema.productVariants.productId })
+        .from(schema.productVariantValues)
+        .innerJoin(schema.productVariants, eq(schema.productVariants.id, schema.productVariantValues.productVariantId))
+        .where(inArray(schema.productVariantValues.id, variantIds))) {
+        owners.set(value.id, value.productId);
+      }
+      const unknownVariant = added.find((item) => item.variantId && owners.get(item.variantId) !== item.productId);
+      if (unknownVariant) throw new Error(`Cart items must use a variant of their product; ${unknownVariant.variantId} is not available`);
+    }
+    return items.map(({ productId, variantId, quantity }) => variantId ? { productId, variantId, quantity } : { productId, quantity });
   }
 
   async function finalizeOrderPayment(params: {
@@ -414,18 +474,16 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         return cart;
       },
       
-      async updateItems(cartId: string, items: Array<{ productId: string, variantId?: string, quantity: number }>) {
-        if (!Array.isArray(items) || items.length > 100 || items.some((item) =>
-          !item || typeof item.productId !== 'string' || !item.productId.trim() || item.productId.length > 128 ||
-          !Number.isSafeInteger(item.quantity) || item.quantity <= 0 || item.quantity > 99 ||
-          (item.variantId !== undefined && (typeof item.variantId !== 'string' || item.variantId.length > 128))
-        )) {
-          throw new Error('Cart items must have a product and a positive integer quantity');
-        }
-        const itemKeys = items.map((item) => `${item.productId}\0${item.variantId || ''}`);
-        if (new Set(itemKeys).size !== itemKeys.length) {
-          throw new Error('Duplicate cart items are not allowed');
-        }
+      /**
+       * Check an item list against the basket limits and the catalog without writing, for example
+       * before creating a basket for it. Returns the list with only the stored fields.
+       */
+      async validateItems(items: unknown, current: Array<{ productId: string; variantId?: string | null }> = []) {
+        return checkCartItems(items, current);
+      },
+
+      async updateItems(cartId: string, items: CartItemInput[]) {
+        assertCartItems(items);
 
         const cart = await db.select().from(schema.carts).where(eq(schema.carts.id, cartId)).get();
         if (!cart) {
@@ -437,9 +495,10 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         if (cart.checkoutSessionId) {
           throw new Error('Checkout already started for this cart');
         }
+        const checked = await checkCartItems(items, cart.items);
 
         const updated = await db.update(schema.carts)
-          .set({ items, updatedAt: new Date(), version: sql`${schema.carts.version} + 1` })
+          .set({ items: checked, updatedAt: new Date(), version: sql`${schema.carts.version} + 1` })
           .where(and(eq(schema.carts.id, cartId), eq(schema.carts.closed, false),
             isNull(schema.carts.checkoutSessionId), eq(schema.carts.version, cart.version)))
           .returning({ id: schema.carts.id });
@@ -492,6 +551,11 @@ export function bindCommerceApi(options: CommerceApiOptions) {
           return { status: 'paid', paymentUrl: null };
         }
         if (order.paymentProvider === 'admin_test') {
+          // Only the admin test route registers the simulated provider; public status checks never settle it.
+          // The owner can cancel it, and reconcileCommerce releases it once stale.
+          if (!paymentAdapters.some((candidate) => candidate.providerId === 'admin_test')) {
+            return { status: 'pending', paymentUrl: null };
+          }
           await finalizeOrderPayment({ orderId: order.id, provider: 'admin_test',
             providerId: order.checkoutSessionId, paymentStatus: 'success',
             amount: order.totalAmount, currency: order.currency });
@@ -541,9 +605,10 @@ export function bindCommerceApi(options: CommerceApiOptions) {
          if (cart.checkoutSessionId) {
            throw new Error('Checkout already started for this cart');
          }
+         // The simulated admin_test provider is used only when a caller names it.
          const defaultAdapter = options.providerId
            ? paymentAdapters.find((adapter) => adapter.providerId === options.providerId)
-           : paymentAdapters.length === 1 ? paymentAdapters[0] : undefined;
+           : paymentAdapters.length === 1 && paymentAdapters[0].providerId !== 'admin_test' ? paymentAdapters[0] : undefined;
          if (!defaultAdapter) throw new Error('A payment provider must be selected and configured before checkout');
 
          let requiresShipping = false;
@@ -881,7 +946,8 @@ export function bindCommerceApi(options: CommerceApiOptions) {
           .where(eq(schema.componentReservations.orderId, id));
         const inventoryReservations = await db.select().from(schema.inventoryReservations)
           .where(eq(schema.inventoryReservations.orderId, id));
-        if (order.checkoutSessionId && !options.sessionExpired) {
+        // A simulated admin_test checkout has no external session, so it can be released without its provider.
+        if (order.checkoutSessionId && !options.sessionExpired && order.paymentProvider !== 'admin_test') {
           const adapter = paymentAdapters.find((candidate) => candidate.providerId === (order.paymentProvider ?? 'stripe'));
           if (!adapter?.expireCheckoutSession) {
             throw new Error('Payment provider must expire the checkout session before stock can be released');
@@ -1029,25 +1095,6 @@ export function bindCommerceApi(options: CommerceApiOptions) {
 
         return { success: true, event: event.type, ignored: true };
       }
-    },
-
-    // Stub for DO binding
-    inventory: {
-      async reserve(productId: string, variantId: string | undefined, quantity: number) {
-        // In Phase 1 implementation, assuming env bound to INVENTORY_DO
-        // For local development stub:
-        if (!env['INVENTORY_DO' as keyof typeof env]) {
-          console.warn('[Talisman Commerce] INVENTORY_DO binding not found. Falling back to optimistic reservation.');
-          return { success: true, reserved: quantity, pessimistic: false };
-        }
-        
-        // Pseudo logic for DO execution
-        // const id = env.INVENTORY_DO.idFromName(`${productId}${variantId ? `_${variantId}` : ''}`);
-        // const stub = env.INVENTORY_DO.get(id);
-        // const res = await stub.fetch(`http://do/reserve?qty=${quantity}`);
-        // return await res.json();
-        return { success: true, reserved: quantity, pessimistic: true };
-      }
     }
   }
 }
@@ -1061,8 +1108,17 @@ export async function reconcileCommerce(options: CommerceApiOptions, limit = 10)
   const preparations = await env.DB.prepare(`SELECT id FROM _ecommerce_carts
     WHERE checkout_session_id LIKE 'preparing:%' AND updated_at < ?
     ORDER BY updated_at LIMIT ?`).bind(now - 35 * 60, count).all<{ id: string }>();
+  // Without the simulated provider a stale admin_test order cannot be settled. It is released instead,
+  // so it never keeps the admin's basket locked or crowds real orders out of this batch.
+  const settlesAdminTest = options.paymentAdapters?.some(adapter => adapter.providerId === 'admin_test') ?? false;
   const pending = await env.DB.prepare(`SELECT id FROM _ecommerce_orders
-    WHERE status = 'pending' AND created_at < ? ORDER BY created_at LIMIT ?`)
+    WHERE status = 'pending' AND created_at < ?
+      AND (? = 1 OR COALESCE(payment_provider, 'stripe') <> 'admin_test')
+    ORDER BY created_at LIMIT ?`)
+    .bind(now - 15 * 60, settlesAdminTest ? 1 : 0, count).all<{ id: string }>();
+  const abandonedTests = settlesAdminTest ? { results: [] } : await env.DB.prepare(`SELECT id FROM _ecommerce_orders
+    WHERE status = 'pending' AND payment_provider = 'admin_test' AND created_at < ?
+    ORDER BY created_at LIMIT ?`)
     .bind(now - 15 * 60, count).all<{ id: string }>();
   const giftPurchases = await env.DB.prepare(`SELECT id FROM _ecommerce_gift_card_purchases
     WHERE status = 'pending' AND provider_session_id IS NOT NULL AND created_at < ?
@@ -1081,6 +1137,14 @@ export async function reconcileCommerce(options: CommerceApiOptions, limit = 10)
     try {
       const result = await api.orders.reconcilePending(row.id);
       results.push({ id: row.id, status: result?.status ?? 'unchanged' });
+    } catch (error) {
+      results.push({ id: row.id, status: 'error', error: error instanceof Error ? error.message : 'Recovery failed' });
+    }
+  }
+  for (const row of abandonedTests.results ?? []) {
+    try {
+      const cancelled = await api.orders.cancel(row.id);
+      results.push({ id: row.id, status: cancelled?.status ?? 'unchanged' });
     } catch (error) {
       results.push({ id: row.id, status: 'error', error: error instanceof Error ? error.message : 'Recovery failed' });
     }

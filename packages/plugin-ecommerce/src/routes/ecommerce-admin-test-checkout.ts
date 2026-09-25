@@ -5,6 +5,9 @@ import { bindCommerceApi } from '../api';
 import { checkoutSchema } from '../checkout-input';
 import { runtimePaymentAdapters } from '../runtime';
 import { readCartSessionToken } from '../cookies';
+import { AdminTestPaymentAdapter } from '../adapters/admin-test';
+
+// Injected only with ecommercePlugin({ adminTestCheckout: true }).
 
 export const ALL: APIRoute = async ({ request, cookies }) => {
   const authorization = await authorizeCmsRequest(request, 'admin');
@@ -21,7 +24,8 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
     const { env } = await import('cloudflare:workers');
     const api = bindCommerceApi({
       env: env as unknown as TalismanEnv,
-      paymentAdapters: runtimePaymentAdapters(env as Record<string, unknown>)
+      // The simulated provider is registered here only, never for public routes.
+      paymentAdapters: [...runtimePaymentAdapters(env as Record<string, unknown>), new AdminTestPaymentAdapter()]
     });
     const cart = sessionToken ? await api.carts.find(sessionToken) : null;
     if (request.method === 'GET') {

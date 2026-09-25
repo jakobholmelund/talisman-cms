@@ -8,10 +8,12 @@ test('local test secrets stay optional and cannot enable live mode', () => {
     TALISMAN_COMMERCE_LOCAL_STRIPE_SECRET_KEY: 'sk_test_local',
     TALISMAN_COMMERCE_LOCAL_STRIPE_WEBHOOK_SECRET: 'whsec_local'
   };
-  assert.deepEqual(runtimePaymentAdapters(local).map(adapter => adapter.providerId), ['stripe', 'admin_test']);
+  assert.deepEqual(runtimePaymentAdapters(local).map(adapter => adapter.providerId), ['stripe']);
   assert.equal(runtimeStripeSecrets(local).secretKey, 'sk_test_local');
-  assert.deepEqual(runtimePaymentAdapters({ ...local, TALISMAN_COMMERCE_STRIPE_MODE: 'live' }).map(adapter => adapter.providerId), ['admin_test']);
-  assert.deepEqual(runtimePaymentAdapters({ ...local, TALISMAN_COMMERCE_LOCAL_STRIPE_SECRET_KEY: '' }).map(adapter => adapter.providerId), ['admin_test']);
+  // The simulated admin_test provider is never a runtime provider, even when Stripe is missing.
+  assert.deepEqual(runtimePaymentAdapters({ ...local, TALISMAN_COMMERCE_STRIPE_MODE: 'live' }), []);
+  assert.deepEqual(runtimePaymentAdapters({ ...local, TALISMAN_COMMERCE_LOCAL_STRIPE_SECRET_KEY: '' }), []);
+  assert.deepEqual(runtimePaymentAdapters({}), []);
 });
 
 test('deployed Worker secrets take precedence over local test bindings', () => {
@@ -25,7 +27,7 @@ test('deployed Worker secrets take precedence over local test bindings', () => {
   assert.deepEqual(runtimeStripeSecrets(env), {
     secretKey: 'sk_live_worker', webhookSecret: 'whsec_worker', mode: 'live'
   });
-  assert.deepEqual(runtimePaymentAdapters(env).map(adapter => adapter.providerId), ['stripe', 'admin_test']);
+  assert.deepEqual(runtimePaymentAdapters(env).map(adapter => adapter.providerId), ['stripe']);
 });
 
 test('pre-rename GALAXY_* settings still apply when no TALISMAN_* value is set', (t) => {

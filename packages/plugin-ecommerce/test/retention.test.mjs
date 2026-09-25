@@ -46,6 +46,10 @@ function database() {
       };
     }
   };
+  // Baskets accept catalog products only.
+  const now = Math.floor(Date.now() / 1000);
+  sqlite.prepare(`INSERT INTO _ecommerce_products (id, name, slug, base_price, status, created_at, updated_at)
+    VALUES ('frame', 'Frame', 'frame', 12000, 'draft', ?, ?)`).run(now, now);
   return { sqlite, DB };
 }
 

@@ -9,6 +9,12 @@ import { REFERRAL_COOKIE } from '../referrals';
 import { readCartSessionToken } from '../cookies';
 
 export const POST: APIRoute = async ({ request, cookies }) => {
+  const { env } = await import('cloudflare:workers');
+  const runtimeEnv = env as unknown as TalismanEnv & Record<string, unknown>;
+  // Checked before anything else: a disabled checkout reads no basket and writes nothing.
+  if (readSetting(runtimeEnv, 'COMMERCE_CHECKOUT_ENABLED') !== 'true') {
+    return Response.json({ error: 'Checkout is disabled' }, { status: 503 });
+  }
   if (request.headers.get('origin') !== new URL(request.url).origin) {
     return Response.json({ error: 'Same-origin request required' }, { status: 403 });
   }
@@ -24,11 +30,6 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     const parsed = checkoutSchema.safeParse(await request.json());
     if (!parsed.success) return Response.json({ error: 'Invalid checkout details' }, { status: 400 });
     const body = parsed.data;
-    const { env } = await import('cloudflare:workers');
-    const runtimeEnv = env as unknown as TalismanEnv & Record<string, unknown>;
-    if (readSetting(runtimeEnv, 'COMMERCE_CHECKOUT_ENABLED') !== 'true') {
-      return Response.json({ error: 'Checkout is disabled' }, { status: 503 });
-    }
     const api = bindCommerceApi({
       env: runtimeEnv,
       paymentAdapters: runtimePaymentAdapters(runtimeEnv)
