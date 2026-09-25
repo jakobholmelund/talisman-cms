@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { analyticsRequest, Metric, money, number, Panel, RangePicker, Trend } from './common';
+import { analyticsRequest, Metric, money, number, Panel, RangePicker, refundWording, Trend } from './common';
 import type { CommerceOverview } from '../commerce';
 
 export default function CommerceAnalytics() {
@@ -18,7 +18,9 @@ export default function CommerceAnalytics() {
   }, [days]);
 
   return <div className="talisman-analytics">
-    <div className="talisman-analytics__toolbar"><p>Confirmed ecommerce purchases. Admin test orders are excluded.</p><RangePicker days={days} onChange={setDays} /></div>
+    <div className="talisman-analytics__toolbar"><p>Confirmed ecommerce purchases.{data && (data.stripeMode === 'test'
+      ? ' Admin test orders are excluded. The store is in Stripe test mode, so test-mode orders are included.'
+      : ' Admin test and Stripe test-mode orders are excluded.')}</p><RangePicker days={days} onChange={setDays} /></div>
     {loading && <p role="status">Loading commerce analytics…</p>}
     {error && <p className="talisman-analytics__error" role="alert">{error}</p>}
     {data && !loading && <>
@@ -27,9 +29,10 @@ export default function CommerceAnalytics() {
         <div className="talisman-analytics__metrics">
           <Metric label="Orders" value={number(row.orders)} detail="Confirmed purchases" />
           <Metric label="Gross sales" value={money(row.grossSales, row.currency)} detail="After discounts, before refunds" />
-          <Metric label="Net sales" value={money(row.netSales, row.currency)} detail="After recorded refunds" />
-          <Metric label="Refunds" value={money(row.refunds, row.currency)} />
-          <Metric label="Average order" value={money(row.averageOrderValue, row.currency)} detail="Net sales per order" />
+          <Metric label="Net sales" value={money(row.netSales, row.currency)} detail={refundWording(data.refundBasis).netSales} />
+          <Metric label="Refunds" value={money(row.refunds, row.currency)}
+            detail={`${refundWording(data.refundBasis).refunds} · ${number(row.refundedOrders)} ${row.refundedOrders === 1 ? 'order' : 'orders'}`} />
+          <Metric label="Average order" value={money(row.averageOrderValue, row.currency)} detail="Gross sales per order" />
         </div>
         <Panel title={`Net sales by day · ${row.currency.toUpperCase()}`}>
           <Trend points={data.daily.filter(item => item.currency === row.currency).map(item => ({ ...item, value: item.netSales / 100 }))}
@@ -44,7 +47,8 @@ export default function CommerceAnalytics() {
         </div>)}
         {!data.products.length && <p className="talisman-analytics__muted">No product sales in this period.</p>}
       </div></Panel>
-      <p className="talisman-analytics__muted">Sales are grouped by payment date. Product values are before discounts and partial refunds. Gift cards and store credit count as payment toward net sales.</p>
+      <p className="talisman-analytics__muted">Dates are UTC. Sales are grouped by payment date. {refundWording(data.refundBasis).footnote}
+        {data.undatedRefunds && ' Some refunds were recorded before refund dates were stored; those count on the payment date.'} Product values are before discounts and partial refunds. Gift cards and store credit count as payment toward net sales.</p>
     </>}
   </div>;
 }

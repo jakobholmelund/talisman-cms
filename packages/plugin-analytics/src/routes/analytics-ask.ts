@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
+import { readSetting } from 'talisman-cms/env';
 import { createAskReport } from '../ask';
 // Provided by the Talisman CMS integration during the server build.
 // @ts-ignore
@@ -31,7 +32,10 @@ export const POST: APIRoute = async ({ request }) => {
       collection => collection.nativeSchemaMapping?.schemaPath === '@talisman-cms/plugin-ecommerce/schema' &&
         collection.nativeSchemaMapping?.exportName === 'products'
     );
-    const report = await createAskReport(body.question, bindings.AI, bindings.DB, env as Record<string, unknown>, adminBase, productCollection?.slug || 'products');
+    // Live only when the setting is `live`, as in plugin-ecommerce. In test mode, test-mode orders are reported.
+    const stripeMode = readSetting(env, 'COMMERCE_STRIPE_MODE') === 'live' ? 'live' : 'test';
+    const report = await createAskReport(body.question, bindings.AI, bindings.DB, env as Record<string, unknown>,
+      adminBase, productCollection?.slug || 'products', stripeMode);
     return Response.json(report, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Could not create the report.';

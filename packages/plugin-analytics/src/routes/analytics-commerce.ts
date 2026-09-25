@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
+import { readSetting } from 'talisman-cms/env';
 import { parsePeriod } from '../cloudflare';
 import { fetchCommerceOverview } from '../commerce';
 // Provided by the Talisman CMS integration during the server build.
@@ -19,7 +20,9 @@ export const GET: APIRoute = async ({ request }) => {
       collection => collection.nativeSchemaMapping?.schemaPath === '@talisman-cms/plugin-ecommerce/schema' &&
         collection.nativeSchemaMapping?.exportName === 'products'
     );
-    const data = await fetchCommerceOverview(db, days, adminBase, productCollection?.slug || 'products');
+    // Live only when the setting is `live`, as in plugin-ecommerce. In test mode, test-mode orders are reported.
+    const stripeMode = readSetting(env, 'COMMERCE_STRIPE_MODE') === 'live' ? 'live' : 'test';
+    const data = await fetchCommerceOverview(db, days, adminBase, productCollection?.slug || 'products', stripeMode);
     return Response.json(data, { headers: { 'Cache-Control': 'private, max-age=120' } });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : 'Commerce analytics unavailable' },

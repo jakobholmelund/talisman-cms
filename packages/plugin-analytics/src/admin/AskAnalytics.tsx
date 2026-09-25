@@ -1,20 +1,17 @@
 import React, { useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import type { AskReport } from '../ask';
-import { adminBase, Metric, money, number, Panel, Trend } from './common';
+import { adminBase, Metric, money, number, Panel, refundWording, Trend } from './common';
+import { formatRange } from './dates';
 
 const suggestions = [
   'How are sales doing over the last 30 days?',
   'Which products sold best last month?',
-  'Did refunds increase compared with the previous 30 days?',
+  // Neutral about how refunds are dated: without refund dates, a refunds comparison can only
+  // compare the refunds on each window's own orders, not the refunds issued in it.
+  'Show refunds for the last 30 days',
   'Show traffic and sales for the last 7 days',
 ];
-
-function dates(start: string, end: string) {
-  const first = new Date(start).toLocaleDateString(undefined, { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' });
-  const last = new Date(new Date(end).getTime() - 1).toLocaleDateString(undefined, { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' });
-  return `${first}–${last} UTC`;
-}
 
 export default function AskAnalytics() {
   const [question, setQuestion] = useState('');
@@ -56,9 +53,11 @@ export default function AskAnalytics() {
   const currencyRows = [...(report?.commerce?.currencies || [])];
   for (const previous of report?.previousCommerce?.currencies || []) {
     if (!currencyRows.some(row => row.currency === previous.currency)) currencyRows.push({
-      ...previous, orders: 0, grossSales: 0, netSales: 0, refunds: 0, charged: 0, averageOrderValue: 0,
+      ...previous, orders: 0, grossSales: 0, netSales: 0, refunds: 0, refundedOrders: 0, charged: 0, averageOrderValue: 0,
     });
   }
+
+  const wording = refundWording(report?.commerce?.refundBasis || 'payment_date');
 
   return <div className="talisman-analytics talisman-analytics__ask">
     <p className="talisman-analytics__intro">Ask about confirmed sales, products, refunds, or Cloudflare traffic. Each answer is built from the underlying reports.</p>
@@ -78,24 +77,30 @@ export default function AskAnalytics() {
     {report && <article className="talisman-analytics__report">
       <header className="talisman-analytics__report-header">
         <h2>{report.title}</h2>
-        <p>{report.period.label} · {dates(report.period.start, report.period.end)}</p>
-        {report.previous && <p>Compared with {dates(report.previous.start, report.previous.end)}</p>}
+        <p>{report.period.label} · {formatRange(report.period.start, report.period.end)}</p>
+        {report.previous && <p>Compared with {report.previous.label.charAt(0).toLowerCase()}{report.previous.label.slice(1)} · {formatRange(report.previous.start, report.previous.end)}</p>}
       </header>
       <p className="talisman-analytics__summary">{report.summary}</p>
       {report.commerce && <>
         {currencyRows.map(row => {
           const previous = report.previousCommerce?.currencies.find(item => item.currency === row.currency);
+          const refunds = <Metric label="Refunds" value={money(row.refunds, row.currency)}
+            detail={previous ? `Previous: ${money(previous.refunds, row.currency)} · ${wording.previous}` : wording.refunds} />;
           return <section key={row.currency}>
             <h3 className="talisman-analytics__currency">{row.currency.toUpperCase()}</h3>
             <div className="talisman-analytics__metrics">
+              {report.subject === 'refunds' && <>
+                {refunds}
+                <Metric label="Refunded orders" value={number(row.refundedOrders)}
+                  detail={previous ? `Previous: ${number(previous.refundedOrders)} · ${wording.previous}` : wording.refunds} />
+              </>}
               <Metric label="Orders" value={number(row.orders)} detail={previous ? `Previous: ${number(previous.orders)}` : 'Confirmed purchases'} />
-              {report.subject !== 'products' && <Metric label="Net sales" value={money(row.netSales, row.currency)} detail={previous ? `Previous: ${money(previous.netSales, row.currency)}` : 'After recorded refunds'} />}
+              {report.subject !== 'products' && <Metric label="Net sales" value={money(row.netSales, row.currency)} detail={previous ? `Previous: ${money(previous.netSales, row.currency)}` : wording.netSales} />}
               {report.subject === 'sales' || report.subject === 'traffic_and_sales' ? <>
                 <Metric label="Gross sales" value={money(row.grossSales, row.currency)} detail="After discounts, before refunds" />
-                <Metric label="Average order" value={money(row.averageOrderValue, row.currency)} />
+                <Metric label="Average order" value={money(row.averageOrderValue, row.currency)} detail="Gross sales per order" />
               </> : null}
-              {report.subject === 'refunds' || report.subject === 'sales' ?
-                <Metric label="Refunds" value={money(row.refunds, row.currency)} detail={previous ? `Previous: ${money(previous.refunds, row.currency)}` : undefined} /> : null}
+              {report.subject === 'sales' && refunds}
             </div>
             {report.subject !== 'refunds' && report.subject !== 'products' && <Panel title={`Net sales by day · ${row.currency.toUpperCase()}`}>
               <Trend points={report.commerce!.daily.filter(item => item.currency === row.currency).map(item => ({ date: item.date, value: item.netSales / 100 }))}
