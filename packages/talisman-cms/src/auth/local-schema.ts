@@ -16,6 +16,7 @@ export const user = sqliteTable('galaxy_auth_user', {
 
 export const session = sqliteTable('galaxy_auth_session', {
   id: text('id').primaryKey(),
+  authMethod: text('auth_method'),
   expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
   token: text('token').notNull().unique(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),

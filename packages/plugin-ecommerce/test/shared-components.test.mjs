@@ -15,10 +15,11 @@ import { issueAdminGiftCard, evaluateGiftCard, getGiftCardBalance, startGiftCard
 import { fulfillCommerceOrder, listCommerceOrdersAdmin } from '../dist/fulfillment.js';
 
 const giftEnv = (DB) => ({ DB, GALAXY_COMMERCE_GIFT_CARD_KEY: 'a'.repeat(64) });
-const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.sql',
+const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.sql', '0007_local_auth.sql',
   '0008_shared_components.sql', '0010_checkout_inventory.sql', '0011_order_payment_provider.sql',
   '0012_customer_accounts.sql', '0013_referrals_and_credit.sql', '0014_promotions.sql',
-  '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql'];
+  '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
+  '0019_shared_customer_identity.sql'];
 
 function database(migrationCount = migrationFiles.length) {
   const sqlite = new DatabaseSync(':memory:');
@@ -34,6 +35,7 @@ function database(migrationCount = migrationFiles.length) {
       return {
         bind(...params) { values = params; return this; },
         async all() { return { results: prepared.all(...values) }; },
+        async first() { return prepared.get(...values) ?? null; },
         async raw() {
           const raw = sqlite.prepare(sql);
           raw.setReturnArrays(true);
@@ -447,12 +449,21 @@ test('a real paid checkout requires email proof before granting an account sessi
   const token = new URL(link).searchParams.get('token');
   const activated = await consumeCustomerEmailSignIn({ DB }, token);
   assert.equal(activated.account.email, address.customerEmail);
+  const identity = sqlite.prepare(`SELECT u.email, u.role FROM galaxy_auth_user u
+    JOIN _ecommerce_customer_accounts c ON c.cms_user_id = u.id WHERE c.id = ?`).get(paid.userId);
+  assert.equal(identity.email, address.customerEmail.toLowerCase());
+  assert.equal(identity.role, 'customer');
   assert.equal((await findCustomerSession({ DB }, activated.token)).id, paid.userId);
   assert.equal(await consumeCustomerEmailSignIn({ DB }, token), null);
-  let unknownAddressSent = false;
+  let registrationLink;
   await requestCustomerEmailSignIn({ DB }, 'unknown@example.test',
-    value => value, async () => { unknownAddressSent = true; });
-  assert.equal(unknownAddressSent, false);
+    value => `https://example.test/account/verify?token=${value}`,
+    async (_to, value) => { registrationLink = value; });
+  assert.equal(sqlite.prepare(`SELECT email_verified_at FROM _ecommerce_customer_accounts
+    WHERE email_normalized = 'unknown@example.test'`).get().email_verified_at, null);
+  const registered = await consumeCustomerEmailSignIn({ DB }, new URL(registrationLink).searchParams.get('token'));
+  assert.equal(registered.account.email, 'unknown@example.test');
+  assert.equal(sqlite.prepare(`SELECT COUNT(*) AS count FROM galaxy_auth_user WHERE email = 'unknown@example.test'`).get().count, 1);
   assert.equal(await activateNewCustomer({ DB }, order.id, 'another-browser'), null);
   await revokeCustomerSession({ DB }, activated.token);
   assert.equal(await findCustomerSession({ DB }, activated.token), null);
@@ -467,6 +478,18 @@ test('a real paid checkout requires email proof before granting an account sessi
   assert.equal(claimed.id, later.id);
   assert.equal(claimed.userId, activated.account.id);
   assert.equal(claimed.items[0].productId, 'forrest');
+  sqlite.close();
+});
+
+test('shopper email links allow registration but limit requests from one IP', async () => {
+  const { sqlite, DB } = database();
+  let sent = 0;
+  for (let index = 0; index < 21; index++) {
+    await requestCustomerEmailSignIn({ DB }, `new-${index}@example.test`, token => token,
+      async () => { sent++; }, '203.0.113.10');
+  }
+  assert.equal(sent, 20);
+  assert.equal(sqlite.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_customer_accounts`).get().count, 20);
   sqlite.close();
 });
 

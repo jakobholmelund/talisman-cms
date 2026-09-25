@@ -1,5 +1,6 @@
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
+import { ensureVerifiedEmailIdentity } from 'talisman-cms/auth/identity';
 import { customerAccounts, customerSessions, orders } from './schema';
 
 export const CUSTOMER_SESSION_COOKIE = 'talisman-customer';
@@ -28,16 +29,34 @@ export async function activateNewCustomer(_env: TalismanEnv, _orderId: string, _
 /** The caller must deliver the link to the account's email address. */
 export async function requestCustomerEmailSignIn(env: TalismanEnv, email: string,
   linkForToken: (token: string) => string,
-  sendLink: (to: string, link: string) => Promise<void>) {
+  sendLink: (to: string, link: string) => Promise<void>, sourceIp?: string | null) {
   const normalized = email.trim().toLowerCase();
   if (normalized.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
     throw new Error('Valid email required');
   }
   const db = createDbClient(env);
-  const account = await db.select().from(customerAccounts)
-    .where(eq(customerAccounts.emailNormalized, normalized)).get();
-  if (!account) return;
   const now = Math.floor(Date.now() / 1000);
+  if (sourceIp && sourceIp.length <= 64) {
+    const key = `shopper-email:${await hashToken(sourceIp)}`;
+    const limit = await env.DB.prepare(`INSERT INTO galaxy_auth_rate_limit (id, key, count, last_request)
+      VALUES (?, ?, 1, ?) ON CONFLICT(key) DO UPDATE SET
+        count = CASE WHEN last_request <= ? THEN 1 ELSE count + 1 END,
+        last_request = CASE WHEN last_request <= ? THEN ? ELSE last_request END
+      RETURNING count`)
+      .bind(`rate_${crypto.randomUUID()}`, key, now, now - 3600, now - 3600, now)
+      .first<{ count: number }>();
+    if ((limit?.count ?? 21) > 20) return;
+  }
+  let account = await db.select().from(customerAccounts)
+    .where(eq(customerAccounts.emailNormalized, normalized)).get();
+  if (!account) {
+    await db.insert(customerAccounts).values({ id: `acct_${crypto.randomUUID()}`, email: normalized,
+      emailNormalized: normalized, createdAt: new Date(now * 1000), updatedAt: new Date(now * 1000) })
+      .onConflictDoNothing({ target: customerAccounts.emailNormalized });
+    account = await db.select().from(customerAccounts)
+      .where(eq(customerAccounts.emailNormalized, normalized)).get();
+    if (!account) throw new Error('Shopper account could not be created');
+  }
   const recent = await env.DB.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_customer_sessions
     WHERE account_id = ? AND purpose = 'email_challenge' AND created_at > ?`)
     .bind(account.id, now - 600).all<{ count: number }>();
@@ -72,11 +91,13 @@ export async function consumeCustomerEmailSignIn(env: TalismanEnv, token: string
   const account = await db.select().from(customerAccounts)
     .where(eq(customerAccounts.id, accountId)).get();
   if (!account) return null;
+  const cmsUserId = await ensureVerifiedEmailIdentity(env, account.emailNormalized, account.name);
   const sessionToken = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   await env.DB.batch([
     env.DB.prepare(`UPDATE _ecommerce_customer_accounts
-      SET email_verified_at = COALESCE(email_verified_at, ?), updated_at = ? WHERE id = ?`)
-      .bind(now, now, account.id),
+      SET email_verified_at = COALESCE(email_verified_at, ?), updated_at = ?, cms_user_id = ?
+      WHERE id = ?`)
+      .bind(now, now, cmsUserId, account.id),
     env.DB.prepare(`INSERT INTO _ecommerce_customer_sessions
       (id, account_id, token_hash, expires_at, created_at, purpose)
       VALUES (?, ?, ?, ?, ?, 'session')`)

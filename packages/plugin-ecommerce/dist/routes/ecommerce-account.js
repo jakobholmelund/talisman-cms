@@ -5,15 +5,15 @@ import {
   findCustomerSession,
   requestCustomerEmailSignIn,
   revokeCustomerSession
-} from "../chunk-SRJQDDQH.js";
+} from "../chunk-OM7CZNWS.js";
 import {
   bindCommerceApi
-} from "../chunk-LVJ6XT5P.js";
-import "../chunk-MPVZ6EEH.js";
-import "../chunk-LHGIEHI6.js";
-import "../chunk-JB5GG7SZ.js";
-import "../chunk-53CI56PJ.js";
-import "../chunk-XLYDGTBP.js";
+} from "../chunk-4B5ROQI2.js";
+import "../chunk-MQPA2QMJ.js";
+import "../chunk-PRGHPNDB.js";
+import "../chunk-AGAY2N6E.js";
+import "../chunk-U46CR236.js";
+import "../chunk-6RT3KMIV.js";
 
 // src/routes/ecommerce-account.ts
 var ALL = async ({ request, cookies }) => {
@@ -62,7 +62,8 @@ var ALL = async ({ request, cookies }) => {
             })
           });
           if (!response.ok) throw new Error("Email delivery failed");
-        }
+        },
+        request.headers.get("cf-connecting-ip")
       );
       return Response.json({ accepted: true }, { headers });
     } catch (error) {

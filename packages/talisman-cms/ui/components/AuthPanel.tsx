@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Lock } from 'lucide-react';
 
-export function AuthPanel({ adminBasePath }: { adminBasePath: string }) {
+export function AuthPanel({ adminBasePath, isHybridAuth = false }: { adminBasePath: string; isHybridAuth?: boolean }) {
   const [setupRequired, setSetupRequired] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -64,6 +64,7 @@ export function AuthPanel({ adminBasePath }: { adminBasePath: string }) {
         {setupRequired && <label className="block text-sm">Setup token<input required type="password" autoComplete="off" value={setupToken} onChange={event => setSetupToken(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-zinc-950 px-3 py-2" /></label>}
         {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
         <button disabled={loading} type="submit" className="w-full rounded-lg bg-indigo-500 px-4 py-2.5 font-medium text-white hover:bg-indigo-400 disabled:opacity-50">{loading ? 'Working…' : setupRequired ? 'Create admin' : 'Sign in'}</button>
+        {isHybridAuth && <a href={`${adminBasePath}/sso`} className="block text-center text-sm text-indigo-300 hover:text-indigo-200">Sign in as admin with Cloudflare</a>}
       </form>
     </div>
   );

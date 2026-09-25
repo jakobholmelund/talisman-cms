@@ -58,6 +58,14 @@
       "types": "./dist/auth/local.d.ts",
       "import": "./dist/auth/local.js"
     },
+    "./auth/hybrid": {
+      "types": "./dist/auth/hybrid.d.ts",
+      "import": "./dist/auth/hybrid.js"
+    },
+    "./auth/identity": {
+      "types": "./dist/auth/identity.d.ts",
+      "import": "./dist/auth/identity.js"
+    },
     "./auth/guard": {
       "types": "./dist/auth/guard.d.ts",
       "import": "./dist/auth/guard.js"

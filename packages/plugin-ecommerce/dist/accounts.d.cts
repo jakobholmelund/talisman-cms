@@ -4,6 +4,7 @@ declare const CUSTOMER_SESSION_COOKIE = "talisman-customer";
 declare const CUSTOMER_SESSION_MAX_AGE: number;
 declare function findCustomerSession(env: TalismanEnv, token?: string | null): Promise<{
     id: string;
+    cmsUserId: string | null;
     email: string;
     emailNormalized: string;
     emailVerifiedAt: Date | null;
@@ -15,10 +16,11 @@ declare function findCustomerSession(env: TalismanEnv, token?: string | null): P
 /** Basket possession never proves ownership of the checkout email. */
 declare function activateNewCustomer(_env: TalismanEnv, _orderId: string, _basketToken: string): Promise<null>;
 /** The caller must deliver the link to the account's email address. */
-declare function requestCustomerEmailSignIn(env: TalismanEnv, email: string, linkForToken: (token: string) => string, sendLink: (to: string, link: string) => Promise<void>): Promise<void>;
+declare function requestCustomerEmailSignIn(env: TalismanEnv, email: string, linkForToken: (token: string) => string, sendLink: (to: string, link: string) => Promise<void>, sourceIp?: string | null): Promise<void>;
 declare function consumeCustomerEmailSignIn(env: TalismanEnv, token: string): Promise<{
     account: {
         id: string;
+        cmsUserId: string | null;
         email: string;
         emailNormalized: string;
         emailVerifiedAt: Date | null;

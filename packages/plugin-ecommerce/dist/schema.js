@@ -43,7 +43,7 @@ import {
   variantComponents,
   variants,
   variantsRelations
-} from "./chunk-XLYDGTBP.js";
+} from "./chunk-6RT3KMIV.js";
 export {
   carts,
   cartsRelations,

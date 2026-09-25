@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { authorizeCmsRequestWithAdapter } from '../dist/auth/authorize.js';
 import { DevAuthAdapter } from '../dist/auth/dev.js';
-import { LocalAuthAdapter, getAccessEmail } from '../dist/auth/local.js';
+import { LocalAuthAdapter, getAccessEmail, signInCloudflareAdmin } from '../dist/auth/local.js';
+import { HybridAuthAdapter } from '../dist/auth/hybrid.js';
 import { AccessAuthAdapter } from '../dist/auth/access.js';
 import { talismanLoader } from '../dist/loader.js';
 
@@ -40,6 +41,14 @@ test('local auth preserves its runtime path and requires both Access settings', 
     GALAXY_ACCESS_TEAM_DOMAIN: 'https://team.cloudflareaccess.com',
     GALAXY_ACCESS_AUDIENCE: 'audience',
   }), null);
+});
+
+test('hybrid auth exposes its reusable adapter and Cloudflare SSO fails closed without a verified token', async () => {
+  const adapter = HybridAuthAdapter('/cms/');
+  assert.deepEqual(adapter.__talismanAuthRuntime.args, ['/cms']);
+  assert.equal(adapter.__talismanAuthRuntime.moduleId, 'talisman-cms/auth/hybrid');
+  const response = await signInCloudflareAdmin(new Request('https://example.test/cms/sso'), '/cms');
+  assert.equal(response.status, 403);
 });
 
 test('Cloudflare Access auth fails closed without verified identity and an allowlisted email', async () => {

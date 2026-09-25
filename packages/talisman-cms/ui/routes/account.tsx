@@ -24,6 +24,7 @@ function AccountPage() {
 
   if (context.isDevAuth) return <p>Account settings are unavailable with the development auth adapter.</p>;
   if (context.isAccessAuth) return <p>Your account is managed through Cloudflare Access.</p>;
+  if (context.isHybridAuth && context.user?.role === 'admin') return <p>Your admin sign-in is managed through Cloudflare Access.</p>;
   return <div className="max-w-xl space-y-6"><div><h1 className="text-3xl font-semibold">Account</h1><p className="mt-2 text-zinc-400">{context.user?.email}</p></div>
     <form onSubmit={changePassword} className="space-y-4 rounded-xl border border-white/10 bg-zinc-900/70 p-6">
       <h2 className="text-lg font-medium">Change password</h2>

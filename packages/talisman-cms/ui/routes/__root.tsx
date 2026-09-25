@@ -17,7 +17,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
     
     if (!context.user) return context.isAccessAuth
       ? <div className="min-h-screen bg-zinc-950 flex items-center justify-center px-4 text-zinc-100"><p>Cloudflare Access has not authorized this CMS account.</p></div>
-      : <AuthPanel adminBasePath={context.adminBasePath} />;
+      : <AuthPanel adminBasePath={context.adminBasePath} isHybridAuth={context.isHybridAuth} />;
 
     async function signOut() {
       if (context.isAccessAuth) {

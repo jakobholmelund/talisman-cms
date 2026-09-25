@@ -298,6 +298,7 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
   const apiAuthSessionRoutePath = fileURLToPath(new URL('../src/routes/api/auth/session.ts', import.meta.url));
   const apiAuthLocalRoutePath = fileURLToPath(new URL('../src/routes/api/auth/local.ts', import.meta.url));
   const apiAuthSetupRoutePath = fileURLToPath(new URL('../src/routes/api/auth/setup.ts', import.meta.url));
+  const apiAuthSsoRoutePath = fileURLToPath(new URL('../src/routes/api/auth/sso.ts', import.meta.url));
 
   let runtimeConfigPath = fileURLToPath(new URL('./runtime-config.js', import.meta.url));
   if (!existsSync(runtimeConfigPath)) {
@@ -360,6 +361,12 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
         injectRoute({
           pattern: `${adminPathPrefix}/api/auth/setup`,
           entrypoint: apiAuthSetupRoutePath,
+          prerender: false
+        });
+
+        injectRoute({
+          pattern: `${adminPathPrefix}/sso`,
+          entrypoint: apiAuthSsoRoutePath,
           prerender: false
         });
 

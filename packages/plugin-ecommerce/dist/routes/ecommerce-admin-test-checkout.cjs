@@ -238,6 +238,7 @@ var customers = (0, import_sqlite_core.sqliteTable)("_ecommerce_customers", {
 });
 var customerAccounts = (0, import_sqlite_core.sqliteTable)("_ecommerce_customer_accounts", {
   id: (0, import_sqlite_core.text)("id").primaryKey(),
+  cmsUserId: (0, import_sqlite_core.text)("cms_user_id").unique(),
   email: (0, import_sqlite_core.text)("email").notNull(),
   emailNormalized: (0, import_sqlite_core.text)("email_normalized").notNull().unique(),
   emailVerifiedAt: (0, import_sqlite_core.integer)("email_verified_at", { mode: "timestamp" }),

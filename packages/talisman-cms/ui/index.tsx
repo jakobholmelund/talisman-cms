@@ -19,7 +19,8 @@ const router = createRouter({
     user: null,
     adminBasePath,
     isDevAuth: false,
-    isAccessAuth: false
+    isAccessAuth: false,
+    isHybridAuth: false
   } as RouterContext
 });
 
@@ -42,10 +43,11 @@ if (mountPoint) {
       const user = data.user || null;
       const isDevAuth = data.isDevAuth === true;
       const isAccessAuth = data.isAccessAuth === true;
+      const isHybridAuth = data.isHybridAuth === true;
       
       root.render(
         <StrictMode>
-          <RouterProvider router={router} context={{ user, adminBasePath, isDevAuth, isAccessAuth }} />
+          <RouterProvider router={router} context={{ user, adminBasePath, isDevAuth, isAccessAuth, isHybridAuth }} />
         </StrictMode>
       );
     })
@@ -54,7 +56,7 @@ if (mountPoint) {
       // Mount anyways so the AuthGuard can redirect to a login view if needed
       root.render(
         <StrictMode>
-          <RouterProvider router={router} context={{ user: null, adminBasePath, isDevAuth: false, isAccessAuth: false }} />
+          <RouterProvider router={router} context={{ user: null, adminBasePath, isDevAuth: false, isAccessAuth: false, isHybridAuth: false }} />
         </StrictMode>
       );
     });

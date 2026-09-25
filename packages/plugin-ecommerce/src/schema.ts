@@ -201,9 +201,10 @@ export const customers = sqliteTable('_ecommerce_customers', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull()
 });
 
-/** Shopper identities are separate from CMS administrator accounts and Stripe customers. */
+/** Shopper profile and order owner. Verified email links connect it to the shared user identity. */
 export const customerAccounts = sqliteTable('_ecommerce_customer_accounts', {
   id: text('id').primaryKey(),
+  cmsUserId: text('cms_user_id').unique(),
   email: text('email').notNull(),
   emailNormalized: text('email_normalized').notNull().unique(),
   emailVerifiedAt: integer('email_verified_at', { mode: 'timestamp' }),

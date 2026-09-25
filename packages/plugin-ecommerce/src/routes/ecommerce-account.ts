@@ -51,7 +51,7 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
               html: `<p>Use this one-time link to sign in. It expires in 15 minutes.</p><p><a href="${link}">Sign in</a></p>` })
           });
           if (!response.ok) throw new Error('Email delivery failed');
-        });
+        }, request.headers.get('cf-connecting-ip'));
       return Response.json({ accepted: true }, { headers });
     } catch (error) {
       return Response.json({ error: error instanceof Error && error.message === 'Valid email required'

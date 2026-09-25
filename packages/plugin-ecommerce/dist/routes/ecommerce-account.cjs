@@ -237,6 +237,7 @@ var customers = (0, import_sqlite_core.sqliteTable)("_ecommerce_customers", {
 });
 var customerAccounts = (0, import_sqlite_core.sqliteTable)("_ecommerce_customer_accounts", {
   id: (0, import_sqlite_core.text)("id").primaryKey(),
+  cmsUserId: (0, import_sqlite_core.text)("cms_user_id").unique(),
   email: (0, import_sqlite_core.text)("email").notNull(),
   emailNormalized: (0, import_sqlite_core.text)("email_normalized").notNull().unique(),
   emailVerifiedAt: (0, import_sqlite_core.integer)("email_verified_at", { mode: "timestamp" }),
@@ -1674,6 +1675,7 @@ function bindCommerceApi(options) {
 // src/accounts.ts
 var import_drizzle_orm8 = require("drizzle-orm");
 var import_client6 = require("talisman-cms/client");
+var import_identity = require("talisman-cms/auth/identity");
 var CUSTOMER_SESSION_COOKIE = "talisman-customer";
 var CUSTOMER_SESSION_MAX_AGE = 60 * 60 * 24 * 30;
 async function hashToken(token) {
@@ -1692,15 +1694,34 @@ async function findCustomerSession(env, token) {
   if (!session) return null;
   return await db.select().from(customerAccounts).where((0, import_drizzle_orm8.eq)(customerAccounts.id, session.accountId)).get() ?? null;
 }
-async function requestCustomerEmailSignIn(env, email, linkForToken, sendLink) {
+async function requestCustomerEmailSignIn(env, email, linkForToken, sendLink, sourceIp) {
   const normalized = email.trim().toLowerCase();
   if (normalized.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
     throw new Error("Valid email required");
   }
   const db = (0, import_client6.createDbClient)(env);
-  const account = await db.select().from(customerAccounts).where((0, import_drizzle_orm8.eq)(customerAccounts.emailNormalized, normalized)).get();
-  if (!account) return;
   const now = Math.floor(Date.now() / 1e3);
+  if (sourceIp && sourceIp.length <= 64) {
+    const key = `shopper-email:${await hashToken(sourceIp)}`;
+    const limit = await env.DB.prepare(`INSERT INTO galaxy_auth_rate_limit (id, key, count, last_request)
+      VALUES (?, ?, 1, ?) ON CONFLICT(key) DO UPDATE SET
+        count = CASE WHEN last_request <= ? THEN 1 ELSE count + 1 END,
+        last_request = CASE WHEN last_request <= ? THEN ? ELSE last_request END
+      RETURNING count`).bind(`rate_${crypto.randomUUID()}`, key, now, now - 3600, now - 3600, now).first();
+    if ((limit?.count ?? 21) > 20) return;
+  }
+  let account = await db.select().from(customerAccounts).where((0, import_drizzle_orm8.eq)(customerAccounts.emailNormalized, normalized)).get();
+  if (!account) {
+    await db.insert(customerAccounts).values({
+      id: `acct_${crypto.randomUUID()}`,
+      email: normalized,
+      emailNormalized: normalized,
+      createdAt: new Date(now * 1e3),
+      updatedAt: new Date(now * 1e3)
+    }).onConflictDoNothing({ target: customerAccounts.emailNormalized });
+    account = await db.select().from(customerAccounts).where((0, import_drizzle_orm8.eq)(customerAccounts.emailNormalized, normalized)).get();
+    if (!account) throw new Error("Shopper account could not be created");
+  }
   const recent = await env.DB.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_customer_sessions
     WHERE account_id = ? AND purpose = 'email_challenge' AND created_at > ?`).bind(account.id, now - 600).all();
   if ((recent.results?.[0]?.count ?? 0) >= 3) return;
@@ -1733,10 +1754,12 @@ async function consumeCustomerEmailSignIn(env, token) {
   const db = (0, import_client6.createDbClient)(env);
   const account = await db.select().from(customerAccounts).where((0, import_drizzle_orm8.eq)(customerAccounts.id, accountId)).get();
   if (!account) return null;
+  const cmsUserId = await (0, import_identity.ensureVerifiedEmailIdentity)(env, account.emailNormalized, account.name);
   const sessionToken = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   await env.DB.batch([
     env.DB.prepare(`UPDATE _ecommerce_customer_accounts
-      SET email_verified_at = COALESCE(email_verified_at, ?), updated_at = ? WHERE id = ?`).bind(now, now, account.id),
+      SET email_verified_at = COALESCE(email_verified_at, ?), updated_at = ?, cms_user_id = ?
+      WHERE id = ?`).bind(now, now, cmsUserId, account.id),
     env.DB.prepare(`INSERT INTO _ecommerce_customer_sessions
       (id, account_id, token_hash, expires_at, created_at, purpose)
       VALUES (?, ?, ?, ?, ?, 'session')`).bind(
@@ -1802,7 +1825,8 @@ var ALL = async ({ request, cookies }) => {
             })
           });
           if (!response.ok) throw new Error("Email delivery failed");
-        }
+        },
+        request.headers.get("cf-connecting-ip")
       );
       return Response.json({ accepted: true }, { headers });
     } catch (error) {

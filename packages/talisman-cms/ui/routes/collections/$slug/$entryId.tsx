@@ -1841,6 +1841,7 @@ export function CollectionEntryEditor({
   const initialEntry = rawEntry as any;
   const navigate = useNavigate();
   const router = useRouter();
+  const isAdmin = router.options.context.user?.role === 'admin';
   const nativeCollection = isNativeCollection(collection);
   const presetCollection = isComponentPresetCollection(collection);
   const versioningEnabled = !nativeCollection;
@@ -2240,7 +2241,7 @@ export function CollectionEntryEditor({
                     {!collection.readOnly && <Button onClick={handleManualSaveClick} disabled={isWorking} className="w-full gap-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-400 hover:to-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_25px_rgba(99,102,241,0.5)] transition-all duration-300 border-0 h-11 text-base">
                       <Save size={18} /> {isWorking ? 'Working...' : versioningEnabled ? 'Save Draft' : 'Save Changes'}
                     </Button>}
-                    {versioningEnabled && (
+                    {versioningEnabled && !collection.readOnly && isAdmin && (
                       <div className="grid grid-cols-2 gap-3 mt-3">
                         <Button type="button" variant="outline" disabled={isWorking} onClick={() => void runEntryAction('publish')} className="gap-2">
                           <Send size={16} /> Publish
@@ -2301,9 +2302,9 @@ export function CollectionEntryEditor({
                                  <div className="text-sm text-zinc-200">Revision #{revision.revisionNumber}</div>
                                  <div className="text-[11px] uppercase tracking-widest text-zinc-500">{revision.type.replace('_', ' ')}</div>
                                </div>
-                               <Button type="button" variant="ghost" size="sm" disabled={isWorking} onClick={() => void handleRestoreRevision(revision.id)}>
+                               {isAdmin && !collection.readOnly && <Button type="button" variant="ghost" size="sm" disabled={isWorking} onClick={() => void handleRestoreRevision(revision.id)}>
                                  Restore
-                               </Button>
+                               </Button>}
                              </div>
                              <div className="flex items-center gap-2 text-xs text-zinc-500">
                                <Clock3 size={12} />

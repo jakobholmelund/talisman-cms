@@ -1,0 +1,18 @@
+# Admin coverage audit
+
+This audit compares the CMS and bundled plugin APIs with the current admin UI. It covers the core admin and the ecommerce and analytics plugins in this repository. An installing project may add its own collections, plugins, or auth adapter.
+
+| Area | Current admin support | Gap or decision |
+| --- | --- | --- |
+| Shared users | List with pagination. Local mode can create, reset passwords, change roles, disable, enable and remove CMS accounts. Hybrid mode can add editors, promote verified shoppers with a password and revoke CMS access while retaining the shopper identity. | Implemented in `ui/routes/users.tsx`. Editing a user's name or email, managing individual sessions and deleting shopper profiles are still absent. The development adapter has no stored users. |
+| Cloudflare Access identities | Access-only mode assigns roles from Worker email allowlists. Hybrid mode exchanges a verified admin identity for a marked CMS session on `/admin/sso`. | There is no admin editor for the allowlist. It is deployment configuration, so changing it requires a Worker configuration update. |
+| Webshop users | Email-link registration or sign-in links a verified shopper profile to the shared CMS user identity. Shopper and CMS sessions are separate; a customer role cannot access the CMS. | The admin shows verified shopper identities, but does not edit their order and credit data in Users. Those stay in Commerce. |
+| Content entries | List, create, edit, save draft, publish, archive, and restore revisions | The generic API supports `DELETE /api/collections/:slug/entries/:id`, but the entry editor has no remove action. Add a confirmed delete action for collections whose delete access permits it. |
+| Role aware content actions | The API requires admin for publish, archive, restore, and all deletes | Publish, archive, and restore now appear only for admins. Collection specific access rules can still further restrict actions, so the UI should eventually reflect those permissions too. |
+| Collections | Code configured collections are listed and editable through their entries | “New Collection” is a disabled control in `ui/routes/collections/index.tsx`. Collections are code configured; replace the control with guidance or implement a separate schema management feature. |
+| Globals | List, create, and edit | The API has no global delete route, and there is no admin remove action. This appears to be a current data model limitation rather than a missing button. |
+| Media | Upload, browse, and edit metadata through the media collection | No media removal action is exposed. Before adding one, ensure the API deletes the R2 object and all derived assets along with the DB entry. |
+| Dashboard | Navigation and static cards | “Total Posts,” “Media Assets,” and “Cache Hit Rate” show `--` in `ui/routes/index.tsx`; no metrics are fetched. Counts already exist in the collections API for posts and media. |
+| Ecommerce | Catalog and records plus dedicated orders, promotions, gift cards, checkout, and analytics screens | The generic commerce data models are exposed according to plugin configuration. Some are intentionally read only because payment workflows own their writes. |
+
+Suggested next work: add safe entry deletion, then replace the static dashboard cards. Media deletion needs backend cleanup before a UI action is offered.

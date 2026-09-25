@@ -2547,7 +2547,7 @@ declare const customers: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     };
     dialect: "sqlite";
 }>;
-/** Shopper identities are separate from CMS administrator accounts and Stripe customers. */
+/** Shopper profile and order owner. Verified email links connect it to the shared user identity. */
 declare const customerAccounts: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     name: "_ecommerce_customer_accounts";
     schema: undefined;
@@ -2562,6 +2562,25 @@ declare const customerAccounts: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
             notNull: true;
             hasDefault: false;
             isPrimaryKey: true;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        cmsUserId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "cms_user_id";
+            tableName: "_ecommerce_customer_accounts";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
             isAutoincrement: false;
             hasRuntimeDefault: false;
             enumValues: [string, ...string[]];

@@ -238,6 +238,7 @@ var customers = (0, import_sqlite_core.sqliteTable)("_ecommerce_customers", {
 });
 var customerAccounts = (0, import_sqlite_core.sqliteTable)("_ecommerce_customer_accounts", {
   id: (0, import_sqlite_core.text)("id").primaryKey(),
+  cmsUserId: (0, import_sqlite_core.text)("cms_user_id").unique(),
   email: (0, import_sqlite_core.text)("email").notNull(),
   emailNormalized: (0, import_sqlite_core.text)("email_normalized").notNull().unique(),
   emailVerifiedAt: (0, import_sqlite_core.integer)("email_verified_at", { mode: "timestamp" }),
@@ -1675,6 +1676,7 @@ function bindCommerceApi(options) {
 // src/accounts.ts
 var import_drizzle_orm8 = require("drizzle-orm");
 var import_client6 = require("talisman-cms/client");
+var import_identity = require("talisman-cms/auth/identity");
 var CUSTOMER_SESSION_COOKIE = "talisman-customer";
 var CUSTOMER_SESSION_MAX_AGE = 60 * 60 * 24 * 30;
 async function hashToken(token) {

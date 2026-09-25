@@ -134,6 +134,13 @@
       "when": 1789600000011,
       "tag": "0018_entry_revision_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1789600000012,
+      "tag": "0019_shared_customer_identity",
+      "breakpoints": true
     }
   ]
 }

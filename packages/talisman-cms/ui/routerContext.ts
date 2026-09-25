@@ -5,4 +5,5 @@ export interface RouterContext {
   adminBasePath: string;
   isDevAuth: boolean;
   isAccessAuth: boolean;
+  isHybridAuth: boolean;
 }
