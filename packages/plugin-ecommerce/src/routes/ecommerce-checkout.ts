@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { bindCommerceApi } from '../api';
+import { PARKED_CHECKOUT_MESSAGE, bindCommerceApi } from '../api';
 import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from '../accounts';
 import { runtimePaymentAdapters } from '../runtime';
 import type { TalismanEnv } from 'talisman-cms/client';
@@ -56,6 +56,8 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     if (cart.checkoutSessionId) {
       const resumed = await api.orders.resumeFromCart(cart.id, { limitProviderChecks: true });
       if (resumed?.providerCheckLimited) return providerCheckLimitResponse();
+      // A checkout parked for review stays locked until the store decides; trying again does not help.
+      if (resumed?.review) return Response.json({ error: PARKED_CHECKOUT_MESSAGE }, { status: 409 });
       if (resumed?.paymentUrl) {
         return Response.json({ orderId: resumed.order.id, redirectUrl: resumed.paymentUrl, mode: 'redirect' });
       }

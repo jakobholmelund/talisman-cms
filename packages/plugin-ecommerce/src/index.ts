@@ -772,6 +772,22 @@ export const ecommercePlugin = (
              idColumn: 'id'
           }
         });
+        collections.push({
+          name: 'Payment Check Decisions', slug: '_ecommerce_reconcile_decisions',
+          description: 'Administrator retries and releases of checkouts parked for review, with reasons.',
+          adminSection: 'commerce', readOnly: true,
+          fields: [
+            { name: 'id', label: 'ID', type: 'text', required: true },
+            { name: 'orderId', label: 'Order ID', type: 'text' },
+            { name: 'purchaseId', label: 'Gift Card Purchase ID', type: 'text' },
+            { name: 'action', label: 'Action', type: 'text' },
+            { name: 'failure', label: 'Parked For', type: 'text' },
+            { name: 'paymentReturned', label: 'Payment Returned', type: 'text' },
+            { name: 'adminActor', label: 'Administrator', type: 'text' },
+            { name: 'reason', label: 'Reason', type: 'text' }
+          ],
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'reconcileDecisions', idColumn: 'id' }
+        });
       }
 
       for (const collection of collections) {

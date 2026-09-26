@@ -126,6 +126,13 @@ export interface PaymentProviderAdapter {
   }>;
 
   /**
+   * How much of a payment the provider has refunded: 'full' once all of it, 'partial' for part of it,
+   * otherwise 'none'. An administrator can release a completed checkout parked for review only once its
+   * payment was refunded in full or lost to a dispute.
+   */
+  getRefundStatus?(paymentIntentId: string): Promise<'none' | 'partial' | 'full'>;
+
+  /**
    * Whether the payment is disputed: 'open' while the dispute is undecided, 'lost' once the payment
    * was taken back, otherwise 'none'. Referral awards are released only after it answers 'none'.
    */

@@ -17,15 +17,21 @@ import { readStoreSettings } from './store-settings';
 import { minimumChargeAmount } from './money';
 import { UNDELIVERABLE_COUNTRY, withCountryCode } from './checkout-input';
 import { chooseShippingRate, deliveryEstimate, shippingCharge } from './shipping';
-import { calculateOrderTax, ordersMissingTaxTransaction, ordersWithUnreversedTax, recordConfirmedOrderTax,
-  recordOrderTax, resendPendingTaxReversals, reverseOrderTax, reverseRefundedOrderTax, taxAddressFor,
-  taxableLines } from './tax';
+import { calculateOrderTax, recordConfirmedOrderTax, recordMissingTaxTransactions, resendPendingTaxReversals,
+  reverseRefundedOrderTax, reverseUnreversedTax, taxAddressFor, taxableLines } from './tax';
 export { TaxCalculationError } from './tax';
 import { INVENTORY_COLUMNS } from './inventory';
 import { fullRefundStatements } from './order-adjustments';
 import { applyStripeDispute, parseStripeDispute } from './disputes';
 import { WebhookMismatchError, WebhookRetryLaterError, WebhookSignatureError } from './webhook-errors';
 export { WebhookMismatchError, WebhookRetryLaterError, WebhookSignatureError } from './webhook-errors';
+import { RECONCILE_DUE, RECONCILE_ORDER, ReconcileFailure, assertStoreStripeMode, completedCheckoutReturn,
+  decisionInsert, isMissingSessionError, isOtherStripeModeSession, reconcileAttempt, reconcileFailure,
+  sessionLookupFailure, uncheckedSessionRefusal, type PaymentReturn, type ReconcileDecision, type ReconcileResult } from './reconcile';
+export { ReconcileFailure, type ReconcileFailureCode, type ReconcileResult } from './reconcile';
+
+/** The answer to a shopper who asks about, or tries to release, a checkout parked for review. */
+export const PARKED_CHECKOUT_MESSAGE = 'The store is reviewing the payment for this checkout. Contact the store to release it.';
 
 export interface CommerceApiOptions {
   env: TalismanEnv;
@@ -817,7 +823,9 @@ export function bindCommerceApi(options: CommerceApiOptions) {
        * The pending checkout that locks a basket: its payment URL while the provider session is open,
        * or null once the lock is gone. Public routes pass `limitProviderChecks`, so the provider is asked
        * only when the order's provider-check slot is free (see provider-checks.ts); otherwise the order is
-       * returned as stored, with `providerCheckLimited` and no payment URL.
+       * returned as stored, with `providerCheckLimited` and no payment URL. An order parked for review, or
+       * one whose check failed in a way no retry fixes, is returned with `review` and no payment URL; the
+       * provider is not asked about a parked one.
        */
       async resumeFromCart(cartId: string, options: { limitProviderChecks?: boolean } = {}) {
         const cart = await db.select().from(schema.carts).where(eq(schema.carts.id, cartId)).get();
@@ -843,10 +851,19 @@ export function bindCommerceApi(options: CommerceApiOptions) {
             customerEmail: order.customerEmail ?? undefined });
           return { order: (await this.find(order.id))!, paymentUrl: `/checkout/success?order=${encodeURIComponent(order.id)}` };
         }
+        // A parked checkout keeps its basket locked until an administrator retries or releases it.
+        if (order.reconcileReviewAt) return { order, paymentUrl: null, review: true };
         if (options.limitProviderChecks && !await mayAskPaymentProvider(env, order, paymentAdapters)) {
           return { order, paymentUrl: null, providerCheckLimited: true };
         }
-        const reconciled = await this.reconcilePending(order.id);
+        let reconciled;
+        try {
+          reconciled = await this.reconcilePending(order.id);
+        } catch (error) {
+          // No retry fixes this one: scheduled reconciliation parks it and reports it once.
+          if (reconcileFailure(error).permanent) return { order, paymentUrl: null, review: true };
+          throw error;
+        }
         if (reconciled?.status === 'paid') {
           return { order: (await this.find(order.id))!, paymentUrl: `/checkout/success?order=${encodeURIComponent(order.id)}` };
         }
@@ -874,18 +891,32 @@ export function bindCommerceApi(options: CommerceApiOptions) {
             amount: order.totalAmount, currency: order.currency });
           return { status: 'paid', paymentUrl: null };
         }
-        const adapter = paymentAdapters.find((candidate) => candidate.providerId === (order.paymentProvider ?? 'stripe'));
-        if (!adapter?.getCheckoutSession) throw new Error('Payment provider cannot reconcile checkout');
-        const session = await adapter.getCheckoutSession(order.checkoutSessionId);
+        // A parked order waits for an administrator's retry or release; nothing asks the provider about it.
+        if (order.reconcileReviewAt) return { status: 'pending', paymentUrl: null, review: true };
+        // Failures that another attempt cannot change throw a permanent ReconcileFailure, which
+        // reconcileCommerce parks; the provider's own errors are classified there.
+        const provider = order.paymentProvider ?? 'stripe';
+        const adapter = paymentAdapters.find((candidate) => candidate.providerId === provider);
+        if (!adapter?.getCheckoutSession) {
+          throw new ReconcileFailure('provider_not_configured', 'Payment provider cannot reconcile checkout');
+        }
+        // Checked once Stripe is configured: its key then matches the mode setting, so a session of the
+        // other mode is a leftover. Without Stripe, a missing mode setting would make every session look
+        // like one, and the order waits like any other missing configuration.
+        if (provider === 'stripe') assertStoreStripeMode(env, order.checkoutSessionId);
+        const session = await adapter.getCheckoutSession(order.checkoutSessionId)
+          .catch((error: unknown) => { throw sessionLookupFailure(error); });
         if (session.status === 'expired') {
           await this.cancel(id, { sessionExpired: true });
           return { status: 'cancelled', paymentUrl: null };
         }
         if (session.status === 'complete' && session.paymentStatus === 'paid') {
+          // What the provider charged must equal the order's total, which includes shipping and exclusive
+          // tax; a mismatch stays a permanent failure.
           if (session.amountTotal !== order.totalAmount ||
             session.currency?.toLowerCase() !== order.currency.toLowerCase() ||
-            ((order.paymentProvider ?? 'stripe') === 'stripe' && !session.paymentIntentId)) {
-            throw new Error('Completed payment does not match pending order');
+            (provider === 'stripe' && !session.paymentIntentId)) {
+            throw new ReconcileFailure('payment_mismatch', 'Completed payment does not match pending order');
           }
           await finalizeOrderPayment({ orderId: id, provider: order.paymentProvider ?? 'stripe',
             providerId: order.checkoutSessionId, paymentStatus: 'success',
@@ -1334,9 +1365,21 @@ export function bindCommerceApi(options: CommerceApiOptions) {
       /**
        * Release a pending order, its reservations and its basket lock. The public release route passes
        * `limitProviderChecks`, so the provider is asked only when the order's provider-check slot is free;
-       * otherwise it throws ProviderCheckLimitedError and changes nothing.
+       * otherwise it throws ProviderCheckLimitedError and changes nothing. An order parked for review is
+       * released only with `reviewRelease`, an administrator's decision, or once its session expired. A
+       * Stripe session of the other mode is never asked about, since this Worker's key cannot read it.
        */
-      async cancel(id: string, options: { sessionExpired?: boolean; limitProviderChecks?: boolean } = {}) {
+      async cancel(id: string, options: {
+        sessionExpired?: boolean; limitProviderChecks?: boolean;
+        /**
+         * An administrator's release of a parked order, whose `decision` is recorded in the batch that
+         * cancels it. A Stripe session of the other mode is not looked up, and a session the provider no
+         * longer has counts as closed. Any other session is asked about as usual; a completed one is
+         * released only once its payment went back to the shopper (see completedCheckoutReturn), which
+         * `confirmPaymentReturned` confirms only where the provider names no payment to check.
+         */
+        reviewRelease?: { decision: ReconcileDecision; confirmPaymentReturned?: boolean };
+      } = {}) {
         const order = await db.select().from(schema.orders).where(eq(schema.orders.id, id)).get();
         if (!order) return null;
         // A paid order, refunded or disputed since included, keeps its stock and its status.
@@ -1344,25 +1387,54 @@ export function bindCommerceApi(options: CommerceApiOptions) {
 
         const timestamp = Math.floor(Date.now() / 1000);
         if (order.status === 'cancelled') return order;
+        if (order.reconcileReviewAt && !options.sessionExpired && !options.reviewRelease) {
+          throw new Error(PARKED_CHECKOUT_MESSAGE);
+        }
         const reservations = await db.select().from(schema.componentReservations)
           .where(eq(schema.componentReservations.orderId, id));
         const inventoryReservations = await db.select().from(schema.inventoryReservations)
           .where(eq(schema.inventoryReservations.orderId, id));
+        const otherModeSession = (order.paymentProvider ?? 'stripe') === 'stripe' &&
+          isOtherStripeModeSession(env, order.checkoutSessionId);
+        let paymentReturned: PaymentReturn | null = null;
         // A simulated admin_test checkout has no external session, so it can be released without its provider.
         if (order.checkoutSessionId && !options.sessionExpired && order.paymentProvider !== 'admin_test') {
           const adapter = paymentAdapters.find((candidate) => candidate.providerId === (order.paymentProvider ?? 'stripe'));
           if (!adapter?.expireCheckoutSession) {
             throw new Error('Payment provider must expire the checkout session before stock can be released');
           }
-          if (options.limitProviderChecks && !await mayAskPaymentProvider(env, order, paymentAdapters)) {
-            throw new ProviderCheckLimitedError();
-          }
-          const session = await adapter.getCheckoutSession?.(order.checkoutSessionId);
-          if (session?.status === 'complete') {
-            throw new Error('Payment has completed; wait for confirmation before changing the basket');
-          }
-          if (session?.status !== 'expired') {
-            await adapter.expireCheckoutSession(order.checkoutSessionId);
+          // With Stripe configured, its key matches the mode setting, so a session of the other mode is a
+          // leftover this key cannot read. Scheduled reconciliation parks its order for the store's review;
+          // only an administrator releases it, after checking the session in that mode's dashboard.
+          if (otherModeSession && !options.reviewRelease) throw new Error(PARKED_CHECKOUT_MESSAGE);
+          // A session this key cannot read or expire may still be paid; the release waits until it has expired.
+          const refuseUnchecked = () => {
+            const refusal = uncheckedSessionRefusal(Math.floor(order.createdAt.getTime() / 1000));
+            if (refusal) throw refusal;
+          };
+          if (otherModeSession) refuseUnchecked();
+          if (!otherModeSession) {
+            if (options.limitProviderChecks && !await mayAskPaymentProvider(env, order, paymentAdapters)) {
+              throw new ProviderCheckLimitedError();
+            }
+            let session: Awaited<ReturnType<NonNullable<typeof adapter.getCheckoutSession>>> | undefined;
+            let missing = false;
+            try {
+              session = await adapter.getCheckoutSession?.(order.checkoutSessionId);
+            } catch (error) {
+              if (!options.reviewRelease || !isMissingSessionError(error)) throw error;
+              missing = true;
+              refuseUnchecked();
+            }
+            if (session?.status === 'complete') {
+              if (!options.reviewRelease) {
+                throw new Error('Payment has completed; wait for confirmation before changing the basket');
+              }
+              // A refund leaves the session complete and paid, so the payment itself is asked about.
+              paymentReturned = await completedCheckoutReturn(adapter, session, options.reviewRelease.confirmPaymentReturned);
+            } else if (!missing && session?.status !== 'expired') {
+              await adapter.expireCheckoutSession(order.checkoutSessionId);
+            }
           }
         }
         const statements: D1PreparedStatement[] = [
@@ -1424,11 +1496,20 @@ export function bindCommerceApi(options: CommerceApiOptions) {
           statements.push(env.DB.prepare(`UPDATE _ecommerce_orders SET cart_id = NULL
             WHERE id = ? AND status = 'cancelled'`).bind(id));
         }
+        if (options.reviewRelease) {
+          // The administrator's decision is kept with the release: this batch records it whenever it leaves
+          // the order cancelled, and a failed record rolls the whole release back.
+          const { decision } = options.reviewRelease;
+          statements.push(env.DB.prepare(decisionInsert('order', 'release', `status = 'cancelled'`))
+            .bind(decision.id, paymentReturned, decision.actor, decision.reason, timestamp, id));
+        }
         await env.DB.batch(statements);
 
         const cancelled = await this.find(id);
-        // A cancelled checkout's single-use discount is deleted, whichever path cancelled it.
-        if (cancelled?.status === 'cancelled' &&
+        // A cancelled checkout's single-use discount is deleted, whichever path cancelled it. A session of
+        // the other Stripe mode has its discount in that mode, out of this key's reach; it expires with
+        // the session.
+        if (cancelled?.status === 'cancelled' && !otherModeSession &&
             order.creditApplied + order.discountAmount + order.giftCardApplied > 0) {
           await discardCheckoutDiscount(
             paymentAdapters.find((candidate) => candidate.providerId === (order.paymentProvider ?? 'stripe')), id);
@@ -1470,32 +1551,50 @@ export function bindCommerceApi(options: CommerceApiOptions) {
   }
 }
 
-/** Run from a protected admin request or a scheduled Worker to repair missed webhooks. */
+/**
+ * Run from a protected admin request or a scheduled Worker to repair missed webhooks. Each row is
+ * attempted on its own: a failure is reported in its result and never stops the others.
+ *
+ * Pending orders and gift card purchases are taken in turn, rows never tried first, each once its
+ * backoff since the last attempt has passed (2^attempts minutes, at most six hours), so a row that keeps
+ * failing never holds back newer ones. Every attempt is recorded. A permanent failure (a session the
+ * provider no longer has, a session of the other Stripe mode, a completed payment that does not match)
+ * parks the row for an administrator: that attempt reports `error` with `parked: true`, and a parked row
+ * is not selected again, so only new or transient failures are reported.
+ *
+ * Tax records and reversals back off the same way on counts of their own, and a success clears the
+ * count. They are not parked: one that keeps failing is reported each time it is tried again.
+ */
 export async function reconcileCommerce(options: CommerceApiOptions, limit = 10) {
   const count = Math.max(1, Math.min(20, Math.floor(limit)));
   const { env } = options;
   const api = bindCommerceApi(options);
   const now = Math.floor(Date.now() / 1000);
+  // ';' follows ':', so the range holds exactly the ids that start with 'preparing:', read from the
+  // unique index on checkout_session_id. LIKE cannot use that index: it ignores case.
   const preparations = await env.DB.prepare(`SELECT id FROM _ecommerce_carts
-    WHERE checkout_session_id LIKE 'preparing:%' AND updated_at < ?
+    WHERE checkout_session_id >= 'preparing:' AND checkout_session_id < 'preparing;' AND updated_at < ?
     ORDER BY updated_at LIMIT ?`).bind(now - 35 * 60, count).all<{ id: string }>();
   // Without the simulated provider a stale admin_test order cannot be settled. It is released instead,
   // so it never keeps the admin's basket locked or crowds real orders out of this batch.
   const settlesAdminTest = options.paymentAdapters?.some(adapter => adapter.providerId === 'admin_test') ?? false;
+  // Both order queries state `status = 'pending'` as a literal, which lets them use the partial index
+  // of migration 0029.
   const pending = await env.DB.prepare(`SELECT id FROM _ecommerce_orders
-    WHERE status = 'pending' AND created_at < ?
+    WHERE status = 'pending' AND created_at < ? AND reconcile_review_at IS NULL AND ${RECONCILE_DUE}
       AND (? = 1 OR COALESCE(payment_provider, 'stripe') <> 'admin_test')
-    ORDER BY created_at LIMIT ?`)
-    .bind(now - 15 * 60, settlesAdminTest ? 1 : 0, count).all<{ id: string }>();
+    ORDER BY ${RECONCILE_ORDER} LIMIT ?`)
+    .bind(now - 15 * 60, now, settlesAdminTest ? 1 : 0, count).all<{ id: string }>();
   const abandonedTests = settlesAdminTest ? { results: [] } : await env.DB.prepare(`SELECT id FROM _ecommerce_orders
     WHERE status = 'pending' AND payment_provider = 'admin_test' AND created_at < ?
     ORDER BY created_at LIMIT ?`)
     .bind(now - 15 * 60, count).all<{ id: string }>();
   const giftPurchases = await env.DB.prepare(`SELECT id FROM _ecommerce_gift_card_purchases
     WHERE status = 'pending' AND provider_session_id IS NOT NULL AND created_at < ?
-    ORDER BY created_at LIMIT ?`)
-    .bind(now - 15 * 60, count).all<{ id: string }>();
-  const results: Array<{ id: string; status: string; error?: string }> = [];
+      AND reconcile_review_at IS NULL AND ${RECONCILE_DUE}
+    ORDER BY ${RECONCILE_ORDER} LIMIT ?`)
+    .bind(now - 15 * 60, now, count).all<{ id: string }>();
+  const results: ReconcileResult[] = [];
   for (const row of preparations.results ?? []) {
     try {
       await api.orders.resumeFromCart(row.id);
@@ -1505,12 +1604,7 @@ export async function reconcileCommerce(options: CommerceApiOptions, limit = 10)
     }
   }
   for (const row of pending.results ?? []) {
-    try {
-      const result = await api.orders.reconcilePending(row.id);
-      results.push({ id: row.id, status: result?.status ?? 'unchanged' });
-    } catch (error) {
-      results.push({ id: row.id, status: 'error', error: error instanceof Error ? error.message : 'Recovery failed' });
-    }
+    results.push(await reconcileAttempt(env, 'order', row.id, now, () => api.orders.reconcilePending(row.id)));
   }
   for (const row of abandonedTests.results ?? []) {
     try {
@@ -1522,31 +1616,23 @@ export async function reconcileCommerce(options: CommerceApiOptions, limit = 10)
   }
   const stripe = options.paymentAdapters?.find(adapter => adapter.providerId === 'stripe');
   for (const row of giftPurchases.results ?? []) {
-    try {
-      if (!stripe) throw new Error('Stripe adapter is unavailable');
-      const result = await reconcileGiftCardPurchase(env, stripe, row.id);
-      results.push({ id: row.id, status: result?.status ?? 'unchanged' });
-    } catch (error) {
-      results.push({ id: row.id, status: 'error', error: error instanceof Error ? error.message : 'Recovery failed' });
-    }
+    results.push(await reconcileAttempt(env, 'gift_card_purchase', row.id, now,
+      () => reconcileGiftCardPurchase(env, stripe, row.id)));
   }
-  // Tax transactions that were not recorded when their orders were paid, and then refunds not yet
-  // mirrored in the tax: gift card tender refunds, refunds of gift-card-only orders and any reversal
-  // that failed. Reversals recorded in the last five minutes may still be in flight.
+  // Tax transactions that were not recorded when their orders were paid, reversals whose request
+  // failed, and then refunds not yet mirrored in the tax: gift card tender refunds, refunds of
+  // gift-card-only orders and any reversal not recorded at refund time. Each pass backs off failing
+  // rows on counts of their own, apart from the payment ones above (see tax.ts), and a pass that fails
+  // as a whole is reported under its name without stopping the others.
   const adapters = options.paymentAdapters ?? [];
-  for (const row of await ordersMissingTaxTransaction(env, count)) {
+  const taxPasses = [['tax_transactions', recordMissingTaxTransactions],
+    ['tax_reversal_resends', resendPendingTaxReversals], ['tax_reversals', reverseUnreversedTax]] as const;
+  for (const [name, pass] of taxPasses) {
     try {
-      results.push({ id: row.id, status: await recordOrderTax(env, adapters, row.id) ? 'tax_recorded' : 'unchanged' });
+      results.push(...await pass(env, adapters, now, count));
     } catch (error) {
-      results.push({ id: row.id, status: 'error', error: error instanceof Error ? error.message : 'Tax recording failed' });
-    }
-  }
-  results.push(...await resendPendingTaxReversals(env, adapters, now - 5 * 60, count));
-  for (const row of await ordersWithUnreversedTax(env, count)) {
-    try {
-      results.push({ id: row.id, status: await reverseOrderTax(env, adapters, row.id) ? 'tax_reversed' : 'unchanged' });
-    } catch (error) {
-      results.push({ id: row.id, status: 'error', error: error instanceof Error ? error.message : 'Tax reversal failed' });
+      const failure = reconcileFailure(error);
+      results.push({ id: name, status: 'error', error: failure.message, code: failure.code });
     }
   }
   // Pending referral awards whose hold has passed. Held and voided awards are outcomes, not failures.

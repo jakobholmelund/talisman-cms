@@ -8,6 +8,7 @@ import { getReferralPolicy, referralReversalStatements } from './referrals';
 import { readStoreSettings } from './store-settings';
 import { minimumChargeAmount } from './money';
 import { WebhookMismatchError } from './webhook-errors';
+import { ReconcileFailure, assertStoreStripeMode, sessionLookupFailure } from './reconcile';
 
 const MIN_CARD_CENTS = 500;
 const amountSchema = z.number().int().min(MIN_CARD_CENTS).max(100_000);
@@ -477,20 +478,33 @@ export async function expireGiftCardPurchase(env: TalismanEnv, id: string, sessi
     .bind(Math.floor(Date.now() / 1000), id, sessionId).run();
 }
 
-/** Repair a paid or expired purchase when its signed webhook did not arrive. */
-export async function reconcileGiftCardPurchase(env: TalismanEnv, adapter: PaymentProviderAdapter, id: string) {
-  if (adapter.providerId !== 'stripe' || !adapter.getCheckoutSession) {
-    throw new Error('Stripe session lookup is required for gift card reconciliation');
-  }
+/**
+ * Repair a paid or expired purchase when its signed webhook did not arrive. A purchase parked for
+ * review is returned as pending without asking Stripe. Failures that another attempt cannot change (a
+ * session Stripe does not have, a session of the other Stripe mode, a completed payment that does not
+ * match) throw a permanent ReconcileFailure, which reconcileCommerce parks.
+ */
+export async function reconcileGiftCardPurchase(env: TalismanEnv, adapter: PaymentProviderAdapter | undefined, id: string) {
   const db = createDbClient(env);
   const purchase = await db.select().from(giftCardPurchases).where(eq(giftCardPurchases.id, id)).get();
   if (!purchase || purchase.status !== 'pending' || !purchase.providerSessionId) return null;
-  const session = await adapter.getCheckoutSession(purchase.providerSessionId);
+  if (purchase.reconcileReviewAt) return { status: 'pending', review: true };
+  if (adapter?.providerId !== 'stripe' || !adapter.getCheckoutSession) {
+    throw new ReconcileFailure('provider_not_configured', 'Stripe session lookup is required for gift card reconciliation');
+  }
+  // Checked once Stripe is configured, whose key matches the mode setting (see reconcilePending).
+  assertStoreStripeMode(env, purchase.providerSessionId);
+  const session = await adapter.getCheckoutSession(purchase.providerSessionId)
+    .catch((error: unknown) => { throw sessionLookupFailure(error); });
   if (session.status === 'expired') {
     await expireGiftCardPurchase(env, id, purchase.providerSessionId);
     return { status: 'cancelled' };
   }
   if (session.status === 'complete' && session.paymentStatus === 'paid') {
+    if (session.amountTotal !== purchase.amountCents || session.currency?.toLowerCase() !== purchase.currency.toLowerCase() ||
+      !session.paymentIntentId) {
+      throw new ReconcileFailure('payment_mismatch', 'Gift card payment does not match purchase');
+    }
     await confirmGiftCardPurchase(env, {
       id: purchase.providerSessionId,
       metadata: { giftCardPurchaseId: id },
@@ -514,7 +528,9 @@ export async function getPurchasedGiftCard(env: TalismanEnv, id: string, accessT
     // A card whose value moved to a replacement is void, and its code no longer shown.
     code: card && purchase.status === 'paid' && card.status !== 'void'
       ? await decryptCardSecret(await giftCardKeyring(env), card) : null,
-    balanceCents: card?.balanceCents ?? null };
+    balanceCents: card?.balanceCents ?? null,
+    // A pending purchase whose payment check is parked stays pending until an administrator decides.
+    paymentUnderReview: purchase.status === 'pending' && purchase.reconcileReviewAt !== null };
 }
 
 /**

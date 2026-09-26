@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, type FormEvent } from 'react';
 import { adminRequest, CommerceAdmin, errorText, Feedback, Field, money, Panel, Stat } from './common';
 import OrderAdjustments from './OrderAdjustments';
+import ReconcileReview from './ReconcileReview';
 
 type View = 'awaiting' | 'recent';
 type Address = { name?: string; line1?: string; line2?: string; city?: string; state?: string; postalCode?: string; country?: string };
@@ -151,6 +152,7 @@ export default function Orders() {
       <button type="button" className="ecom-admin__secondary" disabled={busy} onClick={() => void reconcile()}>Check pending payments</button>
     </form>
     <div ref={feedback}><Feedback message={message} error={error} /></div>
+    <ReconcileReview refreshKey={page} />
     {!page && !error && <p className="ecom-admin__muted">Loading orders…</p>}
     {page && !orders.length && <Panel title={query ? 'No matching orders' : view === 'awaiting' ? 'Nothing awaiting shipment' : 'No orders yet'}>
       <p className="ecom-admin__muted">{query ? `No order in ${views[view].toLowerCase()} has this exact ID or email address.`

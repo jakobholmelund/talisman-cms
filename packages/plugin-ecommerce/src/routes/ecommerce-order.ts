@@ -6,6 +6,7 @@ import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from '../accounts';
 import { readCartSessionToken } from '../cookies';
 import { PROVIDER_CHECK_MIN_ORDER_AGE_SECONDS, ProviderCheckLimitedError, mayAskPaymentProvider,
   providerCheckLimitResponse } from '../provider-checks';
+import { reconcileFailure } from '../reconcile';
 
 export const ALL: APIRoute = async ({ request, cookies }) => {
   const sessionToken = readCartSessionToken(cookies);
@@ -43,16 +44,24 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
       }
     }
     // The provider is asked at most once per order per interval, and not before the order is a minute
-    // old, which the webhook normally settles; any other request returns the stored status.
-    if (order.status === 'pending' && await mayAskPaymentProvider(runtimeEnv, order, paymentAdapters,
-      { minOrderAgeSeconds: PROVIDER_CHECK_MIN_ORDER_AGE_SECONDS })) {
-      await api.orders.reconcilePending(order.id);
+    // old, which the webhook normally settles; any other request returns the stored status. An order
+    // parked for review waits for an administrator and is never checked from here.
+    if (order.status === 'pending' && !order.reconcileReviewAt && await mayAskPaymentProvider(runtimeEnv, order,
+      paymentAdapters, { minOrderAgeSeconds: PROVIDER_CHECK_MIN_ORDER_AGE_SECONDS })) {
+      try {
+        await api.orders.reconcilePending(order.id);
+      } catch (error) {
+        // The shopper gets the stored status. Scheduled reconciliation records the failure, backs off
+        // and parks a permanent one.
+        console.warn('[commerce] Order status check failed', { code: reconcileFailure(error).code });
+      }
       order = await api.orders.findForSession(orderId, sessionToken, customer?.id);
       if (!order) return Response.json({ error: 'Order not found' }, { status: 404 });
     }
     return Response.json({
       orderId: order.id,
       status: order.status,
+      paymentUnderReview: order.status === 'pending' && order.reconcileReviewAt !== null,
       fulfillmentStatus: order.fulfillmentStatus,
       paymentProvider: order.paymentProvider,
       accountCreatedByOrder: order.userId === `acct_${order.id}`,

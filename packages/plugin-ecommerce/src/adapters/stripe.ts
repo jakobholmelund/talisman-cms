@@ -213,6 +213,14 @@ export class StripePaymentAdapter implements PaymentProviderAdapter {
     }
   }
 
+  async getRefundStatus(paymentIntentId: string): Promise<'none' | 'partial' | 'full'> {
+    // A Checkout payment's successful charge is the intent's latest one, and it carries the refunds.
+    const intent = await this.stripe.paymentIntents.retrieve(paymentIntentId, { expand: ['latest_charge'] });
+    const charge = intent.latest_charge && typeof intent.latest_charge === 'object' ? intent.latest_charge : null;
+    if (!charge?.amount_refunded) return 'none';
+    return charge.refunded ? 'full' : 'partial';
+  }
+
   async getDisputeStatus(paymentIntentId: string): Promise<'none' | 'open' | 'lost'> {
     const disputes = await this.stripe.disputes.list({ payment_intent: paymentIntentId, limit: 10 });
     if (disputes.data.some((dispute) => dispute.status === 'lost')) return 'lost';

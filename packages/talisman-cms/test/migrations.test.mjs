@@ -329,6 +329,11 @@ const seeds = {
     INSERT INTO galaxy_auth_session (id, expires_at, token, created_at, updated_at, user_id) VALUES
       ('sess-1', ${T + 86_400}, 'token-1', ${T}, ${T}, 'admin-1');
   `),
+  // A checkout left pending, as releases since 0011 wrote it.
+  '0011_order_payment_provider': (db) => db.exec(`
+    INSERT INTO _ecommerce_orders (id, status, items, total_amount, checkout_session_id, payment_provider, created_at, updated_at) VALUES
+      ('order-pending', 'pending', '[]', 4000, 'cs_test_pending', 'stripe', ${T + 40}, ${T + 40});
+  `),
   '0012_customer_accounts': (db) => db.exec(`
     INSERT INTO _ecommerce_customer_accounts (id, email, email_normalized, email_verified_at, name, created_at, updated_at) VALUES
       ('shop-admin', 'Admin@Example.com', 'admin@example.com', ${T + 500}, 'Admin shopping', ${T}, ${T}),
@@ -460,6 +465,7 @@ test('a database with data from earlier releases upgrades cleanly', () => {
     assert.deepEqual(rows(db, `SELECT id, status, fulfillment_status, updated_at FROM _ecommerce_orders ORDER BY id`), [
       { id: 'order-1', status: 'paid', fulfillment_status: 'unfulfilled', updated_at: T },
       { id: 'order-marked-fulfilled', status: 'paid', fulfillment_status: 'fulfilled', updated_at: T + 30 },
+      { id: 'order-pending', status: 'pending', fulfillment_status: 'unfulfilled', updated_at: T + 40 },
       { id: 'order-shipped', status: 'paid', fulfillment_status: 'fulfilled', updated_at: T + 100 },
       { id: 'order-shipped-refunded', status: 'partially_refunded', fulfillment_status: 'fulfilled', updated_at: T + 300 },
     ]);
@@ -482,6 +488,7 @@ test('a database with data from earlier releases upgrades cleanly', () => {
       { status: 'paid', fulfillment_status: 'fulfilled', updated_at: T + 500 });
     assertIntegrity(db);
     assertGiftCardRowsKept(db);
+    assertReconcileStateUntried(db);
     migrate(empty);
     assert.deepEqual(fullSchema(db), fullSchema(empty));
   } finally {
@@ -497,7 +504,7 @@ test('0026 lets an order ship in parcels and take appended corrections, with ind
     const schema = outline(db);
     assert.equal(schema.columns._ecommerce_fulfillments,
       'id order_id admin_actor carrier tracking_number note created_at kind corrects_id completes_order');
-    assert.match(schema.columns._ecommerce_orders, / fulfillment_status$/);
+    assert.match(schema.columns._ecommerce_orders, / fulfillment_status( |$)/);
     const touching = (name) => name.includes('_ecommerce_fulfillment') || name.includes('_ecommerce_orders_awaiting')
       || name.includes('_ecommerce_orders_recent');
     assert.deepEqual(schema.indexes.filter(touching), [
@@ -715,6 +722,280 @@ test('0028 adds refund dates, disputes and restocks beside existing rows, and th
     assert.throws(() => restock('rst-2', 'cres-paid'), /UNIQUE constraint failed/);
     assert.throws(() => restock('rst-3', 'cres-other', ' '), /CHECK constraint failed/);
     assert.throws(() => restock('rst-4', 'cres-other', 'admin-1', 'short'), /CHECK constraint failed/);
+    assertIntegrity(db);
+  } finally {
+    db.close();
+  }
+});
+
+/** 0029: tax records and reversals written before it start with no failed attempts. */
+const taxUntried = { tax_sync_attempts: 0, tax_sync_last_at: null, tax_sync_last_error: null };
+
+/** 0029: orders and gift card purchases written before it keep their values and start untried and unparked. */
+function assertReconcileStateUntried(db) {
+  for (const table of ['_ecommerce_orders', '_ecommerce_gift_card_purchases']) {
+    assert.deepEqual(rows(db, `SELECT DISTINCT reconcile_attempts, reconcile_last_at, reconcile_last_error, reconcile_review_at
+      FROM ${table}`), [{ reconcile_attempts: 0, reconcile_last_at: null, reconcile_last_error: null, reconcile_review_at: null }], table);
+  }
+  assert.deepEqual(rows(db, 'SELECT DISTINCT tax_sync_attempts, tax_sync_last_at, tax_sync_last_error FROM _ecommerce_orders'),
+    [taxUntried]);
+}
+
+const queryPlan = (db, sql, ...params) => rows(db, `EXPLAIN QUERY PLAN ${sql}`, ...params).map((step) => step.detail).join(' | ');
+
+test('0029 adds reconciliation state and indexes, keeps rows, and the previous release still writes and reads them', () => {
+  const db = openDatabase();
+  try {
+    const tag = '0029_commerce_reconcile_backoff';
+    migrate(db, { to: tags[tags.indexOf(tag) - 1], after: { '0004_ecommerce_plugin': seeds['0004_ecommerce_plugin'],
+      '0011_order_payment_provider': seeds['0011_order_payment_provider'], '0015_gift_cards': seeds['0015_gift_cards'] } });
+    // A gift card purchase left pending, started by the previous release's statements.
+    db.prepare(`INSERT INTO _ecommerce_gift_card_purchases
+      (id,buyer_email,amount_cents,currency,status,access_token_hash,created_at,updated_at)
+      VALUES (?,?,?,'usd','pending',?,?,?)`).run('gp-pending', 'buyer@example.com', 5000, 'hash-pending', T, T);
+    db.prepare(`UPDATE _ecommerce_gift_card_purchases SET provider_session_id = ?, updated_at = ?
+      WHERE id = ? AND status = 'pending'`).run('cs_test_gift', T, 'gp-pending');
+    const orders = rows(db, 'SELECT * FROM _ecommerce_orders ORDER BY id');
+    const purchases = rows(db, 'SELECT * FROM _ecommerce_gift_card_purchases ORDER BY id');
+    applyMigration(db, tag);
+
+    const untried = { reconcile_attempts: 0, reconcile_last_at: null, reconcile_last_error: null, reconcile_review_at: null };
+    assert.deepEqual(rows(db, 'SELECT * FROM _ecommerce_orders ORDER BY id'),
+      orders.map((order) => ({ ...order, ...untried, ...taxUntried })));
+    assert.deepEqual(rows(db, 'SELECT * FROM _ecommerce_gift_card_purchases ORDER BY id'),
+      purchases.map((purchase) => ({ ...purchase, ...untried })));
+    const added = /^(_ecommerce_orders_pending_idx|_ecommerce_gift_card_purchases_status_created_idx|_ecommerce_payments_order_idx|_ecommerce_orders_checkout_session_idx|galaxy_auth_verification_identifier_idx|_ecommerce_reconcile_decisions_\w+) /;
+    const schema = outline(db);
+    assert.deepEqual(schema.indexes.filter((index) => added.test(index)), [
+      '_ecommerce_gift_card_purchases_status_created_idx ON _ecommerce_gift_card_purchases (status, created_at)',
+      '_ecommerce_orders_checkout_session_idx ON _ecommerce_orders (checkout_session_id)',
+      '_ecommerce_orders_pending_idx ON _ecommerce_orders (created_at) WHERE ...',
+      '_ecommerce_payments_order_idx ON _ecommerce_payments (order_id)',
+      '_ecommerce_reconcile_decisions_order_idx ON _ecommerce_reconcile_decisions (order_id, created_at)',
+      '_ecommerce_reconcile_decisions_purchase_idx ON _ecommerce_reconcile_decisions (purchase_id, created_at)',
+      'galaxy_auth_verification_identifier_idx ON galaxy_auth_verification (identifier, created_at)',
+    ]);
+    // Administrator decisions on parked records name the order or the purchase they changed.
+    assert.equal(schema.columns._ecommerce_reconcile_decisions,
+      'id order_id purchase_id action failure payment_returned admin_actor reason created_at');
+    assert.deepEqual(schema.foreignKeys.filter((key) => key.startsWith('_ecommerce_reconcile_decisions.')), [
+      '_ecommerce_reconcile_decisions.order_id -> _ecommerce_orders.id',
+      '_ecommerce_reconcile_decisions.purchase_id -> _ecommerce_gift_card_purchases.id',
+    ]);
+
+    // Pending rows by age; a refund's payment rows and revenue reports by order; checkout resume by session;
+    // better-auth's newest verification row of an identifier, and its delete.
+    assert.match(queryPlan(db, `SELECT id FROM _ecommerce_orders WHERE status = 'pending' AND created_at < ? ORDER BY created_at LIMIT ?`, T, 10),
+      /SEARCH _ecommerce_orders USING INDEX _ecommerce_orders_pending_idx \(created_at<\?\)/);
+    assert.match(queryPlan(db, `SELECT id FROM _ecommerce_gift_card_purchases WHERE status = 'pending' AND created_at < ?`, T),
+      /SEARCH _ecommerce_gift_card_purchases USING (COVERING )?INDEX _ecommerce_gift_card_purchases_status_created_idx \(status=\? AND created_at<\?\)/);
+    assert.match(queryPlan(db, `UPDATE _ecommerce_payments SET status = 'refunded' WHERE order_id = ? AND provider = 'stripe'`, 'order-1'),
+      /SEARCH _ecommerce_payments USING INDEX _ecommerce_payments_order_idx \(order_id=\?\)/);
+    assert.match(queryPlan(db, `SELECT o.id, MIN(p.created_at) AS paid_at FROM _ecommerce_orders o
+      JOIN _ecommerce_payments p ON p.order_id = o.id
+      WHERE o.status IN ('paid', 'fulfilled', 'partially_refunded', 'refunded') GROUP BY o.id`),
+      /SEARCH p USING INDEX _ecommerce_payments_order_idx \(order_id=\?\)/);
+    assert.match(queryPlan(db, `SELECT id FROM _ecommerce_orders WHERE checkout_session_id = ?`, 'cs_test_pending'),
+      /SEARCH _ecommerce_orders USING INDEX _ecommerce_orders_checkout_session_idx \(checkout_session_id=\?\)/);
+    const newest = queryPlan(db, `SELECT id, value FROM galaxy_auth_verification WHERE identifier = ? ORDER BY created_at DESC LIMIT 1`, 'reset:1');
+    assert.match(newest, /SEARCH galaxy_auth_verification USING INDEX galaxy_auth_verification_identifier_idx \(identifier=\?\)/);
+    assert.doesNotMatch(newest, /TEMP B-TREE/, 'the index gives the newest row first');
+    assert.match(queryPlan(db, `DELETE FROM galaxy_auth_verification WHERE identifier = ?`, 'reset:1'),
+      /SEARCH galaxy_auth_verification USING INDEX galaxy_auth_verification_identifier_idx \(identifier=\?\)/);
+    // The orders queue keeps the partial indexes of 0026, and pages without sorting.
+    const awaiting = `status IN ('paid','partially_refunded') AND fulfillment_status <> 'fulfilled'
+      AND COALESCE(payment_provider, 'stripe') <> 'admin_test'`;
+    assert.match(queryPlan(db, `SELECT COUNT(*) AS count FROM _ecommerce_orders WHERE ${awaiting}`), /_ecommerce_orders_awaiting_idx/);
+    assert.equal(queryPlan(db, `SELECT id FROM _ecommerce_orders WHERE ${awaiting} ORDER BY created_at ASC, id ASC LIMIT ?`, 51),
+      'SCAN _ecommerce_orders USING INDEX _ecommerce_orders_awaiting_idx');
+    assert.equal(queryPlan(db, `SELECT id FROM _ecommerce_orders WHERE status NOT IN ('pending','cancelled','draft')
+      AND COALESCE(payment_provider, 'stripe') <> 'admin_test' ORDER BY created_at DESC, id DESC LIMIT ?`, 51),
+      'SCAN _ecommerce_orders USING INDEX _ecommerce_orders_recent_idx');
+
+    // The previous release's reconciliation queries, verbatim, still find the pending rows.
+    const due = T + 3600;
+    assert.deepEqual(rows(db, `SELECT id FROM _ecommerce_orders
+      WHERE status = 'pending' AND created_at < ?
+        AND (? = 1 OR COALESCE(payment_provider, 'stripe') <> 'admin_test')
+      ORDER BY created_at LIMIT ?`, due, 0, 10), [{ id: 'order-pending' }]);
+    assert.deepEqual(rows(db, `SELECT id FROM _ecommerce_gift_card_purchases
+      WHERE status = 'pending' AND provider_session_id IS NOT NULL AND created_at < ?
+      ORDER BY created_at LIMIT ?`, due, 10), [{ id: 'gp-pending' }]);
+    assert.deepEqual(rows(db, `SELECT id FROM _ecommerce_carts
+      WHERE checkout_session_id LIKE 'preparing:%' AND updated_at < ?
+      ORDER BY updated_at LIMIT ?`, due, 10), []);
+    // Its checkout inserts a pending order without the new columns, which take their defaults.
+    db.prepare(`INSERT INTO _ecommerce_orders
+      (id, cart_id, user_id, checkout_session_id, payment_provider, status, items, total_amount, subtotal_amount, credit_applied, discount_code, discount_amount, gift_card_id, gift_card_applied, referral_code, referral_reward_cents, currency,
+       customer_email, shipping_address, billing_address, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'usd', ?, ?, ?, ?, ?) `)
+      .run('order-new', null, null, 'cs_test_new', 'stripe', '[]', 12000, 12000, 0, null, 0, null, 0, null, 0,
+        'new@example.com', null, null, T + 50, T + 50);
+    assert.deepEqual(row(db, `SELECT reconcile_attempts, reconcile_last_at, reconcile_last_error, reconcile_review_at
+      FROM _ecommerce_orders WHERE id = 'order-new'`), untried);
+
+    // The new release records attempts and parks a row; the previous release, after a rollback, still
+    // settles or cancels it, ignoring that state.
+    db.prepare(`UPDATE _ecommerce_orders SET reconcile_attempts = reconcile_attempts + 1,
+        reconcile_last_at = ?, reconcile_last_error = ?, reconcile_review_at = ?
+      WHERE id = ? AND status = 'pending' AND reconcile_review_at IS NULL RETURNING id`).all(T + 60, 'session_missing', T + 60, 'order-pending');
+    db.prepare(`UPDATE _ecommerce_gift_card_purchases SET reconcile_attempts = reconcile_attempts + 1, reconcile_last_at = ?,
+      reconcile_last_error = ? WHERE id = ?`).run(T + 60, 'provider_unavailable', 'gp-pending');
+    db.prepare(`UPDATE _ecommerce_orders SET status = 'paid', updated_at = ?, customer_email = ?, payment_intent_id = ?
+      WHERE id = ? AND status = 'pending' AND checkout_session_id = ? AND total_amount = ?`)
+      .run(T + 70, 'new@example.com', 'pi_pending', 'order-pending', 'cs_test_pending', 4000);
+    db.prepare(`UPDATE _ecommerce_orders SET status = 'cancelled', updated_at = ?
+      WHERE id = ? AND status NOT IN ('paid', 'fulfilled')`).run(T + 70, 'order-new');
+    db.prepare(`UPDATE _ecommerce_gift_card_purchases
+      SET status = 'paid',payment_intent_id = ?,updated_at = ?
+      WHERE id = ? AND status = 'pending' AND provider_session_id = ?`).run('pi_gift', T + 70, 'gp-pending', 'cs_test_gift');
+    assert.deepEqual(rows(db, `SELECT id, status, reconcile_attempts, reconcile_last_error, reconcile_review_at FROM _ecommerce_orders
+      WHERE id IN ('order-pending', 'order-new') ORDER BY id`), [
+      { id: 'order-new', status: 'cancelled', reconcile_attempts: 0, reconcile_last_error: null, reconcile_review_at: null },
+      { id: 'order-pending', status: 'paid', reconcile_attempts: 1, reconcile_last_error: 'session_missing', reconcile_review_at: T + 60 },
+    ]);
+    assert.deepEqual(row(db, `SELECT status, reconcile_attempts, reconcile_last_error FROM _ecommerce_gift_card_purchases WHERE id = 'gp-pending'`),
+      { status: 'paid', reconcile_attempts: 1, reconcile_last_error: 'provider_unavailable' });
+    assert.throws(() => db.exec(`UPDATE _ecommerce_orders SET reconcile_attempts = -1 WHERE id = 'order-new'`), /CHECK constraint failed/);
+    assert.throws(() => db.exec(`UPDATE _ecommerce_gift_card_purchases SET reconcile_attempts = -1 WHERE id = 'gp-pending'`), /CHECK constraint failed/);
+
+    // A decision names exactly one existing order or purchase, a known action, the administrator and a
+    // reason; only a release records how a completed checkout's payment was returned.
+    const decide = db.prepare(`INSERT INTO _ecommerce_reconcile_decisions
+      (id, order_id, purchase_id, action, failure, payment_returned, admin_actor, reason, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    decide.run('rcd-retry', 'order-pending', null, 'retry', 'session_missing', null, 'admin-1', 'Stripe restored it', T + 80);
+    decide.run('rcd-release', null, 'gp-pending', 'release', 'payment_mismatch', 'refunded', 'admin-1', 'Refunded in Stripe', T + 90);
+    for (const [values, error] of [
+      [['rcd-both', 'order-pending', 'gp-pending', 'retry', null, null, 'admin-1', 'Two records at once'], /CHECK constraint failed/],
+      [['rcd-none', null, null, 'retry', null, null, 'admin-1', 'No record at all'], /CHECK constraint failed/],
+      [['rcd-action', 'order-pending', null, 'archive', null, null, 'admin-1', 'Unknown action here'], /CHECK constraint failed/],
+      [['rcd-return', 'order-pending', null, 'retry', null, 'refunded', 'admin-1', 'A retry returns nothing'], /CHECK constraint failed/],
+      [['rcd-how', 'order-pending', null, 'release', null, 'maybe', 'admin-1', 'An unknown return way'], /CHECK constraint failed/],
+      [['rcd-actor', 'order-pending', null, 'retry', null, null, '  ', 'Nobody decided this'], /CHECK constraint failed/],
+      [['rcd-reason', 'order-pending', null, 'retry', null, null, 'admin-1', ' short  '], /CHECK constraint failed/],
+      [['rcd-missing', 'order-missing', null, 'retry', null, null, 'admin-1', 'No such order exists'], /FOREIGN KEY constraint failed/],
+    ]) assert.throws(() => decide.run(...values, T + 95), error, values[0]);
+    assert.deepEqual(rows(db, 'SELECT id FROM _ecommerce_reconcile_decisions ORDER BY created_at'), [{ id: 'rcd-retry' }, { id: 'rcd-release' }]);
+    assertIntegrity(db);
+  } finally {
+    db.close();
+  }
+});
+
+test('0029 counts tax attempts on orders and reversals, indexes the tax passes, and the previous release still records and reverses tax', () => {
+  const db = openDatabase();
+  try {
+    const tag = '0029_commerce_reconcile_backoff';
+    migrate(db, { to: tags[tags.indexOf(tag) - 1] });
+    // As the previous release leaves them: a paid order whose tax transaction is missing, and a partly
+    // refunded one with a reversal sent, one whose request failed, and a refund not reversed yet.
+    const insertOrder = db.prepare(`INSERT INTO _ecommerce_orders (id, status, items, total_amount, payment_provider,
+      tax_amount, tax_behavior, tax_calculation_id, tax_transaction_id, provider_refunded_cents, created_at, updated_at)
+      VALUES (?, ?, '[]', 13200, 'stripe', 1200, 'exclusive', ?, ?, ?, ?, ?)`);
+    insertOrder.run('order-tax-missing', 'paid', 'taxcalc_1', null, 0, T, T);
+    insertOrder.run('order-tax-refunded', 'partially_refunded', 'taxcalc_2', 'tax_2', 8000, T + 10, T + 30);
+    // The previous release's statements, verbatim: record a reversal, then store the provider's id for it.
+    const recordReversal = db.prepare(`INSERT INTO _ecommerce_tax_reversals
+      (id, order_id, reference, amount, provider_reversal_id, created_at)
+      SELECT ?, ?, ?, ?, '', ? WHERE (SELECT COALESCE(SUM(amount), 0) FROM _ecommerce_tax_reversals
+        WHERE order_id = ?) = ?
+      ON CONFLICT(reference) DO NOTHING`);
+    const sendReversal = db.prepare(`UPDATE _ecommerce_tax_reversals SET provider_reversal_id = ?
+    WHERE reference = ? AND provider_reversal_id = ''`);
+    recordReversal.run('taxrev-sent', 'order-tax-refunded', 'order-tax-refunded:reversal:3000', 3000, T + 20, 'order-tax-refunded', 0);
+    sendReversal.run('taxrev_1', 'order-tax-refunded:reversal:3000');
+    recordReversal.run('taxrev-unsent', 'order-tax-refunded', 'order-tax-refunded:reversal:5000', 2000, T + 30, 'order-tax-refunded', 3000);
+    const reversals = rows(db, 'SELECT * FROM _ecommerce_tax_reversals ORDER BY id');
+    applyMigration(db, tag);
+
+    // Existing reversals and orders keep their values and start with no failed tax attempts.
+    assert.deepEqual(rows(db, 'SELECT * FROM _ecommerce_tax_reversals ORDER BY id'),
+      reversals.map((reversal) => ({ ...reversal, ...taxUntried })));
+    assert.deepEqual(rows(db, `SELECT id, tax_sync_attempts, tax_sync_last_at, tax_sync_last_error FROM _ecommerce_orders
+      ORDER BY id`), [{ id: 'order-tax-missing', ...taxUntried }, { id: 'order-tax-refunded', ...taxUntried }]);
+    const schema = outline(db);
+    assert.equal(schema.columns._ecommerce_tax_reversals,
+      'id order_id reference amount provider_reversal_id created_at tax_sync_attempts tax_sync_last_at tax_sync_last_error');
+    assert.deepEqual(schema.indexes.filter((index) => /^_ecommerce_(orders_tax_refunded|tax_reversals_unsent)_idx /.test(index)), [
+      '_ecommerce_orders_tax_refunded_idx ON _ecommerce_orders (created_at) WHERE ...',
+      '_ecommerce_tax_reversals_unsent_idx ON _ecommerce_tax_reversals (created_at) WHERE ...',
+    ]);
+
+    // The tax passes, as the previous release runs them and with this release's backoff: paid orders
+    // without a transaction come from the index of 0025, unsent reversals and refunded orders with a
+    // transaction from those of 0029.
+    const target = `CASE WHEN o.status = 'refunded' THEN o.gift_card_applied + o.total_amount
+      ELSE MIN(o.gift_card_applied + o.total_amount, o.provider_refunded_cents + o.gift_card_refunded_cents) END`;
+    const reversed = '(SELECT COALESCE(SUM(r.amount), 0) FROM _ecommerce_tax_reversals r WHERE r.order_id = o.id)';
+    const backoff = (alias) => ({
+      due: `(${alias}tax_sync_last_at IS NULL OR ${alias}tax_sync_last_at <= ? - MIN(21600, 60 << MIN(${alias}tax_sync_attempts, 9)))`,
+      order: `COALESCE(${alias}tax_sync_last_at, 0), ${alias}created_at, ${alias}id`,
+    });
+    const missing = `SELECT id FROM _ecommerce_orders WHERE status IN ('paid', 'fulfilled', 'partially_refunded', 'refunded')
+      AND tax_calculation_id IS NOT NULL AND tax_transaction_id IS NULL`;
+    const unsent = `SELECT r.order_id, r.reference, r.amount, o.payment_provider, o.tax_transaction_id
+      FROM _ecommerce_tax_reversals r JOIN _ecommerce_orders o ON o.id = r.order_id WHERE r.provider_reversal_id = '' AND r.created_at < ?`;
+    const unreversed = `SELECT o.id FROM _ecommerce_orders o WHERE o.status IN ('partially_refunded', 'refunded')
+      AND o.tax_transaction_id IS NOT NULL AND ${target} > ${reversed}`;
+    const passes = [
+      [`${missing} ORDER BY created_at LIMIT ?`, [10],
+        /SEARCH _ecommerce_orders USING INDEX _ecommerce_orders_tax_transaction_missing_idx \(status=\?\)/,
+        [{ id: 'order-tax-missing' }]],
+      [`${missing} AND ${backoff('').due} ORDER BY ${backoff('').order} LIMIT ?`, [T + 100, 10],
+        /SEARCH _ecommerce_orders USING INDEX _ecommerce_orders_tax_transaction_missing_idx \(status=\?\)/,
+        [{ id: 'order-tax-missing' }]],
+      [`${unsent} ORDER BY r.created_at LIMIT ?`, [T + 100, 10],
+        /SEARCH r USING INDEX _ecommerce_tax_reversals_unsent_idx \(created_at<\?\)/,
+        [{ order_id: 'order-tax-refunded', reference: 'order-tax-refunded:reversal:5000', amount: 2000,
+          payment_provider: 'stripe', tax_transaction_id: 'tax_2' }]],
+      [`${unsent} AND ${backoff('r.').due} ORDER BY ${backoff('r.').order} LIMIT ?`, [T + 100, T + 100, 10],
+        /SEARCH r USING INDEX _ecommerce_tax_reversals_unsent_idx \(created_at<\?\)/,
+        [{ order_id: 'order-tax-refunded', reference: 'order-tax-refunded:reversal:5000', amount: 2000,
+          payment_provider: 'stripe', tax_transaction_id: 'tax_2' }]],
+      [`${unreversed} ORDER BY o.created_at LIMIT ?`, [10],
+        /SCAN o USING INDEX _ecommerce_orders_tax_refunded_idx/, [{ id: 'order-tax-refunded' }]],
+      [`${unreversed} AND ${backoff('o.').due} ORDER BY ${backoff('o.').order} LIMIT ?`, [T + 100, 10],
+        /SCAN o USING INDEX _ecommerce_orders_tax_refunded_idx/, [{ id: 'order-tax-refunded' }]],
+    ];
+    for (const [sql, params, plan, found] of passes) {
+      assert.match(queryPlan(db, sql, ...params), plan, sql);
+      assert.deepEqual(rows(db, sql, ...params), found, sql);
+    }
+
+    // This release counts failed attempts and clears them; a count is never negative.
+    db.prepare(`UPDATE _ecommerce_orders SET tax_sync_attempts = tax_sync_attempts + 1, tax_sync_last_at = ?,
+      tax_sync_last_error = ? WHERE id = ? AND tax_transaction_id IS NULL`).run(T + 100, 'provider_unavailable', 'order-tax-missing');
+    db.prepare(`UPDATE _ecommerce_tax_reversals SET tax_sync_attempts = tax_sync_attempts + 1, tax_sync_last_at = ?,
+      tax_sync_last_error = ? WHERE reference = ? AND provider_reversal_id = ''`).run(T + 100, 'failed', 'order-tax-refunded:reversal:5000');
+    assert.deepEqual(rows(db, `SELECT id, tax_sync_attempts, tax_sync_last_at, tax_sync_last_error FROM _ecommerce_orders
+      WHERE id LIKE 'order-tax-%' ORDER BY id`), [
+      { id: 'order-tax-missing', tax_sync_attempts: 1, tax_sync_last_at: T + 100, tax_sync_last_error: 'provider_unavailable' },
+      { id: 'order-tax-refunded', ...taxUntried },
+    ]);
+    // A counted failure waits: two minutes after it, the order and the reversal are due again.
+    assert.deepEqual(rows(db, `${missing} AND ${backoff('').due}`, T + 219), []);
+    assert.deepEqual(rows(db, `${missing} AND ${backoff('').due}`, T + 220), [{ id: 'order-tax-missing' }]);
+    assert.deepEqual(rows(db, `${unsent} AND ${backoff('r.').due}`, T + 1000, T + 219), []);
+    for (const table of ['_ecommerce_orders', '_ecommerce_tax_reversals']) {
+      assert.throws(() => db.exec(`UPDATE ${table} SET tax_sync_attempts = -1`), /CHECK constraint failed/, table);
+    }
+
+    // After a rollback, the previous release records the transaction, and sends the reversal and a new
+    // one, ignoring the counts; new reversals take the defaults.
+    db.prepare(`UPDATE _ecommerce_orders SET tax_transaction_id = ?
+    WHERE id = ? AND tax_transaction_id IS NULL`).run('tax_1', 'order-tax-missing');
+    sendReversal.run('taxrev_2', 'order-tax-refunded:reversal:5000');
+    recordReversal.run('taxrev-new', 'order-tax-refunded', 'order-tax-refunded:reversal:8000', 3000, T + 200, 'order-tax-refunded', 5000);
+    sendReversal.run('taxrev_3', 'order-tax-refunded:reversal:8000');
+    assert.deepEqual(rows(db, `SELECT reference, provider_reversal_id, tax_sync_attempts, tax_sync_last_error
+      FROM _ecommerce_tax_reversals ORDER BY created_at`), [
+      { reference: 'order-tax-refunded:reversal:3000', provider_reversal_id: 'taxrev_1', tax_sync_attempts: 0, tax_sync_last_error: null },
+      { reference: 'order-tax-refunded:reversal:5000', provider_reversal_id: 'taxrev_2', tax_sync_attempts: 1, tax_sync_last_error: 'failed' },
+      { reference: 'order-tax-refunded:reversal:8000', provider_reversal_id: 'taxrev_3', tax_sync_attempts: 0, tax_sync_last_error: null },
+    ]);
+    // Nothing is left for either release's passes.
+    for (const [sql, params] of passes) assert.deepEqual(rows(db, sql, ...params), [], sql);
     assertIntegrity(db);
   } finally {
     db.close();

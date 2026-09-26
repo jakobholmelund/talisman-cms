@@ -15,7 +15,8 @@ const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.
   '0012_customer_accounts.sql', '0013_referrals_and_credit.sql', '0014_promotions.sql',
   '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
   '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql', '0025_order_shipping_and_tax.sql',
-  '0026_order_fulfillment_status.sql', '0027_gift_card_review.sql', '0028_provider_refunds_and_disputes.sql'];
+  '0026_order_fulfillment_status.sql', '0027_gift_card_review.sql', '0028_provider_refunds_and_disputes.sql',
+  '0029_commerce_reconcile_backoff.sql'];
 
 /** A frame and a case that ship, and a digital guide that does not. */
 function database() {
@@ -76,7 +77,8 @@ const giftCardKey = { TALISMAN_COMMERCE_GIFT_CARD_KEY: 'a'.repeat(64) };
 
 /**
  * Stands in for Stripe with a flat 10% tax and records every request. A test can replace the
- * calculation, make the next transaction fail, or act while a reversal is in flight.
+ * calculation, make the next transaction fail or have a function pick the failure of each, or act
+ * while a reversal is in flight.
  */
 function taxingProvider(state = {}) {
   const calls = { sessions: [], calculations: [], transactions: [], reversals: [] };
@@ -99,7 +101,7 @@ function taxingProvider(state = {}) {
     },
     async recordTaxTransaction(params) {
       calls.transactions.push(params);
-      const failure = state.recordError;
+      const failure = state.recordError ?? state.recordFails?.(params);
       state.recordError = null;
       if (failure) throw failure;
       return { transactionId: `tax_${params.orderId}` };
@@ -109,7 +111,7 @@ function taxingProvider(state = {}) {
       const onReverse = state.onReverse;
       state.onReverse = null;
       if (onReverse) await onReverse(params);
-      const failure = state.reverseError;
+      const failure = state.reverseError ?? state.reverseFails?.(params);
       state.reverseError = null;
       if (failure) throw failure;
       return { reversalId: `taxrev_${number}` };
@@ -141,6 +143,28 @@ function storedTax(sqlite, orderId) {
 
 const reversals = (sqlite, orderId) => sqlite.prepare(`SELECT reference, amount, provider_reversal_id
   FROM _ecommerce_tax_reversals WHERE order_id = ? ORDER BY created_at, amount`).all(orderId).map((row) => ({ ...row }));
+
+/** An order's failed tax attempts since its last success, and the code of the last one. */
+const orderTaxSync = (sqlite, orderId) => ({ ...sqlite.prepare(`SELECT tax_sync_attempts AS attempts,
+  tax_sync_last_error AS lastError FROM _ecommerce_orders WHERE id = ?`).get(orderId) });
+/** Each reversal of an order: its amount, whether it was sent, and its failed attempts since its last success. */
+const reversalSync = (sqlite, orderId) => sqlite.prepare(`SELECT amount, provider_reversal_id <> '' AS sent,
+  tax_sync_attempts AS attempts, tax_sync_last_error AS lastError FROM _ecommerce_tax_reversals
+  WHERE order_id = ? ORDER BY created_at, amount`).all(orderId).map((row) => ({ ...row }));
+
+/** Mocks Date only, so the test decides how much time passes between runs. */
+function clock(t) {
+  const start = Math.floor(Date.now() / 1000) * 1000;
+  t.mock.timers.enable({ apis: ['Date'], now: start });
+  return (seconds) => t.mock.timers.setTime(start + seconds * 1000);
+}
+
+// Stripe errors as the SDK throws them: a request Stripe will never take, such as the record of an
+// expired calculation, and an outage.
+const rejected = () => Object.assign(new Error('The tax calculation has expired'),
+  { type: 'StripeInvalidRequestError', statusCode: 400 });
+const unreachable = () => Object.assign(new Error('An error occurred with our connection to Stripe.'),
+  { type: 'StripeConnectionError' });
 
 const frameAndCase = [{ productId: 'frame', quantity: 1 }, { productId: 'case', quantity: 1 }];
 
@@ -345,7 +369,7 @@ test('a gift-card-only order records its tax transaction when it is confirmed, a
   sqlite.close();
 });
 
-test('a tax transaction that fails at confirmation is logged and recorded by reconcileCommerce', async (t) => {
+test('a tax transaction that fails at confirmation is logged, counted and recorded by reconcileCommerce', async (t) => {
   const logged = [];
   t.mock.method(console, 'error', (message) => { logged.push(message); });
   const { sqlite, DB } = database();
@@ -359,18 +383,42 @@ test('a tax transaction that fails at confirmation is logged and recorded by rec
   assert.deepEqual(await pay(api, order, 'pi_retry'), { success: true, orderId: order.id, status: 'paid' });
   assert.deepEqual(storedTax(sqlite, order.id).slice(3), [null, 13200]);
   assert.deepEqual(logged, [`[Commerce] The tax transaction of order ${order.id} was not recorded: Stripe is unavailable`]);
+  // The failure counts as an attempt, so reconciliation waits two minutes before it tries again.
+  assert.deepEqual(orderTaxSync(sqlite, order.id), { attempts: 1, lastError: 'failed' });
+  assert.deepEqual((await reconcileCommerce({ env, paymentAdapters: [adapter] }))
+    .filter((result) => result.id === order.id), []);
 
   // Retried an hour after the payment, the record is dated at the payment; at confirmation it was not.
   const paidAt = Math.floor(Date.now() / 1000) - 3600;
   sqlite.prepare('UPDATE _ecommerce_payments SET created_at = ? WHERE order_id = ?').run(paidAt, order.id);
+  sqlite.prepare('UPDATE _ecommerce_orders SET tax_sync_last_at = ? WHERE id = ?').run(paidAt, order.id);
   const results = await reconcileCommerce({ env, paymentAdapters: [adapter] });
   assert.deepEqual(results.filter((result) => result.id === order.id), [{ id: order.id, status: 'tax_recorded' }]);
   assert.equal(storedTax(sqlite, order.id)[3], `tax_${order.id}`);
   assert.deepEqual(calls.transactions.map((call) => call.postedAt), [undefined, paidAt]);
+  assert.deepEqual(orderTaxSync(sqlite, order.id), { attempts: 0, lastError: null });
   // Recorded once: the next run finds nothing to record.
   const again = await reconcileCommerce({ env, paymentAdapters: [adapter] });
   assert.deepEqual(again.filter((result) => result.id === order.id), []);
   assert.deepEqual(calls.transactions.map((call) => call.orderId), [order.id, order.id]);
+  sqlite.close();
+});
+
+test('an order disputed before its tax transaction was recorded still gets it recorded', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const { sqlite, DB } = database();
+  const { adapter, state } = taxingProvider();
+  const env = { DB, ...exclusive };
+  const api = bindCommerceApi({ env, paymentAdapters: [adapter] });
+  const order = await placeOrder(api, 'disputed-browser', [{ productId: 'frame', quantity: 1 }]);
+  state.recordError = new Error('Stripe is unavailable');
+  await pay(api, order, 'pi_disputed');
+  // A dispute opens before the retry. It does not undo the sale, so the transaction is still recorded.
+  sqlite.prepare(`UPDATE _ecommerce_orders SET status = 'disputed', tax_sync_last_at = tax_sync_last_at - 3600
+    WHERE id = ?`).run(order.id);
+  const results = await reconcileCommerce({ env, paymentAdapters: [adapter] });
+  assert.deepEqual(results.filter((result) => result.id === order.id), [{ id: order.id, status: 'tax_recorded' }]);
+  assert.equal(storedTax(sqlite, order.id)[3], `tax_${order.id}`);
   sqlite.close();
 });
 
@@ -463,12 +511,161 @@ test('a reversal the provider refused stays pending and is sent again, unchanged
   // A reversal recorded in the last few minutes may still be in flight, so it is left alone.
   assert.deepEqual((await reconcileCommerce({ env, paymentAdapters: [adapter] }))
     .filter((result) => result.id === order.id), []);
-  sqlite.prepare('UPDATE _ecommerce_tax_reversals SET created_at = created_at - 600').run();
+  // Ten minutes on, both that wait and the one its counted failure started have passed.
+  sqlite.prepare('UPDATE _ecommerce_tax_reversals SET created_at = created_at - 600, tax_sync_last_at = tax_sync_last_at - 600').run();
   assert.deepEqual((await reconcileCommerce({ env, paymentAdapters: [adapter] }))
     .filter((result) => result.id === order.id), [{ id: order.id, status: 'tax_reversed' }]);
   assert.deepEqual(calls.reversals[1], calls.reversals[0]);
   assert.deepEqual(reversals(sqlite, order.id), [{ reference: `${order.id}:reversal:3000`, amount: 3000,
     provider_reversal_id: 'taxrev_2' }]);
+  sqlite.close();
+});
+
+test('ten tax records that keep failing do not hold back an eleventh, and each failure is counted', async (t) => {
+  const at = clock(t);
+  t.mock.method(console, 'error', () => {});
+  const { sqlite, DB } = database();
+  const { adapter, calls, state } = taxingProvider();
+  const env = { DB, ...exclusive };
+  const api = bindCommerceApi({ env, paymentAdapters: [adapter] });
+  const run = () => reconcileCommerce({ env, paymentAdapters: [adapter] });
+  // Stripe cannot be reached while eleven orders are paid, a second apart.
+  state.recordFails = () => unreachable();
+  const orders = [];
+  for (let index = 0; index < 11; index++) {
+    at(index);
+    const order = await placeOrder(api, `backlog-browser-${index}`, [{ productId: 'frame', quantity: 1 }]);
+    await pay(api, order, `pi_backlog_${index}`);
+    orders.push(order);
+  }
+  const stuck = orders.slice(0, 10);
+  const eleventh = orders[10];
+  // Each failure at payment counts, so reconciliation waits two minutes before trying an order again.
+  assert.deepEqual(orders.map((order) => orderTaxSync(sqlite, order.id)),
+    orders.map(() => ({ attempts: 1, lastError: 'provider_unavailable' })));
+  at(119);
+  assert.deepEqual(await run(), []);
+
+  // Then Stripe refuses the ten oldest for good, as it does the records of expired calculations. They
+  // take the batch once more and fail; the provider's own text is not reported.
+  state.recordFails = (params) => stuck.some((order) => order.id === params.orderId) ? rejected() : null;
+  at(130);
+  assert.deepEqual((await run()).map((result) => [result.id, result.status, result.code, result.error]),
+    stuck.map((order) => [order.id, 'error', 'failed', 'The payment provider returned an error']));
+  assert.deepEqual(orderTaxSync(sqlite, stuck[0].id), { attempts: 2, lastError: 'failed' });
+  // They now wait four minutes, so the next run records the eleventh, which clears its count.
+  at(131);
+  assert.deepEqual(await run(), [{ id: eleventh.id, status: 'tax_recorded' }]);
+  assert.equal(storedTax(sqlite, eleventh.id)[3], `tax_${eleventh.id}`);
+  assert.deepEqual(orderTaxSync(sqlite, eleventh.id), { attempts: 0, lastError: null });
+  assert.equal(calls.transactions.filter((call) => call.orderId === eleventh.id).length, 2);
+  at(130 + 239);
+  assert.deepEqual(await run(), []);
+  at(130 + 240);
+  assert.equal((await run()).filter((result) => result.status === 'error').length, 10);
+
+  // However many attempts failed, an order waits at most six hours.
+  sqlite.prepare('UPDATE _ecommerce_orders SET tax_sync_attempts = 70, tax_sync_last_at = ? WHERE id = ?')
+    .run(Math.floor(Date.now() / 1000) - 6 * 60 * 60 + 1, stuck[0].id);
+  assert.deepEqual(await run(), []);
+  sqlite.prepare('UPDATE _ecommerce_orders SET tax_sync_last_at = tax_sync_last_at - 1 WHERE id = ?').run(stuck[0].id);
+  assert.deepEqual((await run()).map((result) => [result.id, result.code]), [[stuck[0].id, 'failed']]);
+  assert.deepEqual(orderTaxSync(sqlite, stuck[0].id), { attempts: 71, lastError: 'failed' });
+  sqlite.close();
+});
+
+test('a reversal whose request keeps failing backs off on its own count, which its success clears', async (t) => {
+  const at = clock(t);
+  t.mock.method(console, 'error', () => {});
+  const { sqlite, DB } = database();
+  const { adapter, calls, state } = taxingProvider();
+  const env = { DB, ...exclusive };
+  const api = bindCommerceApi({ env, paymentAdapters: [adapter] });
+  const run = async () => (await reconcileCommerce({ env, paymentAdapters: [adapter] }))
+    .map((result) => [result.id, result.status, result.code ?? null]);
+  const order = await placeOrder(api, 'flaky-reversal-browser', [{ productId: 'frame', quantity: 1 }]);
+  await pay(api, order, 'pi_flaky_reversal');
+  let outage = true;
+  state.reverseFails = () => outage ? unreachable() : null;
+
+  // The refund's reversal is recorded, and its failed request is counted on the reversal, not the order.
+  await providerRefund(api, 'pi_flaky_reversal', 13200, 3000);
+  assert.deepEqual(reversalSync(sqlite, order.id), [{ amount: 3000, sent: 0, attempts: 1, lastError: 'provider_unavailable' }]);
+  assert.deepEqual(orderTaxSync(sqlite, order.id), { attempts: 0, lastError: null });
+  // It may be in flight for five minutes. Then it is sent again, and after a second failure it waits
+  // four minutes.
+  at(300);
+  assert.deepEqual(await run(), []);
+  at(301);
+  assert.deepEqual(await run(), [[order.id, 'error', 'provider_unavailable']]);
+  assert.deepEqual(reversalSync(sqlite, order.id), [{ amount: 3000, sent: 0, attempts: 2, lastError: 'provider_unavailable' }]);
+  at(301 + 239);
+  assert.deepEqual(await run(), []);
+  outage = false;
+  at(301 + 240);
+  assert.deepEqual(await run(), [[order.id, 'tax_reversed', null]]);
+  assert.deepEqual(reversalSync(sqlite, order.id), [{ amount: 3000, sent: 1, attempts: 0, lastError: null }]);
+  // Each of the three requests named the same reversal, so Stripe reverses the refund once.
+  assert.deepEqual(calls.reversals, [calls.reversals[0], calls.reversals[0], calls.reversals[0]]);
+  assert.equal(calls.reversals[0].reference, `${order.id}:reversal:3000`);
+  sqlite.close();
+});
+
+test('a refund whose reversal cannot be recorded counts on its order until reconciliation records it', async (t) => {
+  const at = clock(t);
+  t.mock.method(console, 'error', () => {});
+  const { sqlite, DB } = database();
+  const { adapter } = taxingProvider();
+  const env = { DB, ...exclusive };
+  const api = bindCommerceApi({ env, paymentAdapters: [adapter] });
+  const order = await placeOrder(api, 'unreversed-browser', [{ productId: 'frame', quantity: 1 }]);
+  await pay(api, order, 'pi_unreversed');
+  // A Worker whose provider cannot reverse tax takes the refund: there is no reversal to send yet, so
+  // the order counts the failure.
+  const cannotReverse = { ...adapter, reverseTaxTransaction: undefined };
+  await providerRefund(bindCommerceApi({ env, paymentAdapters: [cannotReverse] }), 'pi_unreversed', 13200, 13200);
+  assert.deepEqual(orderTaxSync(sqlite, order.id), { attempts: 1, lastError: 'provider_not_configured' });
+  assert.deepEqual(reversals(sqlite, order.id), []);
+
+  at(120);
+  assert.deepEqual(await reconcileCommerce({ env, paymentAdapters: [cannotReverse] }), [{ id: order.id,
+    status: 'error', error: 'Payment provider cannot reverse tax', code: 'provider_not_configured' }]);
+  assert.deepEqual(orderTaxSync(sqlite, order.id), { attempts: 2, lastError: 'provider_not_configured' });
+  at(120 + 239);
+  assert.deepEqual(await reconcileCommerce({ env, paymentAdapters: [adapter] }), []);
+  at(120 + 240);
+  assert.deepEqual(await reconcileCommerce({ env, paymentAdapters: [adapter] }), [{ id: order.id, status: 'tax_reversed' }]);
+  assert.deepEqual(orderTaxSync(sqlite, order.id), { attempts: 0, lastError: null });
+  assert.deepEqual(reversalSync(sqlite, order.id), [{ amount: 13200, sent: 1, attempts: 0, lastError: null }]);
+  sqlite.close();
+});
+
+/** The query plan of `sql`, one step per line. Its parameters do not change the plan, so each is bound as 0. */
+const queryPlan = (sqlite, sql) => sqlite.prepare(`EXPLAIN QUERY PLAN ${sql}`)
+  .all(...(sql.match(/\?/g) ?? []).map(() => 0)).map((step) => step.detail).join('\n');
+
+test('the tax passes find their rows through partial indexes', async () => {
+  const { sqlite, DB } = database();
+  const { adapter } = taxingProvider();
+  const statements = [];
+  const recording = { ...DB, prepare(sql) {
+    statements.push(sql.replace(/\s+/g, ' ').trim());
+    return DB.prepare(sql);
+  } };
+  await reconcileCommerce({ env: { DB: recording, ...exclusive }, paymentAdapters: [adapter] });
+  const statement = (start) => {
+    const found = statements.find((sql) => sql.startsWith(start));
+    assert.ok(found, start);
+    return found;
+  };
+  // Paid orders without a transaction, from the partial index of migration 0025.
+  assert.match(queryPlan(sqlite, statement('SELECT id FROM _ecommerce_orders WHERE status IN (')),
+    /SEARCH _ecommerce_orders USING INDEX _ecommerce_orders_tax_transaction_missing_idx \(status=\?\)/);
+  // Unsent reversals and refunded orders with a transaction, from those of migration 0029.
+  assert.match(queryPlan(sqlite, statement('SELECT r.order_id, r.reference')),
+    /SEARCH r USING INDEX _ecommerce_tax_reversals_unsent_idx \(created_at<\?\)/);
+  assert.match(queryPlan(sqlite, statement('SELECT o.id FROM _ecommerce_orders o WHERE o.status IN (')),
+    /SCAN o USING INDEX _ecommerce_orders_tax_refunded_idx/);
   sqlite.close();
 });
 

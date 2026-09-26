@@ -112,3 +112,22 @@ test('Stripe charges shipping as its own line, which the one coupon can reduce l
   assert.deepEqual(calls.map(call => call.type), ['session']);
   assert.deepEqual(calls[0].input.line_items.map(line => line.price_data.product_data.name), ['Frames']);
 });
+
+test('Stripe refund status is read from the payment intent\'s latest charge', async () => {
+  const adapter = new StripePaymentAdapter({ secretKey: 'sk_test_fake' });
+  const calls = [];
+  let charge = null;
+  adapter.stripe = { paymentIntents: { async retrieve(id, params) {
+    calls.push([id, params]);
+    return { id, latest_charge: charge };
+  } } };
+  const cases = [
+    [null, 'none'], ['ch_not_expanded', 'none'], [{ amount: 5000, amount_refunded: 0, refunded: false }, 'none'],
+    [{ amount: 5000, amount_refunded: 250, refunded: false }, 'partial'], [{ amount: 5000, amount_refunded: 5000, refunded: true }, 'full'],
+  ];
+  for (const [latest, expected] of cases) {
+    charge = latest;
+    assert.equal(await adapter.getRefundStatus('pi_test'), expected, JSON.stringify(latest));
+  }
+  assert.ok(calls.every(([id, params]) => id === 'pi_test' && params.expand.includes('latest_charge')));
+});

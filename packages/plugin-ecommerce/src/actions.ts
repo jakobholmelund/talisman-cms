@@ -1,6 +1,6 @@
 import { defineAction, ActionError } from 'astro:actions';
 import { z } from 'astro/zod';
-import { bindCommerceApi, CART_MAX_LINE_QUANTITY } from './api';
+import { bindCommerceApi, CART_MAX_LINE_QUANTITY, PARKED_CHECKOUT_MESSAGE } from './api';
 import { runtimePaymentAdapters } from './runtime';
 import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from './accounts';
 import { REFERRAL_COOKIE } from './referrals';
@@ -178,6 +178,8 @@ export const ecommerceActions = {
           if (resumed?.providerCheckLimited) {
             throw new ActionError({ code: 'TOO_MANY_REQUESTS', message: PROVIDER_CHECK_RETRY_MESSAGE });
           }
+          // A checkout parked for review stays locked until the store decides; trying again does not help.
+          if (resumed?.review) throw new ActionError({ code: 'CONFLICT', message: PARKED_CHECKOUT_MESSAGE });
           if (resumed?.paymentUrl) {
             return { success: true, redirectUrl: resumed.paymentUrl, mode: 'redirect', orderId: resumed.order.id };
           }

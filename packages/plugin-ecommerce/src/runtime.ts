@@ -1,9 +1,10 @@
 import { StripePaymentAdapter } from './adapters/stripe';
 import { readSetting } from 'talisman-cms/env';
+import { runtimeStripeMode } from './stripe-mode';
 
 /** Worker secrets are read at request time, never serialized into the Astro build. */
 export function runtimeStripeSecrets(env: Record<string, unknown>) {
-  const mode = readSetting(env, 'COMMERCE_STRIPE_MODE') === 'live' ? 'live' : 'test';
+  const mode = runtimeStripeMode(env);
   const localSecretKey = mode === 'test' ? readSetting(env, 'COMMERCE_LOCAL_STRIPE_SECRET_KEY') ?? '' : '';
   const localWebhookSecret = mode === 'test' ? readSetting(env, 'COMMERCE_LOCAL_STRIPE_WEBHOOK_SECRET') ?? '' : '';
   const secretKey = typeof env.STRIPE_SECRET_KEY === 'string' && env.STRIPE_SECRET_KEY

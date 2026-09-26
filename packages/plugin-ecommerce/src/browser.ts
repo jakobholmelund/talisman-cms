@@ -138,7 +138,7 @@ export function startAdminTestCheckout(input: {
 }
 
 export function getOrderStatus(orderId: string) {
-  return commerceRequest<{ orderId: string; status: string; paymentProvider: string | null; accountCreatedByOrder: boolean; accountLinked: boolean; totalAmount: number; subtotalAmount: number; shippingAmount: number; shippingLabel: string | null; taxAmount: number; taxBehavior: 'inclusive' | 'exclusive' | null; creditApplied: number; discountCode: string | null; discountAmount: number; giftCardApplied: number; giftCardRefundedCents: number; providerRefundedCents: number; currency: string }>(
+  return commerceRequest<{ orderId: string; status: string; paymentUnderReview: boolean; paymentProvider: string | null; accountCreatedByOrder: boolean; accountLinked: boolean; totalAmount: number; subtotalAmount: number; shippingAmount: number; shippingLabel: string | null; taxAmount: number; taxBehavior: 'inclusive' | 'exclusive' | null; creditApplied: number; discountCode: string | null; discountAmount: number; giftCardApplied: number; giftCardRefundedCents: number; providerRefundedCents: number; currency: string }>(
     `/api/ecommerce/order?order=${encodeURIComponent(orderId)}`, 'GET');
 }
 

@@ -3,6 +3,29 @@ import { sqliteTable, text, integer, primaryKey, uniqueIndex, check } from 'driz
 import { sql } from 'drizzle-orm';
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 
+/**
+ * Reconciliation of a pending order or gift card purchase (migration 0029): the attempts so far, when
+ * the last one ran and its failure code, and when a permanent failure parked the row for an
+ * administrator. Codes are listed in reconcile.ts.
+ */
+const reconcileColumns = () => ({
+  reconcileAttempts: integer('reconcile_attempts').notNull().default(0),
+  reconcileLastAt: integer('reconcile_last_at', { mode: 'timestamp' }),
+  reconcileLastError: text('reconcile_last_error'),
+  reconcileReviewAt: integer('reconcile_review_at', { mode: 'timestamp' }),
+});
+
+/**
+ * The tax passes of reconcileCommerce (migration 0029): the failed attempts at an order's tax record or
+ * reversal, or at sending a reversal, when the last one ran and its failure code (codes are listed in
+ * reconcile.ts). A success clears them.
+ */
+const taxSyncColumns = () => ({
+  taxSyncAttempts: integer('tax_sync_attempts').notNull().default(0),
+  taxSyncLastAt: integer('tax_sync_last_at', { mode: 'timestamp' }),
+  taxSyncLastError: text('tax_sync_last_error'),
+});
+
 export const carts = sqliteTable('_ecommerce_carts', {
   id: text('id').primaryKey(), // Usually mapped to a session generic ID
   sessionToken: text('session_token').unique(), // For guest checkout
@@ -52,6 +75,8 @@ export const orders = sqliteTable('_ecommerce_orders', {
   customerEmail: text('customer_email'),
   shippingAddress: text('shipping_address', { mode: 'json' }).$type<{ name?: string, line1?: string, line2?: string, city?: string, state?: string, postalCode?: string, country?: string }>(),
   billingAddress: text('billing_address', { mode: 'json' }).$type<{ name?: string, line1?: string, line2?: string, city?: string, state?: string, postalCode?: string, country?: string }>(),
+  ...reconcileColumns(),
+  ...taxSyncColumns(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull()
 });
@@ -378,6 +403,7 @@ export const giftCardPurchases = sqliteTable('_ecommerce_gift_card_purchases', {
   /** The part of providerRefundedCents already settled on the purchase's cards: taken off a reinstated card, or cancelled with void ones. */
   refundAdjustedCents: integer('refund_adjusted_cents').notNull().default(0),
   accessTokenHash: text('access_token_hash').notNull(),
+  ...reconcileColumns(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });
@@ -461,6 +487,7 @@ export const taxReversals = sqliteTable('_ecommerce_tax_reversals', {
   reference: text('reference').notNull().unique(),
   amount: integer('amount').notNull(), // Positive, in the order currency's minor units.
   providerReversalId: text('provider_reversal_id').notNull(),
+  ...taxSyncColumns(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 
@@ -496,6 +523,23 @@ export const restocks = sqliteTable('_ecommerce_restocks', {
   reason: text('reason').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [uniqueIndex('_ecommerce_restocks_reservation_unique').on(table.reservationType, table.reservationId)]);
+
+/**
+ * Administrator decisions on orders and gift card purchases parked for review (migration 0029), each
+ * recorded with the retry or release it carried out. Exactly one of orderId and purchaseId is set.
+ */
+export const reconcileDecisions = sqliteTable('_ecommerce_reconcile_decisions', {
+  id: text('id').primaryKey(),
+  orderId: text('order_id').references(() => orders.id),
+  purchaseId: text('purchase_id').references(() => giftCardPurchases.id),
+  action: text('action').$type<'retry' | 'release'>().notNull(),
+  failure: text('failure'), // The failure code the record was parked with.
+  // How a released completed checkout's payment was shown to be returned; null for any other decision.
+  paymentReturned: text('payment_returned').$type<'refunded' | 'dispute_lost' | 'confirmed'>(),
+  adminActor: text('admin_actor').notNull(),
+  reason: text('reason').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
 
 // --- Drizzle Relations API ---
 
