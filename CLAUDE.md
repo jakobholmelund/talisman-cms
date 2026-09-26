@@ -67,7 +67,7 @@ node scripts/check-dist-drift.mjs  # run in a clone where your changes are stage
 
 - `packages/talisman-cms/drizzle/NNNN_name.sql` are hand-written SQL files applied with `wrangler d1 migrations apply`. The Drizzle schema is a query-builder view; it does not model triggers, CHECKs or partial indexes. The core currently also owns the ecommerce tables.
 - For a new migration: take the next number, add one entry to `drizzle/meta/_journal.json` (next `idx`, `when` one higher than the last), add it to `test/migrations.test.mjs` and to any plugin test migration lists, and describe it in RELEASE.md (deployment gate step 1, with a read-only pre-check if it adds a unique index), the CHANGELOG and the core README's migrations section. When parallel groups work on migrations, add each file exactly once.
-- Migrations must reach a site's D1 before the Worker that needs them; 0.1 adds `0019` to `0024`. The order and pre-checks are in RELEASE.md#deployment-gate. Only the owner runs remote migrations, deploys or publishes.
+- Migrations must reach a site's D1 before the Worker that needs them; 0.1 adds `0019` to `0025`. The order and pre-checks are in RELEASE.md#deployment-gate. Only the owner runs remote migrations, deploys or publishes.
 
 ## Publishing
 

@@ -17,8 +17,9 @@ Since the last public commit (`0d1d72d`), `main` has gained `HybridAuthAdapter`,
 - hardened the ecommerce plugin: exported cookie names, a bounded basket API, sign-in links that create an account only when used, per-address, per-network and store-wide sign-in limits, a discount preview that answers only while checkout is enabled, and a scheduled retention purge;
 - added a safe rich-text renderer, closed injection sinks in the daisyUI and Starwind plugins, and required a CMS session for plugin admin routes;
 - pinned CI actions, added a production dependency audit and SECURITY.md;
-- added migrations `0019` through `0024`;
-- enforced the [incentives and abuse](#commerce-launch-incentives-and-abuse) rules in the ecommerce plugin without a further migration: referrals off by default with held awards, a rate-limited discount preview with one refusal, a Turnstile check and a reserved budget for sign-in email, a limit on new baskets per network, a throttled order status check and single-use Stripe coupons.
+- added migrations `0019` through `0025`;
+- enforced the [incentives and abuse](#commerce-launch-incentives-and-abuse) rules in the ecommerce plugin without a further migration: referrals off by default with held awards, a rate-limited discount preview with one refusal, a Turnstile check and a reserved budget for sign-in email, a limit on new baskets per network, a throttled order status check and single-use Stripe coupons;
+- settled the [commerce launch decisions](#commerce-launch-decisions) in the ecommerce plugin: a configurable store currency, delivery countries, shipping rates and Stripe Tax, money scaled by each currency's minor units, and Stripe's presentment currency pinned to the order currency, with migration `0025` recording shipping and tax on orders.
 
 [CHANGELOG.md](CHANGELOG.md) lists every change, the breaking changes and the upgrade steps.
 
@@ -28,7 +29,7 @@ Since the last public commit (`0d1d72d`), `main` has gained `HybridAuthAdapter`,
 | --- | --- | --- |
 | [Release](#release) | Publish the 0.1 preview | First. Maintainer steps only, no issues |
 | [After publish](#after-publish) | One auth copy per Worker, no route generation in installed packages, then publishing from CI instead of committing `dist/` | After the first publish. The CI publish comes last, once sites install from npm |
-| [Commerce launch: decisions](#commerce-launch-decisions) | Plugin support for currency, tax, shipping and delivery countries | Before the other commerce work that touches totals |
+| [Commerce launch: decisions](#commerce-launch-decisions) | Plugin support for currency, tax, shipping and delivery countries | Done before the 0.1 publish; follow-ups are listed in its items |
 | [Commerce launch: order operations](#commerce-launch-order-operations) | Queue, fulfillment, refunds, reconciliation, notifications, gift cards, inventory | Checkout stays disabled until the commerce workstreams are done |
 | [Commerce launch: incentives and abuse](#commerce-launch-incentives-and-abuse) | Rules for referrals, discounts, sign-in email and public endpoints | Done before the 0.1 publish; follow-ups are listed in its items |
 | [Commerce launch: shopper pages](#commerce-launch-shopper-pages) | Order access, basket handover, errors and catalog reads for storefronts | Same gate |
@@ -42,7 +43,7 @@ Public checkout stays off (`TALISMAN_COMMERCE_CHECKOUT_ENABLED=false`) until the
 
 ## Release
 
-The maintainer steps for the 0.1 preview are in [RELEASE.md](RELEASE.md): verify a clean checkout of `main` (`pnpm release:verify`, `node scripts/check-dist-drift.mjs`, `pnpm audit --prod --audit-level high`), push `main`, run `pnpm release:publish --dry-run` and then publish. Sites that upgrade apply migrations `0019` through `0024` before deploying the new Worker, as the [deployment gate](RELEASE.md#deployment-gate) describes. The incentive and abuse rules ship in the same release and need no further migration; the deployment gate lists their settings and the Stripe webhook event to add.
+The maintainer steps for the 0.1 preview are in [RELEASE.md](RELEASE.md): verify a clean checkout of `main` (`pnpm release:verify`, `node scripts/check-dist-drift.mjs`, `pnpm audit --prod --audit-level high`), push `main`, run `pnpm release:publish --dry-run` and then publish. Sites that upgrade apply migrations `0019` through `0025` before deploying the new Worker, as the [deployment gate](RELEASE.md#deployment-gate) describes. The incentive and abuse rules ship in the same release and need no further migration; the deployment gate lists their settings and the Stripe webhook event to add. The currency, delivery, shipping and tax settings ship in it too, with migration `0025`; a site that sets none of them behaves as before.
 
 Three audit findings that were to be settled before the npm release are only partly fixed, and are accepted for 0.1: a built Worker still carries two copies of the auth modules, builds still print route-injection lines and the playground keeps scratch pages, and the schema types `media.updatedAt` as not null. Their remaining work is tracked below under [After publish](#after-publish) and [Maintenance](#maintenance) (`integration-contract/src-dist-dual-auth-modules`, `release-packaging/debug-leftovers`, `migrations-schema/drizzle-kit-snapshot-drift`).
 
@@ -84,19 +85,23 @@ Order: the first two items can start right after the first publish. Publishing f
 
 ## Commerce launch: decisions
 
-Before a store opens checkout, its owner decides where it sells, in which currency, how tax and shipping are charged, and what the returns policy is. Those are business decisions; the plugin has to support them. Today it hard-codes USD, adds no tax or shipping to totals and accepts any two-letter country code. Do these items before the order-operations work that touches totals.
+Before a store opens checkout, its owner decides where it sells, in which currency, how tax and shipping are charged, and what the returns policy is. Those are business decisions; the plugin has to support them. Both items below are done, so the order-operations work that touches totals can build on them.
 
 ### Make currency, tax, shipping and delivery countries configurable
 
-**Why:** `'usd'` is hard-coded in the order code, the Stripe adapter and the gift card code (issuing, purchase, confirmation, refund and redemption, which refuses any card not in USD), the Stripe session has no tax or shipping options, the country is free text, the admin labels amounts "(USD)", and the admin, the storefront components and analytics divide every currency by 100.
+**Status:** done on `main` before the 0.1 publish. Worker settings set the store currency (`TALISMAN_COMMERCE_CURRENCY`, default `usd`), the delivery countries (`TALISMAN_COMMERCE_DELIVERY_COUNTRIES`, officially assigned ISO 3166-1 codes, checked when something ships), up to ten shipping rates (`TALISMAN_COMMERCE_SHIPPING_RATES`) and the tax mode (`TALISMAN_COMMERCE_TAX`: `none`, `stripe-inclusive` or `stripe-exclusive`, with an optional `TALISMAN_COMMERCE_TAX_CODE` and `TALISMAN_COMMERCE_SHIP_FROM_COUNTRY`). A store that sets none of them behaves as before, and an invalid value closes checkout with a generic 503 and a log line. Tax is calculated with the Stripe Tax API before payment rather than with `automatic_tax`, recorded as a transaction once the order is paid and reversed in part for each refund. Orders record their shipping and tax (migration `0025`), and the redemption guards check totals that include them. The admin, the storefront components, analytics and the playground scale money by each currency's minor units. Gift cards stay in USD, the only currency their tables hold, and are refused in a store with another currency. Follow-ups are listed under [Orders queue](#orders-queue-every-order-awaiting-shipment-with-names-and-labelled-amounts), [Refunds, restocking and disputes](#refunds-restocking-and-disputes), [Reconciliation](#reconciliation-indexes-backoff-and-a-review-state-for-stuck-orders), [Validate checkout input](#validate-checkout-input-the-same-way-in-the-action-and-the-route) and [Enforce ledger and stock invariants](#enforce-ledger-and-stock-invariants-in-the-database), and the Stripe Tax setup and test-mode checks are launch gates 10 to 12 in [PRODUCTION_READINESS.md](packages/plugin-ecommerce/PRODUCTION_READINESS.md).
 
-**Approach:** Add store settings (or plugin options) for the currency, the allowed delivery countries, the tax mode (Stripe Tax `automatic_tax`, or none) and shipping rates. Use the configured currency everywhere an order or gift card is created, checked or redeemed. Pass the settings to the payment session, check the country against the allowlist on the server, and record tax and shipping on the order. Format and scale money by each currency's minor units (`Intl.NumberFormat(...).resolvedOptions().maximumFractionDigits`) in analytics, the admin and the storefront components.
+**Why:** A store sells in its own currency, to the countries it serves, and charges the tax and shipping its business needs, so these have to be settings rather than code, and every amount has to be scaled by its currency's minor units instead of divided by 100.
+
+**Approach:** Add store settings (or plugin options) for the currency, the allowed delivery countries, the tax mode (Stripe Tax, or none) and shipping rates. Use the configured currency everywhere an order or gift card is created, checked or redeemed. Pass the settings to the payment session, check the country against the allowlist on the server, and record tax and shipping on the order. Format and scale money by each currency's minor units (`Intl.NumberFormat(...).resolvedOptions().maximumFractionDigits`) in analytics, the admin and the storefront components.
 
 **Audit refs:** `commerce-checkout/no-tax-or-shipping-in-totals`, `analytics-plugin/money-assumes-two-decimals`
 
 **Issue:** #TBD-commerce-currency-tax-shipping
 
 ### Pin the Stripe presentment currency to the order currency
+
+**Status:** done on `main` before the 0.1 publish. Every Checkout Session sets `currency` to the order currency and `adaptive_pricing: { enabled: false }`, and its line items and coupon use that currency, so Stripe never presents another; confirmation and refunds still compare the amount and currency with the order. The test-mode run with a card and address outside the store's country is launch gate 11 in [PRODUCTION_READINESS.md](packages/plugin-ecommerce/PRODUCTION_READINESS.md). No further migration.
 
 **Why:** Payment confirmation and refunds compare amount and currency strictly with the order. If Stripe shows the buyer a local currency (Adaptive Pricing), a captured payment may never confirm its order.
 
@@ -124,7 +129,7 @@ The admin tools and background jobs a store needs to run orders every day. Sugge
 
 **Why:** The queue loads the 100 newest orders and counts "Needs fulfillment" in the browser from that list, so older paid orders drop out of view. Rows show raw product and variant ids and the items subtotal without a label.
 
-**Approach:** Query unfulfilled orders separately with cursor paging and a server-side count. Join product names, variant labels and SKUs at query time. Label the items subtotal and show the charged total with the discount, credit and gift card breakdown. Depends on the fulfillment status item.
+**Approach:** Query unfulfilled orders separately with cursor paging and a server-side count. Join product names, variant labels and SKUs at query time. Label the items subtotal and show the charged total with the discount, credit and gift card breakdown. Each order's panel already lists these totals, with shipping and tax, in the order currency; the read-only Orders collection should show the currency next to its amounts too. Depends on the fulfillment status item.
 
 **Audit refs:** `admin-ui/orders-queue-truncation`
 
@@ -134,7 +139,7 @@ The admin tools and background jobs a store needs to run orders every day. Sugge
 
 **Why:** Refunds never release stock, and chargebacks are handled only for referral awards, so a disputed order can still be shipped.
 
-**Approach:** Subscribe to `charge.dispute.created`, add a `disputed` status that the fulfillment guard rejects, and extend the `charge.dispute.closed` handling, which already reverses referral awards on a lost dispute, to the order itself. Add an audited admin "restock" action for refunded orders that releases stock with relative updates.
+**Approach:** Subscribe to `charge.dispute.created`, add a `disputed` status that the fulfillment guard rejects, and extend the `charge.dispute.closed` handling, which already reverses referral awards on a lost dispute, to the order itself, including a full reversal of its Stripe Tax transaction. Add an audited admin "restock" action for refunded orders that releases stock with relative updates.
 
 **Audit refs:** `commerce-checkout/refund-dispute-gaps`
 
@@ -154,7 +159,7 @@ The admin tools and background jobs a store needs to run orders every day. Sugge
 
 **Why:** The scheduled reconciliation picks the oldest pending orders and gift card purchases with `LIMIT 10`. A few that always fail block newer ones, and the queries scan whole tables because indexes are missing.
 
-**Approach:** Add attempt, last-attempt and last-error columns and order the batch so failing rows move back. Park permanent failures (missing session, live/test mismatch, amount mismatch) in a review status shown in the orders queue with a release action. Add indexes on orders and gift card purchases by status and date, payments by order, sessions by checkout id and `galaxy_auth_verification(identifier)`, and replace the `LIKE 'preparing:%'` scan with a range predicate. The scheduled handler should fail only for new or transient errors.
+**Approach:** Add attempt, last-attempt and last-error columns and order the batch so failing rows move back. Park permanent failures (missing session, live/test mismatch, amount mismatch, and a tax transaction or reversal that Stripe refuses once its 24-hour idempotency key or 90-day calculation has expired) in a review status shown in the orders queue with a release action. Add indexes on orders and gift card purchases by status and date, payments by order, sessions by checkout id and `galaxy_auth_verification(identifier)`, and replace the `LIKE 'preparing:%'` scan with a range predicate. The scheduled handler should fail only for new or transient errors.
 
 **Audit refs:** `perf-edge/reconcile-head-of-line-blocking`, `migrations-schema/missing-indexes-reconcile-webhook`
 
@@ -354,7 +359,7 @@ What the plugin gives storefront pages: order access, the basket across sign-ins
 
 **Why:** The checkout action has its own schema that passes unknown keys and unbounded address strings through to the stored order.
 
-**Approach:** Reuse the bounded, strict `checkoutSchema` in the action, with the delivery-country allowlist once stores can configure one, and store only known address fields.
+**Approach:** Reuse the bounded, strict `checkoutSchema` in the action and store only known address fields. The country code, delivery-country and shipping option checks already run in `createFromCart` for both.
 
 **Audit refs:** `commerce-checkout/checkout-action-weaker-validation`
 
@@ -398,7 +403,7 @@ Shopper data rights, and database rules that protect balances and roles.
 
 **Why:** The credit and gift card ledgers can be updated or deleted, and negative stock or prices are accepted on insert, so balances rely on application discipline.
 
-**Approach:** Add `BEFORE UPDATE` and `BEFORE DELETE` triggers that abort on both ledger tables, `BEFORE INSERT` versions of the stock guards, and non-negative price triggers.
+**Approach:** Add `BEFORE UPDATE` and `BEFORE DELETE` triggers that abort on both ledger tables, `BEFORE INSERT` versions of the stock guards, and non-negative price triggers. Check an order's totals (items, shipping and exclusive tax against discount, credit, gift card and charge) on every insert and update, not only when a code or gift card is reserved, and cap the sum of an order's tax reversals at what it charged.
 
 **Audit refs:** `migrations-schema/db-invariants-incomplete`
 
@@ -440,7 +445,7 @@ Tests for the money paths, written alongside the fixes they protect.
 
 ## Commerce launch: rehearsal
 
-The last step before a store opens checkout: one real, low-value order through payment, reconciliation, fulfillment, refund and stock review (launch gate 4 in [PRODUCTION_READINESS.md](packages/plugin-ecommerce/PRODUCTION_READINESS.md)).
+The last step before a store opens checkout: one real, low-value order through payment, reconciliation, fulfillment, refund and stock review (launch gate 4 in [PRODUCTION_READINESS.md](packages/plugin-ecommerce/PRODUCTION_READINESS.md)), with the store's currency, shipping and tax settings in place and after the Stripe Tax setup and test-mode checks in launch gates 10 to 12.
 
 ## Post-release architecture
 
