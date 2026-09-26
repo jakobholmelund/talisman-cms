@@ -38,7 +38,9 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     });
     const customer = await findCustomerSession(runtimeEnv, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
 
-    const cart = await api.carts.getOrCreate(sessionToken, customer?.id);
+    // Checkout needs an open basket and never creates one.
+    const cart = (customer?.id ? await api.carts.claim(sessionToken, customer.id) : null) ??
+      await api.carts.find(sessionToken, customer?.id);
     if (!cart || cart.items.length === 0) {
       return new Response(JSON.stringify({ error: 'Cart is empty' }), {
         status: 400,

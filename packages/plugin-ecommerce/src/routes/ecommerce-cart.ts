@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { bindCommerceApi } from '../api';
 import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from '../accounts';
 import { ensureCartSession, readCartSessionToken } from '../cookies';
+import { basketCreationOverLimit, basketLimitResponse } from '../basket-limits';
 import type { carts } from '../schema';
 import type { TalismanEnv } from 'talisman-cms/client';
 
@@ -72,6 +73,10 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
       }
       // Limits and catalog ids are checked before a basket or its cookie is created.
       const checked = await api.carts.validateItems(items, existing?.items);
+      // Only a request that creates a basket is counted, before its row or cookie is written.
+      if (!existing && await basketCreationOverLimit(env as unknown as TalismanEnv, request.headers.get('cf-connecting-ip'))) {
+        return basketLimitResponse();
+      }
       // Reuse the basket cookie, adopting one set under the legacy name, or mint a new one
       const sessionToken = ensureCartSession(cookies, new URL(request.url).protocol === 'https:');
 

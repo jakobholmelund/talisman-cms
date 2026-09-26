@@ -7,6 +7,7 @@ import { REFERRAL_COOKIE } from './referrals';
 import { codeRefusalBody } from './promotions';
 import { CODE_CHECK_LIMIT_MESSAGE, codeChecksOverBasketLimit, codeChecksOverNetworkLimit } from './code-check-limits';
 import { ensureCartSession, readCartSessionToken } from './cookies';
+import { BASKET_LIMIT_MESSAGE, basketCreationOverLimit } from './basket-limits';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { readSetting } from 'talisman-cms/env';
 
@@ -53,8 +54,13 @@ export const ecommerceActions = {
         const api = bindCommerceApi({ env: env as unknown as TalismanEnv });
         // A product that is not in the catalog is refused before a basket or cookie is created.
         await api.carts.validateItems([{ productId: input.productId, variantId: input.variantId, quantity: input.quantity }]);
-        const sessionToken = getOrCreateCartSession(context);
         const customer = await findCustomerSession(env as unknown as TalismanEnv, context.cookies?.get?.(CUSTOMER_SESSION_COOKIE)?.value);
+        // Only a request that creates a basket is counted, before its row or cookie is written.
+        if (!await currentCart(api, context, customer?.id) &&
+          await basketCreationOverLimit(env as unknown as TalismanEnv, context.request?.headers?.get?.('cf-connecting-ip'))) {
+          throw new ActionError({ code: 'TOO_MANY_REQUESTS', message: BASKET_LIMIT_MESSAGE });
+        }
+        const sessionToken = getOrCreateCartSession(context);
         const cart = await api.carts.getOrCreate(sessionToken, customer?.id);
         if (!cart) {
           throw new ActionError({
@@ -143,7 +149,7 @@ export const ecommerceActions = {
       if (readSetting(env, 'COMMERCE_CHECKOUT_ENABLED') !== 'true') {
         throw new ActionError({ code: 'FORBIDDEN', message: 'Checkout is disabled' });
       }
-      const sessionToken = getOrCreateCartSession(context);
+      const sessionToken = context.cookies ? readCartSessionToken(context.cookies) : undefined;
 
       try {
         const api = bindCommerceApi({
@@ -151,7 +157,8 @@ export const ecommerceActions = {
           paymentAdapters: runtimePaymentAdapters(env as Record<string, unknown>),
         });
         const customer = await findCustomerSession(env as unknown as TalismanEnv, context.cookies?.get?.(CUSTOMER_SESSION_COOKIE)?.value);
-        const cart = await api.carts.getOrCreate(sessionToken, customer?.id);
+        // Checkout needs an open basket and never creates one or its cookie.
+        const cart = await currentCart(api, context, customer?.id);
 
         if (!cart || !Array.isArray(cart.items) || cart.items.length === 0) {
           throw new ActionError({
