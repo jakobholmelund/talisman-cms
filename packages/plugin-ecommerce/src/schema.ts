@@ -541,6 +541,40 @@ export const reconcileDecisions = sqliteTable('_ecommerce_reconcile_decisions', 
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 
+/**
+ * Order confirmations, shipment notices and gift card claim emails: one row per email, written with the
+ * change that calls for it. No addresses; `lastError` is an error code.
+ */
+export const emailDeliveries = sqliteTable('_ecommerce_email_deliveries', {
+  id: text('id').primaryKey(),
+  kind: text('kind').$type<'order_confirmation' | 'shipment' | 'shipment_update' | 'gift_card_claim'>().notNull(),
+  /** The order, the shipment or correction (fulfillment id), or the gift card purchase. */
+  subjectId: text('subject_id').notNull(),
+  status: text('status').$type<'pending' | 'sent' | 'failed' | 'cancelled'>().notNull().default('pending'),
+  attempts: integer('attempts').notNull().default(0),
+  lastError: text('last_error'),
+  nextAttemptAt: integer('next_attempt_at', { mode: 'timestamp' }).notNull(),
+  claimedAt: integer('claimed_at', { mode: 'timestamp' }),
+  sentAt: integer('sent_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, (table) => [uniqueIndex('_ecommerce_email_deliveries_kind_subject_unique').on(table.kind, table.subjectId)]);
+
+/** One-time links that show a purchased gift card's code; only the token's hash is stored. */
+export const giftCardClaims = sqliteTable('_ecommerce_gift_card_claims', {
+  id: text('id').primaryKey(),
+  tokenHash: text('token_hash').notNull().unique(),
+  purchaseId: text('purchase_id').notNull().references(() => giftCardPurchases.id),
+  /** The card whose code the link shows. */
+  cardId: text('card_id').notNull().references(() => giftCards.id),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  usedAt: integer('used_at', { mode: 'timestamp' }),
+  revokedAt: integer('revoked_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  /** The administrator who resent the link, with the reason; null for the link sent after payment. */
+  createdBy: text('created_by'),
+  reason: text('reason'),
+});
+
 // --- Drizzle Relations API ---
 
 export const cartsRelations = relations(carts, ({ many }) => ({

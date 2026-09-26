@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import type { TalismanEnv } from 'talisman-cms/client';
-import { chunked, describeOrderItems, placeholders } from './order-items';
+import { ORDER_AMOUNT_COLUMNS, chunked, describeOrderItems, orderAmounts, placeholders } from './order-items';
+import { deliverCommerceEmail } from './commerce-emails';
+import { COMMERCE_EMAIL_LEASE_SECONDS, commerceEmailStatement } from './email-deliveries';
 
 /** Orders per page of the admin orders queue unless a request asks for another size. */
 export const ORDERS_PAGE_SIZE = 50;
@@ -29,8 +31,7 @@ const VIEWS: Record<OrdersView, { where: string; ascending: boolean }> = {
 };
 
 const ORDER_COLUMNS = `id, status, fulfillment_status, payment_provider, customer_email, currency, items,
-  shipping_address, subtotal_amount, discount_code, discount_amount, credit_applied, shipping_amount,
-  shipping_label, tax_amount, tax_behavior, gift_card_applied, total_amount, provider_refunded_cents, gift_card_refunded_cents, created_at`;
+  shipping_address, ${ORDER_AMOUNT_COLUMNS}, created_at`;
 
 type OrderRow = {
   id: string; status: string; fulfillment_status: FulfillmentStatus; payment_provider: string | null;
@@ -114,35 +115,6 @@ function decodeCursor(view: OrdersView, cursor: string) {
     // Reported below.
   }
   throw new FulfillmentInputError('The page cursor is invalid; reload the orders');
-}
-
-/** Each amount with its label, in the order the admin reads them. Deductions are negative. */
-function orderAmounts(row: OrderRow) {
-  // Orders placed before migration 0013 stored no subtotal; they had no deductions.
-  const amounts = [{ key: 'itemsSubtotal', label: 'Items subtotal', cents: row.subtotal_amount || row.total_amount }];
-  if (row.discount_amount > 0) {
-    amounts.push({ key: 'discount', label: row.discount_code ? `Discount (${row.discount_code})` : 'Discount', cents: -row.discount_amount });
-  }
-  if (row.credit_applied > 0) amounts.push({ key: 'storeCredit', label: 'Store credit', cents: -row.credit_applied });
-  // A free rate still shows, so the admin sees which one the buyer chose.
-  if (row.shipping_amount > 0 || row.shipping_label) {
-    amounts.push({ key: 'shipping', label: row.shipping_label ? `Shipping (${row.shipping_label})` : 'Shipping', cents: row.shipping_amount });
-  }
-  // Inclusive tax is already inside the prices above, so it is shown but adds nothing.
-  if (row.tax_amount > 0) {
-    amounts.push(row.tax_behavior === 'inclusive'
-      ? { key: 'taxIncluded', label: 'Tax included in the prices', cents: row.tax_amount }
-      : { key: 'tax', label: 'Tax', cents: row.tax_amount });
-  }
-  if (row.gift_card_applied > 0) amounts.push({ key: 'giftCard', label: 'Gift card', cents: -row.gift_card_applied });
-  amounts.push({ key: 'charged', label: 'Charged by the payment provider', cents: row.total_amount });
-  if (row.provider_refunded_cents > 0) {
-    amounts.push({ key: 'providerRefunded', label: 'Refunded by the payment provider', cents: row.provider_refunded_cents });
-  }
-  if (row.gift_card_refunded_cents > 0) {
-    amounts.push({ key: 'giftCardRefunded', label: 'Refunded to the gift card', cents: row.gift_card_refunded_cents });
-  }
-  return amounts;
 }
 
 // Fulfillment rows are only ever appended, so rowid is the order they were written in. `created_at`
@@ -260,6 +232,8 @@ function refusal(cause: unknown, message: string) {
  * Records a shipment of a paid real order that has not shipped in full. It completes the order
  * unless `completesOrder` is false, which records one parcel of a split shipment. The database
  * trigger enforces the same rules. A later refund or dispute changes only the payment status.
+ * The buyer is emailed a shipment notice with the carrier and tracking number; a failed send never
+ * fails the shipment, and the scheduled job retries it.
  */
 export async function fulfillCommerceOrder(env: TalismanEnv, actor: string, input: unknown) {
   const values = parseInput(shipmentSchema, input);
@@ -274,15 +248,21 @@ export async function fulfillCommerceOrder(env: TalismanEnv, actor: string, inpu
     throw new Error(`A ${order.status.replaceAll('_', ' ')} order cannot ship`);
   }
   const id = `ful_${crypto.randomUUID()}`;
+  const now = Math.floor(Date.now() / 1000);
   try {
-    await env.DB.prepare(`INSERT INTO _ecommerce_fulfillments
-      (id, order_id, kind, completes_order, admin_actor, carrier, tracking_number, note, created_at)
-      VALUES (?, ?, 'shipment', ?, ?, ?, ?, ?, ?)`)
-      .bind(id, values.orderId, values.completesOrder ? 1 : 0, actor, values.carrier, values.trackingNumber,
-        values.note, Math.floor(Date.now() / 1000)).run();
+    // The notice is recorded with the shipment, so a shipment is never recorded without it.
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO _ecommerce_fulfillments
+        (id, order_id, kind, completes_order, admin_actor, carrier, tracking_number, note, created_at)
+        VALUES (?, ?, 'shipment', ?, ?, ?, ?, ?, ?)`)
+        .bind(id, values.orderId, values.completesOrder ? 1 : 0, actor, values.carrier, values.trackingNumber,
+          values.note, now),
+      commerceEmailStatement(env, 'shipment', id, now),
+    ]);
   } catch (cause) {
     throw refusal(cause, 'Order is not ready for fulfillment');
   }
+  await deliverCommerceEmail(env, 'shipment', id);
   const current = await env.DB.prepare(`SELECT status, fulfillment_status FROM _ecommerce_orders WHERE id = ?`)
     .bind(values.orderId).first<{ status: string; fulfillment_status: FulfillmentStatus }>();
   return { fulfillmentId: id, orderId: values.orderId, status: current?.status,
@@ -292,7 +272,9 @@ export async function fulfillCommerceOrder(env: TalismanEnv, actor: string, inpu
 /**
  * Appends a correction that restates a shipment's carrier and tracking number, with the reason.
  * The shipment row never changes, so its history stays readable. A correction ships nothing, so any
- * payment status allows it; admin test orders do not.
+ * payment status allows it; admin test orders do not. When the shipment's notice already went out (or
+ * is being sent), the buyer gets an updated notice with the corrected details; a notice not sent yet
+ * carries them anyway, since notices read the details in force when they are sent.
  */
 export async function correctCommerceFulfillment(env: TalismanEnv, actor: string, input: unknown) {
   const values = parseInput(correctionSchema, input);
@@ -314,15 +296,23 @@ export async function correctCommerceFulfillment(env: TalismanEnv, actor: string
     throw new Error('The correction changes nothing');
   }
   const id = `ful_${crypto.randomUUID()}`;
+  const now = Math.floor(Date.now() / 1000);
   try {
-    await env.DB.prepare(`INSERT INTO _ecommerce_fulfillments
-      (id, order_id, kind, corrects_id, completes_order, admin_actor, carrier, tracking_number, note, created_at)
-      VALUES (?, ?, 'correction', ?, 0, ?, ?, ?, ?, ?)`)
-      .bind(id, shipment.order_id, shipment.id, actor, values.carrier, values.trackingNumber, values.reason,
-        Math.floor(Date.now() / 1000)).run();
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO _ecommerce_fulfillments
+        (id, order_id, kind, corrects_id, completes_order, admin_actor, carrier, tracking_number, note, created_at)
+        VALUES (?, ?, 'correction', ?, 0, ?, ?, ?, ?, ?)`)
+        .bind(id, shipment.order_id, shipment.id, actor, values.carrier, values.trackingNumber, values.reason, now),
+      commerceEmailStatement(env, 'shipment_update', id, now, {
+        sql: `EXISTS (SELECT 1 FROM _ecommerce_email_deliveries WHERE kind = 'shipment' AND subject_id = ?
+          AND (status = 'sent' OR (status = 'pending' AND claimed_at > ?)))`,
+        // Only a live lease means the notice is being sent; after a stale one the notice carries the correction.
+        params: [shipment.id, now - COMMERCE_EMAIL_LEASE_SECONDS] }),
+    ]);
   } catch (cause) {
     throw refusal(cause, 'Shipment cannot be corrected');
   }
+  await deliverCommerceEmail(env, 'shipment_update', id);
   return { correctionId: id, fulfillmentId: shipment.id, orderId: shipment.order_id,
     carrier: values.carrier, trackingNumber: values.trackingNumber };
 }

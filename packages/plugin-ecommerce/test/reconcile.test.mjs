@@ -22,7 +22,11 @@ registerHooks({
     return { url: `data:text/javascript,${encodeURIComponent(stubs[specifier])}`, shortCircuit: true };
   },
 });
-const { bindCommerceApi, reconcileCommerce, PARKED_CHECKOUT_MESSAGE } = await import('../dist/api.js');
+const { bindCommerceApi, reconcileCommerce: reconcileWithEmails, PARKED_CHECKOUT_MESSAGE } = await import('../dist/api.js');
+// These tests leave email unconfigured, so the email retry pass reports the confirmations waiting for an
+// email provider (see emails.test.mjs). Only that result is dropped; any other email result still counts.
+const reconcileCommerce = async (...args) => (await reconcileWithEmails(...args))
+  .filter((result) => !(result.id === 'commerce_emails' && /needs? an email provider/.test(result.error ?? '')));
 const { StripePaymentAdapter } = await import('../dist/adapters/stripe.js');
 const { runtimePaymentAdapters } = await import('../dist/runtime.js');
 const { getPurchasedGiftCard, reconcileGiftCardPurchase, startGiftCardPurchase } = await import('../dist/gift-cards.js');
@@ -41,7 +45,7 @@ const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.
   '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
   '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql', '0025_order_shipping_and_tax.sql',
   '0026_order_fulfillment_status.sql', '0027_gift_card_review.sql', '0028_provider_refunds_and_disputes.sql',
-  '0029_commerce_reconcile_backoff.sql'];
+  '0029_commerce_reconcile_backoff.sql', '0030_commerce_order_emails.sql'];
 
 /** An in-memory D1 stand-in. `recorded` collects every statement run, with its parameters. */
 function database() {

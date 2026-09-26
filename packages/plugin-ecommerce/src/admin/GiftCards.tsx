@@ -1,9 +1,11 @@
 import React, { useEffect, useState, type FormEvent } from 'react';
 import { adminRequest, amountInput, CommerceAdmin, errorText, Feedback, Field, formAmount, money, Panel, Stat, storeCurrency } from './common';
 
+type ClaimLink = { createdAt: string | null; expiresAt: string | null; usedAt: string | null; revokedAt: string | null; resent: boolean };
 type Card = { id: string; codeSuffix: string; source: string; initialCents: number;
   balanceCents: number; currency: string; status: 'active' | 'suspended' | 'void'; adminReason: string | null;
-  purchaseId: string | null; replacesPurchaseId: string | null; inReview: boolean };
+  purchaseId: string | null; replacesPurchaseId: string | null; inReview: boolean; buyerEmail: string | null;
+  claimLink: ClaimLink | null; claimEmail: { status: string; lastError: string | null; attempts: number } | null };
 type Review = { purchaseId: string; amountCents: number; currency: string; refundedCents: number;
   adjustedCents: number; cardId: string | null; codeSuffix: string | null; cardStatus: 'active' | 'suspended' | null;
   cardHeld: boolean; cardReplacement: boolean; balanceCents: number | null; spentCents: number; pendingCents: number;
@@ -18,6 +20,22 @@ const GIFT_CARD_CURRENCY = 'usd';
 const limits = { issue: { min: 500, max: 100_000 }, refund: { min: 1 } };
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+const day = (iso: string | null) => iso ? new Date(iso).toLocaleDateString() : '';
+
+/** What the buyer was sent: the claim email while it is not sent, and the newest claim link. */
+function claimSummary(card: Card) {
+  const parts: string[] = [];
+  const email = card.claimEmail;
+  if (email && email.status !== 'sent') parts.push(`claim email ${email.status}${email.lastError ? ` (${email.lastError})` : ''}`);
+  const link = card.claimLink;
+  if (link) {
+    parts.push(link.usedAt ? `claim link used ${day(link.usedAt)}`
+      : link.revokedAt ? 'claim link revoked'
+      : link.expiresAt && Date.parse(link.expiresAt) <= Date.now() ? 'claim link expired'
+      : `claim link ${link.resent ? 'resent' : 'sent'} ${day(link.createdAt)}, unused`);
+  }
+  return parts.map(part => ` · ${part}`).join('');
+}
 
 export default function GiftCards() {
   const [cards, setCards] = useState<Card[]>([]);
@@ -93,6 +111,21 @@ export default function GiftCards() {
     } finally { setBusy(false); }
   }
 
+  // The buyer gets a new one-time link by email; once it is sent, earlier unused links stop working.
+  async function resendClaim(form: HTMLFormElement | null, card: Card, purchaseId: string) {
+    if (!form?.reportValidity()) return;
+    const reason = String(new FormData(form).get('reason') || '').trim();
+    if (!window.confirm(`Email ${card.buyerEmail ?? 'the buyer'} a new link to the code of card •••• ${card.codeSuffix}? Earlier unused links for ${purchaseId} stop working.`)) return;
+    setBusy(true);
+    try {
+      await adminRequest('gift-cards-admin', { action: 'resendClaimLink', data: { purchaseId, reason } });
+      form.reset(); await reload(); show('Claim link sent. It works once, for 7 days.');
+    } catch (cause) {
+      // The list shows what the buyer has now, for example a claim email that went out meanwhile.
+      show(errorText(cause), true); await reload().catch(() => undefined);
+    } finally { setBusy(false); }
+  }
+
   async function reencrypt() {
     if (encryption?.legacyCodes && !window.confirm('A Worker from a release before key ids cannot show codes once they are re-encrypted. Re-encrypt them now?')) return;
     setBusy(true);
@@ -109,7 +142,7 @@ export default function GiftCards() {
   }
 
   const active = cards.filter(card => card.status === 'active');
-  const visible = cards.filter(card => [card.codeSuffix, card.source, card.status, card.adminReason, card.purchaseId, card.replacesPurchaseId].join(' ').toLowerCase().includes(search.trim().toLowerCase()));
+  const visible = cards.filter(card => [card.codeSuffix, card.source, card.status, card.adminReason, card.purchaseId, card.replacesPurchaseId, card.buyerEmail].join(' ').toLowerCase().includes(search.trim().toLowerCase()));
   const outdated = encryption ? encryption.previousKeyCodes + encryption.legacyCodes : 0;
   return <CommerceAdmin current="gift-cards">
     <p className="ecom-admin__intro">Issue and monitor stored-value gift cards. New codes appear only once, immediately after issuance.</p>
@@ -137,20 +170,32 @@ export default function GiftCards() {
       {reviewCount > reviews.length && <p className="ecom-admin__muted">Showing the {reviews.length} oldest of {reviewCount}.</p>}
     </Panel>
     <Panel title="Issue a gift card">
-      <p className="ecom-admin__muted">Every administrative issuance records your reason. Share the code through a secure channel. To replace a purchased card, for example when its code was lost, enter its purchase ID and, as the amount, the balance left on it: the old card is voided, its balance moves to the new card, and a later refund of the purchase holds the new card.</p>
+      <p className="ecom-admin__muted">Every administrative issuance records your reason. Share the code through a secure channel. To replace a purchased card, for example when its code was lost, enter its purchase ID and, as the amount, the balance left on it: the old card is voided and its links stop working, its balance moves to the new card, and a later refund of the purchase holds the new card. Resend the claim link from the new card's row to email the buyer its code.</p>
       {!canIssue && <p className="ecom-admin__notice">Gift cards are kept in {currencyCode} only, so a store that sells in {currency.toUpperCase()} cannot issue, sell or redeem them. Existing cards can still be refunded.</p>}
       <form onSubmit={event => void issue(event)}><div className="ecom-admin__grid"><Field label={`Amount (${currencyCode})`}><input name="amount" type="number" {...amountInput(GIFT_CARD_CURRENCY, limits.issue)} required /></Field><Field label="Reason"><input name="reason" minLength={8} maxLength={500} required /></Field><Field label="Replaces purchase (optional)"><input name="replacesPurchaseId" pattern="gp_[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}" placeholder="gp_…" /></Field></div><div className="ecom-admin__actions"><button type="submit" disabled={busy || !canIssue}>Issue gift card</button></div></form>
       {issuedCode && <div className="ecom-admin__notice"><strong>Card created — copy this code now</strong><Field label="Private code"><input readOnly value={issuedCode} /></Field><div className="ecom-admin__actions"><button type="button" onClick={() => void navigator.clipboard.writeText(issuedCode)}>Copy code</button></div></div>}
     </Panel>
     <Panel title="Issued cards">
-      <Field label="Find a card"><input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Code suffix, source or purchase" /></Field>
+      <p className="ecom-admin__muted">After payment, the buyer of a card is emailed a one-time link that shows its code once, for 7 days. To send a new link, for example when the email was lost or after a replacement, enter a reason and resend it; earlier unused links stop working.</p>
+      <Field label="Find a card"><input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Code suffix, source, purchase or buyer email" /></Field>
       {!loaded && !error && <p className="ecom-admin__muted">Loading cards…</p>}
       {loaded && !visible.length && <p className="ecom-admin__muted">{cards.length ? 'No cards match this search.' : 'No cards issued yet.'}</p>}
-      {visible.map(card => <div className="ecom-admin__row" key={card.id}><span><strong>•••• {card.codeSuffix}</strong><small>{card.source}{card.purchaseId ? ` · purchase ${card.purchaseId}` : ''} · {money(card.balanceCents, card.currency)} of {money(card.initialCents, card.currency)} remaining · {card.status}{card.replacesPurchaseId ? ` · replaces purchase ${card.replacesPurchaseId}` : ''}{card.adminReason ? ` · ${card.adminReason}` : ''}</small></span>{card.status === 'active'
-        ? <button type="button" className="ecom-admin__secondary" disabled={busy} onClick={() => void toggle(card)}>Suspend</button>
-        : card.status === 'suspended' && (card.inReview
-          ? <small className="ecom-admin__muted">Held for review</small>
-          : <button type="button" className="ecom-admin__secondary" disabled={busy} onClick={() => void toggle(card)}>Reactivate</button>)}</div>)}
+      {visible.map(card => {
+        // A replacement's links go to the buyer of the purchase it replaces.
+        const purchase = card.purchaseId ?? card.replacesPurchaseId;
+        return <div className="ecom-admin__row" key={card.id}><span><strong>•••• {card.codeSuffix}</strong><small>{card.source}{card.purchaseId ? ` · purchase ${card.purchaseId}` : ''}{card.buyerEmail ? ` · bought by ${card.buyerEmail}` : ''} · {money(card.balanceCents, card.currency)} of {money(card.initialCents, card.currency)} remaining · {card.status}{card.replacesPurchaseId ? ` · replaces purchase ${card.replacesPurchaseId}` : ''}{card.adminReason ? ` · ${card.adminReason}` : ''}{claimSummary(card)}</small></span>
+          <div className="ecom-admin__actions">
+            {purchase && card.status === 'active' && <form className="ecom-admin__actions" onSubmit={event => event.preventDefault()}>
+              <input name="reason" aria-label={`Reason to resend the claim link of ${purchase}`} placeholder="Reason to resend" minLength={8} maxLength={500} required />
+              <button type="button" className="ecom-admin__secondary" disabled={busy} onClick={event => void resendClaim(event.currentTarget.form, card, purchase)}>Resend claim link</button>
+            </form>}
+            {card.status === 'active'
+              ? <button type="button" className="ecom-admin__secondary" disabled={busy} onClick={() => void toggle(card)}>Suspend</button>
+              : card.status === 'suspended' && (card.inReview
+                ? <small className="ecom-admin__muted">Held for review</small>
+                : <button type="button" className="ecom-admin__secondary" disabled={busy} onClick={() => void toggle(card)}>Reactivate</button>)}
+          </div></div>;
+      })}
     </Panel>
     <Panel title="Refund gift card tender">
       <p className="ecom-admin__muted">Refund Stripe charges in Stripe. A full Stripe refund restores the remaining gift card amount automatically.</p>

@@ -489,6 +489,9 @@ test('a database with data from earlier releases upgrades cleanly', () => {
     assertIntegrity(db);
     assertGiftCardRowsKept(db);
     assertReconcileStateUntried(db);
+    // 0030: orders paid and gift cards bought before it are sent no email.
+    assert.deepEqual([row(db, 'SELECT COUNT(*) AS n FROM _ecommerce_email_deliveries').n,
+      row(db, 'SELECT COUNT(*) AS n FROM _ecommerce_gift_card_claims').n], [0, 0]);
     migrate(empty);
     assert.deepEqual(fullSchema(db), fullSchema(empty));
   } finally {
@@ -996,6 +999,98 @@ test('0029 counts tax attempts on orders and reversals, indexes the tax passes, 
     ]);
     // Nothing is left for either release's passes.
     for (const [sql, params] of passes) assert.deepEqual(rows(db, sql, ...params), [], sql);
+    assertIntegrity(db);
+  } finally {
+    db.close();
+  }
+});
+
+test('0030 adds the email log and gift card claim links, changes no row, and the previous Worker still writes', () => {
+  const db = openDatabase();
+  try {
+    const previous = tags[tags.indexOf('0030_commerce_order_emails') - 1];
+    migrate(db, { to: previous, after: seeds });
+    const existing = tableNames(db);
+    const contents = () => Object.fromEntries(existing.map((table) => [table, rows(db, `SELECT * FROM "${table}" ORDER BY rowid`)]));
+    const before = contents();
+    applyMigration(db, '0030_commerce_order_emails');
+    assert.deepEqual(contents(), before, 'every existing row keeps its values');
+    assert.deepEqual(tableNames(db).filter((table) => !existing.includes(table)), ['_ecommerce_email_deliveries', '_ecommerce_gift_card_claims']);
+    const schema = outline(db);
+    assert.equal(schema.columns._ecommerce_email_deliveries,
+      'id kind subject_id status attempts last_error next_attempt_at claimed_at sent_at created_at');
+    assert.equal(schema.columns._ecommerce_gift_card_claims,
+      'id token_hash purchase_id card_id expires_at used_at revoked_at created_at created_by reason');
+    const added = (name) => name.includes('_ecommerce_email_deliveries') || name.includes('_ecommerce_gift_card_claim');
+    assert.deepEqual(schema.indexes.filter(added), [
+      '_ecommerce_email_deliveries UNIQUE (kind, subject_id)',
+      '_ecommerce_email_deliveries_due_idx ON _ecommerce_email_deliveries (next_attempt_at) WHERE ...',
+      '_ecommerce_gift_card_claims UNIQUE (token_hash)',
+      '_ecommerce_gift_card_claims_purchase_idx ON _ecommerce_gift_card_claims (purchase_id, created_at)',
+    ]);
+    assert.deepEqual(schema.foreignKeys.filter(added), [
+      '_ecommerce_gift_card_claims.card_id -> _ecommerce_gift_cards.id',
+      '_ecommerce_gift_card_claims.purchase_id -> _ecommerce_gift_card_purchases.id',
+    ]);
+    assert.deepEqual(schema.triggers.filter(added), ['_ecommerce_gift_card_claim_guard ON _ecommerce_gift_card_claims']);
+
+    // What the previous Worker writes still works and asks for no email: a paid order's shipment and a
+    // gift card purchase, with the statements of that release.
+    db.exec(`INSERT INTO _ecommerce_orders (id, status, items, total_amount, payment_provider, customer_email, created_at, updated_at)
+      VALUES ('order-paid', 'paid', '[]', 9000, 'stripe', 'buyer@example.com', ${T}, ${T})`);
+    db.exec(`INSERT INTO _ecommerce_fulfillments (id, order_id, kind, completes_order, admin_actor, carrier, tracking_number, note, created_at)
+      VALUES ('ful-previous-worker', 'order-paid', 'shipment', 1, 'admin-1', 'UPS', '1Z999', 'Parcel handed over', ${T + 10})`);
+    db.prepare(`INSERT INTO _ecommerce_gift_card_purchases
+      (id,buyer_email,amount_cents,currency,status,access_token_hash,provider_session_id,created_at,updated_at)
+      VALUES (?,?,?,'usd','pending',?,?,?,?)`).run('gp-new', 'buyer@example.com', 5000, 'hash-new', 'cs_new', T, T);
+    db.prepare(`UPDATE _ecommerce_gift_card_purchases SET status = 'paid',payment_intent_id = ?,updated_at = ?
+      WHERE id = ? AND status = 'pending' AND provider_session_id = ?`).run('pi_new', T, 'gp-new', 'cs_new');
+    db.prepare(`INSERT INTO _ecommerce_gift_cards
+      (id,code_hash,code_suffix,encrypted_code,source,purchase_id,initial_cents,balance_cents,currency,status,created_at,updated_at)
+      SELECT ?,?,?,?,'purchase',id,amount_cents,0,'usd','active',?,?
+      FROM _ecommerce_gift_card_purchases WHERE id = ? AND status = 'paid'
+      ON CONFLICT(purchase_id) DO NOTHING`).run('gift-new', 'code-new', 'EEEE', '000000000000000000000000:44', T, T, 'gp-new');
+    db.prepare(`INSERT INTO _ecommerce_gift_card_ledger
+      (id,card_id,purchase_id,kind,amount_cents,created_at)
+      SELECT 'gcl_issue_' || id,id,purchase_id,'issue',initial_cents,?
+      FROM _ecommerce_gift_cards WHERE purchase_id = ? ON CONFLICT(id) DO NOTHING`).run(T, 'gp-new');
+    assert.equal(row(db, `SELECT fulfillment_status FROM _ecommerce_orders WHERE id = 'order-paid'`).fulfillment_status, 'fulfilled');
+    assert.equal(row(db, `SELECT balance_cents FROM _ecommerce_gift_cards WHERE id = 'gift-new'`).balance_cents, 5000);
+    assert.equal(row(db, 'SELECT COUNT(*) AS n FROM _ecommerce_email_deliveries').n, 0);
+
+    // One email per kind and subject; a sent email has its time, and only known kinds are recorded.
+    const deliver = (id, kind = 'order_confirmation', subject = 'order-paid', conflict = '') => db.exec(`INSERT INTO
+      _ecommerce_email_deliveries (id, kind, subject_id, next_attempt_at, created_at) VALUES ('${id}', '${kind}', '${subject}', ${T}, ${T})${conflict}`);
+    deliver('mail-1');
+    assert.throws(() => deliver('mail-2'), /UNIQUE constraint failed/);
+    deliver('mail-2', 'order_confirmation', 'order-paid', ' ON CONFLICT (kind, subject_id) DO NOTHING');
+    deliver('mail-3', 'shipment', 'ful-previous-worker');
+    assert.throws(() => deliver('mail-4', 'newsletter'), /CHECK constraint failed/);
+    assert.deepEqual(row(db, `SELECT status, attempts, last_error, claimed_at, sent_at FROM _ecommerce_email_deliveries WHERE id = 'mail-1'`),
+      { status: 'pending', attempts: 0, last_error: null, claimed_at: null, sent_at: null });
+    assert.throws(() => db.exec(`UPDATE _ecommerce_email_deliveries SET status = 'sent' WHERE id = 'mail-1'`), /CHECK constraint failed/);
+    db.exec(`UPDATE _ecommerce_email_deliveries SET status = 'sent', sent_at = ${T + 20} WHERE id = 'mail-1'`);
+
+    // A claim link is made only for an active card of its own purchase, with an expiry after its
+    // creation, and a resend names who and why.
+    const link = (id, card, purchase, extra = { created_by: null, reason: null }, expiresAt = T + 604800) => db.prepare(`INSERT INTO
+      _ecommerce_gift_card_claims (id, token_hash, purchase_id, card_id, expires_at, created_at, created_by, reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(id, `hash-${id}`, purchase, card, expiresAt, T, extra.created_by, extra.reason);
+    assert.throws(() => link('claim-suspended', 'gift-held', 'gp-held'), /Gift card cannot be claimed/);
+    assert.throws(() => link('claim-other', 'gift-new', 'gp-held'), /Gift card cannot be claimed/);
+    assert.throws(() => link('claim-admin', 'gift-admin', 'gp-new'), /Gift card cannot be claimed/);
+    link('claim-1', 'gift-new', 'gp-new');
+    assert.throws(() => link('claim-2', 'gift-new', 'gp-new', { created_by: 'admin-1', reason: null }), /CHECK constraint failed/);
+    assert.throws(() => link('claim-3', 'gift-new', 'gp-new', { created_by: 'admin-1', reason: 'Lost' }), /CHECK constraint failed/);
+    assert.throws(() => link('claim-4', 'gift-new', 'gp-new', undefined, T), /CHECK constraint failed/);
+    link('claim-5', 'gift-new', 'gp-new', { created_by: 'admin-1', reason: 'Buyer lost the email' });
+    assert.throws(() => db.prepare(`INSERT INTO _ecommerce_gift_card_claims (id, token_hash, purchase_id, card_id, expires_at, created_at)
+      VALUES ('claim-6', 'hash-claim-1', 'gp-new', 'gift-new', ${T + 10}, ${T})`).run(), /UNIQUE constraint failed/);
+    // A replacement card of the purchase can be claimed too.
+    db.exec(`INSERT INTO _ecommerce_gift_cards
+      (id,code_hash,code_suffix,encrypted_code,source,admin_actor,admin_reason,replaces_purchase_id,initial_cents,balance_cents,currency,status,created_at,updated_at)
+      VALUES ('gift-replacement','code-replacement','FFFF','000000000000000000000000:55','admin','admin-1','Replacement card','gp-new',5000,0,'usd','active',${T},${T})`);
+    link('claim-7', 'gift-replacement', 'gp-new');
     assertIntegrity(db);
   } finally {
     db.close();

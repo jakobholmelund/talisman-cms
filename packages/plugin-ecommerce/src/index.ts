@@ -1,9 +1,10 @@
 import { Plugin, CollectionConfig, FieldDefinition, BlockDefinition } from 'talisman-cms'
 import { fileURLToPath } from 'url';
 import { existsSync } from 'node:fs';
-export { bindCommerceApi, reconcileCommerce, CART_MAX_LINES, CART_MAX_LINE_QUANTITY, TaxCalculationError } from './api';
+export { bindCommerceApi, reconcileCommerce, deliverPendingCommerceEmails, CART_MAX_LINES, CART_MAX_LINE_QUANTITY, TaxCalculationError } from './api';
 export type { PaymentProviderAdapter, PaymentReferences, ValidatedWebhookEvent, TaxCalculation, TaxCalculationParams } from './payments';
 export { TaxAddressError } from './payments';
+export type { CommerceEmailTemplates } from './emails';
 export { StripePaymentAdapter } from './adapters/stripe';
 export { AdminTestPaymentAdapter } from './adapters/admin-test';
 export { readStoreSettings, readStoreCurrency, StoreSettingsError } from './store-settings';
@@ -37,10 +38,29 @@ export interface EcommercePluginConfig {
    * @default false
    */
   adminTestCheckout?: boolean;
+  /**
+   * A module that replaces the order confirmation, shipment and gift card claim emails: a package
+   * specifier or an absolute path that the site's build can resolve, for example
+   * `fileURLToPath(new URL('./src/lib/commerce-emails.ts', import.meta.url))`. It exports any of
+   * `orderConfirmation`, `shipment` and `giftCardClaim` (see `CommerceEmailTemplates` in
+   * `@talisman-cms/plugin-ecommerce/emails`); the others keep the default.
+   */
+  emailTemplates?: string;
 }
 
 /** Tells the shared admin screens which optional tools this site registered. */
 const ADMIN_OPTIONS_MODULE = 'virtual:talisman-cms/ecommerce-admin';
+/** Gives server code the store's email templates; `emailTemplates: null` without them. */
+const EMAIL_TEMPLATES_MODULE = 'virtual:talisman-cms/ecommerce-emails';
+
+/** The virtual module's source; the path is checked like the core's custom email provider module. */
+function emailTemplatesModule(path: string | undefined) {
+  if (path === undefined) return 'export const emailTemplates = null;';
+  if (typeof path !== 'string' || !path.trim() || path.startsWith('./') || path.startsWith('../')) {
+    throw new TypeError('[plugin-ecommerce] emailTemplates must be a package specifier or an absolute path.');
+  }
+  return `export * as emailTemplates from ${JSON.stringify(path)};`;
+}
 
 function resolveCartEndpointPath() {
   return resolveRouteEntrypoint('ecommerce-cart');
@@ -149,6 +169,7 @@ export const ecommercePlugin = (
   const productsSlug = config?.productsCollectionSlug || 'products';
   const inject = config?.injectCollections !== false;
   const adminTestCheckout = config?.adminTestCheckout === true;
+  const emailTemplatesSource = emailTemplatesModule(config?.emailTemplates);
   const cartEndpointPath = resolveCartEndpointPath();
   const checkoutEndpointPath = resolveCheckoutEndpointPath();
   const adminReconcileEndpointPath = resolveAdminReconcileEndpointPath();
@@ -191,6 +212,14 @@ export const ecommercePlugin = (
         },
         load(id: string) {
           if (id === `\0${ADMIN_OPTIONS_MODULE}`) return `export const adminTestCheckout = ${adminTestCheckout};`;
+        }
+      }, {
+        name: 'talisman-cms-ecommerce-email-templates',
+        resolveId(id: string) {
+          if (id === EMAIL_TEMPLATES_MODULE) return `\0${EMAIL_TEMPLATES_MODULE}`;
+        },
+        load(id: string) {
+          if (id === `\0${EMAIL_TEMPLATES_MODULE}`) return emailTemplatesSource;
         }
       }]
     },
@@ -684,6 +713,37 @@ export const ecommercePlugin = (
             { name: 'reason', label: 'Reason', type: 'text' }
           ],
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardOrderRefunds', idColumn: 'orderId' }
+        });
+        collections.push({
+          name: 'Gift Card Claim Links', slug: '_ecommerce_gift_card_claims',
+          description: 'One-time links emailed to buyers to show their gift card code, with who resent a link and why.',
+          adminSection: 'commerce', readOnly: true,
+          fields: [
+            { name: 'id', label: 'ID', type: 'text', required: true },
+            { name: 'purchaseId', label: 'Purchase ID', type: 'text' },
+            { name: 'cardId', label: 'Gift Card ID', type: 'text' },
+            { name: 'expiresAt', label: 'Expires', type: 'date' },
+            { name: 'usedAt', label: 'Used', type: 'date' },
+            { name: 'revokedAt', label: 'Revoked', type: 'date' },
+            { name: 'createdBy', label: 'Resent By', type: 'text' },
+            { name: 'reason', label: 'Reason', type: 'text' }
+          ],
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardClaims', idColumn: 'id' }
+        });
+        collections.push({
+          name: 'Order Emails', slug: '_ecommerce_email_deliveries',
+          description: 'Order confirmations, shipment notices and gift card claim emails, with their delivery status and last error code.',
+          adminSection: 'commerce', readOnly: true,
+          fields: [
+            { name: 'id', label: 'ID', type: 'text', required: true },
+            { name: 'kind', label: 'Kind', type: 'text' },
+            { name: 'subjectId', label: 'Order, Shipment or Purchase ID', type: 'text' },
+            { name: 'status', label: 'Status', type: 'text' },
+            { name: 'attempts', label: 'Attempts', type: 'number' },
+            { name: 'lastError', label: 'Last Error', type: 'text' },
+            { name: 'sentAt', label: 'Sent', type: 'date' }
+          ],
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'emailDeliveries', idColumn: 'id' }
         });
 
         // --- Tags ---

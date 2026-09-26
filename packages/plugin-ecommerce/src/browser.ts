@@ -100,6 +100,56 @@ export function verifyCustomerEmailSignIn(token: string) {
   return commerceRequest<{ account: CustomerAccountSummary }>('/api/ecommerce/account', 'POST', { token });
 }
 
+/**
+ * Reads the one-time token on the page a gift card claim link opens (`/gift-cards/claim#token=...`),
+ * then removes it from the address bar. The token is only ever in the fragment, which browsers never
+ * send to the server. Returns null without a token.
+ */
+export function readGiftCardClaimToken(
+  loc: SignInLocation | undefined = typeof window === 'undefined' ? undefined : window.location,
+  hist: SignInHistory | undefined = typeof window === 'undefined' ? undefined : window.history,
+) {
+  if (!loc) return null;
+  const hash = new URLSearchParams(loc.hash.replace(/^#/, ''));
+  const token = hash.get('token');
+  if (!token) return null;
+  hash.delete('token');
+  const fragment = hash.toString();
+  hist?.replaceState(hist.state, '', `${loc.pathname}${loc.search}${fragment ? `#${fragment}` : ''}`);
+  return token;
+}
+
+/**
+ * Uses a gift card claim link: returns the card's code and balance once. Call it when the shopper asks
+ * to see the code, not when the page loads, so a link scanner that opens the page does not use it up.
+ * Rejects with the server's message and `status` (0 when the request never reached the server).
+ * `retryable` is true when the link was not used (a failed connection, too many requests or a
+ * temporary problem), so the page can offer to try again; otherwise the link was already used, has
+ * expired or was replaced by a newer one.
+ */
+export async function claimGiftCardCode(token: string): Promise<{ code: string; balanceCents: number; currency: string }> {
+  const failure = (message: string, status: number, retryable: boolean) => Object.assign(new Error(message), { status, retryable });
+  let response: Response;
+  try {
+    response = await fetch('/api/ecommerce/gift-cards', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'claim', token }),
+    });
+  } catch {
+    throw failure('The connection failed. Please try again.', 0, true);
+  }
+  const result = await response.json().catch(() => ({})) as { code?: unknown; balanceCents: number; currency: string; error?: string };
+  if (!response.ok) {
+    throw failure(result.error || 'The gift card code could not be shown.', response.status,
+      response.status === 429 || response.status >= 500);
+  }
+  // The server used the link for this answer, so another try cannot show the code.
+  if (typeof result.code !== 'string') throw failure('The gift card code could not be shown.', response.status, false);
+  return { code: result.code, balanceCents: result.balanceCents, currency: result.currency };
+}
+
 export function signOutCustomerAccount() {
   return commerceRequest<{ account: null }>('/api/ecommerce/account', 'DELETE');
 }

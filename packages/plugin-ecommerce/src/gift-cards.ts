@@ -9,6 +9,11 @@ import { readStoreSettings } from './store-settings';
 import { minimumChargeAmount } from './money';
 import { WebhookMismatchError } from './webhook-errors';
 import { ReconcileFailure, assertStoreStripeMode, sessionLookupFailure } from './reconcile';
+import { giftCardClaimEmail, type GiftCardClaimEmail } from './emails';
+import { applyEmailTemplate, bareEmailAddress, commerceEmailHeld, commerceEmailSetup, commerceEmailStatement,
+  emailErrorCode, holdCommerceEmail, missingEmailSettings, releaseCommerceEmailStatement, sendCommerceEmailNow,
+  sendCommerceMessage, supersedeCommerceEmailStatement, type CommerceEmailComposer,
+  type CommerceEmailSetup } from './email-deliveries';
 
 const MIN_CARD_CENTS = 500;
 const amountSchema = z.number().int().min(MIN_CARD_CENTS).max(100_000);
@@ -272,15 +277,48 @@ export async function issueAdminGiftCard(env: TalismanEnv, actor: string, input:
   return { id, code: secret.code, amountCents, currency, replacesPurchaseId: replaces };
 }
 
+const isoSeconds = (seconds: unknown) => typeof seconds === 'number' ? new Date(seconds * 1000).toISOString() : null;
+
+/** The newest claim link of a card, as the admin list shows it. */
+function claimLinkView(value: unknown) {
+  if (typeof value !== 'string') return null;
+  const link = JSON.parse(value) as Record<string, unknown>;
+  return { createdAt: isoSeconds(link.createdAt), expiresAt: isoSeconds(link.expiresAt), usedAt: isoSeconds(link.usedAt),
+    revokedAt: isoSeconds(link.revokedAt), resent: link.resent === 1 };
+}
+
+/** The claim email sent after a purchase: its status and, while it is not sent, the last error code. */
+function claimEmailView(value: unknown) {
+  if (typeof value !== 'string') return null;
+  const email = JSON.parse(value) as { status: string; lastError: string | null; attempts: number };
+  return { status: email.status, lastError: email.lastError, attempts: email.attempts };
+}
+
 export async function getGiftCardsAdmin(env: TalismanEnv) {
   const db = createDbClient(env);
   return db.select({ id: giftCards.id, codeSuffix: giftCards.codeSuffix,
     source: giftCards.source, purchaseId: giftCards.purchaseId, replacesPurchaseId: giftCards.replacesPurchaseId,
+    // The buyer of the purchase the card belongs to or replaces; the claim link resend goes there. The
+    // subqueries name the card's columns with their table, because drizzle leaves them unqualified.
+    buyerEmail: sql<string | null>`(SELECT p.buyer_email FROM _ecommerce_gift_card_purchases p
+      WHERE p.id = COALESCE(_ecommerce_gift_cards.purchase_id, _ecommerce_gift_cards.replaces_purchase_id))`,
     adminActor: giftCards.adminActor, adminReason: giftCards.adminReason, initialCents: giftCards.initialCents,
     balanceCents: giftCards.balanceCents, currency: giftCards.currency, status: giftCards.status,
     // While its purchase is held for review, the card cannot be reactivated.
     inReview: sql<boolean>`EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p
       WHERE p.id IN (${giftCards.purchaseId}, ${giftCards.replacesPurchaseId}) AND p.status = 'review')`.mapWith(Boolean),
+    // Read through the purchase index: a card's links all belong to its purchase, or to the one it replaces.
+    claimLink: sql`(SELECT json_object('createdAt', l.created_at, 'expiresAt', l.expires_at, 'usedAt', l.used_at,
+        'revokedAt', l.revoked_at, 'resent', l.created_by IS NOT NULL)
+      FROM _ecommerce_gift_card_claims l
+      WHERE l.purchase_id = COALESCE(_ecommerce_gift_cards.purchase_id, _ecommerce_gift_cards.replaces_purchase_id)
+        AND l.card_id = _ecommerce_gift_cards.id
+      -- A link the buyer can still use comes first, so a resend that failed never hides a working link.
+      ORDER BY (l.used_at IS NULL AND l.revoked_at IS NULL AND l.expires_at > CAST(strftime('%s', 'now') AS INTEGER)) DESC,
+        l.created_at DESC, l.rowid DESC LIMIT 1)`.mapWith(claimLinkView),
+    claimEmail: sql`(SELECT json_object('status', d.status, 'lastError', d.last_error, 'attempts', d.attempts)
+      FROM _ecommerce_email_deliveries d WHERE d.kind = 'gift_card_claim' AND d.subject_id = _ecommerce_gift_cards.purchase_id)`
+      .mapWith(claimEmailView),
     createdAt: giftCards.createdAt }).from(giftCards)
     .orderBy(giftCards.createdAt);
 }
@@ -468,8 +506,171 @@ export async function confirmGiftCardPurchase(env: TalismanEnv, session: {
       SELECT 'gcl_issue_' || id,id,purchase_id,'issue',initial_cents,?
       FROM _ecommerce_gift_cards WHERE purchase_id = ? ON CONFLICT(id) DO NOTHING`)
       .bind(timestamp, id),
+    // The buyer gets a claim link once, however often the payment is confirmed.
+    commerceEmailStatement(env, 'gift_card_claim', id, timestamp, {
+      sql: `EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases WHERE id = ? AND status = 'paid' AND provider_session_id = ?)`,
+      params: [id, session.id] }),
   ]);
+  await sendCommerceEmailNow(env, 'gift_card_claim', id, composeGiftCardClaimEmail);
   return { success: true, purchaseId: id };
+}
+
+/** A claim link works once, for 7 days. */
+export const GIFT_CARD_CLAIM_SECONDS = 7 * 24 * 60 * 60;
+/** Claim requests one client network (an IPv4 address or an IPv6 /64) may make per hour. */
+export const GIFT_CARD_CLAIMS_PER_NETWORK_PER_HOUR = 20;
+const CLAIM_TOKEN = /^[0-9a-f]{64}$/;
+
+/** The storefront page a claim link opens. The token is in the fragment, so it never reaches the server's logs. */
+const claimUrl = (origin: string, token: string) => `${origin}/gift-cards/claim#token=${token}`;
+
+type ClaimTarget = { id: string; buyer_email: string; amount_cents: number; currency: string;
+  card_id: string | null; card_status: string | null };
+
+/** The purchase, its buyer and the card that holds its value now: the purchased card or its replacement. */
+function claimTarget(env: TalismanEnv, purchaseId: string) {
+  return env.DB.prepare(`SELECT p.id,p.buyer_email,p.amount_cents,p.currency,c.id AS card_id,c.status AS card_status
+    FROM _ecommerce_gift_card_purchases p LEFT JOIN _ecommerce_gift_cards c ON c.id = (${currentCard('p.id')})
+    WHERE p.id = ?`).bind(purchaseId).first<ClaimTarget>();
+}
+
+/**
+ * A new claim link for a card; only the token's hash is stored, so the token is returned this once.
+ * The statement returns the link's id when it made the link, and makes none unless `condition` holds.
+ */
+async function newClaimLink(env: TalismanEnv, target: ClaimTarget & { card_id: string }, now: number,
+  { resend, condition }: { resend?: { actor: string; reason: string }; condition?: { sql: string; params: unknown[] } } = {}) {
+  const token = randomHex(32);
+  const id = `gclaim_${crypto.randomUUID()}`;
+  const expiresAt = now + GIFT_CARD_CLAIM_SECONDS;
+  return { id, token, expiresAt, statement: env.DB.prepare(`INSERT INTO _ecommerce_gift_card_claims
+      (id,token_hash,purchase_id,card_id,expires_at,created_at,created_by,reason)
+      SELECT ?,?,?,?,?,?,?,? WHERE ${condition?.sql ?? '1'} RETURNING id`)
+    .bind(id, await hashGiftCardSecret(token), target.id, target.card_id, expiresAt, now,
+      resend?.actor ?? null, resend?.reason ?? null, ...(condition?.params ?? [])) };
+}
+
+const revokeClaimLinkStatement = (env: TalismanEnv, id: string) => env.DB.prepare(`UPDATE _ecommerce_gift_card_claims
+  SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`).bind(Math.floor(Date.now() / 1000), id);
+const revokeClaimLink = (env: TalismanEnv, id: string) => revokeClaimLinkStatement(env, id).run();
+
+function claimEmail(setup: CommerceEmailSetup, target: ClaimTarget, link: { token: string; expiresAt: number }) {
+  const email: GiftCardClaimEmail = {
+    store: setup.store,
+    purchase: { id: target.id, amountCents: target.amount_cents, currency: target.currency },
+    claim: { url: claimUrl(setup.store.origin!, link.token), expiresAt: new Date(link.expiresAt * 1000) },
+  };
+  return applyEmailTemplate(setup, 'giftCardClaim', email, giftCardClaimEmail(email));
+}
+
+/**
+ * The email sent after a purchase is paid: a new one-time link, never the code. The link is made when
+ * the email is sent and revoked if the send fails, so a retry sends a new one. A purchase whose card
+ * is no longer active gets no link.
+ */
+export const composeGiftCardClaimEmail: CommerceEmailComposer = async (env, purchaseId, setup, now) => {
+  const target = await claimTarget(env, purchaseId);
+  if (!target) return { cancel: 'not_found' };
+  if (!target.card_id || target.card_status !== 'active') return { cancel: 'not_claimable' };
+  const to = bareEmailAddress(target.buyer_email);
+  if (!to) return { fail: 'invalid_recipient' };
+  // Only while this Worker still holds the email: one whose lease ran out, and whose email another Worker
+  // or an administrator's resend took over, makes no link and sends nothing.
+  const link = await newClaimLink(env, { ...target, card_id: target.card_id }, now,
+    { condition: commerceEmailHeld('gift_card_claim', purchaseId, now) });
+  if (!await link.statement.first()) return { cancel: 'superseded' };
+  return { to, message: await claimEmail(setup, target, link), onFailure: () => revokeClaimLink(env, link.id) };
+};
+
+/**
+ * Shows the code of the card a claim link was made for, once. The link must be unused, not revoked and
+ * not expired, and its card active: a replacement voids the card it replaces, so links made before it
+ * stop working. Of concurrent requests with one link, only one gets the code. Returns null for every
+ * link that cannot be used.
+ */
+export async function claimGiftCardCode(env: TalismanEnv, token: unknown) {
+  if (typeof token !== 'string' || !CLAIM_TOKEN.test(token)) return null;
+  const now = Math.floor(Date.now() / 1000);
+  const claim = await env.DB.prepare(`SELECT l.id,l.card_id,c.code_hash,c.encrypted_code,c.balance_cents,c.currency
+    FROM _ecommerce_gift_card_claims l JOIN _ecommerce_gift_cards c ON c.id = l.card_id
+    WHERE l.token_hash = ? AND l.used_at IS NULL AND l.revoked_at IS NULL AND l.expires_at > ? AND c.status = 'active'`)
+    .bind(await hashGiftCardSecret(token), now)
+    .first<{ id: string; card_id: string; code_hash: string; encrypted_code: string; balance_cents: number; currency: string }>();
+  if (!claim) return null;
+  // Decrypted before the link is used up, so a missing key leaves the link working.
+  const code = await decryptCardSecret(await giftCardKeyring(env),
+    { id: claim.card_id, codeHash: claim.code_hash, encryptedCode: claim.encrypted_code });
+  const used = await env.DB.prepare(`UPDATE _ecommerce_gift_card_claims SET used_at = ?
+    WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?
+      AND EXISTS (SELECT 1 FROM _ecommerce_gift_cards WHERE id = ? AND status = 'active')
+    RETURNING id`).bind(now, claim.id, now, claim.card_id).all();
+  if (!used.results?.length) return null;
+  return { code, balanceCents: claim.balance_cents, currency: claim.currency };
+}
+
+const resendSchema = z.object({
+  purchaseId: purchaseIdSchema,
+  reason: z.string().trim().min(8).max(500),
+}).strict();
+
+/**
+ * Emails the buyer of a purchase a new claim link for the card that holds its value now, for example
+ * after the first email was lost or a replacement card was issued. The new link records the
+ * administrator and the reason. While the email is sent, the purchase's automatic claim email is held
+ * with the lease a sending Worker takes, so the two are never sent at once; a resend is refused while
+ * the automatic email is being sent. Only after the new email is sent do the links made before it stop
+ * working and a claim email that was still waiting get cancelled. When the send fails, only the new
+ * link is revoked: earlier links keep working, the automatic email keeps its retries, and the action
+ * can be repeated.
+ */
+export async function resendGiftCardClaimLink(env: TalismanEnv, actor: string, input: unknown) {
+  const values = resendSchema.parse(input);
+  if (!actor.trim()) throw new Error('Administrator identity is required');
+  const setup = await commerceEmailSetup(env);
+  const missing = missingEmailSettings(setup, 'gift_card_claim');
+  if (missing.length) throw new Error(`Email needs ${missing.join(', ')} before a claim link can be sent`);
+  const target = await claimTarget(env, values.purchaseId);
+  if (!target) throw new Error('Gift card purchase not found');
+  if (!target.card_id || target.card_status !== 'active') {
+    throw new Error('A claim link can be sent only while the card that holds the purchase\'s value is active');
+  }
+  const to = bareEmailAddress(target.buyer_email);
+  if (!to) throw new Error('The purchase has no valid buyer address');
+  const now = Math.floor(Date.now() / 1000);
+  const hold = await holdCommerceEmail(env, 'gift_card_claim', values.purchaseId, now);
+  if (hold === 'busy') {
+    throw new Error('The claim email is being sent right now; reload in a few minutes and resend it only if it was not sent');
+  }
+  const release = hold === null ? [] : [releaseCommerceEmailStatement(env, 'gift_card_claim', values.purchaseId, hold)];
+  const link = await newClaimLink(env, { ...target, card_id: target.card_id }, now, { resend: { actor, reason: values.reason } });
+  try {
+    await link.statement.first();
+  } catch (cause) {
+    if (release.length) await env.DB.batch(release);
+    throw new Error('The purchase\'s card changed while the link was being made; reload and try again', { cause });
+  }
+  try {
+    await sendCommerceMessage(env, setup, 'gift_card_claim', to, await claimEmail(setup, target, link));
+  } catch (error) {
+    // The new link was in no email, so it is harmless if this fails; the hold then ends with its lease.
+    await env.DB.batch([revokeClaimLinkStatement(env, link.id), ...release]).catch(() => undefined);
+    const code = emailErrorCode(error);
+    console.warn('[commerce] Gift card claim link not sent', { purchase: values.purchaseId, code });
+    throw new Error(`The claim email could not be sent (${code}); earlier links still work. Try again later`);
+  }
+  // Links made before this one stop working, by insertion order, so of two resends at once the later
+  // link is the one that keeps working.
+  try {
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE _ecommerce_gift_card_claims SET revoked_at = ?
+        WHERE purchase_id = ? AND used_at IS NULL AND revoked_at IS NULL
+          AND rowid < (SELECT rowid FROM _ecommerce_gift_card_claims WHERE id = ?)`).bind(now, values.purchaseId, link.id),
+      ...(hold === null ? [] : [supersedeCommerceEmailStatement(env, 'gift_card_claim', values.purchaseId, hold)]),
+    ]);
+  } catch (cause) {
+    throw new Error('The claim email was sent, but earlier links still work; resend it again to stop them', { cause });
+  }
+  return { purchaseId: values.purchaseId, claimId: link.id, expiresAt: new Date(link.expiresAt * 1000).toISOString() };
 }
 
 export async function expireGiftCardPurchase(env: TalismanEnv, id: string, sessionId: string) {

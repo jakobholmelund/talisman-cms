@@ -2,13 +2,19 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { bindCommerceApi, reconcileCommerce } from '../dist/api.js';
+import { bindCommerceApi, reconcileCommerce as reconcileWithEmails } from '../dist/api.js';
 import { AdminTestPaymentAdapter } from '../dist/adapters/admin-test.js';
 import { StripePaymentAdapter } from '../dist/adapters/stripe.js';
 import { TaxAddressError, TaxCalculationError } from '../dist/index.js';
 import { createDiscountCode } from '../dist/promotions.js';
 import { issueAdminGiftCard, refundGiftCardOnlyOrder, refundGiftCardTender } from '../dist/gift-cards.js';
 import { listCustomerOrders } from '../dist/accounts.js';
+// These tests leave email unconfigured, so the email retry pass reports the confirmations waiting for an
+// email provider (see emails.test.mjs). Only that result is dropped; any other email result still counts.
+const reconcileCommerce = async (...args) => (await reconcileWithEmails(...args))
+  .filter((result) => !(result.id === 'commerce_emails' && /needs? an email provider/.test(result.error ?? '')));
+const waitingForEmail = (message, details) => message === '[commerce] Email not sent'
+  && /email needs an email provider/.test(details?.error ?? '');
 
 const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.sql', '0007_local_auth.sql',
   '0008_shared_components.sql', '0010_checkout_inventory.sql', '0011_order_payment_provider.sql',
@@ -16,7 +22,7 @@ const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.
   '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
   '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql', '0025_order_shipping_and_tax.sql',
   '0026_order_fulfillment_status.sql', '0027_gift_card_review.sql', '0028_provider_refunds_and_disputes.sql',
-  '0029_commerce_reconcile_backoff.sql'];
+  '0029_commerce_reconcile_backoff.sql', '0030_commerce_order_emails.sql'];
 
 /** A frame and a case that ship, and a digital guide that does not. */
 function database() {
@@ -371,7 +377,8 @@ test('a gift-card-only order records its tax transaction when it is confirmed, a
 
 test('a tax transaction that fails at confirmation is logged, counted and recorded by reconcileCommerce', async (t) => {
   const logged = [];
-  t.mock.method(console, 'error', (message) => { logged.push(message); });
+  // Email is not configured here, so the order confirmation waits; emails.test.mjs covers that line.
+  t.mock.method(console, 'error', (message, details) => { if (!waitingForEmail(message, details)) logged.push(message); });
   const { sqlite, DB } = database();
   const { adapter, calls, state } = taxingProvider();
   const env = { DB, ...exclusive };
@@ -493,7 +500,8 @@ test('a refund recorded between another reversal\'s read and its record is rever
 
 test('a reversal the provider refused stays pending and is sent again, unchanged, by reconcileCommerce', async (t) => {
   const logged = [];
-  t.mock.method(console, 'error', (message) => { logged.push(message); });
+  // Email is not configured here, so the order confirmation waits; emails.test.mjs covers that line.
+  t.mock.method(console, 'error', (message, details) => { if (!waitingForEmail(message, details)) logged.push(message); });
   const { sqlite, DB } = database();
   const { adapter, calls, state } = taxingProvider();
   const env = { DB, ...exclusive };

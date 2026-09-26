@@ -37,7 +37,7 @@ const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.
   '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
   '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql', '0025_order_shipping_and_tax.sql',
   '0026_order_fulfillment_status.sql', '0027_gift_card_review.sql', '0028_provider_refunds_and_disputes.sql',
-  '0029_commerce_reconcile_backoff.sql'];
+  '0029_commerce_reconcile_backoff.sql', '0030_commerce_order_emails.sql'];
 
 /** An in-memory D1 stand-in. Like D1, it runs one batch at a time, each in a transaction. */
 function database() {

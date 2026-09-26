@@ -17,7 +17,7 @@ const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.
   '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
   '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql', '0025_order_shipping_and_tax.sql',
   '0026_order_fulfillment_status.sql', '0027_gift_card_review.sql', '0028_provider_refunds_and_disputes.sql',
-  '0029_commerce_reconcile_backoff.sql'];
+  '0029_commerce_reconcile_backoff.sql', '0030_commerce_order_emails.sql'];
 
 function database() {
   const sqlite = new DatabaseSync(':memory:');
@@ -70,7 +70,11 @@ function shop(settings = ENABLED) {
   sqlite.prepare(`INSERT INTO _ecommerce_customer_accounts
     (id, email, email_normalized, email_verified_at, created_at, updated_at)
     VALUES ('referrer', 'Jane.Doe@gmail.com', 'jane.doe@gmail.com', ?, ?, ?)`).run(now, now, now);
-  const env = { DB, TALISMAN_COMMERCE_GIFT_CARD_KEY: 'a'.repeat(64), ...settings };
+  // Email is configured, as in a store that takes orders, so order confirmations go out and the
+  // scheduled job has none waiting to report.
+  const EMAIL = { async send() { return { messageId: '<m@example.test>' }; } };
+  const env = { DB, EMAIL, TALISMAN_EMAIL_PROVIDER: 'cloudflare', TALISMAN_EMAIL_FROM: 'Store <no-reply@example.test>',
+    TALISMAN_COMMERCE_GIFT_CARD_KEY: 'a'.repeat(64), ...settings };
   const state = { dispute: 'none', disputeCalls: [] };
   const adapter = {
     providerId: 'stripe',

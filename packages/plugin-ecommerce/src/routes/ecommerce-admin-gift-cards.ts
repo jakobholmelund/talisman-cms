@@ -3,7 +3,7 @@ import type { TalismanEnv } from 'talisman-cms/client';
 import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
 import { getGiftCardsAdmin, getGiftCardReviewsAdmin, getGiftCardKeyStatus, issueAdminGiftCard,
   setGiftCardActive, resolveGiftCardReview, reencryptGiftCardCodes, refundGiftCardTender,
-  refundGiftCardOnlyOrder } from '../gift-cards';
+  refundGiftCardOnlyOrder, resendGiftCardClaimLink } from '../gift-cards';
 import { StoreSettingsError, reportStoreSettingsError } from '../store-settings';
 
 export const ALL: APIRoute = async ({ request }) => {
@@ -33,6 +33,7 @@ export const ALL: APIRoute = async ({ request }) => {
     else if (body.action === 'reencryptCodes') result = await reencryptGiftCardCodes(runtimeEnv, body.data);
     else if (body.action === 'refundTender') result = await refundGiftCardTender(runtimeEnv, actor, body.data);
     else if (body.action === 'refundGiftOnlyOrder') result = await refundGiftCardOnlyOrder(runtimeEnv, actor, body.data);
+    else if (body.action === 'resendClaimLink') result = await resendGiftCardClaimLink(runtimeEnv, actor, body.data);
     else return Response.json({ error: 'Invalid gift card action' }, { status: 400, headers });
     return Response.json({ result }, { headers });
   } catch (error) {

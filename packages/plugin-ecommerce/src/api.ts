@@ -32,6 +32,9 @@ export { ReconcileFailure, type ReconcileFailureCode, type ReconcileResult } fro
 
 /** The answer to a shopper who asks about, or tries to release, a checkout parked for review. */
 export const PARKED_CHECKOUT_MESSAGE = 'The store is reviewing the payment for this checkout. Contact the store to release it.';
+import { deliverCommerceEmail, deliverPendingCommerceEmails } from './commerce-emails';
+import { commerceEmailStatement } from './email-deliveries';
+export { deliverPendingCommerceEmails } from './commerce-emails';
 
 export interface CommerceApiOptions {
   env: TalismanEnv;
@@ -444,6 +447,14 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         ON CONFLICT(provider, provider_id) DO NOTHING`)
         .bind(`pay_${crypto.randomUUID()}`, params.provider, params.providerId, timestamp, params.orderId, params.providerId)
     );
+    // One confirmation per paid real order, whichever path confirms the payment and however often.
+    const confirms = params.provider !== 'admin_test';
+    if (confirms) {
+      statements.push(commerceEmailStatement(env, 'order_confirmation', params.orderId, timestamp, {
+        sql: `EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'paid' AND checkout_session_id = ?
+          AND COALESCE(payment_provider, 'stripe') <> 'admin_test')`,
+        params: [params.orderId, params.providerId] }));
+    }
     await env.DB.batch(statements);
     const current = await db.select().from(schema.orders).where(eq(schema.orders.id, params.orderId)).get();
     if (current?.status !== 'paid') throw new Error('Order is no longer pending');
@@ -452,6 +463,8 @@ export function bindCommerceApi(options: CommerceApiOptions) {
     if (current.taxCalculationId && !current.taxTransactionId) {
       await recordConfirmedOrderTax(env, paymentAdapters, params.orderId);
     }
+    // A failed send never fails the payment; the scheduled job retries it.
+    if (confirms) await deliverCommerceEmail(env, 'order_confirmation', params.orderId);
 
     return { success: true, orderId: params.orderId, status: 'paid' };
   }
@@ -1641,6 +1654,16 @@ export async function reconcileCommerce(options: CommerceApiOptions, limit = 10)
   } catch (error) {
     results.push({ id: 'referral_awards', status: 'error',
       error: error instanceof Error ? error.message : 'Referral release failed' });
+  }
+  // Order, shipment and gift card emails that could not be sent at once. Results carry ids and codes only.
+  // A retry takes about five queries and a send, so a run retries at most five and a backlog clears over
+  // the following runs. This bounds the retries only: an order or purchase that a pass above confirms
+  // sends its email as part of that pass.
+  try {
+    results.push(...await deliverPendingCommerceEmails({ env }, { limit: Math.min(count, 5) }));
+  } catch (error) {
+    results.push({ id: 'commerce_emails', status: 'error',
+      error: error instanceof Error ? error.message : 'Email delivery failed' });
   }
   await env.DB.prepare(`DELETE FROM _ecommerce_customer_sessions
     WHERE (purpose = 'email_challenge' AND expires_at < ?)

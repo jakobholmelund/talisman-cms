@@ -211,6 +211,13 @@
       "when": 1789600000022,
       "tag": "0029_commerce_reconcile_backoff",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1789600000023,
+      "tag": "0030_commerce_order_emails",
+      "breakpoints": true
     }
   ]
 }

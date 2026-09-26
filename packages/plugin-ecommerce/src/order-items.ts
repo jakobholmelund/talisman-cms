@@ -16,6 +16,54 @@ export function chunked<T>(values: T[], size = IN_CHUNK) {
 
 export const placeholders = (values: unknown[]) => values.map(() => '?').join(', ');
 
+/**
+ * The order columns `orderAmounts` reads. Every query that feeds it selects this list, so an amount
+ * added here reaches the admin orders queue and the order confirmation alike.
+ */
+export const ORDER_AMOUNT_COLUMNS = `subtotal_amount, discount_code, discount_amount, credit_applied, shipping_amount,
+  shipping_label, tax_amount, tax_behavior, gift_card_applied, total_amount, provider_refunded_cents, gift_card_refunded_cents`;
+
+/** The order columns `orderAmounts` reads, as D1 returns them. */
+export type OrderAmountsRow = {
+  subtotal_amount: number; total_amount: number; discount_code: string | null; discount_amount: number;
+  credit_applied: number; shipping_amount: number; shipping_label: string | null; tax_amount: number;
+  tax_behavior: 'inclusive' | 'exclusive' | null; gift_card_applied: number; provider_refunded_cents: number;
+  gift_card_refunded_cents: number;
+};
+export type OrderAmount = { key: string; label: string; cents: number };
+
+/**
+ * Each amount of an order with its label, in the order they are read: the admin orders queue and the
+ * order confirmation email show this one list. Deductions are negative.
+ */
+export function orderAmounts(row: OrderAmountsRow): OrderAmount[] {
+  // Orders placed before migration 0013 stored no subtotal; they had no deductions.
+  const amounts = [{ key: 'itemsSubtotal', label: 'Items subtotal', cents: row.subtotal_amount || row.total_amount }];
+  if (row.discount_amount > 0) {
+    amounts.push({ key: 'discount', label: row.discount_code ? `Discount (${row.discount_code})` : 'Discount', cents: -row.discount_amount });
+  }
+  if (row.credit_applied > 0) amounts.push({ key: 'storeCredit', label: 'Store credit', cents: -row.credit_applied });
+  // A free rate still shows, so the admin and the buyer see which one was chosen.
+  if (row.shipping_amount > 0 || row.shipping_label) {
+    amounts.push({ key: 'shipping', label: row.shipping_label ? `Shipping (${row.shipping_label})` : 'Shipping', cents: row.shipping_amount });
+  }
+  // Inclusive tax is already inside the prices above, so it is shown but adds nothing.
+  if (row.tax_amount > 0) {
+    amounts.push(row.tax_behavior === 'inclusive'
+      ? { key: 'taxIncluded', label: 'Tax included in the prices', cents: row.tax_amount }
+      : { key: 'tax', label: 'Tax', cents: row.tax_amount });
+  }
+  if (row.gift_card_applied > 0) amounts.push({ key: 'giftCard', label: 'Gift card', cents: -row.gift_card_applied });
+  amounts.push({ key: 'charged', label: 'Charged by the payment provider', cents: row.total_amount });
+  if (row.provider_refunded_cents > 0) {
+    amounts.push({ key: 'providerRefunded', label: 'Refunded by the payment provider', cents: row.provider_refunded_cents });
+  }
+  if (row.gift_card_refunded_cents > 0) {
+    amounts.push({ key: 'giftCardRefunded', label: 'Refunded to the gift card', cents: row.gift_card_refunded_cents });
+  }
+  return amounts;
+}
+
 type ProductRow = { id: string; name: string; sku: string | null };
 type ValueRow = { id: string; value: string; sku: string | null; group_name: string; group_sku: string | null; definition_name: string | null };
 type GroupRow = { id: string; name: string; sku: string | null };
