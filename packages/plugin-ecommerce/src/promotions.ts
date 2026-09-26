@@ -154,7 +154,8 @@ export async function evaluateDiscountCode(env: TalismanEnv, input: {
   }
   const amount = discountAmountForLines(code, input.lines, input.subtotal, currency);
   if (!amount) throw new DiscountCodeRefusal('not_applicable', 'Discount code does not apply to this basket');
-  return { code: code.code, type: code.type, amount, emailNormalized };
+  // The products the discount applies to, or none for the whole basket, so tax can spread it over them.
+  return { code: code.code, type: code.type, amount, emailNormalized, eligibleProductIds: code.eligibleProductIds };
 }
 
 export async function getPromotionsAdmin(env: TalismanEnv) {

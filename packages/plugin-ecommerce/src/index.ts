@@ -1,12 +1,13 @@
 import { Plugin, CollectionConfig, FieldDefinition, BlockDefinition } from 'talisman-cms'
 import { fileURLToPath } from 'url';
 import { existsSync } from 'node:fs';
-export { bindCommerceApi, reconcileCommerce, CART_MAX_LINES, CART_MAX_LINE_QUANTITY } from './api';
-export type { PaymentProviderAdapter, ValidatedWebhookEvent } from './payments';
+export { bindCommerceApi, reconcileCommerce, CART_MAX_LINES, CART_MAX_LINE_QUANTITY, TaxCalculationError } from './api';
+export type { PaymentProviderAdapter, ValidatedWebhookEvent, TaxCalculation, TaxCalculationParams } from './payments';
+export { TaxAddressError } from './payments';
 export { StripePaymentAdapter } from './adapters/stripe';
 export { AdminTestPaymentAdapter } from './adapters/admin-test';
 export { readStoreSettings, StoreSettingsError } from './store-settings';
-export type { StoreSettings, ShippingRate } from './store-settings';
+export type { StoreSettings, ShippingRate, TaxSettings } from './store-settings';
 export { shippingOptionsFor } from './shipping';
 export type { ShippingOption } from './shipping';
 export { currencyMinorUnits, formatMoney, toMinorUnits, fromMinorUnits, minimumChargeAmount } from './money';
@@ -651,6 +652,10 @@ export const ecommercePlugin = (
           { name: 'shippingLabel', label: 'Shipping Option', type: 'text' },
           { name: 'shippingRateId', label: 'Shipping Rate ID', type: 'text' },
           { name: 'shippingAmount', label: 'Shipping (smallest currency unit)', type: 'number' },
+          { name: 'taxAmount', label: 'Tax (smallest currency unit)', type: 'number' },
+          { name: 'taxBehavior', label: 'Tax Behavior (inclusive or exclusive)', type: 'text' },
+          { name: 'taxCalculationId', label: 'Tax Calculation ID', type: 'text' },
+          { name: 'taxTransactionId', label: 'Tax Transaction ID', type: 'text' },
           { name: 'creditApplied', label: 'Store Credit Used (smallest currency unit)', type: 'number' },
           { name: 'discountCode', label: 'Discount Code', type: 'text' },
           { name: 'discountAmount', label: 'Code Discount (smallest currency unit)', type: 'number' },

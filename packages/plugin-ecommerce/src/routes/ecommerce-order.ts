@@ -60,6 +60,8 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
       subtotalAmount: order.subtotalAmount,
       shippingAmount: order.shippingAmount,
       shippingLabel: order.shippingLabel,
+      taxAmount: order.taxAmount,
+      taxBehavior: order.taxBehavior,
       creditApplied: order.creditApplied,
       discountCode: order.discountCode,
       discountAmount: order.discountAmount,

@@ -113,6 +113,7 @@ export function startCheckout(input: {
   discountCode?: string;
   giftCardCode?: string;
   shippingAddress?: Record<string, string>;
+  /** When the store charges tax and nothing ships, tax is calculated for this address, so it needs a country. */
   billingAddress?: Record<string, string>;
   /** The id of one of the store's shipping options for the country. Without it, the first option. */
   shippingRateId?: string;
@@ -137,7 +138,7 @@ export function startAdminTestCheckout(input: {
 }
 
 export function getOrderStatus(orderId: string) {
-  return commerceRequest<{ orderId: string; status: string; paymentProvider: string | null; accountCreatedByOrder: boolean; accountLinked: boolean; totalAmount: number; subtotalAmount: number; shippingAmount: number; shippingLabel: string | null; creditApplied: number; discountCode: string | null; discountAmount: number; giftCardApplied: number; giftCardRefundedCents: number; providerRefundedCents: number; currency: string }>(
+  return commerceRequest<{ orderId: string; status: string; paymentProvider: string | null; accountCreatedByOrder: boolean; accountLinked: boolean; totalAmount: number; subtotalAmount: number; shippingAmount: number; shippingLabel: string | null; taxAmount: number; taxBehavior: 'inclusive' | 'exclusive' | null; creditApplied: number; discountCode: string | null; discountAmount: number; giftCardApplied: number; giftCardRefundedCents: number; providerRefundedCents: number; currency: string }>(
     `/api/ecommerce/order?order=${encodeURIComponent(orderId)}`, 'GET');
 }
 

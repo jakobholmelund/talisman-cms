@@ -2,14 +2,20 @@ import { z } from 'zod';
 import { isCountryCode } from './countries';
 
 /**
- * Checkout refusals of a country or shipping option the shopper can correct. The checkout routes
- * answer them with 400.
+ * Checkout refusals of an address, country or shipping option the shopper can correct. The checkout
+ * routes answer them with 400.
  */
 export const INVALID_COUNTRY = 'Enter a valid country code';
 export const UNDELIVERABLE_COUNTRY = 'We do not deliver to this country';
 export const SHIPPING_OPTION_UNAVAILABLE = 'This shipping option is not available for your country';
+export const TAX_ADDRESS_REQUIRED = 'A billing address is required to calculate tax';
+export const TAX_ADDRESS_UNUSABLE = 'Tax cannot be calculated for this address. Check it and try again.';
 
-const correctableRefusals = new Set([INVALID_COUNTRY, UNDELIVERABLE_COUNTRY, SHIPPING_OPTION_UNAVAILABLE]);
+/** The answer when the tax calculation fails for any other reason. The checkout routes answer it with 503. */
+export const TAX_UNAVAILABLE = 'Tax could not be calculated. Please try again.';
+
+const correctableRefusals = new Set([INVALID_COUNTRY, UNDELIVERABLE_COUNTRY, SHIPPING_OPTION_UNAVAILABLE,
+  TAX_ADDRESS_REQUIRED, TAX_ADDRESS_UNUSABLE]);
 
 export function isCheckoutDetailsError(error: unknown): error is Error {
   return error instanceof Error && correctableRefusals.has(error.message);

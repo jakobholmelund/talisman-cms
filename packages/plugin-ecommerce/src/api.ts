@@ -18,6 +18,10 @@ import { readStoreSettings } from './store-settings';
 import { minimumChargeAmount } from './money';
 import { UNDELIVERABLE_COUNTRY, withCountryCode } from './checkout-input';
 import { chooseShippingRate, deliveryEstimate, shippingCharge } from './shipping';
+import { calculateOrderTax, ordersMissingTaxTransaction, ordersWithUnreversedTax, recordConfirmedOrderTax,
+  recordOrderTax, resendPendingTaxReversals, reverseOrderTax, reverseRefundedOrderTax, taxAddressFor,
+  taxableLines } from './tax';
+export { TaxCalculationError } from './tax';
 
 export interface CommerceApiOptions {
   env: TalismanEnv;
@@ -342,6 +346,11 @@ export function bindCommerceApi(options: CommerceApiOptions) {
     await env.DB.batch(statements);
     const current = await db.select().from(schema.orders).where(eq(schema.orders.id, params.orderId)).get();
     if (current?.status !== 'paid') throw new Error('Order is no longer pending');
+    // The tax is recorded only once the payment is in. A failure never undoes the confirmation: it
+    // is logged, and reconcileCommerce records the transaction later.
+    if (current.taxCalculationId && !current.taxTransactionId) {
+      await recordConfirmedOrderTax(env, paymentAdapters, params.orderId);
+    }
 
     return { success: true, orderId: params.orderId, status: 'paid' };
   }
@@ -782,6 +791,11 @@ export function bindCommerceApi(options: CommerceApiOptions) {
          // shopper chose or else the first. Without rates, or with nothing to ship, shipping is free.
          const shippingRate = requiresShipping && settings.shippingRates.length
            ? chooseShippingRate(settings, shippingAddress.country, options.shippingRateId) : null;
+         // With a Stripe tax mode every order is taxed but the simulated ones, for where it ships, or
+         // for the billing address when nothing ships.
+         const taxBehavior = settings.tax.mode === 'none' || defaultAdapter.providerId === 'admin_test' ? null
+           : settings.tax.mode === 'stripe-inclusive' ? 'inclusive' : 'exclusive';
+         const taxAddress = taxBehavior ? taxAddressFor(requiresShipping, shippingAddress, billingAddress) : null;
 
          const orderId = `ord_${crypto.randomUUID()}`;
          const referralsPolicy = await getReferralPolicy(env);
@@ -804,7 +818,16 @@ export function bindCommerceApi(options: CommerceApiOptions) {
            creditApplied = Math.min(Math.max(0, owner.creditBalance), merchandise,
              Math.max(0, merchandise + shippingAmount - minimumChargeAmount(currency)));
          }
-         const amountDue = merchandise - creditApplied + shippingAmount;
+         // Tax is calculated on the items after the discount and credit, and on the shipping. A gift
+         // card is a means of payment, so it never lowers the taxed amounts.
+         const tax = taxBehavior && taxAddress ? await calculateOrderTax(defaultAdapter, {
+           cartId, currency, behavior: taxBehavior, settings: settings.tax, shippingAmount, ...taxAddress,
+           lines: taxableLines(orderItems, { amount: discountAmount, productIds: discount?.eligibleProductIds ?? [] },
+             creditApplied),
+         }) : null;
+         // Exclusive tax is added to what the shopper pays; inclusive tax is already in the prices.
+         const exclusiveTax = tax?.behavior === 'exclusive' ? tax.amount : 0;
+         const amountDue = merchandise - creditApplied + shippingAmount + exclusiveTax;
          if (!Number.isSafeInteger(amountDue)) throw new Error('Order total is too large');
          // A gift card is a means of payment: it can pay for shipping too.
          const giftCard = options.giftCardCode && defaultAdapter.providerId === 'stripe'
@@ -865,6 +888,7 @@ export function bindCommerceApi(options: CommerceApiOptions) {
             giftCardApplied,
             shipping: shippingRate ? { label: shippingRate.label, amount: shippingAmount,
               description: deliveryEstimate(shippingRate) ?? undefined } : undefined,
+            tax: exclusiveTax > 0 ? { amount: exclusiveTax } : undefined,
             metadata: { giftCardApplied: String(giftCardApplied),
               storeCreditApplied: String(creditApplied), promotionDiscount: String(discountAmount) },
             successUrl,
@@ -875,14 +899,16 @@ export function bindCommerceApi(options: CommerceApiOptions) {
          const statements: D1PreparedStatement[] = [
            env.DB.prepare(`INSERT INTO _ecommerce_orders
              (id, cart_id, user_id, checkout_session_id, payment_provider, status, items, total_amount, subtotal_amount, credit_applied, discount_code, discount_amount, gift_card_id, gift_card_applied, referral_code, referral_reward_cents, currency,
-              shipping_amount, shipping_rate_id, shipping_label, customer_email, shipping_address, billing_address, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) `)
+              shipping_amount, shipping_rate_id, shipping_label, tax_amount, tax_behavior, tax_calculation_id,
+              customer_email, shipping_address, billing_address, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) `)
              .bind(orderId, cartId, cart.userId, checkoutSessionId, internallyPaid ? 'gift_card' : defaultAdapter.providerId,
                JSON.stringify(orderItems.map(({ name, ...rest }) => rest)), totalAmount,
                subtotalAmount, creditApplied, discount?.code ?? null, discountAmount,
                giftCard?.id ?? null, giftCardApplied,
                referralCode, referralCode ? referralsPolicy.rewardCents : 0, currency,
                shippingAmount, shippingRate?.id ?? null, shippingRate?.label ?? null,
+               tax?.amount ?? 0, tax?.behavior ?? null, tax?.calculationId ?? null,
                options.customerEmail, shippingAddress ? JSON.stringify(shippingAddress) : null,
                billingAddress ? JSON.stringify(billingAddress) : null,
                timestamp, timestamp)
@@ -1242,12 +1268,16 @@ export function bindCommerceApi(options: CommerceApiOptions) {
             amountRefunded: charge.amount_refunded, currency: charge.currency,
           });
           if (giftPurchaseRefund) return giftPurchaseRefund;
-          return recordProviderRefund({
+          const refund = await recordProviderRefund({
             paymentIntentId: charge.payment_intent,
             amount: charge.amount,
             amountRefunded: charge.amount_refunded,
             currency: charge.currency,
           });
+          // The refund is mirrored in the order's tax. A failure is logged, and reconcileCommerce
+          // reverses the tax later; the refund itself stays recorded.
+          await reverseRefundedOrderTax(env, paymentAdapters, refund.orderId);
+          return refund;
         }
 
         return { success: true, event: event.type, ignored: true };
@@ -1314,6 +1344,25 @@ export async function reconcileCommerce(options: CommerceApiOptions, limit = 10)
       results.push({ id: row.id, status: result?.status ?? 'unchanged' });
     } catch (error) {
       results.push({ id: row.id, status: 'error', error: error instanceof Error ? error.message : 'Recovery failed' });
+    }
+  }
+  // Tax transactions that were not recorded when their orders were paid, and then refunds not yet
+  // mirrored in the tax: gift card tender refunds, refunds of gift-card-only orders and any reversal
+  // that failed. Reversals recorded in the last five minutes may still be in flight.
+  const adapters = options.paymentAdapters ?? [];
+  for (const row of await ordersMissingTaxTransaction(env, count)) {
+    try {
+      results.push({ id: row.id, status: await recordOrderTax(env, adapters, row.id) ? 'tax_recorded' : 'unchanged' });
+    } catch (error) {
+      results.push({ id: row.id, status: 'error', error: error instanceof Error ? error.message : 'Tax recording failed' });
+    }
+  }
+  results.push(...await resendPendingTaxReversals(env, adapters, now - 5 * 60, count));
+  for (const row of await ordersWithUnreversedTax(env, count)) {
+    try {
+      results.push({ id: row.id, status: await reverseOrderTax(env, adapters, row.id) ? 'tax_reversed' : 'unchanged' });
+    } catch (error) {
+      results.push({ id: row.id, status: 'error', error: error instanceof Error ? error.message : 'Tax reversal failed' });
     }
   }
   // Pending referral awards whose hold has passed. Held and voided awards are outcomes, not failures.

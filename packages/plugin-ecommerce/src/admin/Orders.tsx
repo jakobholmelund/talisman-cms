@@ -3,12 +3,34 @@ import { adminRequest, CommerceAdmin, errorText, Feedback, Field, money, Panel, 
 
 type Order = {
   id: string; status: string; customerEmail: string | null; currency: string;
-  subtotalAmount: number; totalAmount: number; shippingAmount: number; shippingLabel: string | null;
+  subtotalAmount: number; discountCode: string | null; discountAmount: number; creditApplied: number;
+  shippingAmount: number; shippingLabel: string | null; taxAmount: number; taxBehavior: 'inclusive' | 'exclusive' | null;
+  giftCardApplied: number; totalAmount: number;
   items: Array<{ productId: string; variantId?: string; quantity: number }>;
   shippingAddress?: { name?: string; line1?: string; line2?: string; city?: string; state?: string; postalCode?: string; country?: string } | null;
 };
 type Fulfillment = { orderId: string; adminActor: string; carrier: string | null; trackingNumber: string | null; note: string };
 type OrdersData = { orders: Order[]; fulfillments: Fulfillment[] };
+
+/**
+ * What the order cost and how it was paid, in its currency: the items less the discount and credit,
+ * plus shipping and tax added to the price, less the gift card, is what the provider charged.
+ */
+function OrderTotals({ order }: { order: Order }) {
+  const amount = (value: number) => money(value, order.currency);
+  const less = (value: number) => value > 0 ? `−${amount(value)}` : amount(0);
+  const rows: Array<[string, string]> = [
+    ['Items subtotal', amount(order.subtotalAmount)],
+    [order.discountCode ? `Discount (${order.discountCode})` : 'Discount', less(order.discountAmount)],
+    ['Store credit', less(order.creditApplied)],
+    [order.shippingLabel ? `Shipping: ${order.shippingLabel}` : 'Shipping', amount(order.shippingAmount)],
+    [order.taxBehavior === 'inclusive' ? 'Tax (included)' : 'Tax', amount(order.taxAmount)],
+    ['Gift card', less(order.giftCardApplied)],
+    ['Charged total', amount(order.totalAmount)],
+  ];
+  return <dl className="ecom-admin__totals">{rows.map(([label, value]) =>
+    <React.Fragment key={label}><dt>{label}</dt><dd>{value}</dd></React.Fragment>)}</dl>;
+}
 
 export default function Orders() {
   const [data, setData] = useState<OrdersData | null>(null);
@@ -75,7 +97,7 @@ export default function Orders() {
         <div className="ecom-admin__row"><span><code>{order.id}</code><small>{order.status.replaceAll('_', ' ')} · {order.items.length} line item{order.items.length === 1 ? '' : 's'}</small></span><strong>{money(order.subtotalAmount || order.totalAmount, order.currency)}</strong></div>
         <ul>{order.items.map((item, index) => <li key={index}>{item.quantity} × {item.productId}{item.variantId ? ` / ${item.variantId}` : ''}</li>)}</ul>
         {address && <address>{address.name}<br />{address.line1}<br />{address.line2 && <>{address.line2}<br /></>}{address.city}, {address.state} {address.postalCode}<br />{address.country}</address>}
-        {order.shippingLabel && <p className="ecom-admin__muted">Shipping: {order.shippingLabel} · {money(order.shippingAmount, order.currency)}</p>}
+        <OrderTotals order={order} />
         {record && <p className="ecom-admin__muted">Fulfilled by {record.adminActor}. {[record.carrier, record.trackingNumber, record.note].filter(Boolean).join(' · ')}</p>}
         {order.status === 'paid' && <form onSubmit={event => void fulfill(event, order.id)}>
           <h3>Record shipment</h3><p className="ecom-admin__muted">Mark fulfilled only after this order has actually shipped.</p>

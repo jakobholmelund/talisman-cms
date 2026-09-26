@@ -1,9 +1,21 @@
 import Stripe from 'stripe';
-import type { PaymentProviderAdapter, ValidatedWebhookEvent } from '../payments';
+import { TaxAddressError } from '../payments';
+import type { PaymentProviderAdapter, TaxCalculation, TaxCalculationParams, ValidatedWebhookEvent } from '../payments';
 
 export interface StripeAdapterConfig {
   secretKey: string;
   webhookSecret?: string;
+}
+
+/** The parts of the address the shopper filled in. Stripe reads an empty string as clearing a field. */
+function stripeTaxAddress(address: TaxCalculationParams['address']) {
+  const result: Stripe.Tax.CalculationCreateParams.CustomerDetails.Address = { country: address.country };
+  const parts = { line1: address.line1, line2: address.line2, city: address.city, state: address.state,
+    postal_code: address.postalCode };
+  for (const [key, value] of Object.entries(parts) as Array<[keyof typeof parts, string | undefined]>) {
+    if (typeof value === 'string' && value.trim()) result[key] = value.trim();
+  }
+  return result;
 }
 
 /**
@@ -46,6 +58,7 @@ export class StripePaymentAdapter implements PaymentProviderAdapter {
     discountApplied?: number;
     giftCardApplied?: number;
     shipping?: { label: string; amount: number; description?: string };
+    tax?: { amount: number };
   }): Promise<{ url: string; providerSessionId: string }> {
     const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = params.items.map(item => ({
       price_data: {
@@ -69,6 +82,18 @@ export class StripePaymentAdapter implements PaymentProviderAdapter {
             description: params.shipping.description,
           },
           unit_amount: params.shipping.amount,
+        },
+        quantity: 1,
+      });
+    }
+    // Exclusive tax was calculated with Stripe Tax before the session, so it is a line too and
+    // automatic_tax stays off: the session charges exactly the order's total.
+    if (params.tax && params.tax.amount > 0) {
+      lineItems.push({
+        price_data: {
+          currency: params.currency,
+          product_data: { name: 'Tax' },
+          unit_amount: params.tax.amount,
         },
         quantity: 1,
       });
@@ -177,5 +202,61 @@ export class StripePaymentAdapter implements PaymentProviderAdapter {
     // Won, prevented and closed inquiries are settled; any other status is still open.
     const settled = new Set(['won', 'prevented', 'warning_closed']);
     return disputes.data.some((dispute) => !settled.has(dispute.status)) ? 'open' : 'none';
+  }
+
+  async calculateTax(params: TaxCalculationParams): Promise<TaxCalculation> {
+    const input: Stripe.Tax.CalculationCreateParams = {
+      currency: params.currency,
+      line_items: params.lines.map((line) => ({
+        amount: line.amount,
+        quantity: line.quantity,
+        reference: line.reference,
+        tax_behavior: params.behavior,
+        ...(params.taxCode ? { tax_code: params.taxCode } : {}),
+      })),
+      customer_details: { address: stripeTaxAddress(params.address), address_source: params.addressSource },
+    };
+    if (params.shippingAmount > 0) {
+      input.shipping_cost = { amount: params.shippingAmount, tax_behavior: params.behavior };
+    }
+    if (params.shipFromCountry) input.ship_from_details = { address: { country: params.shipFromCountry } };
+
+    let calculation: Stripe.Tax.Calculation;
+    try {
+      calculation = await this.stripe.tax.calculations.create(input);
+    } catch (error) {
+      // Stripe Tax cannot place the address, which the shopper can correct.
+      if ((error as { code?: unknown } | null)?.code === 'customer_tax_location_invalid') {
+        throw new TaxAddressError(undefined, { cause: error });
+      }
+      throw error;
+    }
+    if (!calculation.id) throw new Error('Stripe Tax returned a calculation without an id');
+    return {
+      id: calculation.id,
+      amountTotal: calculation.amount_total,
+      taxAmountExclusive: calculation.tax_amount_exclusive,
+      taxAmountInclusive: calculation.tax_amount_inclusive,
+    };
+  }
+
+  async recordTaxTransaction(params: { orderId: string; calculationId: string }) {
+    const transaction = await this.stripe.tax.transactions.createFromCalculation({
+      calculation: params.calculationId,
+      reference: params.orderId,
+    }, { idempotencyKey: `tax-transaction:${params.orderId}` });
+    return { transactionId: transaction.id };
+  }
+
+  async reverseTaxTransaction(params: { orderId: string; transactionId: string; amount: number; reference: string }) {
+    // A flat amount, tax included, which Stripe spreads over the transaction's lines and shipping.
+    // Stripe expects it negative.
+    const reversal = await this.stripe.tax.transactions.createReversal({
+      mode: 'partial',
+      original_transaction: params.transactionId,
+      reference: params.reference,
+      flat_amount: -params.amount,
+    }, { idempotencyKey: params.reference });
+    return { reversalId: reversal.id };
   }
 }

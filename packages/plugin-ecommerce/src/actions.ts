@@ -12,6 +12,7 @@ import { PROVIDER_CHECK_RETRY_MESSAGE } from './provider-checks';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { readSetting } from 'talisman-cms/env';
 import { StoreSettingsError, readStoreSettings, reportStoreSettingsError } from './store-settings';
+import { TaxCalculationError } from './tax';
 
 function getOrCreateCartSession(context: any): string {
   if (!context.cookies) return `anon_${crypto.randomUUID()}`;
@@ -223,6 +224,9 @@ export const ecommerceActions = {
         if (error instanceof ActionError) throw error;
         if (error instanceof StoreSettingsError) {
           throw new ActionError({ code: 'SERVICE_UNAVAILABLE', message: reportStoreSettingsError(error) });
+        }
+        if (error instanceof TaxCalculationError) {
+          throw new ActionError({ code: 'SERVICE_UNAVAILABLE', message: error.message });
         }
         // A refused discount or gift card code gets one answer, whatever the reason.
         const refusal = codeRefusalBody(error);

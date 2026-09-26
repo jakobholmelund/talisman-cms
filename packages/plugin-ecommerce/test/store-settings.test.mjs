@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readStoreSettings, shippingOptionsFor, StoreSettingsError } from '../dist/index.js';
 
-test('a store that sets nothing sells in USD, delivers to any country and charges no shipping', () => {
+test('a store that sets nothing sells in USD, delivers to any country and charges no shipping or tax', () => {
+  const tax = (value) => ({ TALISMAN_COMMERCE_TAX: value, TALISMAN_COMMERCE_TAX_CODE: value,
+    TALISMAN_COMMERCE_SHIP_FROM_COUNTRY: value });
   for (const env of [{}, { TALISMAN_COMMERCE_CURRENCY: '', TALISMAN_COMMERCE_DELIVERY_COUNTRIES: '',
-    TALISMAN_COMMERCE_SHIPPING_RATES: '' }, { TALISMAN_COMMERCE_CURRENCY: '  ',
-    TALISMAN_COMMERCE_DELIVERY_COUNTRIES: ' \n ', TALISMAN_COMMERCE_SHIPPING_RATES: ' \n ' }]) {
-    assert.deepEqual(readStoreSettings(env), { currency: 'usd', deliveryCountries: null, shippingRates: [] });
+    TALISMAN_COMMERCE_SHIPPING_RATES: '', ...tax('') }, { TALISMAN_COMMERCE_CURRENCY: '  ',
+    TALISMAN_COMMERCE_DELIVERY_COUNTRIES: ' \n ', TALISMAN_COMMERCE_SHIPPING_RATES: ' \n ', ...tax(' \n ') }]) {
+    assert.deepEqual(readStoreSettings(env), { currency: 'usd', deliveryCountries: null, shippingRates: [],
+      tax: { mode: 'none', taxCode: null, shipFromCountry: null } });
   }
 });
 
@@ -149,4 +152,47 @@ test('shipping options list the rates that serve a country, free once the items 
   // Outside the delivery countries, not a country code, or a store without rates: nothing to offer.
   for (const country of ['FR', 'UK', '', undefined]) assert.deepEqual(options(country), [], String(country));
   assert.deepEqual(shippingOptionsFor(readStoreSettings({}), 'US', 5000), []);
+});
+
+test('the tax mode is case-insensitive, and the tax code and ship-from country are read with it', (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const cases = [
+    [{ TALISMAN_COMMERCE_TAX: 'none' }, { mode: 'none', taxCode: null, shipFromCountry: null }],
+    [{ TALISMAN_COMMERCE_TAX: ' Stripe-Inclusive ' }, { mode: 'stripe-inclusive', taxCode: null, shipFromCountry: null }],
+    [{ TALISMAN_COMMERCE_TAX: 'stripe-exclusive', TALISMAN_COMMERCE_TAX_CODE: ' txcd_99999999 ',
+      TALISMAN_COMMERCE_SHIP_FROM_COUNTRY: ' us ' }, { mode: 'stripe-exclusive', taxCode: 'txcd_99999999', shipFromCountry: 'US' }],
+    // Checked and kept even while tax is off, so turning it on meets no wrong value.
+    [{ TALISMAN_COMMERCE_TAX_CODE: 'txcd_30011000', TALISMAN_COMMERCE_SHIP_FROM_COUNTRY: 'CA' },
+      { mode: 'none', taxCode: 'txcd_30011000', shipFromCountry: 'CA' }],
+    [{ GALAXY_COMMERCE_TAX: 'STRIPE-EXCLUSIVE' }, { mode: 'stripe-exclusive', taxCode: null, shipFromCountry: null }],
+  ];
+  for (const [env, tax] of cases) assert.deepEqual(readStoreSettings(env).tax, tax, JSON.stringify(env));
+});
+
+test('invalid tax settings throw StoreSettingsError naming the setting', () => {
+  const cases = [
+    [{ TALISMAN_COMMERCE_TAX: 'stripe' }, 'TALISMAN_COMMERCE_TAX must be "none", "stripe-inclusive" or '
+      + '"stripe-exclusive", not "stripe"'],
+    [{ TALISMAN_COMMERCE_TAX: 'automatic' }, /^TALISMAN_COMMERCE_TAX must be /],
+    // A list or a boolean is refused rather than read as "none".
+    [{ TALISMAN_COMMERCE_TAX: ['stripe-exclusive'] }, 'TALISMAN_COMMERCE_TAX must be text'],
+    [{ TALISMAN_COMMERCE_TAX: true }, 'TALISMAN_COMMERCE_TAX must be text'],
+    [{ TALISMAN_COMMERCE_TAX_CODE: 'txcd_9999999' }, 'TALISMAN_COMMERCE_TAX_CODE must be a Stripe tax code '
+      + 'such as "txcd_99999999", not "txcd_9999999"'],
+    [{ TALISMAN_COMMERCE_TAX_CODE: 'TXCD_99999999' }, /^TALISMAN_COMMERCE_TAX_CODE must be /],
+    [{ TALISMAN_COMMERCE_TAX_CODE: 'txcd_99999999x' }, /^TALISMAN_COMMERCE_TAX_CODE must be /],
+    [{ TALISMAN_COMMERCE_TAX_CODE: 99999999 }, 'TALISMAN_COMMERCE_TAX_CODE must be text'],
+    [{ TALISMAN_COMMERCE_SHIP_FROM_COUNTRY: 'UK' }, 'TALISMAN_COMMERCE_SHIP_FROM_COUNTRY must be an officially '
+      + 'assigned ISO 3166-1 alpha-2 code such as "US", not "UK"'],
+    [{ TALISMAN_COMMERCE_SHIP_FROM_COUNTRY: 'US, CA' }, /^TALISMAN_COMMERCE_SHIP_FROM_COUNTRY must be /],
+    [{ TALISMAN_COMMERCE_SHIP_FROM_COUNTRY: ['US'] }, 'TALISMAN_COMMERCE_SHIP_FROM_COUNTRY must be text'],
+  ];
+  for (const [env, message] of cases) {
+    assert.throws(() => readStoreSettings(env), (error) => {
+      assert.ok(error instanceof StoreSettingsError, JSON.stringify(env));
+      if (typeof message === 'string') assert.equal(error.message, message);
+      else assert.match(error.message, message);
+      return true;
+    });
+  }
 });

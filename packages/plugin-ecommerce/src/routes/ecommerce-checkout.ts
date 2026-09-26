@@ -11,6 +11,7 @@ import { codeRefusalBody } from '../promotions';
 import { CODE_CHECK_LIMIT_MESSAGE, codeChecksOverBasketLimit, codeChecksOverNetworkLimit } from '../code-check-limits';
 import { providerCheckLimitResponse } from '../provider-checks';
 import { StoreSettingsError, readStoreSettings, reportStoreSettingsError } from '../store-settings';
+import { TaxCalculationError } from '../tax';
 
 export const POST: APIRoute = async ({ request, cookies }) => {
   const { env } = await import('cloudflare:workers');
@@ -110,6 +111,8 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     if (error instanceof StoreSettingsError) {
       return Response.json({ error: reportStoreSettingsError(error) }, { status: 503 });
     }
+    // The cause is already in the Worker log.
+    if (error instanceof TaxCalculationError) return Response.json({ error: error.message }, { status: 503 });
     // A refused discount or gift card code gets one answer, whatever the reason.
     const refusal = codeRefusalBody(error);
     if (refusal) return Response.json(refusal, { status: 409 });

@@ -4,7 +4,7 @@ import { isCountryCode } from './countries';
 
 /**
  * How the store sells, read from its `TALISMAN_COMMERCE_*` Worker settings. A store that sets none
- * of them sells in USD, delivers to any country and charges no shipping.
+ * of them sells in USD, delivers to any country and charges no shipping or tax.
  */
 export interface StoreSettings {
   /** Lowercase ISO 4217 code. Every order amount is an integer in its minor units. */
@@ -19,6 +19,24 @@ export interface StoreSettings {
    * shipping. With rates, an order that ships goes only where one of them serves.
    */
   shippingRates: ShippingRate[];
+  tax: TaxSettings;
+}
+
+/**
+ * How checkout charges tax, as set in `TALISMAN_COMMERCE_TAX`, `TALISMAN_COMMERCE_TAX_CODE` and
+ * `TALISMAN_COMMERCE_SHIP_FROM_COUNTRY`.
+ */
+export interface TaxSettings {
+  /**
+   * `none` charges no tax. With a Stripe mode, Stripe Tax calculates the tax before payment: under
+   * `stripe-inclusive` the prices include it and the order only records it; under `stripe-exclusive`
+   * it is added to what the shopper pays.
+   */
+  mode: 'none' | 'stripe-inclusive' | 'stripe-exclusive';
+  /** The Stripe product tax code for every item, such as `txcd_99999999`, or null for the account's default. */
+  taxCode: string | null;
+  /** The uppercase code of the country the goods ship from, which Stripe Tax is told, or null. */
+  shipFromCountry: string | null;
 }
 
 /** One shipping rate, as set in `TALISMAN_COMMERCE_SHIPPING_RATES`. */
@@ -53,7 +71,8 @@ export class StoreSettingsError extends Error {
 export function readStoreSettings(env: object): StoreSettings {
   const currency = readCurrency(env);
   const deliveryCountries = readDeliveryCountries(env);
-  return { currency, deliveryCountries, shippingRates: readShippingRates(env, deliveryCountries) };
+  const shippingRates = readShippingRates(env, deliveryCountries);
+  return { currency, deliveryCountries, shippingRates, tax: readTax(env) };
 }
 
 /** Logs why the settings were refused, for the operator, and returns the answer for shoppers. */
@@ -182,6 +201,32 @@ function readShippingRates(env: object, deliveryCountries: string[] | null): Shi
     return { id: rate.id, label: rate.label, amount: rate.amount, countries, freeOver: rate.freeOver ?? null,
       minDays: rate.minDays ?? null, maxDays: rate.maxDays ?? null };
   });
+}
+
+const TAX_MODES: ReadonlyArray<TaxSettings['mode']> = ['none', 'stripe-inclusive', 'stripe-exclusive'];
+
+/**
+ * The tax mode, in any case, and its optional tax code and ship-from country. Each is checked
+ * whenever it is set, even while the mode is `none`, so turning tax on never meets a wrong value.
+ */
+function readTax(env: object): TaxSettings {
+  const modeText = readText(env, 'COMMERCE_TAX');
+  const mode = TAX_MODES.find((candidate) => candidate === modeText?.toLowerCase());
+  if (modeText !== undefined && !mode) {
+    throw new StoreSettingsError('TALISMAN_COMMERCE_TAX must be "none", "stripe-inclusive" or "stripe-exclusive", '
+      + `not ${JSON.stringify(modeText)}`);
+  }
+  const taxCode = readText(env, 'COMMERCE_TAX_CODE');
+  if (taxCode !== undefined && !/^txcd_[0-9]{8}$/.test(taxCode)) {
+    throw new StoreSettingsError('TALISMAN_COMMERCE_TAX_CODE must be a Stripe tax code such as "txcd_99999999", '
+      + `not ${JSON.stringify(taxCode)}`);
+  }
+  const shipFrom = readText(env, 'COMMERCE_SHIP_FROM_COUNTRY');
+  if (shipFrom !== undefined && !isCountryCode(shipFrom.toUpperCase())) {
+    throw new StoreSettingsError('TALISMAN_COMMERCE_SHIP_FROM_COUNTRY must be an officially assigned ISO 3166-1 '
+      + `alpha-2 code such as "US", not ${JSON.stringify(shipFrom)}`);
+  }
+  return { mode: mode ?? 'none', taxCode: taxCode ?? null, shipFromCountry: shipFrom?.toUpperCase() ?? null };
 }
 
 function isIntlCurrency(code: string) {

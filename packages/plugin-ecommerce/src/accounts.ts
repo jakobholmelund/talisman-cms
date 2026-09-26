@@ -300,6 +300,8 @@ export async function listCustomerOrders(env: TalismanEnv, accountId: string) {
     subtotalAmount: orders.subtotalAmount,
     shippingAmount: orders.shippingAmount,
     shippingLabel: orders.shippingLabel,
+    taxAmount: orders.taxAmount,
+    taxBehavior: orders.taxBehavior,
     creditApplied: orders.creditApplied,
     currency: orders.currency,
     createdAt: orders.createdAt,

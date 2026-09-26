@@ -10,6 +10,7 @@ import { AdminTestPaymentAdapter } from '../dist/adapters/admin-test.js';
 import { StripePaymentAdapter } from '../dist/adapters/stripe.js';
 import { CUSTOMER_SESSION_COOKIE } from '../dist/accounts.js';
 import { CART_SESSION_COOKIE } from '../dist/cookies.js';
+import { TaxAddressError } from '../dist/index.js';
 
 // Routes read their bindings from cloudflare:workers, the actions come from astro:actions, and the
 // admin route asks the CMS auth guard. This test serves all three.
@@ -798,6 +799,91 @@ test('invalid shipping rates close checkout with the generic 503 and log the rat
   assert.deepEqual([response.status, response.json], [503, { error: 'Checkout is temporarily unavailable.' }]);
   assert.deepEqual(logged, ['[Commerce] Store settings are invalid: TALISMAN_COMMERCE_SHIPPING_RATES[0].amount: Required']);
   assert.equal(count(sqlite, '_ecommerce_orders'), 0);
+  sqlite.close();
+});
+
+// --- Stripe Tax ----------------------------------------------------------------------------------
+
+/**
+ * Replaces the Stripe adapter's tax calculation for one test, so no request reaches Stripe. The
+ * returned function sets what the calculation does next.
+ */
+function stubTaxCalculation(t) {
+  const original = StripePaymentAdapter.prototype.calculateTax;
+  let calculate = () => { throw new Error('No tax calculation was expected'); };
+  StripePaymentAdapter.prototype.calculateTax = async function (params) { return calculate(params); };
+  t.after(() => { StripePaymentAdapter.prototype.calculateTax = original; });
+  return (next) => { calculate = next; };
+}
+
+test('the checkout route and action answer a missing tax address as a bad request and a failed calculation with 503', async (t) => {
+  const logged = [];
+  t.mock.method(console, 'error', (message) => { logged.push(message); });
+  const calculateNext = stubTaxCalculation(t);
+  const { sqlite, DB } = database();
+  sqlite.exec("UPDATE _ecommerce_products SET is_physical = 0 WHERE id = 'case'");
+  const api = bindCommerceApi({ env: { DB } });
+  const cart = await api.carts.getOrCreate('taxed-browser');
+  await api.carts.updateItems(cart.id, [{ productId: 'case', quantity: 1 }]);
+  const env = { ...stripeEnv(DB), TALISMAN_COMMERCE_CHECKOUT_ENABLED: 'true', TALISMAN_COMMERCE_TAX: 'stripe-exclusive' };
+  const cookies = { [CART_SESSION_COOKIE]: 'taxed-browser' };
+  const checkout = async (details) => {
+    const response = await call(checkoutRoute, env, { path: '/api/ecommerce/checkout', cookies,
+      body: { customerEmail: 'owner@example.test', ...details } });
+    return [response.status, response.json];
+  };
+  const action = (details) => {
+    globalThis.workerEnv = env;
+    return ecommerceActions.checkout.handler({ customerEmail: 'owner@example.test', ...details },
+      { cookies: cookieJar(cookies), url: new URL(`${ORIGIN}/_actions/checkout`) });
+  };
+  const billed = { billingAddress: { country: 'US', postalCode: '78701' } };
+
+  // Nothing ships, so tax needs the billing address.
+  const required = 'A billing address is required to calculate tax';
+  assert.deepEqual(await checkout({}), [400, { error: required }]);
+  await assert.rejects(action({}), { code: 'BAD_REQUEST', message: required });
+
+  calculateNext(() => { throw new TaxAddressError(); });
+  const unusable = 'Tax cannot be calculated for this address. Check it and try again.';
+  assert.deepEqual(await checkout(billed), [400, { error: unusable }]);
+  await assert.rejects(action(billed), { code: 'BAD_REQUEST', message: unusable });
+  assert.deepEqual(logged, []);
+
+  calculateNext(() => { throw new Error('Stripe Tax is not active'); });
+  const unavailable = 'Tax could not be calculated. Please try again.';
+  assert.deepEqual(await checkout(billed), [503, { error: unavailable }]);
+  await assert.rejects(action(billed), { code: 'SERVICE_UNAVAILABLE', message: unavailable });
+  // The cause reaches the Worker log only.
+  assert.deepEqual(logged, Array(2).fill(`[Commerce] Tax could not be calculated for basket ${cart.id}: Stripe Tax is not active`));
+
+  assert.equal(count(sqlite, '_ecommerce_orders'), 0);
+  assert.equal(sqlite.prepare('SELECT checkout_session_id FROM _ecommerce_carts').get().checkout_session_id, null);
+  sqlite.close();
+});
+
+test('the order status lists the tax and how it was charged with the other totals', async () => {
+  const { sqlite, DB } = database();
+  const taxing = { ...hostedCheckout,
+    async calculateTax(params) {
+      const base = params.lines.reduce((sum, line) => sum + line.amount, 0) + params.shippingAmount;
+      return { id: 'taxcalc_status', amountTotal: base + 990, taxAmountExclusive: 990, taxAmountInclusive: 0 };
+    },
+    async recordTaxTransaction({ orderId }) { return { transactionId: `tax_${orderId}` }; },
+    async reverseTaxTransaction({ reference }) { return { reversalId: reference }; } };
+  const readStatus = async (env, sessionToken) => {
+    const { order } = await orderTo(env, sessionToken, { shippingAddress: addressIn('GB') }, taxing);
+    await bindCommerceApi({ env, paymentAdapters: [taxing] }).orders.finalizePayment(order.id, { provider: 'stripe',
+      providerId: order.checkoutSessionId, paymentStatus: 'success', amount: order.totalAmount, currency: 'usd' });
+    const status = await call(orderRoute, { DB }, { method: 'GET', path: `/api/ecommerce/order?order=${order.id}`,
+      cookies: { [CART_SESSION_COOKIE]: sessionToken } });
+    return [status.status, status.json.taxAmount, status.json.taxBehavior, status.json.shippingAmount,
+      status.json.totalAmount];
+  };
+  assert.deepEqual(await readStatus({ DB, ...withShipping, TALISMAN_COMMERCE_TAX: 'stripe-exclusive' }, 'taxed-status-browser'),
+    [200, 990, 'exclusive', 1500, 14490]);
+  // An order without tax says so.
+  assert.deepEqual(await readStatus({ DB, ...withShipping }, 'untaxed-status-browser'), [200, 0, null, 1500, 13500]);
   sqlite.close();
 });
 
