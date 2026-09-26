@@ -1,6 +1,6 @@
 import Stripe from 'stripe';
 import { TaxAddressError } from '../payments';
-import type { PaymentProviderAdapter, TaxCalculation, TaxCalculationParams, ValidatedWebhookEvent } from '../payments';
+import type { PaymentProviderAdapter, PaymentReferences, TaxCalculation, TaxCalculationParams, ValidatedWebhookEvent } from '../payments';
 
 export interface StripeAdapterConfig {
   secretKey: string;
@@ -134,6 +134,10 @@ export class StripePaymentAdapter implements PaymentProviderAdapter {
         orderId: params.orderId,
         ...params.metadata,
       },
+      // The charge, its refunds and disputes carry the store's reference, so a webhook event for a
+      // payment the store has not recorded yet can be told apart from one of another integration.
+      payment_intent_data: { metadata: params.metadata?.giftCardPurchaseId
+        ? { giftCardPurchaseId: params.metadata.giftCardPurchaseId } : { orderId: params.orderId } },
     }, { idempotencyKey: params.orderId });
 
     if (!session.url) {
@@ -162,6 +166,8 @@ export class StripePaymentAdapter implements PaymentProviderAdapter {
       return {
         type: event.type,
         data: event.data.object,
+        id: event.id,
+        created: event.created,
         rawEvent: event,
       };
     } catch (err: any) {
@@ -194,6 +200,17 @@ export class StripePaymentAdapter implements PaymentProviderAdapter {
       paymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : null,
       customerEmail: session.customer_details?.email ?? session.customer_email,
     };
+  }
+
+  async getPaymentReferences(paymentIntentId: string): Promise<PaymentReferences | null> {
+    try {
+      const { metadata } = await this.stripe.paymentIntents.retrieve(paymentIntentId);
+      return { orderId: metadata?.orderId ?? null, giftCardPurchaseId: metadata?.giftCardPurchaseId ?? null };
+    } catch (error: any) {
+      // A payment of another Stripe account or mode.
+      if (error?.code === 'resource_missing' || error?.statusCode === 404) return null;
+      throw error;
+    }
   }
 
   async getDisputeStatus(paymentIntentId: string): Promise<'none' | 'open' | 'lost'> {

@@ -47,7 +47,7 @@ const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.
   '0012_customer_accounts.sql', '0013_referrals_and_credit.sql', '0014_promotions.sql',
   '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
   '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql', '0025_order_shipping_and_tax.sql',
-  '0026_order_fulfillment_status.sql', '0027_gift_card_review.sql'];
+  '0026_order_fulfillment_status.sql', '0027_gift_card_review.sql', '0028_provider_refunds_and_disputes.sql'];
 
 function database() {
   const sqlite = new DatabaseSync(':memory:');
@@ -261,7 +261,8 @@ test('a store that sells in EUR records its orders in EUR and confirms only a pa
   const env = { ...stripeEnv(DB), ...settings };
   const inDollars = completedEvent(order);
   const refused = await postWebhook(env, inDollars, signed(inDollars));
-  assert.deepEqual([refused.status, refused.json], [400, { error: 'Payment currency does not match order' }]);
+  // A mismatch no retry can fix is answered 200, so Stripe keeps the endpoint, and changes nothing.
+  assert.deepEqual([refused.status, refused.json], [200, { success: true, event: 'checkout.session.completed', ignored: true, reason: 'currency_mismatch' }]);
   assert.equal(sqlite.prepare('SELECT status FROM _ecommerce_orders WHERE id = ?').get(order.id).status, 'pending');
   assert.equal(count(sqlite, '_ecommerce_payments'), 0);
   const inEuros = completedEvent(order, 'eur');
@@ -742,7 +743,7 @@ test('a Stripe payment of the total with shipping confirms the order, and one of
   const env = { ...stripeEnv(DB), ...withShipping };
   const itemsOnly = completedEvent({ ...order, totalAmount: order.subtotalAmount });
   const refused = await postWebhook(env, itemsOnly, signed(itemsOnly));
-  assert.deepEqual([refused.status, refused.json], [400, { error: 'Payment amount does not match order total' }]);
+  assert.deepEqual([refused.status, refused.json], [200, { success: true, event: 'checkout.session.completed', ignored: true, reason: 'amount_mismatch' }]);
   const payload = completedEvent(order);
   const settled = await postWebhook(env, payload, signed(payload));
   assert.deepEqual([settled.status, settled.json], [200, { success: true, orderId: order.id, status: 'paid' }]);

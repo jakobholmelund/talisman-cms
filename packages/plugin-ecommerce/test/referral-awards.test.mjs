@@ -16,7 +16,7 @@ const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.
   '0012_customer_accounts.sql', '0013_referrals_and_credit.sql', '0014_promotions.sql',
   '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
   '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql', '0025_order_shipping_and_tax.sql',
-  '0026_order_fulfillment_status.sql', '0027_gift_card_review.sql'];
+  '0026_order_fulfillment_status.sql', '0027_gift_card_review.sql', '0028_provider_refunds_and_disputes.sql'];
 
 function database() {
   const sqlite = new DatabaseSync(':memory:');
@@ -128,7 +128,8 @@ const refund = (store, order, amountRefunded) => store.api.webhooks.handleStripe
   type: 'charge.refunded', data: { payment_intent: `pi_${order.id}`, amount: order.totalAmount,
     amount_refunded: amountRefunded, currency: 'usd' } }), 'signature', 'secret');
 const disputeClosed = (store, paymentIntent, status) => store.api.webhooks.handleStripe(JSON.stringify({
-  type: 'charge.dispute.closed', data: { payment_intent: paymentIntent, status } }), 'signature', 'secret');
+  type: 'charge.dispute.closed', data: { id: `dp_${paymentIntent}`, payment_intent: paymentIntent, status } }),
+  'signature', 'secret');
 
 test('canonical addresses drop sub-addressing everywhere and dots only for Gmail', () => {
   assert.equal(canonicalEmail(' Jane.Doe+Promo@GoogleMail.com '), 'janedoe@gmail.com');
@@ -403,15 +404,16 @@ test('a lost dispute voids a pending award and reverses a released one', async (
 
   const reported = await referredPurchase(store, 'two@example.com');
   assert.deepEqual(await disputeClosed(store, `pi_${reported.id}`, 'lost'),
-    { success: true, event: 'charge.dispute.closed', orderId: reported.id });
+    { success: true, event: 'charge.dispute.closed', orderId: reported.id, status: 'refunded' });
   assert.equal(referralStatus(store, reported.id), 'void');
   assert.deepEqual(ledger(store, reported.id), []);
 
   const released = await referredPurchase(store, 'three@example.com');
   assert.deepEqual(statuses(await release(store)), ['referral_released']);
   assert.equal(await balance(store, 'referrer'), 1000);
+  // A won dispute is recorded and leaves the award alone.
   assert.deepEqual(await disputeClosed(store, `pi_${released.id}`, 'won'),
-    { success: true, event: 'charge.dispute.closed', ignored: true });
+    { success: true, event: 'charge.dispute.closed', orderId: released.id, status: 'paid' });
   assert.deepEqual(ledger(store, released.id), RELEASED);
   await disputeClosed(store, `pi_${released.id}`, 'lost');
   await disputeClosed(store, `pi_${released.id}`, 'lost');

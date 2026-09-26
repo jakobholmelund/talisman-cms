@@ -2,7 +2,7 @@ import { Plugin, CollectionConfig, FieldDefinition, BlockDefinition } from 'tali
 import { fileURLToPath } from 'url';
 import { existsSync } from 'node:fs';
 export { bindCommerceApi, reconcileCommerce, CART_MAX_LINES, CART_MAX_LINE_QUANTITY, TaxCalculationError } from './api';
-export type { PaymentProviderAdapter, ValidatedWebhookEvent, TaxCalculation, TaxCalculationParams } from './payments';
+export type { PaymentProviderAdapter, PaymentReferences, ValidatedWebhookEvent, TaxCalculation, TaxCalculationParams } from './payments';
 export { TaxAddressError } from './payments';
 export { StripePaymentAdapter } from './adapters/stripe';
 export { AdminTestPaymentAdapter } from './adapters/admin-test';
@@ -60,6 +60,10 @@ function resolveAdminReconcileEndpointPath() {
 
 function resolveAdminFulfillmentEndpointPath() {
   return resolveRouteEntrypoint('ecommerce-admin-fulfillment');
+}
+
+function resolveAdminOrdersEndpointPath() {
+  return resolveRouteEntrypoint('ecommerce-admin-orders');
 }
 
 function resolveAdminVariantsEndpointPath() {
@@ -149,6 +153,7 @@ export const ecommercePlugin = (
   const checkoutEndpointPath = resolveCheckoutEndpointPath();
   const adminReconcileEndpointPath = resolveAdminReconcileEndpointPath();
   const adminFulfillmentEndpointPath = resolveAdminFulfillmentEndpointPath();
+  const adminOrdersEndpointPath = resolveAdminOrdersEndpointPath();
   const adminVariantsEndpointPath = resolveAdminVariantsEndpointPath();
   const orderEndpointPath = resolveOrderEndpointPath();
   const accountEndpointPath = resolveAccountEndpointPath();
@@ -626,6 +631,50 @@ export const ecommercePlugin = (
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardReviews', idColumn: 'id' }
         });
         collections.push({
+          name: 'Provider Refunds', slug: '_ecommerce_provider_refunds',
+          description: 'Payment provider refunds with the date each was issued, as recorded from Stripe.',
+          adminSection: 'commerce', readOnly: true,
+          fields: [
+            { name: 'id', label: 'ID', type: 'text', required: true },
+            { name: 'orderId', label: 'Order ID', type: 'text' },
+            { name: 'provider', label: 'Provider', type: 'text' },
+            { name: 'providerRefundId', label: 'Provider Refund ID', type: 'text' },
+            { name: 'amountCents', label: 'Amount (smallest currency unit)', type: 'number' }
+          ],
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'providerRefunds', idColumn: 'id' }
+        });
+        collections.push({
+          name: 'Disputes', slug: '_ecommerce_disputes',
+          description: 'Payment disputes on orders and gift card purchases. Respond to them in Stripe.',
+          adminSection: 'commerce', readOnly: true,
+          fields: [
+            { name: 'id', label: 'Dispute ID', type: 'text', required: true },
+            { name: 'orderId', label: 'Order ID', type: 'text' },
+            { name: 'giftCardPurchaseId', label: 'Gift Card Purchase ID', type: 'text' },
+            { name: 'amountCents', label: 'Amount (smallest currency unit)', type: 'number' },
+            { name: 'currency', label: 'Currency', type: 'text' },
+            { name: 'reason', label: 'Reason', type: 'text' },
+            { name: 'status', label: 'Status', type: 'text' },
+            { name: 'statusBefore', label: 'Status Before the Dispute', type: 'text' }
+          ],
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'disputes', idColumn: 'id' }
+        });
+        collections.push({
+          name: 'Restocks', slug: '_ecommerce_restocks',
+          description: 'Stock of refunded orders returned by an administrator, with reasons.',
+          adminSection: 'commerce', readOnly: true,
+          fields: [
+            { name: 'id', label: 'ID', type: 'text', required: true },
+            { name: 'orderId', label: 'Order ID', type: 'text' },
+            { name: 'targetType', label: 'Stock Type', type: 'text' },
+            { name: 'targetId', label: 'Stock ID', type: 'text' },
+            { name: 'quantity', label: 'Quantity', type: 'number' },
+            { name: 'adminActor', label: 'Administrator', type: 'text' },
+            { name: 'reason', label: 'Reason', type: 'text' }
+          ],
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'restocks', idColumn: 'id' }
+        });
+        collections.push({
           name: 'Gift Card Order Refunds', slug: '_ecommerce_gift_card_order_refunds',
           description: 'Audited full refunds for orders settled without Stripe.',
           adminSection: 'commerce', readOnly: true,
@@ -672,7 +721,7 @@ export const ecommercePlugin = (
           { name: 'checkoutSessionId', label: 'Checkout Session ID', type: 'text' },
           { name: 'paymentProvider', label: 'Payment Provider', type: 'text' },
           // 'fulfilled' stays an option for rows written before migration 0026 moved it to fulfillmentStatus.
-          { name: 'status', label: 'Payment Status', type: 'select', options: ['draft', 'pending', 'paid', 'fulfilled', 'cancelled', 'partially_refunded', 'refunded'], required: true, defaultValue: 'draft' },
+          { name: 'status', label: 'Payment Status', type: 'select', options: ['draft', 'pending', 'paid', 'fulfilled', 'cancelled', 'partially_refunded', 'refunded', 'disputed'], required: true, defaultValue: 'draft' },
           { name: 'fulfillmentStatus', label: 'Fulfillment Status', type: 'select', options: ['unfulfilled', 'partially_fulfilled', 'fulfilled'], required: true, defaultValue: 'unfulfilled' },
           { name: 'subtotalAmount', label: 'Item Subtotal (smallest currency unit)', type: 'number' },
           { name: 'shippingLabel', label: 'Shipping Option', type: 'text' },
@@ -783,6 +832,11 @@ export const ecommercePlugin = (
       {
         path: '/ecommerce/fulfillment',
         entrypoint: adminFulfillmentEndpointPath
+      },
+      {
+        // The orders screen's disputes and restocks.
+        path: '/ecommerce/orders-admin',
+        entrypoint: adminOrdersEndpointPath
       },
       {
         // The product editor's variant configurator saves values with their stock here.

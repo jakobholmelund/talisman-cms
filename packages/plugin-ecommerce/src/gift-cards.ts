@@ -7,6 +7,7 @@ import type { PaymentProviderAdapter } from './payments';
 import { getReferralPolicy, referralReversalStatements } from './referrals';
 import { readStoreSettings } from './store-settings';
 import { minimumChargeAmount } from './money';
+import { WebhookMismatchError } from './webhook-errors';
 
 const MIN_CARD_CENTS = 500;
 const amountSchema = z.number().int().min(MIN_CARD_CENTS).max(100_000);
@@ -304,12 +305,19 @@ type ReviewRow = { purchaseId: string; status: string; amountCents: number; curr
   balanceCents: number | null; spentCents: number; pendingCents: number; replacementCount: number };
 const reviewView = (row: ReviewRow) => ({ ...row, cardHeld: row.cardHeld === 1, cardReplacement: row.cardReplacement === 1 });
 
-/** Purchases held for review after a provider refund, oldest first, with what is left on their cards. */
+// A purchase under an open payment dispute is held until the dispute closes, not by a decision.
+const openDispute = (purchase: string) => `EXISTS (SELECT 1 FROM _ecommerce_disputes d
+  WHERE d.gift_card_purchase_id = ${purchase} AND d.closed_at IS NULL)`;
+
+/**
+ * Purchases held for review after a provider refund, oldest first, with what is left on their cards.
+ * Purchases held by an open payment dispute wait for its outcome and are left out.
+ */
 export async function getGiftCardReviewsAdmin(env: TalismanEnv) {
   const rows = await env.DB.prepare(`${reviewSelect}
-    WHERE p.status = 'review' ORDER BY p.updated_at,p.id LIMIT 100`).all<ReviewRow>();
-  const total = await env.DB.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_gift_card_purchases
-    WHERE status = 'review'`).first<{ count: number }>();
+    WHERE p.status = 'review' AND NOT ${openDispute('p.id')} ORDER BY p.updated_at,p.id LIMIT 100`).all<ReviewRow>();
+  const total = await env.DB.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_gift_card_purchases p
+    WHERE p.status = 'review' AND NOT ${openDispute('p.id')}`).first<{ count: number }>();
   return { reviews: (rows.results ?? []).map(reviewView), reviewCount: total?.count ?? 0 };
 }
 
@@ -431,10 +439,15 @@ export async function confirmGiftCardPurchase(env: TalismanEnv, session: {
     purchase.amountCents !== session.amount_total ||
     session.currency?.toLowerCase() !== purchase.currency.toLowerCase() ||
     session.payment_status !== 'paid' || typeof session.payment_intent !== 'string') {
-    throw new Error('Gift card payment does not match purchase');
+    throw new WebhookMismatchError('purchase_mismatch', 'Gift card payment does not match purchase');
   }
   if (purchase.status === 'paid') return { success: true, purchaseId: id, duplicate: true };
-  if (purchase.status !== 'pending') throw new Error('Gift card purchase is no longer pending');
+  // A payment recorded before and refunded or held for review since.
+  if (['partially_refunded', 'refunded', 'review'].includes(purchase.status)
+    && purchase.paymentIntentId === session.payment_intent) return { success: true, purchaseId: id, duplicate: true };
+  if (purchase.status !== 'pending') {
+    throw new WebhookMismatchError('purchase_not_pending', 'Gift card purchase is no longer pending');
+  }
   const cardId = `gift_${crypto.randomUUID()}`;
   const secret = await newCardSecret(env, cardId);
   const timestamp = Math.floor(Date.now() / 1000);
@@ -546,6 +559,48 @@ export function giftCardPurchaseHoldStatements(env: TalismanEnv, purchaseId: str
   ];
 }
 
+/**
+ * Statements that lift a purchase's hold once it needs no decision: the cards the hold suspended become
+ * active again, and a card an administrator suspended stays so. Add them after the statement that moves
+ * the purchase out of review; while it is still held they change nothing.
+ */
+export function giftCardPurchaseReleaseStatements(env: TalismanEnv, purchaseId: string, timestamp: number) {
+  return [
+    env.DB.prepare(`UPDATE _ecommerce_gift_cards SET status = 'active',held_for_review = 0,updated_at = ?
+      WHERE (purchase_id = ? OR replaces_purchase_id = ?) AND status = 'suspended' AND held_for_review = 1
+        AND EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p WHERE p.id = ? AND ${settledPurchase})`)
+      .bind(timestamp, purchaseId, purchaseId, purchaseId),
+  ];
+}
+
+/**
+ * Statements for a purchase whose payment a lost dispute took back: every card it funds is voided and
+ * what is left on them is reversed, and the purchase becomes refunded. Value already spent on orders
+ * stays spent. While a checkout in progress holds value on the cards, nothing changes, like the review
+ * 'void' outcome; add the hold statements first, so nothing more is spent meanwhile.
+ */
+export function giftCardPurchaseChargebackStatements(env: TalismanEnv, purchaseId: string, timestamp: number) {
+  const clear = `NOT EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p WHERE p.id = ? AND ${pendingCheckout('p.id')})`;
+  return [
+    env.DB.prepare(`INSERT INTO _ecommerce_gift_card_ledger
+      (id,card_id,purchase_id,kind,amount_cents,created_at)
+      SELECT 'gcl_chargeback_' || c.id,c.id,?,'purchase_reversal',-c.balance_cents,?
+      FROM _ecommerce_gift_cards c WHERE (c.purchase_id = ? OR c.replaces_purchase_id = ?)
+        AND c.status <> 'void' AND c.balance_cents > 0 AND ${clear}
+      ON CONFLICT(id) DO NOTHING`)
+      .bind(purchaseId, timestamp, purchaseId, purchaseId, purchaseId),
+    env.DB.prepare(`UPDATE _ecommerce_gift_cards SET status = 'void',held_for_review = 0,updated_at = ?
+      WHERE (purchase_id = ? OR replaces_purchase_id = ?) AND status <> 'void' AND ${clear}`)
+      .bind(timestamp, purchaseId, purchaseId, purchaseId),
+    env.DB.prepare(`UPDATE _ecommerce_gift_card_purchases
+      SET status = 'refunded',refund_adjusted_cents = provider_refunded_cents,updated_at = ?
+      WHERE id = ? AND status IN ('paid','partially_refunded','refunded','review')
+        AND NOT EXISTS (SELECT 1 FROM _ecommerce_gift_cards c
+          WHERE (c.purchase_id = ? OR c.replaces_purchase_id = ?) AND c.status <> 'void')`)
+      .bind(timestamp, purchaseId, purchaseId, purchaseId),
+  ];
+}
+
 export async function recordGiftCardPurchaseRefund(env: TalismanEnv, params: {
   paymentIntentId: string; amount: number; amountRefunded: number; currency: string;
 }) {
@@ -556,7 +611,9 @@ export async function recordGiftCardPurchaseRefund(env: TalismanEnv, params: {
   if (purchase.amountCents !== params.amount ||
     params.currency.toLowerCase() !== purchase.currency.toLowerCase() ||
     !Number.isSafeInteger(params.amountRefunded) || params.amountRefunded < 0 ||
-    params.amountRefunded > purchase.amountCents) throw new Error('Gift card refund does not match purchase');
+    params.amountRefunded > purchase.amountCents) {
+    throw new WebhookMismatchError('refund_mismatch', 'Gift card refund does not match purchase');
+  }
   if (params.amountRefunded <= purchase.providerRefundedCents) return { success: true, duplicate: true };
   const timestamp = Math.floor(Date.now() / 1000);
   // Each new refund total holds the purchase for review, including one already resolved. The hold
@@ -593,6 +650,8 @@ export async function resolveGiftCardReview(env: TalismanEnv, actor: string, inp
   if (!actor.trim()) throw new Error('Administrator identity is required');
   const purchase = await env.DB.prepare(`${reviewSelect} WHERE p.id = ?`).bind(values.purchaseId).first<ReviewRow>();
   if (purchase?.status !== 'review') throw new Error('Gift card purchase is not held for review');
+  const disputed = await env.DB.prepare(`SELECT ${openDispute('?')} AS open`).bind(values.purchaseId).first<{ open: number }>();
+  if (disputed?.open) throw new Error('A payment dispute is open for this purchase; its cards stay held until the dispute closes');
   if (purchase.refundedCents !== values.refundedCents) {
     throw new Error('Another refund was recorded for this purchase; reload and review it again');
   }
@@ -622,7 +681,7 @@ export async function resolveGiftCardReview(env: TalismanEnv, actor: string, inp
       SELECT ?,p.id,c.id,'reinstate',p.provider_refunded_cents,p.provider_refunded_cents - p.refund_adjusted_cents,?,?,?
       FROM _ecommerce_gift_card_purchases p JOIN _ecommerce_gift_cards c ON c.id = (${currentCard('p.id')})
       WHERE p.id = ? AND p.status = 'review' AND p.provider_refunded_cents = ?
-        AND c.balance_cents >= p.provider_refunded_cents - p.refund_adjusted_cents
+        AND c.balance_cents >= p.provider_refunded_cents - p.refund_adjusted_cents AND NOT ${openDispute('p.id')}
       RETURNING adjustment_cents`)
       .bind(reviewId, actor, values.reason, timestamp, values.purchaseId, values.refundedCents),
     env.DB.prepare(`INSERT INTO _ecommerce_gift_card_ledger
@@ -644,6 +703,7 @@ export async function resolveGiftCardReview(env: TalismanEnv, actor: string, inp
         'void',p.provider_refunded_cents,${cardValue('p.id')},?,?,?
       FROM _ecommerce_gift_card_purchases p
       WHERE p.id = ? AND p.status = 'review' AND p.provider_refunded_cents = ? AND NOT ${pendingCheckout('p.id')}
+        AND NOT ${openDispute('p.id')}
       RETURNING adjustment_cents`)
       .bind(reviewId, actor, values.reason, timestamp, values.purchaseId, values.refundedCents),
     env.DB.prepare(`INSERT INTO _ecommerce_gift_card_ledger

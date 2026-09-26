@@ -41,8 +41,8 @@ export const orders = sqliteTable('_ecommerce_orders', {
   taxBehavior: text('tax_behavior').$type<'inclusive' | 'exclusive'>(),
   taxCalculationId: text('tax_calculation_id'),
   taxTransactionId: text('tax_transaction_id'),
-  // Payment: draft, pending, paid, partially_refunded, refunded or cancelled. Migration 0026 moved
-  // the legacy 'fulfilled' to fulfillmentStatus; readers still accept it.
+  // Payment: draft, pending, paid, partially_refunded, refunded, disputed or cancelled. Migration 0026
+  // moved the legacy 'fulfilled' to fulfillmentStatus; readers still accept it.
   status: text('status').notNull().default('draft'),
   /** Shipping, kept apart from payment so that a refund never hides a shipment. */
   fulfillmentStatus: text('fulfillment_status').$type<'unfulfilled' | 'partially_fulfilled' | 'fulfilled'>().notNull().default('unfulfilled'),
@@ -65,6 +65,22 @@ export const payments = sqliteTable('_ecommerce_payments', {
   amount: integer('amount').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull()
 }, (table) => [uniqueIndex('_ecommerce_payments_provider_id_unique').on(table.provider, table.providerId)]);
+
+/**
+ * Payment provider refunds with the time they were issued: one row for each rise in an order's
+ * providerRefundedCents, so an order's rows add up to it. Refunds recorded before migration 0028 have
+ * no row. Gift card tender refunds are in giftCardRefunds.
+ */
+export const providerRefunds = sqliteTable('_ecommerce_provider_refunds', {
+  id: text('id').primaryKey(),
+  orderId: text('order_id').notNull().references(() => orders.id),
+  provider: text('provider').notNull(),
+  /** The provider's id for the refund, when the event names it. */
+  providerRefundId: text('provider_refund_id'),
+  amountCents: integer('amount_cents').notNull(),
+  /** When the provider issued the refund; null when unknown. */
+  createdAt: integer('created_at', { mode: 'timestamp' }),
+});
 
 export const products = sqliteTable('_ecommerce_products', {
   id: text('id').primaryKey(),
@@ -447,6 +463,39 @@ export const taxReversals = sqliteTable('_ecommerce_tax_reversals', {
   providerReversalId: text('provider_reversal_id').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
+
+/** Payment disputes by the provider's dispute id, each on an order or a gift card purchase. */
+export const disputes = sqliteTable('_ecommerce_disputes', {
+  id: text('id').primaryKey(),
+  provider: text('provider').notNull(),
+  orderId: text('order_id').references(() => orders.id),
+  giftCardPurchaseId: text('gift_card_purchase_id').references(() => giftCardPurchases.id),
+  amountCents: integer('amount_cents').notNull(),
+  currency: text('currency').notNull(),
+  reason: text('reason'),
+  /** The provider's status, such as needs_response, won or lost. */
+  status: text('status').notNull(),
+  /** The order's or purchase's status before the dispute, which a won dispute restores. */
+  statusBefore: text('status_before').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  /** Null while the dispute is open. */
+  closedAt: integer('closed_at', { mode: 'timestamp' }),
+});
+
+/** Reservation rows of refunded orders that an administrator returned to stock, each once, with the reason. */
+export const restocks = sqliteTable('_ecommerce_restocks', {
+  id: text('id').primaryKey(),
+  orderId: text('order_id').notNull().references(() => orders.id),
+  reservationType: text('reservation_type').$type<'inventory' | 'component'>().notNull(),
+  reservationId: text('reservation_id').notNull(),
+  targetType: text('target_type').$type<'product' | 'variant' | 'stock' | 'component'>().notNull(),
+  targetId: text('target_id').notNull(),
+  quantity: integer('quantity').notNull(),
+  adminActor: text('admin_actor').notNull(),
+  reason: text('reason').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, (table) => [uniqueIndex('_ecommerce_restocks_reservation_unique').on(table.reservationType, table.reservationId)]);
 
 // --- Drizzle Relations API ---
 

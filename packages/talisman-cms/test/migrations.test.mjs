@@ -622,6 +622,105 @@ test('0027 keeps gift card rows, enforces its links, and the previous release ca
   }
 });
 
+test('0028 adds refund dates, disputes and restocks beside existing rows, and the previous release keeps working', () => {
+  const db = openDatabase();
+  try {
+    const previous = tags[tags.indexOf('0028_provider_refunds_and_disputes') - 1];
+    migrate(db, { to: previous, after: { '0004_ecommerce_plugin': seeds['0004_ecommerce_plugin'], '0015_gift_cards': seeds['0015_gift_cards'] } });
+    // Rows as the previous release writes them: paid orders with their reservations, one partly refunded
+    // by Stripe, and a checkout cancelled with its stock released.
+    db.exec(`
+      INSERT INTO _ecommerce_components (id, sku, name, quantity, created_at, updated_at) VALUES ('comp-lens', 'LENS-1', 'Lens pair', 4, ${T}, ${T});
+      INSERT INTO _ecommerce_orders (id, status, items, total_amount, subtotal_amount, payment_provider, payment_intent_id, provider_refunded_cents, created_at, updated_at) VALUES
+        ('order-paid', 'paid', '[]', 12000, 12000, 'stripe', 'pi_paid', 0, ${T}, ${T}),
+        ('order-partly', 'partially_refunded', '[]', 12000, 12000, 'stripe', 'pi_partly', 3000, ${T}, ${T}),
+        ('order-cancelled', 'cancelled', '[]', 12000, 12000, 'stripe', NULL, 0, ${T}, ${T});
+      INSERT INTO _ecommerce_inventory_reservations (id, order_id, target_type, target_id, quantity, released_at) VALUES
+        ('res-paid', 'order-paid', 'stock', 'stock-1', 1, NULL),
+        ('res-cancelled', 'order-cancelled', 'product', 'prod-1', 1, ${T + 5});
+      INSERT INTO _ecommerce_component_reservations (id, order_id, component_id, quantity, released_at) VALUES
+        ('cres-paid', 'order-paid', 'comp-lens', 1, NULL);
+    `);
+    const kept = () => ['_ecommerce_orders', '_ecommerce_payments', '_ecommerce_inventory_reservations',
+      '_ecommerce_component_reservations', '_ecommerce_gift_card_purchases', '_ecommerce_gift_cards']
+      .map((table) => rows(db, `SELECT * FROM ${table} ORDER BY rowid`));
+    const before = kept();
+    applyMigration(db, '0028_provider_refunds_and_disputes');
+    assert.deepEqual(kept(), before);
+
+    const schema = outline(db);
+    assert.equal(schema.columns._ecommerce_provider_refunds, 'id order_id provider provider_refund_id amount_cents created_at');
+    assert.equal(schema.columns._ecommerce_disputes,
+      'id provider order_id gift_card_purchase_id amount_cents currency reason status status_before created_at updated_at closed_at');
+    assert.equal(schema.columns._ecommerce_restocks,
+      'id order_id reservation_type reservation_id target_type target_id quantity admin_actor reason created_at');
+    const added = (name) => ['_ecommerce_provider_refunds', '_ecommerce_disputes', '_ecommerce_restocks'].some((table) => name.includes(table));
+    assert.deepEqual(schema.indexes.filter(added), [
+      '_ecommerce_disputes_order_idx ON _ecommerce_disputes (order_id) WHERE ...',
+      '_ecommerce_disputes_purchase_idx ON _ecommerce_disputes (gift_card_purchase_id) WHERE ...',
+      '_ecommerce_provider_refunds_order_idx ON _ecommerce_provider_refunds (order_id)',
+      '_ecommerce_restocks UNIQUE (reservation_type, reservation_id)',
+      '_ecommerce_restocks_order_idx ON _ecommerce_restocks (order_id, created_at)',
+    ]);
+    assert.deepEqual(schema.foreignKeys.filter(added), [
+      '_ecommerce_disputes.gift_card_purchase_id -> _ecommerce_gift_card_purchases.id',
+      '_ecommerce_disputes.order_id -> _ecommerce_orders.id',
+      '_ecommerce_provider_refunds.order_id -> _ecommerce_orders.id',
+      '_ecommerce_restocks.order_id -> _ecommerce_orders.id',
+    ]);
+    assert.deepEqual(schema.triggers.filter(added), []);
+
+    // The previous release's refund and cancellation statements, verbatim, never touch the new tables.
+    db.prepare(`UPDATE _ecommerce_orders
+        SET provider_refunded_cents = ?, status = ?, updated_at = ?
+        WHERE id = ? AND payment_intent_id = ? AND provider_refunded_cents < ?
+          AND status IN ('paid', 'fulfilled', 'partially_refunded')`)
+      .run(12000, 'refunded', T + 10, 'order-partly', 'pi_partly', 12000);
+    db.prepare(`UPDATE _ecommerce_payments
+        SET status = (SELECT status FROM _ecommerce_orders WHERE id = ?)
+        WHERE order_id = ? AND provider = 'stripe'`).run('order-partly', 'order-partly');
+    db.prepare(`UPDATE _ecommerce_orders SET status = 'cancelled', updated_at = ?
+        WHERE id = ? AND status NOT IN ('paid', 'fulfilled')`).run(T + 10, 'order-paid');
+    assert.deepEqual(rows(db, `SELECT id, status, provider_refunded_cents FROM _ecommerce_orders WHERE id IN ('order-paid', 'order-partly') ORDER BY id`), [
+      { id: 'order-paid', status: 'paid', provider_refunded_cents: 0 },
+      { id: 'order-partly', status: 'refunded', provider_refunded_cents: 12000 },
+    ]);
+
+    // Refund rows are positive amounts of an existing order; a row without a known date is allowed.
+    db.exec(`INSERT INTO _ecommerce_provider_refunds (id, order_id, provider, provider_refund_id, amount_cents, created_at)
+      VALUES ('prf-partly', 'order-partly', 'stripe', NULL, 9000, NULL)`);
+    assert.throws(() => db.exec(`INSERT INTO _ecommerce_provider_refunds (id, order_id, provider, amount_cents, created_at)
+      VALUES ('prf-zero', 'order-partly', 'stripe', 0, ${T})`), /CHECK constraint failed/);
+    assert.throws(() => db.exec(`INSERT INTO _ecommerce_provider_refunds (id, order_id, provider, amount_cents, created_at)
+      VALUES ('prf-missing', 'order-missing', 'stripe', 100, ${T})`), /FOREIGN KEY constraint failed/);
+
+    // A dispute names exactly one order or gift card purchase. 'disputed' needs no schema change, and the
+    // fulfillment guard from 0026 refuses it.
+    const dispute = (id, orderId, purchaseId) => db.exec(`INSERT INTO _ecommerce_disputes
+      (id, provider, order_id, gift_card_purchase_id, amount_cents, currency, reason, status, status_before, created_at, updated_at)
+      VALUES ('${id}', 'stripe', ${orderId ? `'${orderId}'` : 'NULL'}, ${purchaseId ? `'${purchaseId}'` : 'NULL'}, 12000, 'usd', 'fraudulent', 'needs_response', 'paid', ${T}, ${T})`);
+    dispute('dp-order', 'order-paid', null);
+    dispute('dp-purchase', null, 'gp-held');
+    assert.throws(() => dispute('dp-neither', null, null), /CHECK constraint failed/);
+    assert.throws(() => dispute('dp-both', 'order-paid', 'gp-held'), /CHECK constraint failed/);
+    db.exec(`UPDATE _ecommerce_orders SET status = 'disputed' WHERE id = 'order-paid'`);
+    assert.throws(() => db.exec(`INSERT INTO _ecommerce_fulfillments (id, order_id, admin_actor, note, created_at)
+      VALUES ('ful-disputed', 'order-paid', 'admin-1', 'Packed and shipped', ${T})`), /Order is not ready for fulfillment/);
+
+    // A reservation row is returned to stock once, by an administrator who gives a reason.
+    const restock = (id, reservationId, actor = 'admin-1', reason = 'Parcel came back unopened') => db.exec(`INSERT INTO _ecommerce_restocks
+      (id, order_id, reservation_type, reservation_id, target_type, target_id, quantity, admin_actor, reason, created_at)
+      VALUES ('${id}', 'order-partly', 'component', '${reservationId}', 'component', 'comp-lens', 1, '${actor}', '${reason}', ${T})`);
+    restock('rst-1', 'cres-paid');
+    assert.throws(() => restock('rst-2', 'cres-paid'), /UNIQUE constraint failed/);
+    assert.throws(() => restock('rst-3', 'cres-other', ' '), /CHECK constraint failed/);
+    assert.throws(() => restock('rst-4', 'cres-other', 'admin-1', 'short'), /CHECK constraint failed/);
+    assertIntegrity(db);
+  } finally {
+    db.close();
+  }
+});
+
 // The pre-upgrade checks in the package README; each must return no rows before the migration.
 const duplicateRevisionsCheck = `SELECT entry_id, revision_number, COUNT(*) AS copies FROM galaxy_entry_revisions
   GROUP BY entry_id, revision_number HAVING COUNT(*) > 1`;

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, type FormEvent } from 'react';
 import { adminRequest, CommerceAdmin, errorText, Feedback, Field, money, Panel, Stat } from './common';
+import OrderAdjustments from './OrderAdjustments';
 
 type View = 'awaiting' | 'recent';
 type Address = { name?: string; line1?: string; line2?: string; city?: string; state?: string; postalCode?: string; country?: string };
@@ -167,6 +168,7 @@ export default function Orders() {
         <h3>Amounts</h3>
         <ul>{order.amounts.map(amount => <li key={amount.key}>{amount.label}: <strong>{money(amount.cents, order.currency)}</strong></li>)}</ul>
         {address && <address>{address.name}<br />{address.line1}<br />{address.line2 && <>{address.line2}<br /></>}{address.city}, {address.state} {address.postalCode}<br />{address.country}</address>}
+        <OrderAdjustments order={order} />
         {order.shipments.length > 0 && <h3>Shipments</h3>}
         {order.shipments.map(shipment => <React.Fragment key={shipment.id}>
           <div className="ecom-admin__row"><span>

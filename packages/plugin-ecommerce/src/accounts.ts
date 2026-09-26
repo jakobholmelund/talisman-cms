@@ -24,8 +24,11 @@ const REQUESTS_PER_ADDRESS = 3;
 const ADDRESS_WINDOW_SECONDS = 10 * 60;
 /** Emails one address may draw from the reserved pool in 24 hours, so no single address can spend it. */
 const RESERVED_SENDS_PER_ADDRESS = 2;
-/** Order statuses that count as a purchase for first-order promotions and referrals. */
-export const PURCHASED_ORDER_STATUSES = ['paid', 'fulfilled', 'partially_refunded', 'refunded'] as const;
+/**
+ * Order statuses that count as a purchase for first-order promotions and referrals. A disputed order
+ * still counts: its payment went through, and a lost dispute leaves it refunded.
+ */
+export const PURCHASED_ORDER_STATUSES = ['paid', 'fulfilled', 'partially_refunded', 'refunded', 'disputed'] as const;
 
 /**
  * Kept for compatibility: `requestCustomerEmailSignIn` no longer throws it and answers a spent daily

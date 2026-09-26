@@ -48,8 +48,9 @@ export type CommerceOverview = {
 export type CommerceRange = Omit<CommerceOverview, 'periodDays'>;
 
 /**
- * Provider refunds with the time they were issued, one row per refund, written by plugin-ecommerce
- * when available. Per order the rows should add up to provider_refunded_cents; any excess is ignored.
+ * Provider refunds with the time they were issued, one row for each rise in an order's refund total,
+ * written by plugin-ecommerce from its migration 0028 on. Per order the rows should add up to
+ * provider_refunded_cents; any excess is ignored.
  */
 export const providerRefundsTable = '_ecommerce_provider_refunds';
 
@@ -65,12 +66,13 @@ const excludeTestModeOrders = `
         WHERE card.id = o.gift_card_id AND ${stripeTestSession('purchase.provider_session_id')}))`;
 
 // Admin test orders never count. Stripe test-mode orders count only while the store is in test mode.
+// A disputed order is still a sale; a lost dispute makes it refunded.
 const paidOrders = (stripeMode: StripeMode) => `
   paid_orders AS (
     SELECT o.*, MIN(p.created_at) AS paid_at
     FROM _ecommerce_orders o
     JOIN _ecommerce_payments p ON p.order_id = o.id
-    WHERE o.status IN ('paid', 'fulfilled', 'partially_refunded', 'refunded')
+    WHERE o.status IN ('paid', 'fulfilled', 'partially_refunded', 'refunded', 'disputed')
       AND COALESCE(o.payment_provider, 'stripe') <> 'admin_test'${stripeMode === 'test' ? '' : excludeTestModeOrders}
       AND p.status IN ('success', 'partially_refunded', 'refunded')
     GROUP BY o.id
@@ -116,7 +118,10 @@ const refundsByPaymentDate = `
 // rounding leaves nothing over.
 // Whatever is left of an order's refund total has no record of its own: tender returned by a
 // full refund (store credit, the rest of a gift card) is dated when the order was fully
-// refunded, and refunds recorded before refund dates were stored fall back to the payment date.
+// refunded, which the last dated refund marks only when the provider refunds cover the whole
+// charge. Refunds recorded before refund dates were stored, and the payment a lost dispute took
+// back (no provider refund), fall back to the payment date.
+const fullyRefundedAt = `CASE WHEN o.provider_refunded_cents >= o.total_amount THEN t.last_at END`;
 const refundsByRefundDate = `
   provider_refunds AS (
     SELECT r.id, r.order_id, r.created_at, MIN(r.amount_cents, o.provider_refunded_cents + r.amount_cents -
@@ -146,8 +151,8 @@ const refundsByRefundDate = `
     FROM dated_shares d JOIN paid_orders o ON o.id = d.order_id WHERE d.amount > 0
     UNION ALL
     SELECT o.id, LOWER(o.currency), ${refundOf('o')} - COALESCE(t.amount, 0),
-      CASE WHEN o.status = 'refunded' THEN COALESCE(full_refund.created_at, t.last_at, o.paid_at) ELSE o.paid_at END,
-      o.status = 'refunded' AND COALESCE(full_refund.created_at, t.last_at) IS NOT NULL
+      CASE WHEN o.status = 'refunded' THEN COALESCE(full_refund.created_at, ${fullyRefundedAt}, o.paid_at) ELSE o.paid_at END,
+      o.status = 'refunded' AND COALESCE(full_refund.created_at, ${fullyRefundedAt}) IS NOT NULL
     FROM paid_orders o
     LEFT JOIN dated_totals t ON t.order_id = o.id
     LEFT JOIN _ecommerce_gift_card_order_refunds full_refund ON full_refund.order_id = o.id

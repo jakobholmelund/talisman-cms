@@ -17,8 +17,11 @@ export const REFERRAL_MAX_PER_PERIOD = 10;
 export const REFERRAL_PERIOD_DAYS = 30;
 
 const DAY_SECONDS = 24 * 60 * 60;
-/** Order statuses in which a paid order can still earn or keep its referral award. */
-const QUALIFYING_STATUSES = ['paid', 'fulfilled', 'partially_refunded'] as const;
+/**
+ * Order statuses in which a paid order can still earn or keep its referral award. A disputed order
+ * keeps it until the dispute closes, but its award is not released meanwhile.
+ */
+const QUALIFYING_STATUSES = ['paid', 'fulfilled', 'partially_refunded', 'disputed'] as const;
 
 export type ReferralPolicy = {
   /** New referrals are attributed: the switch is on and the terms are valid. */
@@ -100,11 +103,11 @@ export function referralNetAmount(order: Omit<QualifyingOrder, 'status'>) {
 }
 
 /**
- * An order keeps its referral while it is paid, not fully refunded, and its net amount reaches the
- * minimum and at least twice the award's reward. The reward is fixed at checkout, so terms lowered
- * later never let an award exceed half of what the order kept. The minimum counts up to what the
- * order qualified with at checkout (its subtotal less the discount), so a minimum raised later
- * never voids an award by itself; only a refund or a lost dispute does.
+ * An order keeps its referral while it is paid (or disputed), not fully refunded, and its net amount
+ * reaches the minimum and at least twice the award's reward. The reward is fixed at checkout, so
+ * terms lowered later never let an award exceed half of what the order kept. The minimum counts up
+ * to what the order qualified with at checkout (its subtotal less the discount), so a minimum raised
+ * later never voids an award by itself; only a refund or a lost dispute does.
  */
 export function referralOrderQualifies(order: QualifyingOrder, minOrderCents: number, rewardCents = 0) {
   const minimum = Math.min(minOrderCents, order.subtotalAmount - order.discountAmount);
@@ -200,8 +203,9 @@ export async function releaseReferralAwards(options: { env: TalismanEnv; payment
       }
       const provider = order.paymentProvider ?? 'stripe';
       const adapter = paymentAdapters.find((candidate) => candidate.providerId === provider);
-      const dispute = adapter?.getDisputeStatus && order.paymentIntentId
-        ? await adapter.getDisputeStatus(order.paymentIntentId)
+      // A dispute recorded on the order holds the award without asking the provider.
+      const dispute = order.status === 'disputed' ? 'open'
+        : adapter?.getDisputeStatus && order.paymentIntentId ? await adapter.getDisputeStatus(order.paymentIntentId)
         : provider === 'stripe' ? 'unknown' : 'none';
       if (dispute === 'lost') {
         await env.DB.batch(referralReversalStatements(env, row.orderId,
@@ -225,6 +229,7 @@ export async function releaseReferralAwards(options: { env: TalismanEnv; payment
         SELECT ?, r.${account}, r.order_id, ?, r.reward_cents, ?
         FROM _ecommerce_referrals r JOIN _ecommerce_orders o ON o.id = r.order_id
         WHERE r.id = ? AND r.status = 'approved' AND r.reward_cents > 0 AND ${qualifyingOrderSql('o', 'r.reward_cents')}
+          AND o.status <> 'disputed'
         ON CONFLICT DO NOTHING`)
         .bind(id, kind, now, row.id, policy.minOrderCents)));
       const released = await db.select({ id: creditLedger.id }).from(creditLedger)

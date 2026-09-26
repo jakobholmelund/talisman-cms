@@ -1,6 +1,10 @@
 export interface ValidatedWebhookEvent {
   type: string;
   data: any;
+  /** The provider's event id, for logs. */
+  id?: string;
+  /** When the provider created the event, in unix seconds. */
+  created?: number;
   rawEvent?: any;
 }
 
@@ -47,6 +51,9 @@ export class TaxAddressError extends Error {
     this.name = 'TaxAddressError';
   }
 }
+
+/** The store records a provider payment was made for, as its checkout stored them on the payment. */
+export type PaymentReferences = { orderId?: string | null; giftCardPurchaseId?: string | null };
 
 export interface PaymentProviderAdapter {
   /**
@@ -143,4 +150,11 @@ export interface PaymentProviderAdapter {
    */
   reverseTaxTransaction?(params: { orderId: string; transactionId: string; amount: number; reference: string }):
     Promise<{ reversalId: string }>;
+
+  /**
+   * The store references a payment carries, or null when the provider has no such payment. A dispute
+   * event names only the payment, so for one that matches no recorded payment this tells a payment
+   * the store has not recorded yet (worth a retry) from one another integration took (ignored).
+   */
+  getPaymentReferences?(paymentIntentId: string): Promise<PaymentReferences | null>;
 }

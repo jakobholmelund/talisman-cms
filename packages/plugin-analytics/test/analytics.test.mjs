@@ -86,6 +86,35 @@ test('commerce uses payment date, separates currencies, and excludes admin tests
   sqlite.close();
 });
 
+test('a disputed order still counts as a sale, and a lost dispute counts as a refund on the payment date', async () => {
+  const { sqlite, d1, order } = sqliteD1({ refundDates: true });
+  order('disputed', { status: 'disputed', subtotal: 3000, items: lens(3, 1000) });
+  // Lost: the order is refunded in full without a provider refund, so the refund has no date of its own.
+  order('lost', { status: 'refunded', subtotal: 2000, items: lens(2, 1000), payment: 'refunded' });
+  const result = await fetchCommerceOverview(d1, 7, '/admin', 'products', 'live', now);
+  assert.deepEqual(result.currencies.map(({ orders, grossSales, refunds, refundedOrders, netSales }) => ({ orders, grossSales, refunds, refundedOrders, netSales })),
+    [{ orders: 2, grossSales: 5000, refunds: 2000, refundedOrders: 1, netSales: 3000 }]);
+  assert.equal(result.undatedRefunds, true);
+  assert.equal(result.products[0].units, 3);
+  sqlite.close();
+});
+
+test('a dispute lost after a partial refund counts the rest on the payment date, not on the partial refund\'s', async () => {
+  const { sqlite, d1, order } = sqliteD1({ refundDates: true });
+  const ago = days => nowSeconds - days * day;
+  // Paid 20 days ago; Stripe refunded 2000 ten days ago; the dispute over the rest was lost today.
+  order('lost', { status: 'refunded', subtotal: 12000, providerRefunded: 2000, paid: ago(20), payment: 'refunded' });
+  sqlite.prepare(`INSERT INTO _ecommerce_provider_refunds VALUES ('prf_lost_2000', 'lost', 'stripe', NULL, 2000, ?)`).run(ago(10));
+  const result = await fetchCommerceOverview(d1, 30, '/admin', 'products', 'live', now);
+  assert.deepEqual(result.currencies.map(({ grossSales, refunds, netSales }) => ({ grossSales, refunds, netSales })),
+    [{ grossSales: 12000, refunds: 12000, netSales: 0 }]);
+  const netOn = date => result.daily.find(row => row.date === date)?.netSales;
+  assert.equal(netOn('2026-09-15'), -2000);
+  assert.equal(netOn('2026-09-05'), 2000);
+  assert.equal(result.undatedRefunds, true);
+  sqlite.close();
+});
+
 function seedTestModeOrders({ sqlite, order }) {
   sqlite.exec(`
     INSERT INTO _ecommerce_gift_card_purchases VALUES ('gp_test', 'cs_test_gift'), ('gp_live', 'cs_live_gift');
@@ -357,7 +386,7 @@ test('a refunds report summarizes and compares refunds, not net sales', async ()
   assert.equal(report.summary, 'Refunds issued: $170.00 on 5 orders in USD. USD refunds issued rose from zero compared with Jul 27, 2026, 12:00 – Aug 26, 2026, 12:00 UTC.');
   assert.doesNotMatch(report.summary, /net sales/);
   assert.ok(report.notes.some(note => note.startsWith('Refunds count on the date they were issued')));
-  assert.ok(report.notes.some(note => note.startsWith('Some refunds were recorded before refund dates were stored')));
+  assert.ok(report.notes.some(note => note.startsWith('Some refunds have no date of their own')));
   fixture.sqlite.close();
 });
 

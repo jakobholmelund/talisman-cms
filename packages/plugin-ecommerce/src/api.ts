@@ -2,9 +2,8 @@ import { TalismanEnv, createDbClient } from 'talisman-cms/client';
 import * as schema from './schema';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 
-import type { PaymentProviderAdapter } from './payments';
-import { findReferralCode, getReferralPolicy, referralReversalStatements, releaseReferralAwards,
-  reverseReferralForOrder } from './referrals';
+import type { PaymentProviderAdapter, PaymentReferences, ValidatedWebhookEvent } from './payments';
+import { findReferralCode, getReferralPolicy, referralReversalStatements, releaseReferralAwards } from './referrals';
 import { PURCHASED_ORDER_STATUSES, hasPurchaseHistory } from './accounts';
 import { canonicalEmail, canonicalEmailSql, canonicalEmails, canonicalPurchaseParams, canonicalPurchaseSql,
   hasCanonicalPurchase } from './email-identity';
@@ -22,6 +21,11 @@ import { calculateOrderTax, ordersMissingTaxTransaction, ordersWithUnreversedTax
   recordOrderTax, resendPendingTaxReversals, reverseOrderTax, reverseRefundedOrderTax, taxAddressFor,
   taxableLines } from './tax';
 export { TaxCalculationError } from './tax';
+import { INVENTORY_COLUMNS } from './inventory';
+import { fullRefundStatements } from './order-adjustments';
+import { applyStripeDispute, parseStripeDispute } from './disputes';
+import { WebhookMismatchError, WebhookRetryLaterError, WebhookSignatureError } from './webhook-errors';
+export { WebhookMismatchError, WebhookRetryLaterError, WebhookSignatureError } from './webhook-errors';
 
 export interface CommerceApiOptions {
   env: TalismanEnv;
@@ -31,13 +35,6 @@ export interface CommerceApiOptions {
 type RequiredComponent = { id: string; name: string; quantity: number; available: number };
 type InventoryTarget = { type: 'product' | 'variant' | 'stock'; id: string; quantity: number };
 export type CartItemInput = { productId: string; variantId?: string; quantity: number };
-
-/** The stock column checkout reserves from and releases to, by reservation target type. */
-const INVENTORY_COLUMNS = {
-  product: ['_ecommerce_products', 'inventory_quantity'],
-  variant: ['_ecommerce_product_variants', 'inventory_quantity'],
-  stock: ['_ecommerce_stocks', 'quantity'],
-} as const;
 
 /** The rows of a JSON list of reservations bound as the statement's last parameter. */
 const RESERVATION_ROWS = `SELECT json_extract(value, '$.target') AS target, json_extract(value, '$.amount') AS amount
@@ -332,19 +329,20 @@ export function bindCommerceApi(options: CommerceApiOptions) {
     }
     if (order.checkoutSessionId !== params.providerId ||
       (order.paymentProvider ?? 'stripe') !== params.provider) {
-      throw new Error('Payment provider or session does not match order');
+      throw new WebhookMismatchError('session_mismatch', 'Payment provider or session does not match order');
     }
     if (params.amount !== undefined && params.amount !== order.totalAmount) {
-      throw new Error('Payment amount does not match order total');
+      throw new WebhookMismatchError('amount_mismatch', 'Payment amount does not match order total');
     }
     if (params.currency && params.currency.toLowerCase() !== order.currency.toLowerCase()) {
-      throw new Error('Payment currency does not match order');
+      throw new WebhookMismatchError('currency_mismatch', 'Payment currency does not match order');
     }
-    if (['paid', 'fulfilled', 'partially_refunded', 'refunded'].includes(order.status)) {
+    if ((PURCHASED_ORDER_STATUSES as readonly string[]).includes(order.status)) {
       return { success: true, orderId: params.orderId, status: order.status, duplicate: true };
     }
     if (order.status === 'cancelled') {
-      throw new Error('Cancelled order cannot be paid');
+      // Paid after its checkout was released. No retry changes that; an administrator refunds it in Stripe.
+      throw new WebhookMismatchError('order_cancelled', 'Cancelled order cannot be paid');
     }
 
     const timestamp = Math.floor(Date.now() / 1000);
@@ -452,17 +450,26 @@ export function bindCommerceApi(options: CommerceApiOptions) {
     return { success: true, orderId: params.orderId, status: 'paid' };
   }
 
+  /**
+   * Records the refund total of the order paid with `paymentIntentId`, or returns null when no order
+   * was. Each rise in the total adds a _ecommerce_provider_refunds row dated `refundedAt`, when the
+   * provider issued the refund. A disputed order records the refund and stays disputed.
+   */
   async function recordProviderRefund(params: {
     paymentIntentId: string; amount: number; amountRefunded: number; currency: string;
+    /** When the provider issued the refund, in unix seconds; the time it is recorded when unknown. */
+    refundedAt?: number;
+    /** The provider's id for the refund, when the event names it. */
+    providerRefundId?: string | null;
   }) {
     const order = await db.select().from(schema.orders)
       .where(eq(schema.orders.paymentIntentId, params.paymentIntentId)).get();
-    if (!order) throw new Error('Refund payment is not linked to a confirmed order');
+    if (!order) return null;
     if (order.paymentProvider !== 'stripe' || order.totalAmount !== params.amount ||
-      order.currency.toLowerCase() !== params.currency.toLowerCase() ||
+      order.currency.toLowerCase() !== String(params.currency).toLowerCase() ||
       !Number.isSafeInteger(params.amountRefunded) || params.amountRefunded < 0 ||
       params.amountRefunded > order.totalAmount) {
-      throw new Error('Refund does not match order payment');
+      throw new WebhookMismatchError('refund_mismatch', 'Refund does not match order payment');
     }
     if (params.amountRefunded <= order.providerRefundedCents) {
       return { success: true, orderId: order.id, duplicate: true };
@@ -470,37 +477,34 @@ export function bindCommerceApi(options: CommerceApiOptions) {
     const now = Math.floor(Date.now() / 1000);
     const full = params.amountRefunded === order.totalAmount;
     const referralPolicy = order.referralCode ? await getReferralPolicy(env) : null;
+    const refundable = `id = ? AND payment_intent_id = ? AND provider_refunded_cents < ?
+      AND status IN ('paid', 'fulfilled', 'partially_refunded', 'disputed')`;
     const statements: D1PreparedStatement[] = [
+      // First the part of the total that this event adds, read from the stored total under the guard
+      // of the update below: a retried or out-of-order event adds no row, and the rows add up to the total.
+      env.DB.prepare(`INSERT INTO _ecommerce_provider_refunds
+        (id, order_id, provider, provider_refund_id, amount_cents, created_at)
+        SELECT ?, id, 'stripe', ?, ? - provider_refunded_cents, ?
+        FROM _ecommerce_orders WHERE ${refundable}
+        ON CONFLICT(id) DO NOTHING`)
+        .bind(`prf_${order.id}_${params.amountRefunded}`, params.providerRefundId ?? null, params.amountRefunded,
+          params.refundedAt ?? now, order.id, params.paymentIntentId, params.amountRefunded),
+      // A dispute keeps the order disputed; closing it applies the refund status.
       env.DB.prepare(`UPDATE _ecommerce_orders
-        SET provider_refunded_cents = ?, status = ?, updated_at = ?
-        WHERE id = ? AND payment_intent_id = ? AND provider_refunded_cents < ?
-          AND status IN ('paid', 'fulfilled', 'partially_refunded')`)
+        SET provider_refunded_cents = ?, status = CASE WHEN status = 'disputed' THEN status ELSE ? END, updated_at = ?
+        WHERE ${refundable}`)
         .bind(params.amountRefunded, full ? 'refunded' : 'partially_refunded', now,
           order.id, params.paymentIntentId, params.amountRefunded),
+      // The payment shows the refund, taken from the amounts while the order is disputed.
       env.DB.prepare(`UPDATE _ecommerce_payments
-        SET status = (SELECT status FROM _ecommerce_orders WHERE id = ?)
+        SET status = COALESCE((SELECT CASE WHEN o.status IN ('partially_refunded', 'refunded') THEN o.status
+            WHEN o.provider_refunded_cents >= o.total_amount THEN 'refunded'
+            WHEN o.provider_refunded_cents > 0 THEN 'partially_refunded' END
+          FROM _ecommerce_orders o WHERE o.id = ?), status)
         WHERE order_id = ? AND provider = 'stripe'`)
         .bind(order.id, order.id),
     ];
-    if (full) {
-      statements.push(env.DB.prepare(`UPDATE _ecommerce_discount_redemptions
-        SET status = 'refunded', updated_at = ?
-        WHERE order_id = ? AND status = 'confirmed'
-          AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'refunded')`)
-        .bind(now, order.id, order.id));
-      statements.push(env.DB.prepare(`UPDATE _ecommerce_gift_card_redemptions
-        SET status = 'refunded', updated_at = ?
-        WHERE order_id = ? AND status = 'confirmed'
-          AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'refunded')`)
-        .bind(now, order.id, order.id));
-      statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
-        (id, account_id, order_id, kind, amount_cents, created_at)
-        SELECT ?, user_id, id, 'purchase_credit_refund', credit_applied, ?
-        FROM _ecommerce_orders WHERE id = ? AND status = 'refunded'
-          AND credit_applied > 0 AND user_id IS NOT NULL
-        ON CONFLICT(order_id, kind) DO NOTHING`)
-        .bind(`credit_refund_${order.id}`, now, order.id));
-    }
+    if (full) statements.push(...fullRefundStatements(env, order.id, now));
     // A full refund, or a partial one that leaves less than the minimum paid, voids the referral and
     // reverses released awards.
     if (referralPolicy) {
@@ -508,9 +512,132 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         { minOrderCents: referralPolicy.minOrderCents, now }));
     }
     await env.DB.batch(statements);
-    return { success: true, orderId: order.id, status: full ? 'refunded' : 'partially_refunded' };
+    return { success: true, orderId: order.id,
+      status: order.status === 'disputed' ? 'disputed' : full ? 'refunded' : 'partially_refunded' };
   }
   
+  function ignoredEvent(event: ValidatedWebhookEvent) {
+    console.info('[commerce] Stripe event ignored', { type: event.type, id: event.id });
+    return { success: true, event: event.type, ignored: true };
+  }
+
+  /**
+   * For an event whose payment matches no recorded payment: it is retried while the order or gift card
+   * purchase its references name still waits for its payment, and ignored when they name nothing of
+   * this store's or a released checkout. A record that was paid through another payment is a mismatch.
+   */
+  async function assertNoAwaitedPayment(references: PaymentReferences | null | undefined) {
+    const purchaseId = references?.giftCardPurchaseId || null;
+    const orderId = purchaseId ? null : references?.orderId || null;
+    const record = purchaseId
+      ? await db.select({ status: schema.giftCardPurchases.status }).from(schema.giftCardPurchases)
+        .where(eq(schema.giftCardPurchases.id, purchaseId)).get()
+      : orderId ? await db.select({ status: schema.orders.status }).from(schema.orders)
+        .where(eq(schema.orders.id, orderId)).get() : undefined;
+    if (!record || record.status === 'cancelled' || record.status === 'draft') return;
+    if (record.status === 'pending') {
+      throw new WebhookRetryLaterError(`The ${purchaseId ? 'gift card purchase' : 'order'} this payment is for has no recorded payment yet`);
+    }
+    throw new WebhookMismatchError('payment_not_recorded', 'The payment is not the one recorded for the store record it names');
+  }
+
+  async function applyStripeEvent(event: ValidatedWebhookEvent, stripeAdapter: PaymentProviderAdapter) {
+    const text = (value: unknown) => typeof value === 'string' && value ? value : null;
+    const at = Number.isSafeInteger(event.created) && event.created! > 0 ? event.created! : Math.floor(Date.now() / 1000);
+
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data as any; // Stripe.Checkout.Session
+      if (session.payment_status !== 'paid') return ignoredEvent(event);
+      const purchaseId = text(session.metadata?.giftCardPurchaseId);
+      if (purchaseId) {
+        const purchase = await db.select({ id: schema.giftCardPurchases.id }).from(schema.giftCardPurchases)
+          .where(eq(schema.giftCardPurchases.id, purchaseId)).get();
+        return purchase ? confirmGiftCardPurchase(env, session) : ignoredEvent(event);
+      }
+      const orderId = text(session.metadata?.orderId) ?? text(session.client_reference_id);
+      const order = orderId ? await db.select({ id: schema.orders.id }).from(schema.orders)
+        .where(eq(schema.orders.id, orderId)).get() : undefined;
+      if (!order) return ignoredEvent(event);
+      return finalizeOrderPayment({
+        orderId: order.id,
+        provider: 'stripe',
+        providerId: session.id,
+        paymentStatus: 'success',
+        amount: session.amount_total || 0,
+        currency: session.currency,
+        paymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : undefined,
+        customerEmail: session.customer_details?.email || session.customer_email
+      });
+    }
+
+    if (event.type === 'checkout.session.expired') {
+      const session = event.data as any;
+      const purchaseId = text(session.metadata?.giftCardPurchaseId);
+      if (purchaseId) {
+        const purchase = await db.select({ id: schema.giftCardPurchases.id }).from(schema.giftCardPurchases)
+          .where(eq(schema.giftCardPurchases.id, purchaseId)).get();
+        if (!purchase) return ignoredEvent(event);
+        await expireGiftCardPurchase(env, purchaseId, session.id);
+        return { success: true, event: event.type };
+      }
+      const orderId = text(session.metadata?.orderId) ?? text(session.client_reference_id);
+      if (orderId) {
+        const order = await db.select().from(schema.orders).where(eq(schema.orders.id, orderId)).get();
+        if (order?.checkoutSessionId === session.id) {
+          const cancelled = await bindCommerceApi(options).orders.cancel(orderId, { sessionExpired: true });
+          return { success: true, event: event.type, cancelled: cancelled?.status === 'cancelled' };
+        }
+        if (!order && orderId === text(session.metadata?.orderId) && orderId.startsWith('ord_')) {
+          // The checkout stopped before its order was recorded; its coupon, if any, is deleted.
+          await discardCheckoutDiscount(stripeAdapter, orderId);
+          return { success: true, event: event.type, cancelled: false };
+        }
+      }
+      return ignoredEvent(event);
+    }
+
+    if (event.type === 'charge.refunded') {
+      const charge = event.data as any; // Stripe.Charge
+      if (typeof charge.payment_intent !== 'string') return ignoredEvent(event);
+      const refund = { paymentIntentId: charge.payment_intent, amount: charge.amount,
+        amountRefunded: charge.amount_refunded, currency: charge.currency };
+      const giftPurchaseRefund = await recordGiftCardPurchaseRefund(env, refund);
+      if (giftPurchaseRefund) return giftPurchaseRefund;
+      // Stripe API versions before 2022-11-15 list the charge's refunds in the event; later ones do not.
+      const listed = Array.isArray(charge.refunds?.data) ? charge.refunds.data as Array<{ id?: unknown; created?: unknown }> : [];
+      const latest = listed.filter((item) => typeof item?.id === 'string')
+        .sort((a, b) => Number(b.created ?? 0) - Number(a.created ?? 0))[0];
+      const recorded = await recordProviderRefund({ ...refund, refundedAt: at,
+        providerRefundId: typeof latest?.id === 'string' ? latest.id : null });
+      if (recorded) {
+        // The refund is mirrored in the order's tax. A failure is logged, and reconcileCommerce
+        // reverses the tax later; the refund itself stays recorded.
+        await reverseRefundedOrderTax(env, paymentAdapters, recorded.orderId);
+        return recorded;
+      }
+      await assertNoAwaitedPayment({ orderId: text(charge.metadata?.orderId),
+        giftCardPurchaseId: text(charge.metadata?.giftCardPurchaseId) });
+      return ignoredEvent(event);
+    }
+
+    if (event.type === 'charge.dispute.created' || event.type === 'charge.dispute.closed') {
+      const dispute = parseStripeDispute(event.data, at);
+      if (!dispute) return ignoredEvent(event);
+      const applied = await applyStripeDispute(env, dispute, { closed: event.type === 'charge.dispute.closed', at });
+      // A lost dispute leaves its order 'refunded' without a provider refund, so its tax is reversed
+      // here as after recordProviderRefund above; a failure is logged and reconcileCommerce retries it.
+      if (applied && 'orderId' in applied && applied.status === 'refunded') {
+        await reverseRefundedOrderTax(env, paymentAdapters, applied.orderId);
+      }
+      if (applied) return { success: true, event: event.type, ...applied };
+      // A dispute names only the payment; its references tell a payment not recorded yet from a foreign one.
+      await assertNoAwaitedPayment(await stripeAdapter.getPaymentReferences?.(dispute.paymentIntentId));
+      return ignoredEvent(event);
+    }
+
+    return ignoredEvent(event);
+  }
+
   return {
     carts: {
       async quote(cartId: string) {
@@ -1212,7 +1339,8 @@ export function bindCommerceApi(options: CommerceApiOptions) {
       async cancel(id: string, options: { sessionExpired?: boolean; limitProviderChecks?: boolean } = {}) {
         const order = await db.select().from(schema.orders).where(eq(schema.orders.id, id)).get();
         if (!order) return null;
-        if (['paid', 'fulfilled', 'partially_refunded', 'refunded'].includes(order.status)) return order;
+        // A paid order, refunded or disputed since included, keeps its stock and its status.
+        if ((PURCHASED_ORDER_STATUSES as readonly string[]).includes(order.status)) return order;
 
         const timestamp = Math.floor(Date.now() / 1000);
         if (order.status === 'cancelled') return order;
@@ -1239,7 +1367,8 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         }
         const statements: D1PreparedStatement[] = [
           env.DB.prepare(`UPDATE _ecommerce_orders SET status = 'cancelled', updated_at = ?
-            WHERE id = ? AND status NOT IN ('paid', 'fulfilled')`).bind(timestamp, id)
+            WHERE id = ? AND status NOT IN (${PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(', ')})`)
+            .bind(timestamp, id)
         ];
         statements.push(env.DB.prepare(`UPDATE _ecommerce_discount_redemptions
           SET status = 'cancelled', updated_at = ?
@@ -1309,98 +1438,33 @@ export function bindCommerceApi(options: CommerceApiOptions) {
     },
     
     webhooks: {
+      /**
+       * Verifies a Stripe webhook event and applies it. An event that names none of this store's orders
+       * or gift card purchases is answered `{ ignored: true }` and changes nothing. One that names a
+       * record it cannot be applied to, and that no retry would fix, is logged and answered the same
+       * way with a `reason`. Throws WebhookSignatureError when the signature or payload is refused, and
+       * WebhookRetryLaterError for an event about a record whose payment is not recorded yet.
+       */
       async handleStripe(payload: string, signature: string, secret?: string) {
         const stripeAdapter = paymentAdapters.find(a => a.providerId === 'stripe');
         if (!stripeAdapter?.validateWebhook) {
           throw new Error('Stripe adapter not configured options.paymentAdapters');
         }
 
-        const event = await stripeAdapter.validateWebhook(payload, signature, secret || '');
-
-        if (event.type === 'checkout.session.completed') {
-           const session = event.data as any; // Stripe.Checkout.Session
-           if (session.metadata?.giftCardPurchaseId) {
-             return confirmGiftCardPurchase(env, session);
-           }
-           const orderId = session.metadata?.orderId || session.client_reference_id;
-
-           if (session.payment_status !== 'paid') {
-             return { success: true, event: event.type, ignored: true };
-           }
-
-           if (orderId) {
-             return finalizeOrderPayment({
-               orderId,
-               provider: 'stripe',
-               providerId: session.id,
-               paymentStatus: session.payment_status === 'paid' ? 'success' : 'pending',
-               amount: session.amount_total || 0,
-               currency: session.currency,
-               paymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : undefined,
-               customerEmail: session.customer_details?.email || session.customer_email
-             });
-           }
+        let event: ValidatedWebhookEvent;
+        try {
+          event = await stripeAdapter.validateWebhook(payload, signature, secret || '');
+        } catch (cause) {
+          throw new WebhookSignatureError(cause instanceof Error ? cause.message : 'Webhook Error', { cause });
         }
-
-        if (event.type === 'checkout.session.expired') {
-          const session = event.data as any;
-          if (session.metadata?.giftCardPurchaseId) {
-            await expireGiftCardPurchase(env, session.metadata.giftCardPurchaseId, session.id);
-            return { success: true, event: event.type };
-          }
-          const orderId = session.metadata?.orderId || session.client_reference_id;
-          if (orderId) {
-            const order = await db.select().from(schema.orders).where(eq(schema.orders.id, orderId)).get();
-            if (order?.checkoutSessionId === session.id) {
-              const cancelled = await bindCommerceApi(options).orders.cancel(orderId, { sessionExpired: true });
-              return { success: true, event: event.type, cancelled: cancelled?.status === 'cancelled' };
-            }
-            if (!order) {
-              // The checkout stopped before its order was recorded; its coupon, if any, is deleted.
-              await discardCheckoutDiscount(stripeAdapter, orderId);
-              return { success: true, event: event.type, cancelled: false };
-            }
-          }
+        try {
+          return await applyStripeEvent(event, stripeAdapter);
+        } catch (error) {
+          if (!(error instanceof WebhookMismatchError)) throw error;
+          console.error('[commerce] Stripe event does not match the store records',
+            { type: event.type, id: event.id, reason: error.reason });
+          return { success: true, event: event.type, ignored: true, reason: error.reason };
         }
-
-        if (event.type === 'charge.dispute.closed') {
-          // A lost dispute voids the order's referral and reverses released awards.
-          const dispute = event.data as any; // Stripe.Dispute
-          const paymentIntentId = typeof dispute.payment_intent === 'string'
-            ? dispute.payment_intent : dispute.payment_intent?.id;
-          if (dispute.status !== 'lost' || typeof paymentIntentId !== 'string') {
-            return { success: true, event: event.type, ignored: true };
-          }
-          const order = await db.select({ id: schema.orders.id, referralCode: schema.orders.referralCode })
-            .from(schema.orders).where(eq(schema.orders.paymentIntentId, paymentIntentId)).get();
-          if (!order) return { success: true, event: event.type, ignored: true };
-          if (order.referralCode) await reverseReferralForOrder(env, order.id, { disputeLost: true });
-          return { success: true, event: event.type, orderId: order.id };
-        }
-
-        if (event.type === 'charge.refunded') {
-          const charge = event.data as any;
-          if (typeof charge.payment_intent !== 'string') {
-            return { success: true, event: event.type, ignored: true };
-          }
-          const giftPurchaseRefund = await recordGiftCardPurchaseRefund(env, {
-            paymentIntentId: charge.payment_intent, amount: charge.amount,
-            amountRefunded: charge.amount_refunded, currency: charge.currency,
-          });
-          if (giftPurchaseRefund) return giftPurchaseRefund;
-          const refund = await recordProviderRefund({
-            paymentIntentId: charge.payment_intent,
-            amount: charge.amount,
-            amountRefunded: charge.amount_refunded,
-            currency: charge.currency,
-          });
-          // The refund is mirrored in the order's tax. A failure is logged, and reconcileCommerce
-          // reverses the tax later; the refund itself stays recorded.
-          await reverseRefundedOrderTax(env, paymentAdapters, refund.orderId);
-          return refund;
-        }
-
-        return { success: true, event: event.type, ignored: true };
       }
     }
   }
