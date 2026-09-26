@@ -415,6 +415,12 @@ test('a database with data from earlier releases upgrades cleanly', () => {
       { id: 'g-wrapped', data: '{"mode":"dark"}' },
       { id: 'g-wrapped-array', data: '{"value":[1,2]}' },
     ]);
+    // 0025: orders from earlier releases carry no shipping or tax.
+    assert.deepEqual(row(db, `SELECT shipping_amount, shipping_rate_id, shipping_label, tax_amount, tax_behavior,
+      tax_calculation_id, tax_transaction_id FROM _ecommerce_orders WHERE id = 'order-1'`), {
+      shipping_amount: 0, shipping_rate_id: null, shipping_label: null, tax_amount: 0, tax_behavior: null,
+      tax_calculation_id: null, tax_transaction_id: null,
+    });
     migrate(empty);
     assert.deepEqual(fullSchema(db), fullSchema(empty));
   } finally {
@@ -531,6 +537,91 @@ test('0023 lets one published entry per collection serve a slug, and its check f
     db.exec(`UPDATE galaxy_entries SET slug = 'hello', status = 'published' WHERE id = 'hello-copy'`);
     assert.throws(() => db.exec(`UPDATE galaxy_entries SET status = 'published' WHERE id = 'hello-draft'`),
       /UNIQUE constraint failed: galaxy_entries\.collection_id, galaxy_entries\.slug/);
+  } finally {
+    db.close();
+  }
+});
+
+test('0025 counts shipping and exclusive tax in the redemption guards and changes nothing else in them', () => {
+  const db = openDatabase();
+  try {
+    migrate(db, { to: '0024_shopper_sign_in_tokens' });
+    const guards = ['_ecommerce_discount_reserve_guard', '_ecommerce_gift_card_reserve_guard'];
+    const guardSql = () => Object.fromEntries(rows(db, `SELECT name, sql FROM sqlite_schema WHERE type = 'trigger' AND name IN (?, ?)`, ...guards)
+      .map(({ name, sql }) => [name, sql.replace(/\s+/g, ' ')]));
+    const before = guardSql();
+    applyMigration(db, '0025_order_shipping_and_tax');
+    const after = guardSql();
+    const oldTotals = 'o.subtotal_amount = o.discount_amount + o.credit_applied + o.gift_card_applied + o.total_amount';
+    const newTotals = `o.subtotal_amount + o.shipping_amount + CASE WHEN o.tax_behavior = 'exclusive' THEN o.tax_amount ELSE 0 END`
+      + ' = o.discount_amount + o.credit_applied + o.gift_card_applied + o.total_amount';
+    for (const guard of guards) {
+      assert.equal(before[guard].split(oldTotals).length, 2, `${guard}: the totals line appears once before 0025`);
+      assert.equal(after[guard], before[guard].replace(oldTotals, newTotals), guard);
+    }
+
+    db.exec(`INSERT INTO _ecommerce_discount_codes (code, type, value, created_at, updated_at) VALUES ('TENOFF', 'amount', 1000, ${T}, ${T});
+      INSERT INTO _ecommerce_gift_cards (id, code_hash, code_suffix, encrypted_code, source, admin_actor, admin_reason, initial_cents, created_at, updated_at)
+        VALUES ('card-1', 'hash-1', 'WXYZ', 'sealed', 'admin', 'admin-1', 'Migration test card', 100000, ${T}, ${T});
+      INSERT INTO _ecommerce_gift_card_ledger (id, card_id, kind, amount_cents, created_at) VALUES ('gcl-issue', 'card-1', 'issue', 100000, ${T});`);
+    // Each order: a 10000 subtotal less a 1000 discount, 1000 store credit and 2000 from the gift card.
+    const insertOrder = db.prepare(`INSERT INTO _ecommerce_orders (id, status, items, total_amount, subtotal_amount, discount_code,
+      discount_amount, credit_applied, gift_card_id, gift_card_applied, shipping_amount, tax_amount, tax_behavior, created_at, updated_at)
+      VALUES (?, 'pending', '[]', ?, 10000, 'TENOFF', 1000, 1000, 'card-1', 2000, ?, ?, ?, ${T}, ${T})`);
+    const redeemDiscount = db.prepare(`INSERT INTO _ecommerce_discount_redemptions (id, code, order_id, email_normalized, amount_cents, created_at, updated_at)
+      VALUES (?, 'TENOFF', ?, 'shopper@example.com', 1000, ${T}, ${T})`);
+    const redeemGiftCard = db.prepare(`INSERT INTO _ecommerce_gift_card_redemptions (id, card_id, order_id, amount_cents, created_at, updated_at)
+      VALUES (?, 'card-1', ?, 2000, ${T}, ${T})`);
+    const orders = [
+      { id: 'no-shipping-or-tax', shipping: 0, tax: 0, behavior: null, total: 6000, balances: true },
+      { id: 'exclusive-tax', shipping: 500, tax: 840, behavior: 'exclusive', total: 7340, balances: true },
+      { id: 'inclusive-tax', shipping: 500, tax: 800, behavior: 'inclusive', total: 6500, balances: true },
+      { id: 'shipping-left-out', shipping: 500, tax: 0, behavior: null, total: 6000, balances: false },
+      { id: 'exclusive-tax-left-out', shipping: 500, tax: 840, behavior: 'exclusive', total: 6500, balances: false },
+      { id: 'inclusive-tax-added', shipping: 500, tax: 800, behavior: 'inclusive', total: 7300, balances: false },
+    ];
+    for (const { id, shipping, tax, behavior, total, balances } of orders) {
+      insertOrder.run(id, total, shipping, tax, behavior);
+      const redemptions = [
+        [() => redeemDiscount.run(`dr-${id}`, id), /Discount code is no longer available/],
+        [() => redeemGiftCard.run(`gcr-${id}`, id), /Gift card is no longer available/],
+      ];
+      for (const [redeem, refusal] of redemptions) {
+        if (balances) assert.doesNotThrow(redeem, id);
+        else assert.throws(redeem, refusal, id);
+      }
+    }
+    assert.deepEqual(rows(db, 'SELECT order_id FROM _ecommerce_discount_redemptions ORDER BY order_id').map(({ order_id }) => order_id),
+      ['exclusive-tax', 'inclusive-tax', 'no-shipping-or-tax']);
+    assert.equal(row(db, `SELECT balance_cents FROM _ecommerce_gift_cards WHERE id = 'card-1'`).balance_cents, 100000 - 3 * 2000);
+  } finally {
+    db.close();
+  }
+});
+
+test('0025 keeps shipping and tax amounts valid, records a tax reversal once per reference and indexes missing tax transactions', () => {
+  const db = openDatabase();
+  try {
+    migrate(db, { to: '0025_order_shipping_and_tax' });
+    db.exec(`INSERT INTO _ecommerce_orders (id, status, items, total_amount, created_at, updated_at) VALUES ('order-1', 'paid', '[]', 1000, ${T}, ${T})`);
+    for (const assignment of ['shipping_amount = -1', 'tax_amount = -1', `tax_behavior = 'included'`]) {
+      assert.throws(() => db.exec(`UPDATE _ecommerce_orders SET ${assignment} WHERE id = 'order-1'`), /CHECK constraint failed/, assignment);
+    }
+
+    const reverse = db.prepare(`INSERT INTO _ecommerce_tax_reversals (id, order_id, reference, amount, provider_reversal_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ${T})`);
+    reverse.run('rev-1', 'order-1', 'order-1:reversal:500', 500, 'reversal-1');
+    assert.throws(() => reverse.run('rev-2', 'order-1', 'order-1:reversal:500', 500, 'reversal-2'),
+      /UNIQUE constraint failed: _ecommerce_tax_reversals\.reference/);
+    assert.throws(() => reverse.run('rev-3', 'order-1', 'order-1:reversal:1000', 0, 'reversal-3'), /CHECK constraint failed/);
+    assert.throws(() => reverse.run('rev-4', 'order-2', 'order-2:reversal:500', 500, 'reversal-4'), /FOREIGN KEY constraint failed/);
+
+    // The lookup for paid orders whose tax transaction is missing repeats the partial index's conditions.
+    const plan = rows(db, `EXPLAIN QUERY PLAN SELECT id FROM _ecommerce_orders
+      WHERE status IN ('paid','fulfilled','partially_refunded','refunded')
+        AND tax_calculation_id IS NOT NULL AND tax_transaction_id IS NULL
+      ORDER BY created_at LIMIT 10`).map(({ detail }) => detail);
+    assert.ok(plan.some((detail) => detail.includes('USING INDEX _ecommerce_orders_tax_transaction_missing_idx')), plan.join('\n'));
   } finally {
     db.close();
   }

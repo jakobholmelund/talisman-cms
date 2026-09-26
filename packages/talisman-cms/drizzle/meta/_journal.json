@@ -176,6 +176,13 @@
       "when": 1789600000017,
       "tag": "0024_shopper_sign_in_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1789600000018,
+      "tag": "0025_order_shipping_and_tax",
+      "breakpoints": true
     }
   ]
 }

@@ -33,6 +33,14 @@ export const orders = sqliteTable('_ecommerce_orders', {
   giftCardRefundedCents: integer('gift_card_refunded_cents').notNull().default(0),
   creditApplied: integer('credit_applied').notNull().default(0),
   subtotalAmount: integer('subtotal_amount').notNull().default(0),
+  shippingAmount: integer('shipping_amount').notNull().default(0),
+  shippingRateId: text('shipping_rate_id'),
+  shippingLabel: text('shipping_label'),
+  taxAmount: integer('tax_amount').notNull().default(0),
+  /** `exclusive` tax is added to the amount due; `inclusive` tax is already inside the amounts and only recorded. */
+  taxBehavior: text('tax_behavior').$type<'inclusive' | 'exclusive'>(),
+  taxCalculationId: text('tax_calculation_id'),
+  taxTransactionId: text('tax_transaction_id'),
   status: text('status').notNull().default('draft'), // draft, pending, paid, fulfilled, cancelled
   items: text('items', { mode: 'json' }).$type<Array<{ productId: string, variantId?: string, quantity: number, priceAtPurchase: number, usesComponents?: boolean }>>().notNull().default([]),
   totalAmount: integer('total_amount').notNull(),
@@ -394,6 +402,16 @@ export const giftCardOrderRefunds = sqliteTable('_ecommerce_gift_card_order_refu
   orderId: text('order_id').primaryKey().references(() => orders.id),
   adminActor: text('admin_actor').notNull(),
   reason: text('reason').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
+
+/** Partial reversals that mirror an order's refunds in its tax transaction. The unique reference makes a retry record one row. */
+export const taxReversals = sqliteTable('_ecommerce_tax_reversals', {
+  id: text('id').primaryKey(),
+  orderId: text('order_id').notNull().references(() => orders.id),
+  reference: text('reference').notNull().unique(),
+  amount: integer('amount').notNull(), // Positive, in the order currency's minor units.
+  providerReversalId: text('provider_reversal_id').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 

@@ -33,7 +33,7 @@ const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.
   '0008_shared_components.sql', '0010_checkout_inventory.sql', '0011_order_payment_provider.sql',
   '0012_customer_accounts.sql', '0013_referrals_and_credit.sql', '0014_promotions.sql',
   '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
-  '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql'];
+  '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql', '0025_order_shipping_and_tax.sql'];
 
 function applyMigration(sqlite, migration) {
   const sql = readFileSync(new URL(`../../talisman-cms/drizzle/${migration}`, import.meta.url), 'utf8');
@@ -422,8 +422,8 @@ test("better-auth pruning its rate-limit table leaves the shopper counters and t
 });
 
 test('links sent before migration 0024 still work, and its counters move out of better-auth\'s table', async () => {
-  const before = migrationFiles.filter((migration) => migration !== '0024_shopper_sign_in_tokens.sql');
-  const { sqlite, env } = shop({}, before);
+  const upgrade = migrationFiles.indexOf('0024_shopper_sign_in_tokens.sql');
+  const { sqlite, env } = shop({}, migrationFiles.slice(0, upgrade));
   const now = Math.floor(Date.now() / 1000);
   // What the previous release wrote: an unverified account per request, a challenge row, and seconds-based counters.
   sqlite.prepare(`INSERT INTO _ecommerce_customer_accounts (id, email, email_normalized, created_at, updated_at)
@@ -438,7 +438,7 @@ test('links sent before migration 0024 still work, and its counters move out of 
   const counter = sqlite.prepare('INSERT INTO galaxy_auth_rate_limit (id, key, count, last_request) VALUES (?, ?, ?, ?)');
   counter.run('daily', 'shopper-email:daily', 150, now - 3600);
   counter.run('cms', '198.51.100.7|/sign-in/email', 2, Date.now());
-  applyMigration(sqlite, '0024_shopper_sign_in_tokens.sql');
+  for (const migration of migrationFiles.slice(upgrade)) applyMigration(sqlite, migration);
 
   assert.deepEqual(sqlite.prepare('SELECT key FROM galaxy_auth_rate_limit').all().map((row) => row.key), ['198.51.100.7|/sign-in/email']);
   assert.deepEqual({ ...sqlite.prepare('SELECT key, count, window_start FROM _ecommerce_rate_limits').get() },
