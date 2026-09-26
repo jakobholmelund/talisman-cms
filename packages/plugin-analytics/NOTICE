@@ -9,11 +9,13 @@ software below, which is used under the license reproduced with it.
 --------------------------------------------------------------------------------
 daisyUI (https://daisyui.com, https://github.com/saadeghi/daisyui)
 
-Used in @talisman-cms/plugin-ui-daisyui. The built-in theme colour palettes in
-src/admin/themeDefaults.ts are transcribed from daisyUI's theme definitions.
-The daisyUI class names and variable names used by the renderers and the Theme
-Builder, and the component list in catalog.upstream.json, also come from
-daisyUI.
+Used in @talisman-cms/plugin-ui-daisyui. The built-in theme values in
+src/admin/themeDefaults.ts (colours and the radius, size, border, depth and
+noise variables of each theme) are generated from the theme data
+(daisyui/theme/object) of the daisyui npm package, version 5.7.42, which the
+file records. The daisyUI class names and variable names used by the renderers
+and the Theme Builder, and the component list in catalog.upstream.json, also
+come from daisyUI.
 
 MIT License
 

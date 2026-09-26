@@ -1,6 +1,6 @@
 # Commerce production readiness review
 
-Reviewed against the Talisman Cloudflare Worker integration on 25 September 2026.
+Reviewed on 25 September 2026 against the Talisman CMS integration on Cloudflare Workers and D1.
 
 ## Decision
 
@@ -35,6 +35,6 @@ The plugin is suitable for a controlled production deployment with public checko
 5. Configure an email provider (a Cloudflare Email Service `[[send_email]]` binding named `EMAIL` on an onboarded sending domain, or a custom provider), the `TALISMAN_EMAIL_FROM` sender and the `TALISMAN_PUBLIC_ORIGIN`. Turn off any provider feature that stores message content, because sign-in links are bearer credentials for 15 minutes. Prove that the checkout email receives a one-time sign-in link and an unrelated browser cannot use the cart cookie to enter that account. Review `TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT` (default 200 sign-in emails a day) against the provider's quota.
 6. Assign staff to inspect the admin order queue, pack and label shipments, tell customers about dispatch, resolve failed deliveries, handle refunds, and monitor webhook and scheduled Worker failures. The plugin records fulfillment but does not buy labels or send shipment or order confirmation emails.
 7. Keep `TALISMAN_COMMERCE_CHECKOUT_ENABLED=false` until these gates pass. Enable gift card sales separately only after their key backup and purchase, delivery, and refund procedures are tested.
-8. Add a Cloudflare rate limiting rule, keyed on the client IP, for `/api/ecommerce/*` and `/_actions/*`. The basket and sign-in APIs need no session, and the plugin bounds each request but not the request rate.
+8. Add a Cloudflare rate limiting rule, keyed on the client IP, for every public path under `/api/ecommerce/` except `/api/ecommerce/webhooks/`: today `account`, `cart`, `checkout`, `discount`, `gift-cards` and `order`, for every request method, because a `GET` of `order` for a pending order asks the payment provider for its status. Add `/_actions/*` on sites that use the plugin's Astro actions. Leave the Stripe webhook paths out of every per-IP rule: `/api/ecommerce/webhooks/*`, and `/api/stripe/webhooks` with plugin-stripe. Stripe sends webhooks from a small set of addresses, so a per-IP limit would drop deliveries. Check that the zone's plan supports the counting period and block duration you choose; otherwise use the closest values it allows. On a plan that allows a single rate limiting rule, match all these paths in one rule. The basket API needs no session and bounds each request but not the request rate; sign-in has its own per-address, per-network and store-wide limits.
 
-Talisman deployment steps and secret names are in its `DEPLOYMENT.md`. This review covers the code and local integration; it does not certify the merchant's legal, tax, product, or operational readiness.
+Site deployment steps and secret names belong in each site's own deployment notes; the CMS deployment gate is in [RELEASE.md](../../RELEASE.md#deployment-gate). This review covers the code and local integration; it does not certify the merchant's legal, tax, product, or operational readiness.
