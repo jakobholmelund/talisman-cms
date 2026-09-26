@@ -68,6 +68,21 @@ export function bindCommerceApi(options: CommerceApiOptions) {
   const { env, paymentAdapters = [] } = options;
   const db = createDbClient(env);
 
+  // Best effort: the provider's discount is single-use and expires with its checkout, so a
+  // failed delete is logged and never blocks releasing the order.
+  async function discardCheckoutDiscount(adapter: PaymentProviderAdapter | undefined, orderId: string) {
+    if (!adapter?.discardCheckoutDiscount) return;
+    try {
+      await adapter.discardCheckoutDiscount(orderId);
+    } catch (error) {
+      console.warn('[commerce] Checkout discount could not be discarded', {
+        provider: adapter.providerId,
+        name: error instanceof Error ? error.name : typeof error,
+        code: typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : undefined,
+      });
+    }
+  }
+
   async function resolveSelectedVariant(
     product: typeof schema.products.$inferSelect,
     variantId: string
@@ -569,7 +584,7 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         const cart = await db.select().from(schema.carts).where(eq(schema.carts.id, cartId)).get();
         if (!cart?.checkoutSessionId) return null;
         if (cart.checkoutSessionId.startsWith('preparing:')) {
-          // Stripe sessions created by this plugin expire after 30 minutes. A Worker can
+          // Stripe sessions created by this plugin expire after 31 minutes. A Worker can
           // stop between locking the basket and persisting the provider session; only
           // release that orphaned lock after the possible session has expired.
           const cutoff = Math.floor(Date.now() / 1000) - 35 * 60;
@@ -805,7 +820,10 @@ export function bindCommerceApi(options: CommerceApiOptions) {
 
          let session: Awaited<ReturnType<typeof defaultAdapter.createCheckoutSession>> | undefined;
          let committed = false;
+         // The provider may have created a discount for this checkout once it was asked for a session.
+         let providerDiscount = false;
          try {
+         providerDiscount = !internallyPaid && creditApplied + discountAmount + giftCardApplied > 0;
          session = internallyPaid ? { providerSessionId: `internal:${orderId}`, url: successUrl }
            : await defaultAdapter.createCheckoutSession({
             orderId,
@@ -907,9 +925,13 @@ export function bindCommerceApi(options: CommerceApiOptions) {
          return { order, paymentUrl: session.url };
          } catch (error) {
            if (committed) throw error;
-           if (session?.providerSessionId && !internallyPaid) {
-             // Never unlock the basket while a provider session may still accept payment.
-             await defaultAdapter.expireCheckoutSession(session.providerSessionId);
+           try {
+             if (session?.providerSessionId && !internallyPaid) {
+               // Never unlock the basket while a provider session may still accept payment.
+               await defaultAdapter.expireCheckoutSession(session.providerSessionId);
+             }
+           } finally {
+             if (providerDiscount) await discardCheckoutDiscount(defaultAdapter, orderId);
            }
            await env.DB.prepare(`UPDATE _ecommerce_carts SET checkout_session_id = NULL
              WHERE id = ? AND checkout_session_id = ?`).bind(cartId, preparationLock).run();
@@ -1099,7 +1121,14 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         }
         await env.DB.batch(statements);
 
-        return await this.find(id);
+        const cancelled = await this.find(id);
+        // A cancelled checkout's single-use discount is deleted, whichever path cancelled it.
+        if (cancelled?.status === 'cancelled' &&
+            order.creditApplied + order.discountAmount + order.giftCardApplied > 0) {
+          await discardCheckoutDiscount(
+            paymentAdapters.find((candidate) => candidate.providerId === (order.paymentProvider ?? 'stripe')), id);
+        }
+        return cancelled;
       }
     },
     
@@ -1149,6 +1178,11 @@ export function bindCommerceApi(options: CommerceApiOptions) {
             if (order?.checkoutSessionId === session.id) {
               const cancelled = await bindCommerceApi(options).orders.cancel(orderId, { sessionExpired: true });
               return { success: true, event: event.type, cancelled: cancelled?.status === 'cancelled' };
+            }
+            if (!order) {
+              // The checkout stopped before its order was recorded; its coupon, if any, is deleted.
+              await discardCheckoutDiscount(stripeAdapter, orderId);
+              return { success: true, event: event.type, cancelled: false };
             }
           }
         }

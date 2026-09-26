@@ -22,7 +22,8 @@ test('Stripe checkout applies the reserved credit as an exact fixed coupon', asy
   });
   assert.equal(result.providerSessionId, 'cs_test');
   assert.deepEqual(calls[0].input, {
-    amount_off: 3000, currency: 'usd', duration: 'once', name: 'Promotion and store credit'
+    id: 'ord_test_discount', amount_off: 3000, currency: 'usd', duration: 'once', max_redemptions: 1,
+    redeem_by: calls[1].input.expires_at, name: 'Promotion and store credit'
   });
   assert.equal(calls[0].options.idempotencyKey, 'ord_test:discount');
   assert.deepEqual(calls[1].input.discounts, [{ coupon: 'coupon_credit' }]);

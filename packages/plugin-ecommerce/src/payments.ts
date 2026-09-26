@@ -44,6 +44,12 @@ export interface PaymentProviderAdapter {
   /** Stop an open hosted checkout before releasing its stock reservation. */
   expireCheckoutSession?(sessionId: string): Promise<void>;
 
+  /**
+   * Delete the single-use discount the provider created for an order's checkout, once that
+   * checkout has expired or was cancelled. Resolves when there is nothing to delete.
+   */
+  discardCheckoutDiscount?(orderId: string): Promise<void>;
+
   /** Reopen an in-progress hosted checkout after the shopper returns. */
   getCheckoutSession?(sessionId: string): Promise<{
     status: string | null;
