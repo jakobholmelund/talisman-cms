@@ -545,7 +545,8 @@ export const ecommercePlugin = (
             { name: 'source', label: 'Source', type: 'text' },
             { name: 'initialCents', label: 'Issued (smallest currency unit)', type: 'number' },
             { name: 'balanceCents', label: 'Balance (smallest currency unit)', type: 'number' },
-            { name: 'status', label: 'Status', type: 'text' }
+            { name: 'status', label: 'Status', type: 'text' },
+            { name: 'replacesPurchaseId', label: 'Replaces Purchase', type: 'text' }
           ],
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCards', idColumn: 'id' }
         });
@@ -558,7 +559,8 @@ export const ecommercePlugin = (
             { name: 'buyerEmail', label: 'Buyer Email', type: 'text' },
             { name: 'amountCents', label: 'Amount (smallest currency unit)', type: 'number' },
             { name: 'status', label: 'Status', type: 'text' },
-            { name: 'providerRefundedCents', label: 'Refunded (smallest currency unit)', type: 'number' }
+            { name: 'providerRefundedCents', label: 'Refunded (smallest currency unit)', type: 'number' },
+            { name: 'refundAdjustedCents', label: 'Refund Taken Off Cards (smallest currency unit)', type: 'number' }
           ],
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardPurchases', idColumn: 'id' }
         });
@@ -601,6 +603,22 @@ export const ecommercePlugin = (
             { name: 'reason', label: 'Reason', type: 'text' }
           ],
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardRefunds', idColumn: 'id' }
+        });
+        collections.push({
+          name: 'Gift Card Reviews', slug: '_ecommerce_gift_card_reviews',
+          description: 'Administrator decisions on refunded gift card purchases, with reasons.',
+          adminSection: 'commerce', readOnly: true,
+          fields: [
+            { name: 'id', label: 'ID', type: 'text', required: true },
+            { name: 'purchaseId', label: 'Purchase ID', type: 'text' },
+            { name: 'cardId', label: 'Gift Card ID', type: 'text' },
+            { name: 'outcome', label: 'Outcome', type: 'text' },
+            { name: 'refundedCents', label: 'Refunded (smallest currency unit)', type: 'number' },
+            { name: 'adjustmentCents', label: 'Taken Off Cards (smallest currency unit)', type: 'number' },
+            { name: 'adminActor', label: 'Administrator', type: 'text' },
+            { name: 'reason', label: 'Reason', type: 'text' }
+          ],
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardReviews', idColumn: 'id' }
         });
         collections.push({
           name: 'Gift Card Order Refunds', slug: '_ecommerce_gift_card_order_refunds',

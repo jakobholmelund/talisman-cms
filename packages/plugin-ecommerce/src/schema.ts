@@ -359,6 +359,8 @@ export const giftCardPurchases = sqliteTable('_ecommerce_gift_card_purchases', {
   providerSessionId: text('provider_session_id').unique(),
   paymentIntentId: text('payment_intent_id').unique(),
   providerRefundedCents: integer('provider_refunded_cents').notNull().default(0),
+  /** The part of providerRefundedCents already settled on the purchase's cards: taken off a reinstated card, or cancelled with void ones. */
+  refundAdjustedCents: integer('refund_adjusted_cents').notNull().default(0),
   accessTokenHash: text('access_token_hash').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
@@ -372,6 +374,10 @@ export const giftCards = sqliteTable('_ecommerce_gift_cards', {
   encryptedCode: text('encrypted_code').notNull(),
   source: text('source').$type<'purchase' | 'admin'>().notNull(),
   purchaseId: text('purchase_id').references(() => giftCardPurchases.id).unique(),
+  /** Set on an administrator-issued card that took over a purchase's value; a refund of that purchase holds it too. */
+  replacesPurchaseId: text('replaces_purchase_id').references(() => giftCardPurchases.id),
+  /** Suspended by its purchase's review hold while it was active, so reinstating the purchase reactivates it. */
+  heldForReview: integer('held_for_review', { mode: 'boolean' }).notNull().default(false),
   adminActor: text('admin_actor'),
   adminReason: text('admin_reason'),
   initialCents: integer('initial_cents').notNull(),
@@ -407,6 +413,19 @@ export const giftCardRefunds = sqliteTable('_ecommerce_gift_card_refunds', {
   cardId: text('card_id').notNull().references(() => giftCards.id),
   orderId: text('order_id').notNull().references(() => orders.id),
   amountCents: integer('amount_cents').notNull(),
+  adminActor: text('admin_actor').notNull(),
+  reason: text('reason').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
+
+/** Administrator decisions on purchases held for review after a provider refund. */
+export const giftCardReviews = sqliteTable('_ecommerce_gift_card_reviews', {
+  id: text('id').primaryKey(),
+  purchaseId: text('purchase_id').notNull().references(() => giftCardPurchases.id),
+  cardId: text('card_id').notNull().references(() => giftCards.id), // The card that held the purchase's value.
+  outcome: text('outcome').$type<'reinstate' | 'void'>().notNull(),
+  refundedCents: integer('refunded_cents').notNull(), // The provider refund total the decision covered.
+  adjustmentCents: integer('adjustment_cents').notNull(), // Taken off the purchase's cards.
   adminActor: text('admin_actor').notNull(),
   reason: text('reason').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),

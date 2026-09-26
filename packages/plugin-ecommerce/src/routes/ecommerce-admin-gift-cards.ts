@@ -1,8 +1,9 @@
 import type { APIRoute } from 'astro';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
-import { getGiftCardsAdmin, issueAdminGiftCard, setGiftCardActive,
-  refundGiftCardTender, refundGiftCardOnlyOrder } from '../gift-cards';
+import { getGiftCardsAdmin, getGiftCardReviewsAdmin, getGiftCardKeyStatus, issueAdminGiftCard,
+  setGiftCardActive, resolveGiftCardReview, reencryptGiftCardCodes, refundGiftCardTender,
+  refundGiftCardOnlyOrder } from '../gift-cards';
 import { StoreSettingsError, reportStoreSettingsError } from '../store-settings';
 
 export const ALL: APIRoute = async ({ request }) => {
@@ -18,14 +19,19 @@ export const ALL: APIRoute = async ({ request }) => {
   try {
     const { env } = await import('cloudflare:workers');
     const runtimeEnv = env as unknown as TalismanEnv;
-    if (request.method === 'GET') return Response.json({ cards: await getGiftCardsAdmin(runtimeEnv) }, { headers });
+    if (request.method === 'GET') {
+      return Response.json({ cards: await getGiftCardsAdmin(runtimeEnv), ...await getGiftCardReviewsAdmin(runtimeEnv),
+        encryption: await getGiftCardKeyStatus(runtimeEnv) }, { headers });
+    }
     const body = await request.json() as { action?: string; id?: string; active?: boolean; data?: unknown };
     const actor = String(authorization.user?.id ?? '');
     let result: unknown;
     if (body.action === 'issue') result = await issueAdminGiftCard(runtimeEnv, actor, body.data);
     else if (body.action === 'setActive' && typeof body.id === 'string') {
       result = await setGiftCardActive(runtimeEnv, body.id, body.active as boolean);
-    } else if (body.action === 'refundTender') result = await refundGiftCardTender(runtimeEnv, actor, body.data);
+    } else if (body.action === 'resolveReview') result = await resolveGiftCardReview(runtimeEnv, actor, body.data);
+    else if (body.action === 'reencryptCodes') result = await reencryptGiftCardCodes(runtimeEnv, body.data);
+    else if (body.action === 'refundTender') result = await refundGiftCardTender(runtimeEnv, actor, body.data);
     else if (body.action === 'refundGiftOnlyOrder') result = await refundGiftCardOnlyOrder(runtimeEnv, actor, body.data);
     else return Response.json({ error: 'Invalid gift card action' }, { status: 400, headers });
     return Response.json({ result }, { headers });

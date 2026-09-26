@@ -32,7 +32,7 @@ const promotionSlugs = new Set([
 const giftSlugs = new Set([
   '_ecommerce_gift_card_purchases', '_ecommerce_gift_card_ledger',
   '_ecommerce_gift_card_redemptions', '_ecommerce_gift_card_refunds',
-  '_ecommerce_gift_card_order_refunds'
+  '_ecommerce_gift_card_order_refunds', '_ecommerce_gift_card_reviews'
 ]);
 const featuredSlugs = new Set(['products', '_ecommerce_orders', '_ecommerce_discount_codes', '_ecommerce_gift_cards']);
 

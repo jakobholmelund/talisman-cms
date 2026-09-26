@@ -351,6 +351,27 @@ const seeds = {
     UPDATE _ecommerce_orders SET status = 'partially_refunded', provider_refunded_cents = 1000, updated_at = ${T + 300}
       WHERE id = 'order-shipped-refunded';
   `),
+  // Gift card rows as releases before 0027 wrote them: a partial refund held for review, a full refund
+  // of an unspent card voided, and an administrator's card.
+  '0015_gift_cards': (db) => db.exec(`
+    INSERT INTO _ecommerce_gift_card_purchases (id, buyer_email, amount_cents, status, provider_session_id, payment_intent_id, access_token_hash, created_at, updated_at) VALUES
+      ('gp-held', 'buyer@example.com', 10000, 'paid', 'cs_held', 'pi_held', 'hash-held', ${T}, ${T}),
+      ('gp-refunded', 'buyer@example.com', 5000, 'paid', 'cs_refunded', 'pi_refunded', 'hash-refunded', ${T}, ${T});
+    INSERT INTO _ecommerce_gift_cards (id, code_hash, code_suffix, encrypted_code, source, purchase_id, admin_actor, admin_reason, initial_cents, created_at, updated_at) VALUES
+      ('gift-held', 'code-held', 'AAAA', '000000000000000000000000:00', 'purchase', 'gp-held', NULL, NULL, 10000, ${T}, ${T}),
+      ('gift-refunded', 'code-refunded', 'BBBB', '000000000000000000000000:11', 'purchase', 'gp-refunded', NULL, NULL, 5000, ${T}, ${T}),
+      ('gift-admin', 'code-admin', 'CCCC', '000000000000000000000000:22', 'admin', NULL, 'admin-1', 'Customer goodwill', 2500, ${T}, ${T});
+    INSERT INTO _ecommerce_gift_card_ledger (id, card_id, purchase_id, kind, amount_cents, created_at) VALUES
+      ('gcl_issue_gift-held', 'gift-held', 'gp-held', 'issue', 10000, ${T}),
+      ('gcl_issue_gift-refunded', 'gift-refunded', 'gp-refunded', 'issue', 5000, ${T}),
+      ('gcl_issue_gift-admin', 'gift-admin', NULL, 'issue', 2500, ${T});
+    UPDATE _ecommerce_gift_card_purchases SET status = 'review', provider_refunded_cents = 3000, updated_at = ${T + 10} WHERE id = 'gp-held';
+    UPDATE _ecommerce_gift_cards SET status = 'suspended', updated_at = ${T + 10} WHERE id = 'gift-held';
+    UPDATE _ecommerce_gift_card_purchases SET status = 'refunded', provider_refunded_cents = 5000, updated_at = ${T + 10} WHERE id = 'gp-refunded';
+    UPDATE _ecommerce_gift_cards SET status = 'void', updated_at = ${T + 10} WHERE id = 'gift-refunded';
+    INSERT INTO _ecommerce_gift_card_ledger (id, card_id, purchase_id, kind, amount_cents, created_at) VALUES
+      ('gcl_purchase_reversal_gift-refunded', 'gift-refunded', 'gp-refunded', 'purchase_reversal', -5000, ${T + 10});
+  `),
   // Seeds and imports wrote entries straight to D1, without revisions.
   '0019_shared_customer_identity': (db) => db.exec(`
     INSERT INTO galaxy_entries (id, collection_id, slug, status, data, created_at, updated_at) VALUES
@@ -460,6 +481,7 @@ test('a database with data from earlier releases upgrades cleanly', () => {
     assert.deepEqual(row(db, `SELECT status, fulfillment_status, updated_at FROM _ecommerce_orders WHERE id = 'order-1'`),
       { status: 'paid', fulfillment_status: 'fulfilled', updated_at: T + 500 });
     assertIntegrity(db);
+    assertGiftCardRowsKept(db);
     migrate(empty);
     assert.deepEqual(fullSchema(db), fullSchema(empty));
   } finally {
@@ -505,6 +527,95 @@ test('0026 lets an order ship in parcels and take appended corrections, with ind
     assert.deepEqual(state(), { status: 'partially_refunded', fulfillment_status: 'fulfilled', updated_at: T + 2 });
     assert.throws(() => ship('parcel-3', 'order-parcels', 0), /Order is not ready for fulfillment/);
     assert.throws(() => ship('test-parcel', 'order-test', 1), /Order is not ready for fulfillment/);
+    assertIntegrity(db);
+  } finally {
+    db.close();
+  }
+});
+
+/**
+ * 0027: gift card rows keep their values; no refund was taken off a card, no card replaces a purchase,
+ * and no card is marked as suspended by a review hold, so reinstating leaves an earlier suspension alone.
+ */
+function assertGiftCardRowsKept(db) {
+  assert.deepEqual(rows(db, 'SELECT id, status, provider_refunded_cents, refund_adjusted_cents FROM _ecommerce_gift_card_purchases ORDER BY id'), [
+    { id: 'gp-held', status: 'review', provider_refunded_cents: 3000, refund_adjusted_cents: 0 },
+    { id: 'gp-refunded', status: 'refunded', provider_refunded_cents: 5000, refund_adjusted_cents: 0 },
+  ]);
+  assert.deepEqual(rows(db, `SELECT c.id, c.status, c.balance_cents, c.replaces_purchase_id, c.held_for_review,
+      (SELECT SUM(amount_cents) FROM _ecommerce_gift_card_ledger l WHERE l.card_id = c.id) AS ledger
+    FROM _ecommerce_gift_cards c ORDER BY c.id`), [
+    { id: 'gift-admin', status: 'active', balance_cents: 2500, replaces_purchase_id: null, held_for_review: 0, ledger: 2500 },
+    { id: 'gift-held', status: 'suspended', balance_cents: 10000, replaces_purchase_id: null, held_for_review: 0, ledger: 10000 },
+    { id: 'gift-refunded', status: 'void', balance_cents: 0, replaces_purchase_id: null, held_for_review: 0, ledger: 0 },
+  ]);
+  assert.equal(row(db, 'SELECT COUNT(*) AS n FROM _ecommerce_gift_card_reviews').n, 0);
+}
+
+test('0027 keeps gift card rows, enforces its links, and the previous release can still write gift cards', () => {
+  const db = openDatabase();
+  try {
+    const previous = tags[tags.indexOf('0027_gift_card_review') - 1];
+    migrate(db, { to: previous, after: { '0015_gift_cards': seeds['0015_gift_cards'] } });
+    applyMigration(db, '0027_gift_card_review');
+    assertGiftCardRowsKept(db);
+
+    // The previous release's gift card statements, verbatim: issue an administrator's card, start and
+    // confirm a purchase, record a refund, and toggle a card.
+    db.prepare(`INSERT INTO _ecommerce_gift_cards
+      (id,code_hash,code_suffix,encrypted_code,source,admin_actor,admin_reason,initial_cents,balance_cents,currency,status,created_at,updated_at)
+      VALUES (?,?,?,?, 'admin',?,?,?,0,'usd','active',?,?)`)
+      .run('gift-issued', 'code-issued', 'DDDD', '000000000000000000000000:33', 'admin-1', 'Service goodwill', 3000, T, T);
+    db.prepare(`INSERT INTO _ecommerce_gift_card_ledger
+      (id,card_id,kind,amount_cents,created_at) VALUES (?,?,'issue',?,?)`).run('gcl_issue_gift-issued', 'gift-issued', 3000, T);
+    db.prepare(`INSERT INTO _ecommerce_gift_card_purchases
+      (id,buyer_email,amount_cents,currency,status,access_token_hash,created_at,updated_at)
+      VALUES (?,?,?,'usd','pending',?,?,?)`).run('gp-new', 'buyer@example.com', 8000, 'hash-new', T, T);
+    db.prepare(`UPDATE _ecommerce_gift_card_purchases SET provider_session_id = ?, updated_at = ?
+      WHERE id = ? AND status = 'pending'`).run('cs_new', T, 'gp-new');
+    db.prepare(`UPDATE _ecommerce_gift_card_purchases
+      SET status = 'paid',payment_intent_id = ?,updated_at = ?
+      WHERE id = ? AND status = 'pending' AND provider_session_id = ?`).run('pi_new', T, 'gp-new', 'cs_new');
+    db.prepare(`INSERT INTO _ecommerce_gift_cards
+      (id,code_hash,code_suffix,encrypted_code,source,purchase_id,initial_cents,balance_cents,currency,status,created_at,updated_at)
+      SELECT ?,?,?,?,'purchase',id,amount_cents,0,'usd','active',?,?
+      FROM _ecommerce_gift_card_purchases WHERE id = ? AND status = 'paid'
+      ON CONFLICT(purchase_id) DO NOTHING`).run('gift-new', 'code-new', 'EEEE', '000000000000000000000000:44', T, T, 'gp-new');
+    db.prepare(`INSERT INTO _ecommerce_gift_card_ledger
+      (id,card_id,purchase_id,kind,amount_cents,created_at)
+      SELECT 'gcl_issue_' || id,id,purchase_id,'issue',initial_cents,?
+      FROM _ecommerce_gift_cards WHERE purchase_id = ? ON CONFLICT(id) DO NOTHING`).run(T, 'gp-new');
+    db.prepare(`UPDATE _ecommerce_gift_card_purchases SET status = ?,provider_refunded_cents = ?,updated_at = ?
+      WHERE id = ? AND provider_refunded_cents < ?`).run('review', 1000, T + 20, 'gp-new', 1000);
+    db.prepare(`UPDATE _ecommerce_gift_cards SET status = ?,updated_at = ? WHERE id = ?`).run('suspended', T + 20, 'gift-new');
+    db.prepare(`UPDATE _ecommerce_gift_cards SET status = ?,updated_at = ?
+      WHERE id = ? AND status <> 'void' AND (source = 'admin' OR EXISTS (
+        SELECT 1 FROM _ecommerce_gift_card_purchases p WHERE p.id = purchase_id AND p.status = 'paid'))
+      RETURNING id`).all('suspended', T + 20, 'gift-issued');
+    assert.deepEqual(rows(db, `SELECT id, status, balance_cents, replaces_purchase_id, held_for_review FROM _ecommerce_gift_cards
+      WHERE id IN ('gift-issued', 'gift-new') ORDER BY id`), [
+      { id: 'gift-issued', status: 'suspended', balance_cents: 3000, replaces_purchase_id: null, held_for_review: 0 },
+      { id: 'gift-new', status: 'suspended', balance_cents: 8000, replaces_purchase_id: null, held_for_review: 0 },
+    ]);
+    assert.deepEqual(row(db, `SELECT status, provider_refunded_cents, refund_adjusted_cents FROM _ecommerce_gift_card_purchases WHERE id = 'gp-new'`),
+      { status: 'review', provider_refunded_cents: 1000, refund_adjusted_cents: 0 });
+    // A card the new release's hold marked can still be voided by the previous release's refund statement.
+    db.exec(`UPDATE _ecommerce_gift_cards SET held_for_review = 1 WHERE id = 'gift-new'`);
+    db.prepare(`UPDATE _ecommerce_gift_cards SET status = ?,updated_at = ? WHERE id = ?`).run('void', T + 30, 'gift-new');
+    assert.equal(row(db, `SELECT status FROM _ecommerce_gift_cards WHERE id = 'gift-new'`).status, 'void');
+
+    // A card replaces only an existing purchase, and only an administrator's card replaces one; no
+    // more of a refund can be taken off the cards than was refunded.
+    assert.throws(() => db.exec(`UPDATE _ecommerce_gift_cards SET replaces_purchase_id = 'gp-held' WHERE id = 'gift-new'`), /CHECK constraint failed/);
+    assert.throws(() => db.exec(`UPDATE _ecommerce_gift_cards SET replaces_purchase_id = 'gp-missing' WHERE id = 'gift-issued'`), /FOREIGN KEY constraint failed/);
+    db.exec(`UPDATE _ecommerce_gift_cards SET replaces_purchase_id = 'gp-held' WHERE id = 'gift-issued'`);
+    assert.throws(() => db.exec(`UPDATE _ecommerce_gift_card_purchases SET refund_adjusted_cents = 3001 WHERE id = 'gp-held'`), /CHECK constraint failed/);
+    db.exec(`UPDATE _ecommerce_gift_card_purchases SET refund_adjusted_cents = 3000 WHERE id = 'gp-held'`);
+    assert.throws(() => db.exec(`UPDATE _ecommerce_gift_cards SET held_for_review = 2 WHERE id = 'gift-held'`), /CHECK constraint failed/);
+    assert.throws(() => db.exec(`INSERT INTO _ecommerce_gift_card_reviews (id, purchase_id, card_id, outcome, refunded_cents, adjustment_cents, admin_actor, reason, created_at)
+      VALUES ('review-1', 'gp-held', 'gift-held', 'reinstate', 3000, 3000, ' ', 'Partial refund approved', ${T})`), /CHECK constraint failed/);
+    db.exec(`INSERT INTO _ecommerce_gift_card_reviews (id, purchase_id, card_id, outcome, refunded_cents, adjustment_cents, admin_actor, reason, created_at)
+      VALUES ('review-1', 'gp-held', 'gift-held', 'reinstate', 3000, 3000, 'admin-1', 'Partial refund approved', ${T})`);
     assertIntegrity(db);
   } finally {
     db.close();
