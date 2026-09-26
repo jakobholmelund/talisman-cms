@@ -97,19 +97,33 @@ export async function setGiftCardActive(env: TalismanEnv, id: string, active: bo
   return { id, status: active ? 'active' : 'suspended' };
 }
 
+/** Why a gift card was refused. The reason is for server-side use; shoppers see one message. */
+export type GiftCardRefusalReason = 'format' | 'unavailable' | 'nothing_due' | 'cannot_cover';
+
+/** A gift card refused for this order. `message` is the detailed reason for admin tools and logs. */
+export class GiftCardRefusal extends Error {
+  readonly reason: GiftCardRefusalReason;
+  constructor(reason: GiftCardRefusalReason, message: string) {
+    super(message);
+    this.name = 'GiftCardRefusal';
+    this.reason = reason;
+  }
+}
+
+/** Checks a gift card against the amount still due and returns what it pays, or throws a GiftCardRefusal. */
 export async function evaluateGiftCard(env: TalismanEnv, code: string, amountDue: number) {
   const normalized = code.trim().toUpperCase();
-  if (!/^GIFT-[A-F0-9]{32}$/.test(normalized)) throw new Error('Invalid gift card code');
+  if (!/^GIFT-[A-F0-9]{32}$/.test(normalized)) throw new GiftCardRefusal('format', 'Invalid gift card code');
   const db = createDbClient(env);
   const card = await db.select().from(giftCards)
     .where(eq(giftCards.codeHash, await hashGiftCardSecret(normalized))).get();
   if (!card || card.status !== 'active' || card.currency !== 'usd' || card.balanceCents <= 0) {
-    throw new Error('Gift card is unavailable');
+    throw new GiftCardRefusal('unavailable', 'Gift card is unavailable');
   }
-  if (!Number.isSafeInteger(amountDue) || amountDue <= 0) throw new Error('No balance remains to pay');
+  if (!Number.isSafeInteger(amountDue) || amountDue <= 0) throw new GiftCardRefusal('nothing_due', 'No balance remains to pay');
   const amount = card.balanceCents >= amountDue ? amountDue
     : Math.min(card.balanceCents, Math.max(0, amountDue - 50));
-  if (amount <= 0) throw new Error('Gift card cannot cover this order or a valid split payment');
+  if (amount <= 0) throw new GiftCardRefusal('cannot_cover', 'Gift card cannot cover this order or a valid split payment');
   return { id: card.id, codeSuffix: card.codeSuffix, amount, remainingCents: card.balanceCents };
 }
 

@@ -4,6 +4,8 @@ import { bindCommerceApi, CART_MAX_LINE_QUANTITY } from './api';
 import { runtimePaymentAdapters } from './runtime';
 import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from './accounts';
 import { REFERRAL_COOKIE } from './referrals';
+import { codeRefusalBody } from './promotions';
+import { CODE_CHECK_LIMIT_MESSAGE, codeChecksOverBasketLimit, codeChecksOverNetworkLimit } from './code-check-limits';
 import { ensureCartSession, readCartSessionToken } from './cookies';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { readSetting } from 'talisman-cms/env';
@@ -173,6 +175,16 @@ export const ecommerceActions = {
         const successUrl = `${siteUrl}/checkout/success?order={ORDER_ID}`;
         const cancelUrl = `${siteUrl}/checkout/cancel?order={ORDER_ID}`;
 
+        // A checkout that carries a code is a code check and shares the discount preview's limits.
+        if (input.discountCode || input.giftCardCode) {
+          const now = Math.floor(Date.now() / 1000);
+          const sourceIp = context.request?.headers?.get?.('cf-connecting-ip');
+          if (await codeChecksOverNetworkLimit(env as unknown as TalismanEnv, sourceIp, now) ||
+              await codeChecksOverBasketLimit(env as unknown as TalismanEnv, cart.id, now)) {
+            throw new ActionError({ code: 'TOO_MANY_REQUESTS', message: CODE_CHECK_LIMIT_MESSAGE });
+          }
+        }
+
         const result = await api.orders.createFromCart(cart.id, {
           customerEmail: input.customerEmail,
           providerId: 'stripe',
@@ -193,6 +205,9 @@ export const ecommerceActions = {
         };
       } catch (error: any) {
         if (error instanceof ActionError) throw error;
+        // A refused discount or gift card code gets one answer, whatever the reason.
+        const refusal = codeRefusalBody(error);
+        if (refusal) throw new ActionError({ code: 'CONFLICT', message: refusal.error });
         throw new ActionError({
           code: 'BAD_REQUEST',
           message: error.message || 'Failed to complete checkout',

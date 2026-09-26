@@ -353,7 +353,7 @@ test('with checkout enabled, the discount preview keeps its checks and prices th
   const noBasket = await preview({ code: 'SAVE10' }, {});
   assert.deepEqual([noBasket.status, noBasket.json], [404, { error: 'Basket not found' }]);
   const unknown = await preview({ code: 'NOPE10', customerEmail: 'guest@example.test' });
-  assert.deepEqual([unknown.status, unknown.json], [409, { error: 'Discount code is unavailable' }]);
+  assert.deepEqual([unknown.status, unknown.json], [409, { error: 'This code is not valid for this order.', field: 'code' }]);
 
   const priced = { code: 'SAVE10', type: 'percent', discountAmount: 1200, creditApplied: 0,
     giftCardApplied: 0, giftCardSuffix: null, cardAmount: 10800 };

@@ -4,13 +4,17 @@ import type { TalismanEnv } from 'talisman-cms/client';
 import { readSetting } from 'talisman-cms/env';
 import { bindCommerceApi } from '../api';
 import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from '../accounts';
-import { evaluateDiscountCode } from '../promotions';
+import { codeRefusalBody, evaluateDiscountCode } from '../promotions';
 import { evaluateGiftCard } from '../gift-cards';
 import { readCartSessionToken } from '../cookies';
+import { CODE_CHECK_LIMIT_MESSAGE, codeChecksOverBasketLimit, codeChecksOverNetworkLimit } from '../code-check-limits';
 
-const previewSchema = z.object({ code: z.string().trim().max(32).optional(),
-  giftCardCode: z.string().trim().max(37).optional(),
-  customerEmail: z.string().trim().email().max(254).optional() }).strict();
+// `customerEmail` is still accepted in any form so existing storefronts keep working, but the preview
+// ignores it: it decides only from the basket and the signed-in shopper's own account. The code
+// lengths only bound the body; a code of the wrong shape gets the same refusal as any other.
+const previewSchema = z.object({ code: z.string().trim().max(200).optional(),
+  giftCardCode: z.string().trim().max(200).optional(),
+  customerEmail: z.unknown().optional() }).strict();
 
 export const POST: APIRoute = async ({ request, cookies }) => {
   const headers = { 'Cache-Control': 'no-store' };
@@ -28,17 +32,26 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   if (!parsed.success || !(parsed.data.code || parsed.data.giftCardCode)) {
     return Response.json({ error: 'Enter a discount or gift card code' }, { status: 400, headers });
   }
+  const tooMany = () => Response.json({ error: CODE_CHECK_LIMIT_MESSAGE }, { status: 429, headers });
+  const now = Math.floor(Date.now() / 1000);
+  // Every preview that passes the request checks counts, before any basket or code is read.
+  if (await codeChecksOverNetworkLimit(runtimeEnv, request.headers.get('cf-connecting-ip'), now)) return tooMany();
   const token = readCartSessionToken(cookies);
   if (!token) return Response.json({ error: 'Basket not found' }, { status: 404, headers });
   try {
     const account = await findCustomerSession(runtimeEnv, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
     const api = bindCommerceApi({ env: runtimeEnv });
-    const cart = account ? await api.carts.getOrCreate(token, account.id) : await api.carts.find(token);
+    // Links the browser basket to a signed-in account like the cart route, but never creates a basket.
+    const cart = (account ? await api.carts.claim(token, account.id) : null) ??
+      await api.carts.find(token, account?.id);
+    if (cart && await codeChecksOverBasketLimit(runtimeEnv, cart.id, now)) return tooMany();
     if (!cart?.items.length || cart.checkoutSessionId) throw new Error('Basket is not available for discounts');
     const quote = await api.carts.quote(cart.id);
+    // Order-history rules are checked against a signed-in account only. A guest has no verified
+    // address here, so first-order and per-customer rules wait for checkout and its email.
     const promotion = parsed.data.code ? await evaluateDiscountCode(runtimeEnv, {
-      code: parsed.data.code, customerEmail: parsed.data.customerEmail || account?.email || '',
-      accountId: account?.id, subtotal: quote.totalAmount,
+      code: parsed.data.code, customerEmail: '', accountId: account?.id,
+      checkShopperHistory: Boolean(account), subtotal: quote.totalAmount,
       lines: quote.lines.map(line => ({ productId: line.productId,
         quantity: line.quantity, priceAtPurchase: line.unitAmount }))
     }) : null;
@@ -52,6 +65,9 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       giftCardApplied: giftCard?.amount ?? 0, giftCardSuffix: giftCard?.codeSuffix ?? null,
       cardAmount: afterCredit - (giftCard?.amount ?? 0) }, { headers });
   } catch (error) {
+    // Every refusal of an entered code gets one answer; basket problems keep their own.
+    const refusal = codeRefusalBody(error);
+    if (refusal) return Response.json(refusal, { status: 409, headers });
     return Response.json({ error: error instanceof Error ? error.message : 'Discount unavailable' },
       { status: 409, headers });
   }

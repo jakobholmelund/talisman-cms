@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { customerAccounts, discountCodes, discountRedemptions, referralCodes, referralSettings } from './schema';
 import { getReferralPolicy, referralTermsError } from './referrals';
 import { hasPurchaseHistory } from './accounts';
+import { GiftCardRefusal } from './gift-cards';
 
 const optionalLimit = z.number().int().positive().max(1_000_000).nullable();
 const optionalDate = z.number().int().positive().nullable();
@@ -68,43 +69,88 @@ export function discountAmountForLines(code: Pick<typeof discountCodes.$inferSel
   return Math.max(0, Math.min(capped, subtotal - 50));
 }
 
+/** Why a discount code was refused. The reason is for server-side use; shoppers see one message. */
+export type DiscountRefusalReason = 'format' | 'unknown' | 'inactive' | 'dates' | 'email_required'
+  | 'first_order' | 'use_limit' | 'customer_limit' | 'not_applicable';
+
+/** A discount code refused for this order. `message` is the detailed reason for admin tools and logs. */
+export class DiscountCodeRefusal extends Error {
+  readonly reason: DiscountRefusalReason;
+  constructor(reason: DiscountRefusalReason, message: string) {
+    super(message);
+    this.name = 'DiscountCodeRefusal';
+    this.reason = reason;
+  }
+}
+
+/** The one answer a shopper gets when an entered discount or gift card code is refused. */
+export const CODE_REFUSAL_MESSAGE = 'This code is not valid for this order.';
+
+/**
+ * The shopper-facing body for an error that refuses an entered code, or null for any other error.
+ * Every reason gets the same message, so the answer does not tell codes apart; the reason stays on
+ * the error. A code used up between evaluation and reservation at checkout counts as refused too.
+ */
+export function codeRefusalBody(error: unknown): { error: string; field: 'code' | 'giftCardCode' } | null {
+  if (error instanceof DiscountCodeRefusal) return { error: CODE_REFUSAL_MESSAGE, field: 'code' };
+  if (error instanceof GiftCardRefusal) return { error: CODE_REFUSAL_MESSAGE, field: 'giftCardCode' };
+  const message = error instanceof Error ? error.message : '';
+  if (message === 'Discount code is no longer available') return { error: CODE_REFUSAL_MESSAGE, field: 'code' };
+  if (message === 'Gift card is no longer available') return { error: CODE_REFUSAL_MESSAGE, field: 'giftCardCode' };
+  return null;
+}
+
+/**
+ * Checks a discount code against a basket and returns the discount, or throws a DiscountCodeRefusal.
+ * The shopper rules that need order history (first-order codes and per-customer limits) are checked
+ * against the account when `accountId` is given, otherwise against `customerEmail`. With
+ * `checkShopperHistory: false` they are skipped, for a guest preview that has no verified address;
+ * checkout always checks them.
+ */
 export async function evaluateDiscountCode(env: TalismanEnv, input: {
   code: string; customerEmail: string; accountId?: string | null;
   lines: Array<{ productId: string; quantity: number; priceAtPurchase: number }>;
-  subtotal: number;
+  subtotal: number; checkShopperHistory?: boolean;
 }) {
   const normalizedCode = input.code.trim().toUpperCase();
-  if (!/^[A-Z0-9][A-Z0-9_-]{2,31}$/.test(normalizedCode)) throw new Error('Invalid discount code');
+  if (!/^[A-Z0-9][A-Z0-9_-]{2,31}$/.test(normalizedCode)) throw new DiscountCodeRefusal('format', 'Invalid discount code');
   const db = createDbClient(env);
   const code = await db.select().from(discountCodes).where(eq(discountCodes.code, normalizedCode)).get();
-  if (!code || !code.active) throw new Error('Discount code is unavailable');
+  if (!code) throw new DiscountCodeRefusal('unknown', 'Discount code is unavailable');
+  if (!code.active) throw new DiscountCodeRefusal('inactive', 'Discount code is unavailable');
   const now = Date.now();
   if (code.startsAt && code.startsAt.getTime() > now || code.expiresAt && code.expiresAt.getTime() <= now) {
-    throw new Error('Discount code is outside its active dates');
+    throw new DiscountCodeRefusal('dates', 'Discount code is outside its active dates');
   }
   const account = input.accountId ? await db.select().from(customerAccounts)
     .where(eq(customerAccounts.id, input.accountId)).get() : null;
   const emailNormalized = (account?.emailNormalized ?? input.customerEmail.trim().toLowerCase());
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNormalized)) throw new Error('Valid email required for a discount');
+  const checkShopper = input.checkShopperHistory !== false;
+  if (checkShopper && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNormalized)) {
+    throw new DiscountCodeRefusal('email_required', 'Valid email required for a discount');
+  }
   // A first purchase means no paid order yet. Signing up or asking for a sign-in link does not count.
-  if (code.firstOrderOnly && await hasPurchaseHistory(env, { emails: [emailNormalized], accountIds: [account?.id] })) {
-    throw new Error('Discount is for a first purchase only');
+  if (checkShopper && code.firstOrderOnly &&
+      await hasPurchaseHistory(env, { emails: [emailNormalized], accountIds: [account?.id] })) {
+    throw new DiscountCodeRefusal('first_order', 'Discount is for a first purchase only');
   }
   if (code.maxUses !== null) {
     const [{ uses }] = await db.select({ uses: count() }).from(discountRedemptions)
       .where(and(eq(discountRedemptions.code, code.code),
         inArray(discountRedemptions.status, ['reserved', 'confirmed'])));
-    if (uses >= code.maxUses) throw new Error('Discount code has reached its use limit');
+    if (uses >= code.maxUses) throw new DiscountCodeRefusal('use_limit', 'Discount code has reached its use limit');
   }
-  if (code.maxUsesPerCustomer !== null) {
+  if (checkShopper && code.maxUsesPerCustomer !== null) {
     const [{ uses }] = await db.select({ uses: count() }).from(discountRedemptions)
       .where(and(eq(discountRedemptions.code, code.code),
         eq(discountRedemptions.emailNormalized, emailNormalized),
         inArray(discountRedemptions.status, ['reserved', 'confirmed'])));
-    if (uses >= code.maxUsesPerCustomer) throw new Error('Discount code was already used by this shopper');
+    if (uses >= code.maxUsesPerCustomer) {
+      throw new DiscountCodeRefusal('customer_limit', 'Discount code was already used by this shopper');
+    }
   }
   const amount = discountAmountForLines(code, input.lines, input.subtotal);
-  if (!amount) throw new Error('Discount code does not apply to this basket');
+  if (!amount) throw new DiscountCodeRefusal('not_applicable', 'Discount code does not apply to this basket');
   return { code: code.code, type: code.type, amount, emailNormalized };
 }
 

@@ -7,6 +7,8 @@ import { readSetting } from 'talisman-cms/env';
 import { checkoutSchema } from '../checkout-input';
 import { REFERRAL_COOKIE } from '../referrals';
 import { readCartSessionToken } from '../cookies';
+import { codeRefusalBody } from '../promotions';
+import { CODE_CHECK_LIMIT_MESSAGE, codeChecksOverBasketLimit, codeChecksOverNetworkLimit } from '../code-check-limits';
 
 export const POST: APIRoute = async ({ request, cookies }) => {
   const { env } = await import('cloudflare:workers');
@@ -64,6 +66,15 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       });
     }
 
+    // A checkout that carries a code is a code check and shares the discount preview's limits.
+    if (body.discountCode || body.giftCardCode) {
+      const now = Math.floor(Date.now() / 1000);
+      if (await codeChecksOverNetworkLimit(runtimeEnv, request.headers.get('cf-connecting-ip'), now) ||
+          await codeChecksOverBasketLimit(runtimeEnv, cart.id, now)) {
+        return Response.json({ error: CODE_CHECK_LIMIT_MESSAGE }, { status: 429 });
+      }
+    }
+
     const { order, paymentUrl } = await api.orders.createFromCart(cart.id, {
       customerEmail,
       providerId: 'stripe',
@@ -88,6 +99,9 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       headers: { 'Content-Type': 'application/json' }
     });
   } catch (error: any) {
+    // A refused discount or gift card code gets one answer, whatever the reason.
+    const refusal = codeRefusalBody(error);
+    if (refusal) return Response.json(refusal, { status: 409 });
     const status = (
       error.message === 'Cart is empty or not found' ||
       error.message === 'Cart is closed' ||
@@ -99,8 +113,6 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       error.message?.startsWith('A positive price is required') ||
       error.message?.startsWith('Insufficient shared component stock') ||
       error.message === 'Shipping address is required for physical products' ||
-      error.message === 'Discount code is no longer available' ||
-      error.message === 'Gift card is no longer available' ||
       error.message === 'Store credit changed during checkout; please try again' ||
       error.message?.startsWith('Discount code') ||
       error.message?.startsWith('Gift card') ||
