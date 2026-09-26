@@ -6,7 +6,7 @@ export type { PaymentProviderAdapter, ValidatedWebhookEvent, TaxCalculation, Tax
 export { TaxAddressError } from './payments';
 export { StripePaymentAdapter } from './adapters/stripe';
 export { AdminTestPaymentAdapter } from './adapters/admin-test';
-export { readStoreSettings, StoreSettingsError } from './store-settings';
+export { readStoreSettings, readStoreCurrency, StoreSettingsError } from './store-settings';
 export type { StoreSettings, ShippingRate, TaxSettings } from './store-settings';
 export { shippingOptionsFor } from './shipping';
 export type { ShippingOption } from './shipping';

@@ -34,7 +34,7 @@ const orderSummary = await getOrderSummary(cfEnv as any, orderId);
               </div>
               <div>
                 <p class="text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">Total</p>
-                <p class="mt-1 text-lg font-bold text-gray-900">{formatMoney(orderSummary.subtotal, orderSummary.order.currency)}</p>
+                <p class="mt-1 text-lg font-bold text-gray-900">{formatMoney(orderSummary.order.giftCardApplied + orderSummary.order.totalAmount, orderSummary.order.currency)}</p>
               </div>
             </div>
           </div>

@@ -125,10 +125,10 @@ const cancelled = Astro.url.searchParams.get('cancelled') === '1';
             </div>
             <div class="flex items-center justify-between text-gray-500">
               <span>Shipping</span>
-              <span>{cartState.requiresShipping ? 'Collected next' : 'Not required'}</span>
+              <span>{cartState.requiresShipping ? 'Added at payment' : 'Not required'}</span>
             </div>
             <div class="flex items-center justify-between border-t border-gray-100 pt-4 text-lg font-bold text-gray-900">
-              <span>Total</span>
+              <span>Items subtotal</span>
               <span>{formatMoney(cartState.subtotal, cartState.currency)}</span>
             </div>
           </div>

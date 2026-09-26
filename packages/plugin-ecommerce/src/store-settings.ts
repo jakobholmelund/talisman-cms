@@ -77,6 +77,14 @@ export function readStoreSettings(env: object): StoreSettings {
 }
 
 /** Logs why the settings were refused, for the operator, and returns the answer for shoppers. */
+/**
+ * The store currency alone, for pages that only show prices: a mistake in another store setting
+ * closes checkout but should not stop them. Throws StoreSettingsError for an invalid currency.
+ */
+export function readStoreCurrency(env: object): string {
+  return readCurrency(env);
+}
+
 export function reportStoreSettingsError(error: StoreSettingsError) {
   console.error(`[Commerce] Store settings are invalid: ${error.message}`);
   return 'Checkout is temporarily unavailable.';

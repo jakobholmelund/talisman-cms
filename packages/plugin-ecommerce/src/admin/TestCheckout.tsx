@@ -51,7 +51,7 @@ export default function TestCheckout() {
         </div>}
         <div className="ecom-admin__actions"><button type="submit" disabled={busy}>Place test order</button></div>
       </form></Panel>
-      <Panel title="Order summary">{summary.quote.lines.map((line, index) => <div className="ecom-admin__row" key={index}><span>{line.name} × {line.quantity}</span><strong>{money(line.lineTotal, summary.quote!.currency)}</strong></div>)}<div className="ecom-admin__row"><strong>Simulated total</strong><strong>{money(summary.quote.totalAmount, summary.quote.currency)}</strong></div></Panel>
+      <Panel title="Order summary">{summary.quote.lines.map((line, index) => <div className="ecom-admin__row" key={index}><span>{line.name} × {line.quantity}</span><strong>{money(line.lineTotal, summary.quote!.currency)}</strong></div>)}<div className="ecom-admin__row"><strong>Items subtotal</strong><strong>{money(summary.quote.totalAmount, summary.quote.currency)}</strong></div><p className="ecom-admin__muted">The test order adds the store's shipping for the country above. Test orders are never taxed.</p></Panel>
     </div>}
   </CommerceAdmin>;
 }

@@ -1,5 +1,5 @@
 import { and, eq } from 'drizzle-orm';
-import { readStoreSettings } from '@talisman-cms/plugin-ecommerce';
+import { readStoreCurrency } from '@talisman-cms/plugin-ecommerce';
 import { bindCommerceApi } from '@talisman-cms/plugin-ecommerce/api';
 import { StripePaymentAdapter } from '@talisman-cms/plugin-ecommerce/adapters/stripe';
 import {
@@ -66,8 +66,9 @@ export function getCartSessionToken(cookies: CookieJar, options?: { create?: boo
 }
 
 /** The currency the store sells in (TALISMAN_COMMERCE_CURRENCY). Prices are integers in its minor units. */
+// Only the currency: a mistake in another store setting closes checkout, not the shop pages.
 export function getStoreCurrency(env: RuntimeEnv) {
-  return readStoreSettings(env).currency;
+  return readStoreCurrency(env);
 }
 
 async function resolveLineItem(
