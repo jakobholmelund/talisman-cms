@@ -16,7 +16,7 @@ export interface TaxCalculationParams {
    * The product lines, each at its total after its share of the discount and store credit. A gift
    * card is a means of payment and never lowers them. `reference` is unique within the calculation.
    */
-  lines: Array<{ reference: string; amount: number; quantity: number }>;
+  lines: Array<{ reference: string; amount: number; quantity: number; /** Overrides taxCode for this line. */ taxCode?: string }>;
   /** The shipping charge, or 0. */
   shippingAmount: number;
   /** Where the order ships, or the billing address when nothing ships. */
@@ -131,8 +131,11 @@ export interface PaymentProviderAdapter {
    */
   calculateTax?(params: TaxCalculationParams): Promise<TaxCalculation>;
 
-  /** Records the tax of a paid order from its calculation. Safe to retry: the order id names it. */
-  recordTaxTransaction?(params: { orderId: string; calculationId: string }): Promise<{ transactionId: string }>;
+  /**
+   * Records the tax of a paid order from its calculation. Safe to retry: the order id names it.
+   * `postedAt` (Unix seconds) dates a late record at the payment, so its liability falls in that period.
+   */
+  recordTaxTransaction?(params: { orderId: string; calculationId: string; postedAt?: number }): Promise<{ transactionId: string }>;
 
   /**
    * Reverses `amount` (in minor units, tax included) of an order's recorded tax, to mirror a refund.

@@ -273,8 +273,8 @@ test('the discount and credit are spread over the lines in proportion, and fully
   assert.deepEqual(lines(), [['L1:frame', 12000, 1]]);
   assert.deepEqual(storedTax(sqlite, free.id).slice(0, 2), [1200, 'exclusive']);
 
-  // Credit that pays for every item leaves only the shipping taxed. A calculation needs a line, so
-  // the first goes at 0.
+  // Credit that pays for every item leaves only the shipping taxed. Stripe takes no line at 0, so the
+  // shipping is the calculation's only line, under the shipping tax code.
   sqlite.prepare(`INSERT INTO _ecommerce_customer_accounts
     (id, email, email_normalized, credit_balance, created_at, updated_at)
     VALUES ('rich-shopper', 'rich-shopper@example.test', 'rich-shopper@example.test', 50000, ?, ?)`).run(now, now);
@@ -283,7 +283,8 @@ test('the discount and credit are spread over the lines in proportion, and fully
     { customerEmail: 'rich-shopper@example.test' }, 'rich-shopper');
   assert.deepEqual([covered.creditApplied, covered.shippingAmount, covered.taxAmount, covered.totalAmount],
     [18000, 700, 70, 770]);
-  assert.deepEqual([lines(), calls.calculations.at(-1).shippingAmount], [[['L1:frame', 0, 1]], 700]);
+  assert.deepEqual([lines(), calls.calculations.at(-1).shippingAmount], [[['shipping', 700, 1]], 0]);
+  assert.equal(calls.calculations.at(-1).lines[0].taxCode, 'txcd_92010001');
   sqlite.close();
 });
 
@@ -358,9 +359,13 @@ test('a tax transaction that fails at confirmation is logged and recorded by rec
   assert.deepEqual(storedTax(sqlite, order.id).slice(3), [null, 13200]);
   assert.deepEqual(logged, [`[Commerce] The tax transaction of order ${order.id} was not recorded: Stripe is unavailable`]);
 
+  // Retried an hour after the payment, the record is dated at the payment; at confirmation it was not.
+  const paidAt = Math.floor(Date.now() / 1000) - 3600;
+  sqlite.prepare('UPDATE _ecommerce_payments SET created_at = ? WHERE order_id = ?').run(paidAt, order.id);
   const results = await reconcileCommerce({ env, paymentAdapters: [adapter] });
   assert.deepEqual(results.filter((result) => result.id === order.id), [{ id: order.id, status: 'tax_recorded' }]);
   assert.equal(storedTax(sqlite, order.id)[3], `tax_${order.id}`);
+  assert.deepEqual(calls.transactions.map((call) => call.postedAt), [undefined, paidAt]);
   // Recorded once: the next run finds nothing to record.
   const again = await reconcileCommerce({ env, paymentAdapters: [adapter] });
   assert.deepEqual(again.filter((result) => result.id === order.id), []);
@@ -624,6 +629,17 @@ test('the Stripe adapter calculates, records and reverses tax with the Stripe Ta
     { type: 'reversal', input: { mode: 'partial', original_transaction: 'tax_test', reference: 'ord_tax:reversal:5000',
       flat_amount: -5000 }, options: { idempotencyKey: 'ord_tax:reversal:5000' } },
   ]);
+
+  // A late record is dated at the payment, and a line's own tax code wins over the store's.
+  calls.length = 0;
+  calculationError = null;
+  await adapter.recordTaxTransaction({ orderId: 'ord_late', calculationId: 'taxcalc_late', postedAt: 1789000000 });
+  await adapter.calculateTax({ currency: 'usd', behavior: 'exclusive', taxCode: 'txcd_99999999', shippingAmount: 0,
+    lines: [{ reference: 'shipping', amount: 700, quantity: 1, taxCode: 'txcd_92010001' }],
+    addressSource: 'shipping', shipFromCountry: null, address: { country: 'US' } });
+  assert.deepEqual([calls[0].input.posted_at, calls[1].input.line_items[0].tax_code, calls[1].input.shipping_cost],
+    [1789000000, 'txcd_92010001', undefined]);
+  assert.equal(calls.length, 2);
 
   // Exclusive tax is a line of its own in the session; none is added without tax.
   calls.length = 0;

@@ -7,6 +7,9 @@ import { TAX_ADDRESS_REQUIRED, TAX_ADDRESS_UNUSABLE, TAX_UNAVAILABLE } from './c
  * Tax could not be calculated, so checkout stopped before the basket was locked. The routes answer
  * 503 with this message; the cause is in the Worker log.
  */
+/** Stripe's product tax code for shipping charges. */
+const SHIPPING_TAX_CODE = 'txcd_92010001';
+
 export class TaxCalculationError extends Error {
   constructor(options?: ErrorOptions) {
     super(TAX_UNAVAILABLE, options);
@@ -100,9 +103,14 @@ export async function calculateOrderTax(adapter: PaymentProviderAdapter, input: 
   addressSource: TaxCalculationParams['addressSource'];
 }) {
   const charged = input.lines.filter((line) => line.amount > 0);
+  // Store credit can pay for every item while shipping is still charged. Stripe takes no line at 0,
+  // so the shipping is then the only line, under Stripe's tax code for shipping.
+  const shippingOnly = !charged.length && input.shippingAmount > 0;
   const params: TaxCalculationParams = {
     currency: input.currency, behavior: input.behavior, taxCode: input.settings.taxCode,
-    lines: charged.length ? charged : input.lines.slice(0, 1), shippingAmount: input.shippingAmount,
+    lines: shippingOnly ? [{ reference: 'shipping', amount: input.shippingAmount, quantity: 1, taxCode: SHIPPING_TAX_CODE }]
+      : charged.length ? charged : input.lines.slice(0, 1),
+    shippingAmount: shippingOnly ? 0 : input.shippingAmount,
     address: input.address, addressSource: input.addressSource, shipFromCountry: input.settings.shipFromCountry,
   };
   const failed = (reason: string, cause?: unknown) => {
@@ -145,14 +153,19 @@ const PAID_STATUSES = ['paid', 'fulfilled', 'partially_refunded', 'refunded'];
  * order id, and only an order without a transaction takes one. Returns whether this call stored it.
  */
 export async function recordOrderTax(env: TalismanEnv, adapters: PaymentProviderAdapter[], orderId: string) {
-  const order = await env.DB.prepare(`SELECT id, status, payment_provider, tax_calculation_id, tax_transaction_id
-    FROM _ecommerce_orders WHERE id = ?`).bind(orderId).first<{ id: string; status: string;
-    payment_provider: string | null; tax_calculation_id: string | null; tax_transaction_id: string | null }>();
+  const order = await env.DB.prepare(`SELECT id, status, payment_provider, tax_calculation_id, tax_transaction_id,
+      (SELECT MIN(created_at) FROM _ecommerce_payments WHERE order_id = o.id) AS paid_at
+    FROM _ecommerce_orders o WHERE id = ?`).bind(orderId).first<{ id: string; status: string;
+    payment_provider: string | null; tax_calculation_id: string | null; tax_transaction_id: string | null;
+    paid_at: number | null }>();
   if (!order?.tax_calculation_id || order.tax_transaction_id || !PAID_STATUSES.includes(order.status)) return false;
   const adapter = taxProvider(adapters, order.payment_provider);
   if (!adapter?.recordTaxTransaction) throw new Error('Payment provider cannot record tax');
+  // A record made well after the payment, by reconcileCommerce, is dated at the payment so its tax
+  // falls in that period. A prompt one leaves the date to the provider, whose clock may run behind.
+  const late = order.paid_at !== null && order.paid_at < Math.floor(Date.now() / 1000) - 300;
   const { transactionId } = await adapter.recordTaxTransaction({ orderId: order.id,
-    calculationId: order.tax_calculation_id });
+    calculationId: order.tax_calculation_id, ...(late ? { postedAt: order.paid_at! } : {}) });
   const stored = await env.DB.prepare(`UPDATE _ecommerce_orders SET tax_transaction_id = ?
     WHERE id = ? AND tax_transaction_id IS NULL`).bind(transactionId, order.id).run();
   return Number(stored.meta?.changes ?? 0) > 0;

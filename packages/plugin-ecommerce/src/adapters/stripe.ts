@@ -212,7 +212,7 @@ export class StripePaymentAdapter implements PaymentProviderAdapter {
         quantity: line.quantity,
         reference: line.reference,
         tax_behavior: params.behavior,
-        ...(params.taxCode ? { tax_code: params.taxCode } : {}),
+        ...((line.taxCode ?? params.taxCode) ? { tax_code: line.taxCode ?? params.taxCode ?? undefined } : {}),
       })),
       customer_details: { address: stripeTaxAddress(params.address), address_source: params.addressSource },
     };
@@ -240,10 +240,11 @@ export class StripePaymentAdapter implements PaymentProviderAdapter {
     };
   }
 
-  async recordTaxTransaction(params: { orderId: string; calculationId: string }) {
+  async recordTaxTransaction(params: { orderId: string; calculationId: string; postedAt?: number }) {
     const transaction = await this.stripe.tax.transactions.createFromCalculation({
       calculation: params.calculationId,
       reference: params.orderId,
+      ...(params.postedAt ? { posted_at: params.postedAt } : {}),
     }, { idempotencyKey: `tax-transaction:${params.orderId}` });
     return { transactionId: transaction.id };
   }
