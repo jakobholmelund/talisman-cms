@@ -5,13 +5,27 @@ import { isEmailDeliveryError, parseAddress, sendEmail } from 'talisman-cms/emai
 import { getEmailProvider } from 'talisman-cms/email/runtime';
 import { bindCommerceApi } from '../api';
 import { CUSTOMER_SESSION_COOKIE, CUSTOMER_SESSION_MAX_AGE, CustomerRequestLimitError,
-  consumeCustomerEmailSignIn, findCustomerSession, previewCustomerEmailSignIn, requestCustomerEmailSignIn,
-  revokeCustomerSession } from '../accounts';
+  consumeCustomerEmailSignIn, findCustomerSession, normalizeShopperEmail, previewCustomerEmailSignIn,
+  requestCustomerEmailSignIn, revokeCustomerSession } from '../accounts';
 import { CART_SESSION_COOKIE, LEGACY_CART_SESSION_COOKIE, readCartSessionToken } from '../cookies';
 import { shopperSignInEmail } from '../emails';
+import { SHOPPER_SIGN_IN_TURNSTILE_ACTION, readTurnstileSettings, verifyTurnstileToken } from '../turnstile';
 
 /** One answer for every link that cannot be used, so a response never tells links apart. */
 const INVALID_LINK = 'This sign-in link is invalid or has expired.';
+/** One answer for every failed bot check; it says nothing about the address. */
+const BOT_CHECK_FAILED = 'The security check failed. Please try again.';
+
+/** Logs carry codes only: never the address, the link or the token. */
+function logSendFailure(error: unknown) {
+  if (isEmailDeliveryError(error)) {
+    const details = { provider: error.provider, code: error.code, providerCode: error.providerCode ?? null };
+    if (error.code === 'recipient_suppressed') console.warn('[commerce] Sign-in email suppressed', details);
+    else console.error('[commerce] Sign-in email failed', details);
+  } else {
+    console.error('[commerce] Sign-in email failed', { name: error instanceof Error ? error.name : typeof error });
+  }
+}
 
 function originOf(value: string | undefined) {
   try {
@@ -22,7 +36,7 @@ function originOf(value: string | undefined) {
 }
 
 export const ALL: APIRoute = async ({ request, cookies }) => {
-  const { env } = await import('cloudflare:workers');
+  const { env, waitUntil } = await import('cloudflare:workers');
   const runtimeEnv = env as unknown as TalismanEnv;
   const sessionToken = cookies.get(CUSTOMER_SESSION_COOKIE)?.value;
   const headers = { 'Cache-Control': 'no-store' };
@@ -45,7 +59,7 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
   if (request.method !== 'POST') return Response.json({ error: 'Method not allowed' }, { status: 405, headers });
 
   const body = await request.json().catch(() => null) as {
-    basketChoice?: unknown; orderId?: unknown; email?: unknown; token?: unknown; preview?: unknown
+    basketChoice?: unknown; orderId?: unknown; email?: unknown; token?: unknown; preview?: unknown; turnstileToken?: unknown
   } | null;
   const basketToken = readCartSessionToken(cookies);
   if (typeof body?.email === 'string') {
@@ -61,37 +75,47 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
       });
       return Response.json({ error: 'Email sign-in is unavailable' }, { status: 503, headers });
     }
+    const turnstile = readTurnstileSettings(settings);
+    // The secret turns the check on; without the site key no form can produce a token.
+    if (turnstile.secretKey && !turnstile.siteKey) {
+      console.error('[commerce] Email sign-in bot check is not configured', { code: 'turnstile_site_key_missing' });
+      return Response.json({ error: 'Email sign-in is unavailable' }, { status: 503, headers });
+    }
+    if (!normalizeShopperEmail(body.email)) return Response.json({ error: 'Valid email required' }, { status: 400, headers });
+    const sourceIp = request.headers.get('cf-connecting-ip');
+    // Verified before any counter, sign-in link or email, so a refused request changes nothing.
+    if (turnstile.secretKey) {
+      const { refusal, errorCodes } = await verifyTurnstileToken(turnstile.secretKey, body.turnstileToken, {
+        remoteIp: sourceIp, expectedHostname: new URL(publicOrigin).hostname, expectedAction: SHOPPER_SIGN_IN_TURNSTILE_ACTION,
+      });
+      if (refusal) {
+        console.warn('[commerce] Email sign-in bot check refused', { code: refusal, errorCodes });
+        return Response.json({ error: BOT_CHECK_FAILED }, { status: 403, headers });
+      }
+    }
     const siteName = parseAddress(from)?.name ?? new URL(publicOrigin).host;
     try {
-      await requestCustomerEmailSignIn(runtimeEnv, body.email,
+      const { limited } = await requestCustomerEmailSignIn(runtimeEnv, body.email,
         // The token travels in the fragment, so it never reaches the server or its request logs.
         token => `${publicOrigin}/account/verify#token=${encodeURIComponent(token)}`,
         async (to, link) => {
           // The object form keeps the recipient a bare address; a display name can never change it.
           await sendEmail(settings, { to: { email: to }, from, ...shopperSignInEmail({ link, siteName }) }, provider);
-        }, request.headers.get('cf-connecting-ip'));
+        }, sourceIp, {
+          // Sends from the reserved budget finish after the response, so its timing is the same for every address.
+          waitUntil: typeof waitUntil === 'function' ? (task) => waitUntil(task) : undefined,
+          onLimitedSendError: logSendFailure,
+        });
+      if (limited) {
+        console.warn('[commerce] Daily sign-in email limit reached', { pool: 'general' });
+        return Response.json({ accepted: true, limited: true }, { headers });
+      }
       return Response.json({ accepted: true }, { headers });
     } catch (error) {
-      if (error instanceof Error && error.message === 'Valid email required') {
-        return Response.json({ error: error.message }, { status: 400, headers });
-      }
-      if (error instanceof Error && error.name === 'CustomerEmailLimitError') {
-        console.warn('[commerce] Daily sign-in email limit reached');
-        return Response.json({ error: 'Too many sign-in emails were requested today. Please try again later.' },
-          { status: 503, headers });
-      }
-      // Logs carry codes only: never the address, the link or the token.
-      if (isEmailDeliveryError(error)) {
-        const details = { provider: error.provider, code: error.code, providerCode: error.providerCode ?? null };
-        // A suppressed address gets the same answer as any other, so suppression status does not leak.
-        if (error.code === 'recipient_suppressed') {
-          console.warn('[commerce] Sign-in email suppressed', details);
-          return Response.json({ accepted: true }, { headers });
-        }
-        console.error('[commerce] Sign-in email failed', details);
-      } else {
-        console.error('[commerce] Sign-in email failed', { name: error instanceof Error ? error.name : typeof error });
-      }
+      // The address was checked above, so every error here is a failed send.
+      logSendFailure(error);
+      // A suppressed address gets the same answer as any other, so suppression status does not leak.
+      if (isEmailDeliveryError(error) && error.code === 'recipient_suppressed') return Response.json({ accepted: true }, { headers });
       return Response.json({ error: 'The sign-in email could not be sent. Please try again later.' }, { status: 503, headers });
     }
   }

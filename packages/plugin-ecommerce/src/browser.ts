@@ -50,8 +50,16 @@ export function activateNewCustomerAccount(orderId: string) {
   return commerceRequest<{ account: CustomerAccountSummary }>('/api/ecommerce/account', 'POST', { orderId });
 }
 
-export function requestCustomerEmailSignIn(email: string) {
-  return commerceRequest<{ accepted: true }>('/api/ecommerce/account', 'POST', { email });
+/**
+ * Asks for a sign-in link. Pass `turnstileToken` when the site configures a bot check (see
+ * `shopperSignInBotCheck` in `@talisman-cms/plugin-ecommerce/accounts`); a missing or failed check is
+ * refused with "The security check failed. Please try again." `limited: true` means today's general
+ * sign-in email budget is spent: only existing customers still receive a link, and every address
+ * gets this same answer.
+ */
+export function requestCustomerEmailSignIn(email: string, options: { turnstileToken?: string } = {}) {
+  return commerceRequest<{ accepted: true; limited?: true }>('/api/ecommerce/account', 'POST',
+    options.turnstileToken === undefined ? { email } : { email, turnstileToken: options.turnstileToken });
 }
 
 type SignInLocation = Pick<Location, 'pathname' | 'search' | 'hash'>;

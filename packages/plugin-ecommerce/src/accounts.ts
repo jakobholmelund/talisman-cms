@@ -3,20 +3,34 @@ import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
 import { ensureVerifiedEmailIdentity } from 'talisman-cms/auth/identity';
 import { parseAddress } from 'talisman-cms/email';
 import { readSetting } from 'talisman-cms/env';
+import { clientOverLimit, countRequest, peekRequestCount, sha256Hex } from './rate-limits';
 import { customerAccounts, customerSessions, orders } from './schema';
+import { SHOPPER_SIGN_IN_TURNSTILE_ACTION, readTurnstileSettings } from './turnstile';
 
 export const CUSTOMER_SESSION_COOKIE = 'talisman-customer';
 export const CUSTOMER_SESSION_MAX_AGE = 60 * 60 * 24 * 30;
 /** Store-wide sign-in emails per 24 hours unless `TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT` sets another positive whole number. */
 export const CUSTOMER_EMAIL_DAILY_LIMIT = 200;
+const DAY_SECONDS = 24 * 60 * 60;
+/** Daily counters: every address draws on the general pool; the reserved pool is only for existing customers. */
+const GENERAL_POOL_KEY = 'shopper-email:daily';
+const RESERVED_POOL_KEY = 'shopper-email:reserved';
 /** A sign-in link works once, for this many seconds. */
 const SIGN_IN_LINK_SECONDS = 15 * 60;
 /** Requests per hour from one IP address (or IPv6 /64), counted separately for sign-in emails and link previews. */
 const REQUESTS_PER_SOURCE_PER_HOUR = 20;
+/** Sign-in requests one address may make in ten minutes. */
+const REQUESTS_PER_ADDRESS = 3;
+const ADDRESS_WINDOW_SECONDS = 10 * 60;
+/** Emails one address may draw from the reserved pool in 24 hours, so no single address can spend it. */
+const RESERVED_SENDS_PER_ADDRESS = 2;
 /** Order statuses that count as a purchase for first-order promotions and referrals. */
 export const PURCHASED_ORDER_STATUSES = ['paid', 'fulfilled', 'partially_refunded', 'refunded'] as const;
 
-/** The store-wide daily sign-in email limit is used up; the request sent nothing. */
+/**
+ * Kept for compatibility: `requestCustomerEmailSignIn` no longer throws it and answers a spent daily
+ * budget with `{ limited: true }` instead.
+ */
 export class CustomerEmailLimitError extends Error {
   override readonly name = 'CustomerEmailLimitError';
 
@@ -34,17 +48,14 @@ export class CustomerRequestLimitError extends Error {
   }
 }
 
-async function hashToken(token: string) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
+const hashToken = sha256Hex;
 
 /**
  * The lowercased address, or null. Only a bare address is accepted, checked with the same rule the
  * email module applies to recipients, so a display name such as `a<victim@example.com>` can never
  * change who receives the link.
  */
-function normalizeShopperEmail(email: unknown) {
+export function normalizeShopperEmail(email: unknown) {
   if (typeof email !== 'string') return null;
   const normalized = email.trim().toLowerCase();
   if (normalized.length > 254) return null;
@@ -70,50 +81,37 @@ export async function findCustomerSession(env: TalismanEnv, token?: string | nul
   return await db.select().from(customerAccounts).where(eq(customerAccounts.id, session.accountId)).get() ?? null;
 }
 
-/**
- * Counts one request for `key` in a fixed window that starts with the first request, and returns the
- * new count. The counters live in `_ecommerce_rate_limits`: better-auth prunes its own table by its
- * own clock, which deleted these counters when they were kept there.
- */
-async function countRequest(env: TalismanEnv, key: string, now: number, windowSeconds: number) {
-  const limit = await env.DB.prepare(`INSERT INTO _ecommerce_rate_limits (key, count, window_start)
-    VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET
-      count = CASE WHEN window_start <= ? THEN 1 ELSE count + 1 END,
-      window_start = CASE WHEN window_start <= ? THEN ? ELSE window_start END
-    RETURNING count`)
-    .bind(key, now, now - windowSeconds, now - windowSeconds, now)
-    .first<{ count: number }>();
-  return limit?.count;
-}
-
-/** An IPv6 client can usually use any address in its /64, so IPv6 addresses are limited per /64 prefix. */
-function rateLimitSource(ip: string) {
-  const value = ip.trim().toLowerCase();
-  if (!value.includes(':')) return value;
-  const mapped = value.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
-  if (mapped) return mapped[1];
-  const halves = value.split('::');
-  if (halves.length > 2) return value;
-  const left = halves[0] ? halves[0].split(':') : [];
-  const right = halves[1] ? halves[1].split(':') : [];
-  // An embedded IPv4 address fills the last two groups.
-  const width = [...left, ...right].reduce((count, group) => count + (group.includes('.') ? 2 : 1), 0);
-  if (halves.length === 1 ? width !== 8 : width > 7) return value;
-  const groups = [...left, ...Array<string>(8 - width).fill('0'), ...right].slice(0, 4);
-  if (groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return value;
-  return `${groups.map((group) => parseInt(group, 16).toString(16)).join(':')}::/64`;
-}
-
-/** Counts a request from `sourceIp` in `bucket` and says whether that source is over its hourly limit. */
-async function sourceOverLimit(env: TalismanEnv, bucket: string, sourceIp: string | null | undefined, now: number) {
-  if (!sourceIp || sourceIp.length > 64) return false;
-  const count = await countRequest(env, `${bucket}:${await hashToken(rateLimitSource(sourceIp))}`, now, 3600);
-  return (count ?? REQUESTS_PER_SOURCE_PER_HOUR + 1) > REQUESTS_PER_SOURCE_PER_HOUR;
-}
-
 function customerEmailDailyLimit(env: TalismanEnv) {
   const configured = Number(readSetting(env, 'COMMERCE_EMAIL_DAILY_LIMIT'));
   return Number.isSafeInteger(configured) && configured > 0 ? configured : CUSTOMER_EMAIL_DAILY_LIMIT;
+}
+
+/**
+ * The part of the daily limit kept for addresses that already have a verified account or a purchase:
+ * `TALISMAN_COMMERCE_EMAIL_RESERVED_DAILY` when it is a whole number below the limit, otherwise a
+ * quarter of the limit, rounded down.
+ */
+function customerEmailReservedDaily(env: TalismanEnv, dailyLimit: number) {
+  const raw = readSetting(env, 'COMMERCE_EMAIL_RESERVED_DAILY');
+  const configured = raw === undefined ? NaN : Number(raw);
+  return Number.isSafeInteger(configured) && configured >= 0 && configured < dailyLimit ? configured : Math.floor(dailyLimit / 4);
+}
+
+/** An address with a verified shopper account, or with a purchased order placed under it. */
+async function isExistingCustomer(env: TalismanEnv, email: string) {
+  const verified = await env.DB.prepare(`SELECT 1 AS found FROM _ecommerce_customer_accounts
+    WHERE email_normalized = ? AND email_verified_at IS NOT NULL LIMIT 1`).bind(email).first<{ found: number }>();
+  return Boolean(verified) || await hasPurchaseHistory(env, { emails: [email] });
+}
+
+/**
+ * The bot check a storefront should render in its sign-in form, or null when none is configured.
+ * It is on when both `TALISMAN_COMMERCE_TURNSTILE_SITE_KEY` and `TALISMAN_COMMERCE_TURNSTILE_SECRET_KEY`
+ * are set; the account route then refuses email sign-in requests without a valid `turnstileToken`.
+ */
+export function shopperSignInBotCheck(env: TalismanEnv): { provider: 'turnstile'; siteKey: string; action: string } | null {
+  const { siteKey, secretKey } = readTurnstileSettings(env);
+  return siteKey && secretKey ? { provider: 'turnstile', siteKey, action: SHOPPER_SIGN_IN_TURNSTILE_ACTION } : null;
 }
 
 /** Basket possession never proves ownership of the checkout email. */
@@ -145,35 +143,85 @@ export async function hasPurchaseHistory(env: TalismanEnv, shopper: { emails?: A
   return Boolean(prior);
 }
 
+export interface CustomerEmailSignInOptions {
+  /**
+   * Runs work after the response, such as the Worker's `waitUntil`. Once the general daily budget is
+   * spent, the customer lookup and any send from the reserved budget run through it, so the answer
+   * takes the same time for every address. Without it that work runs before the call returns.
+   */
+  waitUntil?: (task: Promise<unknown>) => void;
+  /**
+   * Receives a failed send from the reserved budget. That failure is never thrown, so the answer stays
+   * the same for every address. Defaults to logging the error's name.
+   */
+  onLimitedSendError?: (error: unknown) => void;
+}
+
 /**
  * Sends a one-time link to `email`. The caller must deliver it to the address it is given. Only the
  * token's hash and the address are stored; no shopper account exists until the link is used.
- * A rate-limited request returns without sending, so callers can answer it like any other. Throws
- * `CustomerEmailLimitError` once the store has sent its daily number of sign-in emails.
+ * A rate-limited request returns without sending, so callers can answer it like any other.
+ *
+ * The store-wide daily limit has two pools. The general pool (the limit minus the reserve) serves any
+ * address. Once it is spent the call returns `{ limited: true }` for every address, and sends only to
+ * an address with a verified account or a purchase, while the reserved pool lasts and at most
+ * twice a day per address. Otherwise it returns `{ limited: false }`. Send failures outside the
+ * limited state are thrown.
  */
 export async function requestCustomerEmailSignIn(env: TalismanEnv, email: string,
   linkForToken: (token: string) => string,
-  sendLink: (to: string, link: string) => Promise<void>, sourceIp?: string | null) {
+  sendLink: (to: string, link: string) => Promise<void>, sourceIp?: string | null,
+  options: CustomerEmailSignInOptions = {}): Promise<{ limited: boolean }> {
   const normalized = normalizeShopperEmail(email);
   if (!normalized) throw new Error('Valid email required');
   const now = Math.floor(Date.now() / 1000);
-  if (await sourceOverLimit(env, 'shopper-email', sourceIp, now)) return;
+  const dailyLimit = customerEmailDailyLimit(env);
+  const generalPool = dailyLimit - customerEmailReservedDaily(env, dailyLimit);
+  // A request dropped by a per-client or per-address limit still reports the store-wide state, so the
+  // answer never depends on the address.
+  const dropped = async () => ({ limited: await peekRequestCount(env, GENERAL_POOL_KEY, now, DAY_SECONDS) >= generalPool });
+  if (await clientOverLimit(env, 'shopper-email', sourceIp, { limit: REQUESTS_PER_SOURCE_PER_HOUR, windowSeconds: 3600, now })) {
+    return dropped();
+  }
   const recent = await env.DB.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_sign_in_tokens
     WHERE email_normalized = ? AND created_at > ?`)
-    .bind(normalized, now - 600).first<{ count: number }>();
-  if ((recent?.count ?? 0) >= 3) return;
+    .bind(normalized, now - ADDRESS_WINDOW_SECONDS).first<{ count: number }>();
+  if ((recent?.count ?? 0) >= REQUESTS_PER_ADDRESS) return dropped();
+  // The link count above only sees links already written; this counter is updated atomically, so
+  // parallel requests for one address are held to the same limit. Its key holds the address's hash.
+  const addressKey = await sha256Hex(normalized);
+  if ((await countRequest(env, `shopper-email:address:${addressKey}`, now, ADDRESS_WINDOW_SECONDS) ?? REQUESTS_PER_ADDRESS + 1)
+    > REQUESTS_PER_ADDRESS) return dropped();
   // Caps what a flood of requests from many addresses can send before the provider's own quota runs out.
-  const dailyLimit = customerEmailDailyLimit(env);
-  if ((await countRequest(env, 'shopper-email:daily', now, 24 * 60 * 60) ?? dailyLimit + 1) > dailyLimit) {
-    throw new CustomerEmailLimitError();
+  if ((await countRequest(env, GENERAL_POOL_KEY, now, DAY_SECONDS) ?? generalPool + 1) <= generalPool) {
+    await sendSignInLink(env, normalized, now, linkForToken, sendLink);
+    return { limited: false };
   }
+  const reserved = (async () => {
+    if (!await isExistingCustomer(env, normalized)) return;
+    if ((await countRequest(env, `shopper-email:reserved-address:${addressKey}`, now, DAY_SECONDS) ?? RESERVED_SENDS_PER_ADDRESS + 1)
+      > RESERVED_SENDS_PER_ADDRESS) return;
+    const reservedPool = dailyLimit - generalPool;
+    if ((await countRequest(env, RESERVED_POOL_KEY, now, DAY_SECONDS) ?? reservedPool + 1) > reservedPool) return;
+    await sendSignInLink(env, normalized, now, linkForToken, sendLink);
+  })().catch((error) => {
+    if (options.onLimitedSendError) options.onLimitedSendError(error);
+    else console.error('[commerce] Sign-in email failed', { name: error instanceof Error ? error.name : typeof error });
+  });
+  if (options.waitUntil) options.waitUntil(reserved);
+  else await reserved;
+  return { limited: true };
+}
+
+async function sendSignInLink(env: TalismanEnv, email: string, now: number,
+  linkForToken: (token: string) => string, sendLink: (to: string, link: string) => Promise<void>) {
   const token = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   const tokenHash = await hashToken(token);
   await env.DB.prepare(`INSERT INTO _ecommerce_sign_in_tokens (token_hash, email_normalized, expires_at, created_at)
     VALUES (?, ?, ?, ?)`)
-    .bind(tokenHash, normalized, now + SIGN_IN_LINK_SECONDS, now).run();
+    .bind(tokenHash, email, now + SIGN_IN_LINK_SECONDS, now).run();
   try {
-    await sendLink(normalized, linkForToken(token));
+    await sendLink(email, linkForToken(token));
   } catch (error) {
     await env.DB.prepare(`UPDATE _ecommerce_sign_in_tokens SET revoked_at = ? WHERE token_hash = ?`)
       .bind(Math.floor(Date.now() / 1000), tokenHash).run();
@@ -189,7 +237,9 @@ export async function requestCustomerEmailSignIn(env: TalismanEnv, email: string
  */
 export async function previewCustomerEmailSignIn(env: TalismanEnv, token: unknown, sourceIp?: string | null) {
   const now = Math.floor(Date.now() / 1000);
-  if (await sourceOverLimit(env, 'shopper-preview', sourceIp, now)) throw new CustomerRequestLimitError();
+  if (await clientOverLimit(env, 'shopper-preview', sourceIp, { limit: REQUESTS_PER_SOURCE_PER_HOUR, windowSeconds: 3600, now })) {
+    throw new CustomerRequestLimitError();
+  }
   if (!isSignInToken(token)) return null;
   const link = await env.DB.prepare(`SELECT email_normalized FROM _ecommerce_sign_in_tokens
     WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?`)

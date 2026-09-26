@@ -4,13 +4,17 @@ import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { CUSTOMER_SESSION_COOKIE, CustomerEmailLimitError, requestCustomerEmailSignIn } from '../dist/accounts.js';
-import { previewCustomerSignIn, readCustomerSignInToken } from '../dist/browser.js';
+import { CUSTOMER_SESSION_COOKIE, CustomerEmailLimitError, requestCustomerEmailSignIn,
+  shopperSignInBotCheck } from '../dist/accounts.js';
+import { previewCustomerSignIn, readCustomerSignInToken,
+  requestCustomerEmailSignIn as requestSignInFromBrowser } from '../dist/browser.js';
 
-// The account route reads its bindings from cloudflare:workers, and the email runtime reads the
-// provider registered with talismanCms({ email }) from a virtual module. Both come from this test.
+// The account route reads its bindings and waitUntil from cloudflare:workers, and the email runtime
+// reads the provider registered with talismanCms({ email }) from a virtual module. Both come from
+// this test. Work passed to waitUntil is collected, so a test can check what runs after the response.
 const stubs = {
-  'cloudflare:workers': 'export const env = new Proxy({}, { get: (_, key) => globalThis.workerEnv?.[key] });',
+  'cloudflare:workers': 'export const env = new Proxy({}, { get: (_, key) => globalThis.workerEnv?.[key] });'
+    + ' export const waitUntil = (task) => { globalThis.pendingTasks.push(task); };',
   'virtual:talisman-cms/email': 'export let emailProviderFactory = null;'
     + ' globalThis.setEmailProviderFactory = (factory) => { emailProviderFactory = factory; };',
 };
@@ -111,15 +115,20 @@ function cookieJar(initial = {}) {
   };
 }
 
-async function account(env, body, { origin = ORIGIN, ip = '203.0.113.10', cookies = cookieJar() } = {}) {
+globalThis.pendingTasks = [];
+
+/** Posts to the account route; work it left to waitUntil finishes before this resolves, unless `settle` is false. */
+async function account(env, body, { base = ORIGIN, origin = base, ip = '203.0.113.10', cookies = cookieJar(), settle = true } = {}) {
   globalThis.workerEnv = env;
-  const request = new Request(`${ORIGIN}/api/ecommerce/account`, {
+  const request = new Request(`${base}/api/ecommerce/account`, {
     method: 'POST',
     headers: { origin, 'Content-Type': 'application/json', 'cf-connecting-ip': ip },
     body: JSON.stringify(body),
   });
   const response = await ALL({ request, cookies });
-  return { status: response.status, json: await response.json(), cookies };
+  const json = await response.json();
+  if (settle) await Promise.all(globalThis.pendingTasks.splice(0));
+  return { status: response.status, json, cookies };
 }
 
 /** Captures console output so tests can check that no address, link or token is logged. */
@@ -407,7 +416,7 @@ test("better-auth pruning its rate-limit table leaves the shopper counters and t
 
   assert.equal(sqlite.prepare(`SELECT count FROM _ecommerce_rate_limits WHERE key = 'shopper-email:daily'`).get().count, 2);
   const limited = await account(env, { email: 'late@example.test' }, { ip: '203.0.113.3' });
-  assert.deepEqual([limited.status, limited.json], [503, { error: 'Too many sign-in emails were requested today. Please try again later.' }]);
+  assert.deepEqual([limited.status, limited.json], [200, { accepted: true, limited: true }]);
   assert.equal(sent.length, 2, 'the daily cap still holds');
   sqlite.close();
 });
@@ -507,7 +516,7 @@ test('a store-wide daily limit stops sign-in emails once it is reached', async (
     assert.equal((await account(env, { email: `s${index}@example.test` }, { ip })).status, 200);
   }
   const limited = await account(env, { email: 'late@example.test' }, { ip: '203.0.113.3' });
-  assert.deepEqual([limited.status, limited.json], [503, { error: 'Too many sign-in emails were requested today. Please try again later.' }]);
+  assert.deepEqual([limited.status, limited.json], [200, { accepted: true, limited: true }]);
   assert.equal(sent.length, 2);
   assert.equal(count(sqlite, '_ecommerce_sign_in_tokens'), 2, 'no link was created');
   assert.ok(logs.some((line) => line.level === 'warn' && line.text.includes('Daily sign-in email limit reached')));
@@ -516,7 +525,8 @@ test('a store-wide daily limit stops sign-in emails once it is reached', async (
   const second = shop({ TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT: '3' });
   for (let attempt = 0; attempt < 5; attempt++) await account(second.env, { email: 'same@example.test' });
   assert.equal(second.sent.length, 3);
-  assert.equal((await account(second.env, { email: 'other@example.test' })).status, 503);
+  assert.deepEqual((await account(second.env, { email: 'other@example.test' })).json, { accepted: true, limited: true });
+  assert.equal(second.sent.length, 3);
   second.sqlite.close();
 
   // The window restarts after 24 hours; an invalid setting falls back to 200.
@@ -530,13 +540,14 @@ test('a store-wide daily limit stops sign-in emails once it is reached', async (
   sqlite.close();
 });
 
-test('requestCustomerEmailSignIn throws CustomerEmailLimitError at the daily limit', async () => {
+test('requestCustomerEmailSignIn reports a spent daily budget as limited instead of throwing', async () => {
   const { sqlite, env } = shop({ TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT: '1' });
   let sends = 0;
-  await requestCustomerEmailSignIn(env, 'a@example.test', (token) => token, async () => { sends++; });
-  await assert.rejects(requestCustomerEmailSignIn(env, 'b@example.test', (token) => token, async () => { sends++; }),
-    (error) => error instanceof CustomerEmailLimitError && error.name === 'CustomerEmailLimitError');
+  assert.deepEqual(await requestCustomerEmailSignIn(env, 'a@example.test', (token) => token, async () => { sends++; }), { limited: false });
+  assert.deepEqual(await requestCustomerEmailSignIn(env, 'b@example.test', (token) => token, async () => { sends++; }), { limited: true });
   assert.equal(sends, 1);
+  // Still exported for code that checks for it.
+  assert.equal(new CustomerEmailLimitError().name, 'CustomerEmailLimitError');
   sqlite.close();
 });
 
@@ -576,4 +587,375 @@ test('readCustomerSignInToken reads the fragment, accepts legacy query links and
   assert.equal(replaced.length, 0, 'a URL without a token is left alone');
   assert.equal(readCustomerSignInToken(at('', '#token=no-history')), 'no-history');
   assert.equal(readCustomerSignInToken(), null, 'outside a browser there is no token');
+});
+
+const TURNSTILE = { TALISMAN_COMMERCE_TURNSTILE_SITE_KEY: '0x4AAAAAAAsite-key', TALISMAN_COMMERCE_TURNSTILE_SECRET_KEY: 'turnstile-secret-value' };
+const SITEVERIFY = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+const siteverifyPass = { success: true, hostname: 'shop.test', action: 'shopper-sign-in', 'error-codes': [] };
+
+/** Replaces fetch with a siteverify stub that records each call and answers with `answer(body)`. */
+function stubSiteverify(t, answer) {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push({ url: String(url), init, body });
+    const result = await answer(body);
+    return result instanceof Response ? result : Response.json(result);
+  });
+  return calls;
+}
+
+const nothingWritten = (sqlite) => ['_ecommerce_sign_in_tokens', '_ecommerce_rate_limits', '_ecommerce_customer_accounts']
+  .map((table) => count(sqlite, table));
+
+test('without Turnstile settings sign-in needs no token and siteverify is never called', async (t) => {
+  const calls = stubSiteverify(t, () => siteverifyPass);
+  for (const overrides of [{}, { TALISMAN_COMMERCE_TURNSTILE_SITE_KEY: '0x4AAAAAAAsite-key' }]) {
+    const { sqlite, env, sent } = shop(overrides);
+    assert.equal(shopperSignInBotCheck(env), null, JSON.stringify(overrides));
+    const result = await account(env, { email: 'shopper@example.test' });
+    assert.deepEqual([result.status, result.json], [200, { accepted: true }]);
+    assert.equal((await account(env, { email: 'other@example.test', turnstileToken: 'ignored' })).status, 200);
+    assert.equal(sent.length, 2);
+    sqlite.close();
+  }
+  assert.equal(calls.length, 0);
+});
+
+test('shopperSignInBotCheck gives storefronts the site key and action once both keys are set', () => {
+  assert.deepEqual(shopperSignInBotCheck({ ...TURNSTILE }),
+    { provider: 'turnstile', siteKey: '0x4AAAAAAAsite-key', action: 'shopper-sign-in' });
+  assert.equal(shopperSignInBotCheck({ TALISMAN_COMMERCE_TURNSTILE_SECRET_KEY: 'turnstile-secret-value' }), null);
+  assert.equal(shopperSignInBotCheck({ ...TURNSTILE, TALISMAN_COMMERCE_TURNSTILE_SITE_KEY: '  ' }), null);
+});
+
+test('with Turnstile configured a request without a valid token is refused before any counter, link or email', async (t) => {
+  const logs = captureLogs(t);
+  let answer = siteverifyPass;
+  const calls = stubSiteverify(t, () => typeof answer === 'function' ? answer() : answer);
+  const refused = [403, { error: 'The security check failed. Please try again.' }];
+  const cases = [
+    ['missing token', {}, null],
+    ['empty token', { turnstileToken: '' }, null],
+    ['token that is not a string', { turnstileToken: { value: 'x' } }, null],
+    ['oversized token', { turnstileToken: 'x'.repeat(2049) }, null],
+    ['invalid token', { turnstileToken: 'bad-token' }, { success: false, 'error-codes': ['invalid-input-response'] }],
+    ['success that is not true', { turnstileToken: 'odd-token' }, { success: 'true', hostname: 'shop.test' }],
+    ['siteverify error status', { turnstileToken: 'valid-token' }, () => new Response('unavailable', { status: 500 })],
+    ['siteverify network failure', { turnstileToken: 'valid-token' }, () => { throw new TypeError('fetch failed'); }],
+    ['siteverify answer that is not JSON', { turnstileToken: 'valid-token' }, () => new Response('<html>', { status: 200 })],
+    ['hostname mismatch', { turnstileToken: 'valid-token' }, { ...siteverifyPass, hostname: 'elsewhere.test' }],
+    ['action mismatch', { turnstileToken: 'valid-token' }, { ...siteverifyPass, action: 'newsletter' }],
+  ];
+  for (const [name, extra, siteverify] of cases) {
+    const { sqlite, env, sent } = shop(TURNSTILE);
+    answer = siteverify;
+    const before = calls.length;
+    const result = await account(env, { email: 'shopper@example.test', ...extra });
+    assert.deepEqual([result.status, result.json], refused, name);
+    assert.equal(calls.length - before, siteverify ? 1 : 0, `${name}: siteverify calls`);
+    assert.deepEqual(nothingWritten(sqlite), [0, 0, 0], name);
+    assert.equal(sent.length, 0, name);
+    sqlite.close();
+  }
+  const refusals = logs.filter((line) => line.text.includes('bot check refused'));
+  assert.deepEqual(refusals.map((line) => line.args[1].code), ['missing_token', 'missing_token', 'missing_token', 'missing_token',
+    'rejected', 'rejected', 'unavailable', 'unavailable', 'unavailable', 'hostname_mismatch', 'action_mismatch']);
+  assert.deepEqual(refusals[4].args[1].errorCodes, ['invalid-input-response']);
+  assert.ok(logs.every((line) => !/shopper@example\.test|bad-token|valid-token|turnstile-secret-value/.test(line.text)));
+});
+
+test('a valid Turnstile token lets the request through, and siteverify gets the secret, token and client IP', async (t) => {
+  const calls = stubSiteverify(t, () => siteverifyPass);
+  const { sqlite, env, sent } = shop(TURNSTILE);
+  const result = await account(env, { email: 'shopper@example.test', turnstileToken: 'token-from-widget' }, { ip: '198.51.100.23' });
+  assert.deepEqual([result.status, result.json], [200, { accepted: true }]);
+  assert.equal(sent.length, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, SITEVERIFY);
+  assert.equal(calls[0].init.method, 'POST');
+  assert.ok(calls[0].init.signal instanceof AbortSignal, 'the call has a timeout');
+  assert.deepEqual(calls[0].body, { secret: 'turnstile-secret-value', response: 'token-from-widget', remoteip: '198.51.100.23' });
+  // Siteverify may leave out the hostname and action; success alone then decides.
+  const { sqlite: other, env: otherEnv, sent: otherSent } = shop(TURNSTILE);
+  t.mock.restoreAll();
+  stubSiteverify(t, () => ({ success: true }));
+  assert.equal((await account(otherEnv, { email: 'shopper@example.test', turnstileToken: 'token-2' })).status, 200);
+  assert.equal(otherSent.length, 1);
+  other.close();
+  sqlite.close();
+});
+
+test('the bot check runs after the same-origin and address checks, and previews and links need no token', async (t) => {
+  const calls = stubSiteverify(t, () => siteverifyPass);
+  const { sqlite, env, sent } = shop(TURNSTILE);
+  assert.equal((await account(env, { email: 'shopper@example.test', turnstileToken: 't' }, { origin: 'https://attacker.test' })).status, 403);
+  assert.deepEqual((await account(env, { email: 'not-an-email', turnstileToken: 't' })).json, { error: 'Valid email required' });
+  assert.equal(calls.length, 0);
+  await account(env, { email: 'shopper@example.test', turnstileToken: 't' });
+  const token = tokenFrom(linkIn(sent[0].text));
+  assert.deepEqual((await account(env, { token, preview: true })).json, { email: 's•••@example.test' });
+  assert.equal((await account(env, { token })).status, 200);
+  assert.equal(calls.length, 1, 'only the email request is checked');
+  sqlite.close();
+});
+
+test('a Turnstile secret without a site key makes email sign-in unavailable and logs a code', async (t) => {
+  const logs = captureLogs(t);
+  const calls = stubSiteverify(t, () => siteverifyPass);
+  const { sqlite, env, sent } = shop({ TALISMAN_COMMERCE_TURNSTILE_SECRET_KEY: 'turnstile-secret-value' });
+  const result = await account(env, { email: 'shopper@example.test', turnstileToken: 't' });
+  assert.deepEqual([result.status, result.json], [503, { error: 'Email sign-in is unavailable' }]);
+  assert.equal(calls.length, 0);
+  assert.equal(sent.length, 0);
+  assert.deepEqual(logs.map((line) => line.args[1]), [{ code: 'turnstile_site_key_missing' }]);
+  sqlite.close();
+});
+
+test("Cloudflare's test secret keys pass whatever hostname and action they report", async (t) => {
+  stubSiteverify(t, (body) => body.secret.startsWith('1x')
+    ? { success: true, hostname: 'example.com', action: 'test' }
+    : { success: false, 'error-codes': ['invalid-input-response'] });
+  const pass = shop({ TALISMAN_COMMERCE_TURNSTILE_SITE_KEY: '1x00000000000000000000AA',
+    TALISMAN_COMMERCE_TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA' });
+  assert.equal((await account(pass.env, { email: 'shopper@example.test', turnstileToken: 'XXXX.DUMMY.TOKEN.XXXX' })).status, 200);
+  const fail = shop({ TALISMAN_COMMERCE_TURNSTILE_SITE_KEY: '2x00000000000000000000AB',
+    TALISMAN_COMMERCE_TURNSTILE_SECRET_KEY: '2x0000000000000000000000000000000AA' });
+  t.mock.method(console, 'warn', () => {});
+  assert.equal((await account(fail.env, { email: 'shopper@example.test', turnstileToken: 'XXXX.DUMMY.TOKEN.XXXX' })).status, 403);
+  pass.sqlite.close();
+  fail.sqlite.close();
+});
+
+test('a Turnstile test secret works only on a local development origin', async (t) => {
+  const logs = captureLogs(t);
+  const calls = stubSiteverify(t, () => ({ success: true, hostname: 'example.com', action: 'test' }));
+  const keys = { TALISMAN_COMMERCE_TURNSTILE_SITE_KEY: '1x00000000000000000000AA',
+    TALISMAN_COMMERCE_TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA' };
+  for (const base of ['https://shop.example', 'https://talisman.example.com']) {
+    const { sqlite, env, sent } = shop({ ...keys, TALISMAN_PUBLIC_ORIGIN: base });
+    const result = await account(env, { email: 'shopper@example.test', turnstileToken: 'XXXX.DUMMY.TOKEN.XXXX' }, { base });
+    assert.deepEqual([result.status, result.json], [403, { error: 'The security check failed. Please try again.' }], base);
+    assert.deepEqual(nothingWritten(sqlite), [0, 0, 0]);
+    assert.equal(sent.length, 0);
+    sqlite.close();
+  }
+  assert.equal(calls.length, 0, 'siteverify is not asked');
+  assert.deepEqual(logs.map((line) => line.args[1].code), ['test_key', 'test_key']);
+  for (const base of ['http://localhost:4321', 'http://127.0.0.1:8787', 'http://[::1]:8787', 'https://shop.localhost', 'https://shop.test']) {
+    const { sqlite, env, sent } = shop({ ...keys, TALISMAN_PUBLIC_ORIGIN: base });
+    const result = await account(env, { email: 'shopper@example.test', turnstileToken: 'XXXX.DUMMY.TOKEN.XXXX' }, { base });
+    assert.equal(result.status, 200, base);
+    assert.equal(sent.length, 1);
+    sqlite.close();
+  }
+});
+
+test('requestCustomerEmailSignIn in the browser sends the Turnstile token and returns the limited flag', async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => { calls.push({ url, ...init }); return Response.json({ accepted: true, limited: true }); });
+  assert.deepEqual(await requestSignInFromBrowser('a@example.test', { turnstileToken: 'widget-token' }), { accepted: true, limited: true });
+  await requestSignInFromBrowser('a@example.test');
+  assert.deepEqual(calls.map((call) => JSON.parse(call.body)),
+    [{ email: 'a@example.test', turnstileToken: 'widget-token' }, { email: 'a@example.test' }]);
+});
+
+function addCustomers(sqlite) {
+  sqlite.prepare(`INSERT INTO _ecommerce_customer_accounts (id, email, email_normalized, email_verified_at, created_at, updated_at)
+    VALUES ('acct_verified', 'verified@example.test', 'verified@example.test', 1, 1, 1),
+      ('acct_unverified', 'unverified@example.test', 'unverified@example.test', NULL, 1, 1)`).run();
+  const order = sqlite.prepare(`INSERT INTO _ecommerce_orders (id, customer_email, status, payment_provider, total_amount, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 1000, 1, 1)`);
+  order.run('ord_paid', 'Buyer@Example.test', 'paid', 'stripe');
+  order.run('ord_pending', 'pending@example.test', 'pending', 'stripe');
+  order.run('ord_test', 'tester@example.test', 'paid', 'admin_test');
+}
+
+async function spendGeneralPool(env, size) {
+  for (let index = 0; index < size; index++) {
+    const result = await account(env, { email: `filler-${index}@example.test` }, { ip: `203.0.113.${100 + index}` });
+    assert.deepEqual(result.json, { accepted: true });
+  }
+}
+
+test('with the general budget spent, existing customers still get a link and every address gets the same answer', async (t) => {
+  const logs = captureLogs(t);
+  const { sqlite, env, sent } = shop({ TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT: '8', TALISMAN_COMMERCE_EMAIL_RESERVED_DAILY: '3' });
+  addCustomers(sqlite);
+  await spendGeneralPool(env, 5);
+  assert.equal(sent.length, 5);
+  const answers = [];
+  const ask = async (email, ip) => {
+    const result = await account(env, { email }, { ip });
+    answers.push([result.status, result.json]);
+    return sent.at(-1)?.to;
+  };
+  for (const [index, email] of ['stranger@example.test', 'unverified@example.test', 'pending@example.test', 'tester@example.test'].entries()) {
+    await ask(email, `198.51.100.${index + 1}`);
+  }
+  assert.equal(sent.length, 5, 'unknown addresses, unverified accounts, unpaid and admin test orders get nothing');
+  assert.equal(await ask('verified@example.test', '198.51.100.10'), 'verified@example.test');
+  assert.equal(await ask('buyer@example.test', '198.51.100.11'), 'buyer@example.test');
+  assert.equal(sent.length, 7);
+  assert.ok(linkIn(sent[6].text), 'a reserved send carries a working link');
+  assert.equal((await account(env, { token: tokenFrom(linkIn(sent[5].text)) })).json.account.id, 'acct_verified');
+  assert.ok(answers.every(([status, json]) => status === 200 && JSON.stringify(json) === '{"accepted":true,"limited":true}'));
+  // Only customers draw on the reserve.
+  assert.equal(sqlite.prepare(`SELECT count FROM _ecommerce_rate_limits WHERE key = 'shopper-email:reserved'`).get().count, 2);
+  assert.equal(count(sqlite, '_ecommerce_sign_in_tokens'), 7, 'no link exists for addresses that were not sent one');
+  assert.ok(logs.every((line) => !line.text.includes('@example.test')));
+  sqlite.close();
+});
+
+test('with both budgets spent every address gets the same answer and nothing is sent', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const { sqlite, env, sent } = shop({ TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT: '4', TALISMAN_COMMERCE_EMAIL_RESERVED_DAILY: '1' });
+  addCustomers(sqlite);
+  await spendGeneralPool(env, 3);
+  assert.deepEqual((await account(env, { email: 'verified@example.test' }, { ip: '198.51.100.1' })).json, { accepted: true, limited: true });
+  assert.equal(sent.length, 4, 'the one reserved email went out');
+  const answers = [];
+  for (const [index, email] of ['buyer@example.test', 'verified@example.test', 'stranger@example.test'].entries()) {
+    const result = await account(env, { email }, { ip: `198.51.100.${index + 2}` });
+    answers.push([result.status, result.json]);
+  }
+  assert.deepEqual(answers, Array(3).fill([200, { accepted: true, limited: true }]));
+  assert.equal(sent.length, 4);
+  sqlite.close();
+});
+
+const spentGeneralPool = (sqlite, count) => sqlite.prepare(`INSERT INTO _ecommerce_rate_limits (key, count, window_start)
+  VALUES ('shopper-email:daily', ?, ?)`).run(count, Math.floor(Date.now() / 1000));
+
+test('a request that a per-address or per-IP limit drops gets the same answer as any other', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  // Before the general budget is spent, a dropped request answers like an accepted one.
+  const open = shop();
+  addCustomers(open.sqlite);
+  const openAnswers = [];
+  for (let attempt = 0; attempt < 4; attempt++) openAnswers.push(await account(open.env, { email: 'verified@example.test' }, { ip: `198.51.100.${attempt + 1}` }));
+  for (let index = 0; index < 21; index++) openAnswers.push(await account(open.env, { email: `ip-${index}@example.test` }, { ip: '198.51.100.50' }));
+  assert.equal(open.sent.length, 23, 'the fourth link for one address and the 21st request from one IP were dropped');
+  assert.ok(openAnswers.every(({ status, json }) => status === 200 && JSON.stringify(json) === '{"accepted":true}'));
+  open.sqlite.close();
+
+  // Once it is spent, a dropped request answers limited like every other address.
+  const { sqlite, env, sent } = shop({ TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT: '8', TALISMAN_COMMERCE_EMAIL_RESERVED_DAILY: '3' });
+  addCustomers(sqlite);
+  spentGeneralPool(sqlite, 5);
+  const now = Math.floor(Date.now() / 1000);
+  const link = sqlite.prepare(`INSERT INTO _ecommerce_sign_in_tokens (token_hash, email_normalized, expires_at, created_at) VALUES (?, ?, ?, ?)`);
+  for (let index = 0; index < 3; index++) link.run(`seeded-${index}`, 'verified@example.test', now + 900, now - 60);
+  const answers = [];
+  answers.push(await account(env, { email: 'verified@example.test' }, { ip: '198.51.100.60' }));
+  answers.push(await account(env, { email: 'stranger@example.test' }, { ip: '198.51.100.61' }));
+  for (let index = 0; index < 21; index++) answers.push(await account(env, { email: `limited-${index}@example.test` }, { ip: '198.51.100.62' }));
+  answers.push(await account(env, { email: 'buyer@example.test' }, { ip: '198.51.100.62' }));
+  assert.deepEqual(answers.map(({ status, json }) => [status, json]), Array(answers.length).fill([200, { accepted: true, limited: true }]));
+  assert.equal(sent.length, 0, 'the address limit dropped the customer, and the IP limit dropped the buyer');
+  sqlite.close();
+});
+
+test('one address draws at most two emails a day from the reserve', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const { sqlite, env, sent } = shop({ TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT: '40', TALISMAN_COMMERCE_EMAIL_RESERVED_DAILY: '20' });
+  addCustomers(sqlite);
+  spentGeneralPool(sqlite, 20);
+  const answers = [];
+  for (let attempt = 0; attempt < 8; attempt++) {
+    answers.push(await account(env, { email: 'verified@example.test' }, { ip: `198.51.100.${attempt + 1}` }));
+    // Each request comes after the ten-minute per-address window.
+    sqlite.prepare('UPDATE _ecommerce_sign_in_tokens SET created_at = created_at - 601').run();
+    sqlite.prepare(`UPDATE _ecommerce_rate_limits SET window_start = window_start - 601
+      WHERE key NOT IN ('shopper-email:daily', 'shopper-email:reserved')`).run();
+  }
+  assert.equal(sent.length, 2);
+  assert.equal((await account(env, { email: 'buyer@example.test' }, { ip: '198.51.100.30' })).json.limited, true);
+  assert.equal(sent.at(-1).to, 'buyer@example.test', 'the reserve still serves other customers');
+  assert.equal(sqlite.prepare(`SELECT count FROM _ecommerce_rate_limits WHERE key = 'shopper-email:reserved'`).get().count, 3);
+  assert.ok(answers.every(({ json }) => JSON.stringify(json) === '{"accepted":true,"limited":true}'));
+  assert.ok(sqlite.prepare('SELECT key FROM _ecommerce_rate_limits').all().every(({ key }) => !key.includes('@')), 'counter keys never hold an address');
+  sqlite.close();
+});
+
+test('parallel requests for one address stay within its limits', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const burst = (env, email, size) => Promise.all(Array.from({ length: size },
+    (_, index) => account(env, { email }, { ip: `198.51.${100 + Math.floor(index / 200)}.${index % 200 + 1}`, settle: false })));
+
+  const open = shop();
+  const openAnswers = await burst(open.env, 'same@example.test', 20);
+  await Promise.all(globalThis.pendingTasks.splice(0));
+  assert.equal(open.sent.length, 3, 'three links per address per ten minutes');
+  assert.ok(openAnswers.every(({ json }) => JSON.stringify(json) === '{"accepted":true}'));
+  open.sqlite.close();
+
+  const { sqlite, env, sent } = shop({ TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT: '200' });
+  addCustomers(sqlite);
+  spentGeneralPool(sqlite, 150);
+  const answers = await burst(env, 'verified@example.test', 40);
+  await Promise.all(globalThis.pendingTasks.splice(0));
+  assert.equal(sent.length, 2);
+  assert.equal(sqlite.prepare(`SELECT count FROM _ecommerce_rate_limits WHERE key = 'shopper-email:reserved'`).get().count, 2);
+  assert.ok(answers.every(({ json }) => JSON.stringify(json) === '{"accepted":true,"limited":true}'));
+  sqlite.close();
+});
+
+test('a send from the reserve finishes after the response, and its failure never changes the answer', async (t) => {
+  const logs = captureLogs(t);
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const delivered = [];
+  const EMAIL = { async send(message) { await gate; delivered.push(message); return { messageId: '<m@shop.test>' }; } };
+  const { sqlite, env } = shop({ EMAIL, TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT: '4', TALISMAN_COMMERCE_EMAIL_RESERVED_DAILY: '3' });
+  addCustomers(sqlite);
+  // The one general email of the day is already spent.
+  sqlite.prepare(`INSERT INTO _ecommerce_rate_limits (key, count, window_start) VALUES ('shopper-email:daily', 1, ?)`)
+    .run(Math.floor(Date.now() / 1000));
+  const customer = await account(env, { email: 'verified@example.test' }, { settle: false });
+  assert.deepEqual(customer.json, { accepted: true, limited: true });
+  assert.equal(delivered.length, 0, 'the response came before the send');
+  assert.equal(globalThis.pendingTasks.length, 1, 'the send was handed to waitUntil');
+  release();
+  await Promise.all(globalThis.pendingTasks.splice(0));
+  assert.equal(delivered.length, 1);
+
+  // A failed reserved send is logged by code, revokes its link and is never reported to the requester.
+  env.EMAIL = emailBinding(bindingError('E_DELIVERY_FAILED'));
+  const failed = await account(env, { email: 'buyer@example.test' }, { ip: '198.51.100.40' });
+  assert.deepEqual([failed.status, failed.json], [200, { accepted: true, limited: true }]);
+  const failure = logs.find((line) => line.text.includes('Sign-in email failed'));
+  assert.deepEqual(failure.args[1], { provider: 'cloudflare', code: 'delivery_failed', providerCode: 'E_DELIVERY_FAILED' });
+  assert.deepEqual(challengeRevoked(sqlite), [false, true]);
+  assert.ok(logs.every((line) => !line.text.includes('@example.test')));
+
+  // Called directly without waitUntil, the same work runs before the call returns and still never throws.
+  const direct = await requestCustomerEmailSignIn(env, 'verified@example.test', (token) => token,
+    async () => { throw new Error('provider down'); }, '198.51.100.41');
+  assert.deepEqual(direct, { limited: true });
+  assert.deepEqual(challengeRevoked(sqlite), [false, true, true]);
+  assert.deepEqual(logs.at(-1).args[1], { name: 'Error' });
+  sqlite.close();
+});
+
+test('the reserve defaults to a quarter of the daily limit, and an invalid reserve uses that default', async () => {
+  const cases = [
+    [{}, 150, 'default limit 200 keeps 50'],
+    [{ TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT: '8' }, 6, 'limit 8 keeps 2'],
+    [{ TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT: '3' }, 3, 'limit 3 keeps 0'],
+    [{ TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT: '8', TALISMAN_COMMERCE_EMAIL_RESERVED_DAILY: '0' }, 8, 'a reserve of 0'],
+    [{ TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT: '8', TALISMAN_COMMERCE_EMAIL_RESERVED_DAILY: '7' }, 1, 'a reserve just below the limit'],
+    ...['8', '9', '-1', '1.5', 'lots', ' '].map((reserved) =>
+      [{ TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT: '8', TALISMAN_COMMERCE_EMAIL_RESERVED_DAILY: reserved }, 6, `invalid reserve ${JSON.stringify(reserved)}`]),
+  ];
+  for (const [overrides, general, name] of cases) {
+    const { sqlite, env } = shop(overrides);
+    // Starts just below the general pool, so the next request is the last one it serves.
+    sqlite.prepare(`INSERT INTO _ecommerce_rate_limits (key, count, window_start) VALUES ('shopper-email:daily', ?, ?)`)
+      .run(general - 1, Math.floor(Date.now() / 1000));
+    const send = async () => {};
+    assert.deepEqual(await requestCustomerEmailSignIn(env, 'a@example.test', (token) => token, send), { limited: false }, name);
+    assert.deepEqual(await requestCustomerEmailSignIn(env, 'b@example.test', (token) => token, send), { limited: true }, name);
+    sqlite.close();
+  }
 });
