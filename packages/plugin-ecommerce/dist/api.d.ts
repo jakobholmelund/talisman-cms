@@ -1,5 +1,5 @@
 import { TalismanEnv } from 'talisman-cms/client';
-import { P as PaymentProviderAdapter } from './payments-B8lp8sbe.js';
+import { P as PaymentProviderAdapter } from './payments-Dtu__rfy.js';
 
 /** The answer when an order's slot is taken; it never says anything about the payment itself. */
 declare const PROVIDER_CHECK_RETRY_MESSAGE = "The payment session was checked moments ago. Please try again in 15 seconds.";
@@ -7,6 +7,10 @@ declare const PROVIDER_CHECK_RETRY_MESSAGE = "The payment session was checked mo
 declare class ProviderCheckLimitedError extends Error {
     readonly name = "ProviderCheckLimitedError";
     constructor();
+}
+
+declare class TaxCalculationError extends Error {
+    constructor(options?: ErrorOptions);
 }
 
 interface CommerceApiOptions {
@@ -161,6 +165,13 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 giftCardRefundedCents: number;
                 creditApplied: number;
                 subtotalAmount: number;
+                shippingAmount: number;
+                shippingRateId: string | null;
+                shippingLabel: string | null;
+                taxAmount: number;
+                taxBehavior: "inclusive" | "exclusive" | null;
+                taxCalculationId: string | null;
+                taxTransactionId: string | null;
                 status: string;
                 items: {
                     productId: string;
@@ -213,6 +224,13 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 giftCardRefundedCents: number;
                 creditApplied: number;
                 subtotalAmount: number;
+                shippingAmount: number;
+                shippingRateId: string | null;
+                shippingLabel: string | null;
+                taxAmount: number;
+                taxBehavior: "inclusive" | "exclusive" | null;
+                taxCalculationId: string | null;
+                taxTransactionId: string | null;
                 status: string;
                 items: {
                     productId: string;
@@ -257,6 +275,8 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             providerId?: string;
             shippingAddress?: any;
             billingAddress?: any;
+            /** One of the store's shipping rates. Without it, the first rate that serves the country. */
+            shippingRateId?: string;
             successUrl: string;
             cancelUrl: string;
             referralCode?: string;
@@ -280,6 +300,13 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 giftCardRefundedCents: number;
                 creditApplied: number;
                 subtotalAmount: number;
+                shippingAmount: number;
+                shippingRateId: string | null;
+                shippingLabel: string | null;
+                taxAmount: number;
+                taxBehavior: "inclusive" | "exclusive" | null;
+                taxCalculationId: string | null;
+                taxTransactionId: string | null;
                 status: string;
                 items: {
                     productId: string;
@@ -364,6 +391,13 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             giftCardRefundedCents: number;
             creditApplied: number;
             subtotalAmount: number;
+            shippingAmount: number;
+            shippingRateId: string | null;
+            shippingLabel: string | null;
+            taxAmount: number;
+            taxBehavior: "inclusive" | "exclusive" | null;
+            taxCalculationId: string | null;
+            taxTransactionId: string | null;
             status: string;
             items: {
                 productId: string;
@@ -413,6 +447,13 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             giftCardRefundedCents: number;
             creditApplied: number;
             subtotalAmount: number;
+            shippingAmount: number;
+            shippingRateId: string | null;
+            shippingLabel: string | null;
+            taxAmount: number;
+            taxBehavior: "inclusive" | "exclusive" | null;
+            taxCalculationId: string | null;
+            taxTransactionId: string | null;
             status: string;
             items: {
                 productId: string;
@@ -462,6 +503,13 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             giftCardRefundedCents: number;
             creditApplied: number;
             subtotalAmount: number;
+            shippingAmount: number;
+            shippingRateId: string | null;
+            shippingLabel: string | null;
+            taxAmount: number;
+            taxBehavior: "inclusive" | "exclusive" | null;
+            taxCalculationId: string | null;
+            taxTransactionId: string | null;
             status: string;
             items: {
                 productId: string;
@@ -516,6 +564,13 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             giftCardRefundedCents: number;
             creditApplied: number;
             subtotalAmount: number;
+            shippingAmount: number;
+            shippingRateId: string | null;
+            shippingLabel: string | null;
+            taxAmount: number;
+            taxBehavior: "inclusive" | "exclusive" | null;
+            taxCalculationId: string | null;
+            taxTransactionId: string | null;
             status: string;
             items: {
                 productId: string;
@@ -592,6 +647,13 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             giftCardRefundedCents: number;
             creditApplied: number;
             subtotalAmount: number;
+            shippingAmount: number;
+            shippingRateId: string | null;
+            shippingLabel: string | null;
+            taxAmount: number;
+            taxBehavior: "inclusive" | "exclusive" | null;
+            taxCalculationId: string | null;
+            taxTransactionId: string | null;
             status: string;
             items: {
                 productId: string;
@@ -708,4 +770,4 @@ declare function purgeStaleCommerceData(options: CommercePurgeOptions): Promise<
     authRateLimits: number;
 }>;
 
-export { CART_MAX_LINES, CART_MAX_LINE_QUANTITY, type CartItemInput, type CommerceApiOptions, type CommercePurgeOptions, PROVIDER_CHECK_RETRY_MESSAGE, ProviderCheckLimitedError, aggregateComponentDemand, bindCommerceApi, purgeStaleCommerceData, reconcileCommerce };
+export { CART_MAX_LINES, CART_MAX_LINE_QUANTITY, type CartItemInput, type CommerceApiOptions, type CommercePurgeOptions, PROVIDER_CHECK_RETRY_MESSAGE, ProviderCheckLimitedError, TaxCalculationError, aggregateComponentDemand, bindCommerceApi, purgeStaleCommerceData, reconcileCommerce };

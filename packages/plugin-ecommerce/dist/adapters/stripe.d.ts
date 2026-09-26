@@ -1,5 +1,5 @@
 import Stripe from 'stripe';
-import { P as PaymentProviderAdapter, V as ValidatedWebhookEvent } from '../payments-B8lp8sbe.js';
+import { P as PaymentProviderAdapter, V as ValidatedWebhookEvent, b as TaxCalculationParams, a as TaxCalculation } from '../payments-Dtu__rfy.js';
 
 interface StripeAdapterConfig {
     secretKey: string;
@@ -17,6 +17,7 @@ declare class StripePaymentAdapter implements PaymentProviderAdapter {
     constructor(config: StripeAdapterConfig);
     createCheckoutSession(params: {
         orderId: string;
+        currency: string;
         items: Array<{
             name: string;
             description?: string;
@@ -30,6 +31,14 @@ declare class StripePaymentAdapter implements PaymentProviderAdapter {
         creditApplied?: number;
         discountApplied?: number;
         giftCardApplied?: number;
+        shipping?: {
+            label: string;
+            amount: number;
+            description?: string;
+        };
+        tax?: {
+            amount: number;
+        };
     }): Promise<{
         url: string;
         providerSessionId: string;
@@ -47,6 +56,22 @@ declare class StripePaymentAdapter implements PaymentProviderAdapter {
         customerEmail: string | null;
     }>;
     getDisputeStatus(paymentIntentId: string): Promise<'none' | 'open' | 'lost'>;
+    calculateTax(params: TaxCalculationParams): Promise<TaxCalculation>;
+    recordTaxTransaction(params: {
+        orderId: string;
+        calculationId: string;
+        postedAt?: number;
+    }): Promise<{
+        transactionId: string;
+    }>;
+    reverseTaxTransaction(params: {
+        orderId: string;
+        transactionId: string;
+        amount: number;
+        reference: string;
+    }): Promise<{
+        reversalId: string;
+    }>;
 }
 
 export { type StripeAdapterConfig, StripePaymentAdapter, checkoutCouponId };

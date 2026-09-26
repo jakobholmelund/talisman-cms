@@ -3,19 +3,39 @@ import {
 } from "./chunk-FK3KKBW6.js";
 import {
   StripePaymentAdapter
-} from "./chunk-YXG3523I.js";
+} from "./chunk-C2SYF4CS.js";
 import {
   CART_MAX_LINES,
   CART_MAX_LINE_QUANTITY,
+  TaxCalculationError,
   bindCommerceApi,
-  reconcileCommerce
-} from "./chunk-ZCEC33U7.js";
-import "./chunk-BCWAVKQF.js";
-import "./chunk-YXNRHYNN.js";
-import "./chunk-2RLPKBNT.js";
-import "./chunk-MS53KKKY.js";
-import "./chunk-NITAPJVN.js";
-import "./chunk-CLEUXV3O.js";
+  reconcileCommerce,
+  shippingOptionsFor
+} from "./chunk-GDYU3454.js";
+import "./chunk-HAO6IOX2.js";
+import {
+  TaxAddressError
+} from "./chunk-BGDJXEM5.js";
+import "./chunk-63W5IYCB.js";
+import {
+  COUNTRY_CODES,
+  StoreSettingsError,
+  isCountryCode,
+  readStoreCurrency,
+  readStoreSettings
+} from "./chunk-3I33VHHD.js";
+import {
+  SUPPORTED_CURRENCIES,
+  currencyMinorUnits,
+  formatMoney,
+  fromMinorUnits,
+  isSupportedCurrency,
+  minimumChargeAmount,
+  toMinorUnits
+} from "./chunk-2UYSCNNW.js";
+import "./chunk-6773WH54.js";
+import "./chunk-AASKNEFP.js";
+import "./chunk-U2UUCKVF.js";
 
 // src/index.ts
 import { fileURLToPath } from "url";
@@ -175,7 +195,7 @@ var ecommercePlugin = (config) => {
           );
         }
         productFields.push(
-          { name: "basePrice", label: "Base Price (Cents)", type: "number", required: true, defaultValue: 0 },
+          { name: "basePrice", label: "Base Price (smallest currency unit)", type: "number", required: true, defaultValue: 0 },
           { name: "isPhysical", label: "Is Physical Product", type: "boolean", defaultValue: true },
           { name: "inventoryQuantity", label: "Inventory Quantity", type: "number", defaultValue: 0 },
           { name: "type", label: "Product Type", type: "select", options: ["standard", "digital", "subscription"], defaultValue: "standard", required: true },
@@ -221,7 +241,7 @@ var ecommercePlugin = (config) => {
             { name: "variantId", label: "Variant Definition", type: "relation", relationTo: "_ecommerce_variants" },
             { name: "name", label: "Display Name", type: "text", required: true },
             { name: "sku", label: "SKU", type: "text", defaultValue: null },
-            { name: "priceOverride", label: "Price Override (Cents)", type: "number", defaultValue: null },
+            { name: "priceOverride", label: "Price Override (smallest currency unit)", type: "number", defaultValue: null },
             { name: "inventoryQuantity", label: "Inventory Quantity", type: "number", defaultValue: 0 }
           ],
           nativeSchemaMapping: {
@@ -241,7 +261,7 @@ var ecommercePlugin = (config) => {
             { name: "value", label: "Value", type: "text", required: true },
             { name: "sku", label: "SKU", type: "text", defaultValue: null },
             { name: "image", label: "Variant Image URL", type: "media" },
-            { name: "priceOverride", label: "Price Override (Cents)", type: "number", defaultValue: null }
+            { name: "priceOverride", label: "Price Override (smallest currency unit)", type: "number", defaultValue: null }
           ],
           nativeSchemaMapping: {
             schemaPath: "@talisman-cms/plugin-ecommerce/schema",
@@ -375,7 +395,7 @@ var ecommercePlugin = (config) => {
             { name: "id", label: "ID", type: "text", required: true },
             { name: "email", label: "Email", type: "text" },
             { name: "name", label: "Name", type: "text" },
-            { name: "creditBalance", label: "Store Credit Balance (Cents)", type: "number" }
+            { name: "creditBalance", label: "Store Credit Balance (smallest currency unit)", type: "number" }
           ],
           nativeSchemaMapping: {
             schemaPath: "@talisman-cms/plugin-ecommerce/schema",
@@ -408,7 +428,7 @@ var ecommercePlugin = (config) => {
             { name: "referrerAccountId", label: "Referrer Account ID", type: "text" },
             { name: "referredAccountId", label: "Referred Account ID", type: "text" },
             { name: "orderId", label: "Order ID", type: "text" },
-            { name: "rewardCents", label: "Reward (Cents)", type: "number" },
+            { name: "rewardCents", label: "Reward (smallest currency unit)", type: "number" },
             { name: "status", label: "Status", type: "text" }
           ],
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "referrals", idColumn: "id" }
@@ -424,7 +444,7 @@ var ecommercePlugin = (config) => {
             { name: "accountId", label: "Shopper Account ID", type: "text" },
             { name: "orderId", label: "Order ID", type: "text" },
             { name: "kind", label: "Kind", type: "text" },
-            { name: "amountCents", label: "Amount (Cents)", type: "number" }
+            { name: "amountCents", label: "Amount (smallest currency unit)", type: "number" }
           ],
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "creditLedger", idColumn: "id" }
         });
@@ -437,8 +457,8 @@ var ecommercePlugin = (config) => {
           fields: [
             { name: "id", label: "ID", type: "text", required: true },
             { name: "enabled", label: "Enabled", type: "boolean" },
-            { name: "rewardCents", label: "Reward (Cents)", type: "number" },
-            { name: "minOrderCents", label: "Minimum Order (Cents)", type: "number" },
+            { name: "rewardCents", label: "Reward (smallest currency unit)", type: "number" },
+            { name: "minOrderCents", label: "Minimum Order (smallest currency unit)", type: "number" },
             { name: "attributionDays", label: "Attribution Window (Days)", type: "number" }
           ],
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "referralSettings", idColumn: "id" }
@@ -454,7 +474,7 @@ var ecommercePlugin = (config) => {
             { name: "description", label: "Description", type: "text" },
             { name: "type", label: "Type", type: "text" },
             { name: "value", label: "Value", type: "number" },
-            { name: "remainingCents", label: "Remaining Credit (Cents)", type: "number" },
+            { name: "remainingCents", label: "Remaining Credit (smallest currency unit)", type: "number" },
             { name: "active", label: "Active", type: "boolean" }
           ],
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "discountCodes", idColumn: "code" }
@@ -469,7 +489,7 @@ var ecommercePlugin = (config) => {
             { name: "id", label: "ID", type: "text", required: true },
             { name: "code", label: "Code", type: "text" },
             { name: "orderId", label: "Order ID", type: "text" },
-            { name: "amountCents", label: "Discount (Cents)", type: "number" },
+            { name: "amountCents", label: "Discount (smallest currency unit)", type: "number" },
             { name: "status", label: "Status", type: "text" }
           ],
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "discountRedemptions", idColumn: "id" }
@@ -484,8 +504,8 @@ var ecommercePlugin = (config) => {
             { name: "id", label: "ID", type: "text", required: true },
             { name: "codeSuffix", label: "Code Suffix", type: "text" },
             { name: "source", label: "Source", type: "text" },
-            { name: "initialCents", label: "Issued (Cents)", type: "number" },
-            { name: "balanceCents", label: "Balance (Cents)", type: "number" },
+            { name: "initialCents", label: "Issued (smallest currency unit)", type: "number" },
+            { name: "balanceCents", label: "Balance (smallest currency unit)", type: "number" },
             { name: "status", label: "Status", type: "text" }
           ],
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "giftCards", idColumn: "id" }
@@ -499,9 +519,9 @@ var ecommercePlugin = (config) => {
           fields: [
             { name: "id", label: "ID", type: "text", required: true },
             { name: "buyerEmail", label: "Buyer Email", type: "text" },
-            { name: "amountCents", label: "Amount (Cents)", type: "number" },
+            { name: "amountCents", label: "Amount (smallest currency unit)", type: "number" },
             { name: "status", label: "Status", type: "text" },
-            { name: "providerRefundedCents", label: "Refunded (Cents)", type: "number" }
+            { name: "providerRefundedCents", label: "Refunded (smallest currency unit)", type: "number" }
           ],
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "giftCardPurchases", idColumn: "id" }
         });
@@ -516,7 +536,7 @@ var ecommercePlugin = (config) => {
             { name: "cardId", label: "Gift Card ID", type: "text" },
             { name: "orderId", label: "Order ID", type: "text" },
             { name: "kind", label: "Kind", type: "text" },
-            { name: "amountCents", label: "Amount (Cents)", type: "number" }
+            { name: "amountCents", label: "Amount (smallest currency unit)", type: "number" }
           ],
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "giftCardLedger", idColumn: "id" }
         });
@@ -530,7 +550,7 @@ var ecommercePlugin = (config) => {
             { name: "id", label: "ID", type: "text", required: true },
             { name: "cardId", label: "Gift Card ID", type: "text" },
             { name: "orderId", label: "Order ID", type: "text" },
-            { name: "amountCents", label: "Amount (Cents)", type: "number" },
+            { name: "amountCents", label: "Amount (smallest currency unit)", type: "number" },
             { name: "status", label: "Status", type: "text" }
           ],
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "giftCardRedemptions", idColumn: "id" }
@@ -545,7 +565,7 @@ var ecommercePlugin = (config) => {
             { name: "id", label: "ID", type: "text", required: true },
             { name: "cardId", label: "Gift Card ID", type: "text" },
             { name: "orderId", label: "Order ID", type: "text" },
-            { name: "amountCents", label: "Amount (Cents)", type: "number" },
+            { name: "amountCents", label: "Amount (smallest currency unit)", type: "number" },
             { name: "adminActor", label: "Administrator", type: "text" },
             { name: "reason", label: "Reason", type: "text" }
           ],
@@ -595,18 +615,25 @@ var ecommercePlugin = (config) => {
           { name: "checkoutSessionId", label: "Checkout Session ID", type: "text" },
           { name: "paymentProvider", label: "Payment Provider", type: "text" },
           { name: "status", label: "Status", type: "select", options: ["draft", "pending", "paid", "fulfilled", "cancelled", "partially_refunded", "refunded"], required: true, defaultValue: "draft" },
-          { name: "subtotalAmount", label: "Item Subtotal (Cents)", type: "number" },
-          { name: "creditApplied", label: "Store Credit Used (Cents)", type: "number" },
+          { name: "subtotalAmount", label: "Item Subtotal (smallest currency unit)", type: "number" },
+          { name: "shippingLabel", label: "Shipping Option", type: "text" },
+          { name: "shippingRateId", label: "Shipping Rate ID", type: "text" },
+          { name: "shippingAmount", label: "Shipping (smallest currency unit)", type: "number" },
+          { name: "taxAmount", label: "Tax (smallest currency unit)", type: "number" },
+          { name: "taxBehavior", label: "Tax Behavior (inclusive or exclusive)", type: "text" },
+          { name: "taxCalculationId", label: "Tax Calculation ID", type: "text" },
+          { name: "taxTransactionId", label: "Tax Transaction ID", type: "text" },
+          { name: "creditApplied", label: "Store Credit Used (smallest currency unit)", type: "number" },
           { name: "discountCode", label: "Discount Code", type: "text" },
-          { name: "discountAmount", label: "Code Discount (Cents)", type: "number" },
+          { name: "discountAmount", label: "Code Discount (smallest currency unit)", type: "number" },
           { name: "giftCardId", label: "Gift Card ID", type: "text" },
-          { name: "giftCardApplied", label: "Gift Card Used (Cents)", type: "number" },
-          { name: "giftCardRefundedCents", label: "Gift Card Refunded (Cents)", type: "number" },
-          { name: "totalAmount", label: "Provider Charge (Cents)", type: "number", required: true },
-          { name: "providerRefundedCents", label: "Provider Refunded (Cents)", type: "number" },
+          { name: "giftCardApplied", label: "Gift Card Used (smallest currency unit)", type: "number" },
+          { name: "giftCardRefundedCents", label: "Gift Card Refunded (smallest currency unit)", type: "number" },
+          { name: "totalAmount", label: "Provider Charge (smallest currency unit)", type: "number", required: true },
+          { name: "providerRefundedCents", label: "Provider Refunded (smallest currency unit)", type: "number" },
           { name: "paymentIntentId", label: "Payment Intent ID", type: "text" },
           { name: "referralCode", label: "Referral Code", type: "text" },
-          { name: "referralRewardCents", label: "Referral Reward (Cents)", type: "number" },
+          { name: "referralRewardCents", label: "Referral Reward (smallest currency unit)", type: "number" },
           { name: "customerEmail", label: "Customer Email", type: "text" },
           {
             name: "items",
@@ -616,7 +643,7 @@ var ecommercePlugin = (config) => {
               { name: "productId", label: "Product ID", type: "text", required: true },
               { name: "variantId", label: "Variant ID", type: "text" },
               { name: "quantity", label: "Quantity", type: "number", required: true },
-              { name: "priceAtPurchase", label: "Price At Purchase (Cents)", type: "number", required: true }
+              { name: "priceAtPurchase", label: "Price At Purchase (smallest currency unit)", type: "number", required: true }
             ]
           },
           { name: "shippingAddress", label: "Shipping Address", type: "group", fields: addressFields },
@@ -712,9 +739,24 @@ export {
   AdminTestPaymentAdapter,
   CART_MAX_LINES,
   CART_MAX_LINE_QUANTITY,
+  COUNTRY_CODES,
+  SUPPORTED_CURRENCIES,
+  StoreSettingsError,
   StripePaymentAdapter,
+  TaxAddressError,
+  TaxCalculationError,
   bindCommerceApi,
   createEcommerceLayoutBlocks,
+  currencyMinorUnits,
   ecommercePlugin,
-  reconcileCommerce
+  formatMoney,
+  fromMinorUnits,
+  isCountryCode,
+  isSupportedCurrency,
+  minimumChargeAmount,
+  readStoreCurrency,
+  readStoreSettings,
+  reconcileCommerce,
+  shippingOptionsFor,
+  toMinorUnits
 };

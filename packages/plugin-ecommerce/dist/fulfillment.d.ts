@@ -18,6 +18,13 @@ declare function listCommerceOrdersAdmin(env: TalismanEnv): Promise<{
         giftCardRefundedCents: number;
         creditApplied: number;
         subtotalAmount: number;
+        shippingAmount: number;
+        shippingRateId: string | null;
+        shippingLabel: string | null;
+        taxAmount: number;
+        taxBehavior: "inclusive" | "exclusive" | null;
+        taxCalculationId: string | null;
+        taxTransactionId: string | null;
         status: string;
         items: {
             productId: string;

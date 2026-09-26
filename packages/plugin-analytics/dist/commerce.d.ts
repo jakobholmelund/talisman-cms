@@ -22,6 +22,12 @@ type CommerceOverview = {
     stripeMode: StripeMode;
     /** True when some refunds in the period have no recorded date and were counted on the payment date. */
     undatedRefunds: boolean;
+    /**
+     * Amounts are in each currency's minor units. `grossSales` is the items after discounts, without
+     * the shipping and tax added to the price. `refunds` counts only the items' share of what was
+     * refunded, and `netSales` is gross sales less those refunds. `charged` is what payment providers
+     * charged, shipping and tax included.
+     */
     currencies: Array<{
         currency: string;
         orders: number;

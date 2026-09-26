@@ -1,16 +1,24 @@
 import {
   evaluateDiscountCode
-} from "./chunk-BCWAVKQF.js";
+} from "./chunk-HAO6IOX2.js";
+import {
+  TaxAddressError
+} from "./chunk-BGDJXEM5.js";
 import {
   fulfillCommerceOrder
-} from "./chunk-YXNRHYNN.js";
+} from "./chunk-63W5IYCB.js";
 import {
   confirmGiftCardPurchase,
   evaluateGiftCard,
   expireGiftCardPurchase,
+  isCountryCode,
+  readStoreSettings,
   reconcileGiftCardPurchase,
   recordGiftCardPurchaseRefund
-} from "./chunk-2RLPKBNT.js";
+} from "./chunk-3I33VHHD.js";
+import {
+  minimumChargeAmount
+} from "./chunk-2UYSCNNW.js";
 import {
   canonicalEmail,
   canonicalEmailSql,
@@ -23,12 +31,12 @@ import {
   referralReversalStatements,
   releaseReferralAwards,
   reverseReferralForOrder
-} from "./chunk-MS53KKKY.js";
+} from "./chunk-6773WH54.js";
 import {
   PURCHASED_ORDER_STATUSES,
   claimInterval,
   hasPurchaseHistory
-} from "./chunk-NITAPJVN.js";
+} from "./chunk-AASKNEFP.js";
 import {
   carts,
   componentReservations,
@@ -43,7 +51,7 @@ import {
   stocks,
   variantComponents,
   variants
-} from "./chunk-CLEUXV3O.js";
+} from "./chunk-U2UUCKVF.js";
 
 // src/api.ts
 import { createDbClient } from "talisman-cms/client";
@@ -70,6 +78,294 @@ async function mayAskPaymentProvider(env, order, paymentAdapters, { minOrderAgeS
   if (!paymentAdapters.some((adapter) => adapter.providerId === provider)) return true;
   if (now - Math.floor(order.createdAt.getTime() / 1e3) < minOrderAgeSeconds) return false;
   return claimInterval(env, `order-status:${order.id}`, PROVIDER_CHECK_INTERVAL_SECONDS, now);
+}
+
+// src/checkout-input.ts
+import { z } from "zod";
+var INVALID_COUNTRY = "Enter a valid country code";
+var UNDELIVERABLE_COUNTRY = "We do not deliver to this country";
+var SHIPPING_OPTION_UNAVAILABLE = "This shipping option is not available for your country";
+var TAX_ADDRESS_REQUIRED = "A billing address is required to calculate tax";
+var TAX_ADDRESS_UNUSABLE = "Tax cannot be calculated for this address. Check it and try again.";
+var TAX_UNAVAILABLE = "Tax could not be calculated. Please try again.";
+var correctableRefusals = /* @__PURE__ */ new Set([
+  INVALID_COUNTRY,
+  UNDELIVERABLE_COUNTRY,
+  SHIPPING_OPTION_UNAVAILABLE,
+  TAX_ADDRESS_REQUIRED,
+  TAX_ADDRESS_UNUSABLE
+]);
+function isCheckoutDetailsError(error) {
+  return error instanceof Error && correctableRefusals.has(error.message);
+}
+function withCountryCode(address) {
+  const country = address?.country;
+  if (country === void 0 || country === null) return address;
+  const code = typeof country === "string" ? country.trim().toUpperCase() : null;
+  if (code === null || code && !isCountryCode(code)) throw new Error(INVALID_COUNTRY);
+  return { ...address, country: code };
+}
+var addressSchema = z.object({
+  name: z.string().trim().max(200).optional(),
+  line1: z.string().trim().max(200).optional(),
+  line2: z.string().trim().max(200).optional(),
+  city: z.string().trim().max(100).optional(),
+  state: z.string().trim().max(100).optional(),
+  postalCode: z.string().trim().max(30).optional(),
+  // Any case. Only officially assigned codes pass, so a mistyped "UK" is refused rather than stored.
+  country: z.string().trim().toUpperCase().refine(isCountryCode, INVALID_COUNTRY).optional()
+});
+var checkoutSchema = z.object({
+  customerEmail: z.string().trim().email().max(254).optional(),
+  discountCode: z.string().trim().max(32).optional(),
+  giftCardCode: z.string().trim().max(37).optional(),
+  shippingAddress: addressSchema.optional(),
+  billingAddress: addressSchema.optional(),
+  // A rate id from the store's shipping rates. Left out or blank, checkout uses the first rate that
+  // serves the country.
+  shippingRateId: z.string().trim().max(40).optional()
+});
+function checkoutInputError(error) {
+  return error.issues.some((issue) => issue.path.at(-1) === "country") ? INVALID_COUNTRY : "Invalid checkout details";
+}
+
+// src/shipping.ts
+function shippingOptionsFor(settings, country, itemsAmount) {
+  return ratesServing(settings, country).map((rate) => ({
+    id: rate.id,
+    label: rate.label,
+    amount: shippingCharge(rate, itemsAmount),
+    description: deliveryEstimate(rate),
+    freeOver: rate.freeOver,
+    minDays: rate.minDays,
+    maxDays: rate.maxDays
+  }));
+}
+function ratesServing(settings, country) {
+  const code = typeof country === "string" ? country.trim().toUpperCase() : "";
+  if (!isCountryCode(code) || settings.deliveryCountries && !settings.deliveryCountries.includes(code)) return [];
+  return settings.shippingRates.filter((rate) => !rate.countries || rate.countries.includes(code));
+}
+function chooseShippingRate(settings, country, chosenId) {
+  const serving = ratesServing(settings, country);
+  if (!serving.length) throw new Error(UNDELIVERABLE_COUNTRY);
+  const chosen = chosenId?.trim();
+  const rate = chosen ? serving.find((candidate) => candidate.id === chosen) : serving[0];
+  if (!rate) throw new Error(SHIPPING_OPTION_UNAVAILABLE);
+  return rate;
+}
+function shippingCharge(rate, itemsAmount) {
+  return rate.freeOver !== null && itemsAmount >= rate.freeOver ? 0 : rate.amount;
+}
+function deliveryEstimate(rate) {
+  const days = (count) => `${count} business day${count === 1 ? "" : "s"}`;
+  const { minDays, maxDays } = rate;
+  if (minDays !== null && maxDays !== null) {
+    return `Delivery in ${minDays === maxDays ? days(maxDays) : `${minDays}\u2013${days(maxDays)}`}`;
+  }
+  if (maxDays !== null) return `Delivery in up to ${days(maxDays)}`;
+  if (minDays !== null) return `Delivery in at least ${days(minDays)}`;
+  return null;
+}
+
+// src/tax.ts
+var SHIPPING_TAX_CODE = "txcd_92010001";
+var TaxCalculationError = class extends Error {
+  constructor(options) {
+    super(TAX_UNAVAILABLE, options);
+    this.name = "TaxCalculationError";
+  }
+};
+var describe = (error) => error instanceof Error ? error.message : String(error);
+function allocateProportionally(amount, weights) {
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  if (amount <= 0 || total <= 0) return weights.map(() => 0);
+  const parts = weights.map((weight, index) => {
+    const product = BigInt(amount) * BigInt(weight);
+    return { index, share: Number(product / BigInt(total)), remainder: product % BigInt(total) };
+  });
+  let left = amount - parts.reduce((sum, part) => sum + part.share, 0);
+  const byRemainder = [...parts].sort((a, b) => a.remainder === b.remainder ? a.index - b.index : a.remainder > b.remainder ? -1 : 1);
+  for (const part of byRemainder) {
+    if (left <= 0) break;
+    part.share += 1;
+    left -= 1;
+  }
+  return parts.map((part) => part.share);
+}
+function taxableLines(lines, discount, creditApplied) {
+  const totals = lines.map((line) => line.priceAtPurchase * line.quantity);
+  const discounts = allocateProportionally(discount.amount, totals.map((total, index) => !discount.productIds.length || discount.productIds.includes(lines[index].productId) ? total : 0));
+  const afterDiscount = totals.map((total, index) => total - discounts[index]);
+  const credits = allocateProportionally(creditApplied, afterDiscount);
+  return lines.map((line, index) => ({
+    // Unique within the order, and names the product in the provider's tax reports.
+    reference: `L${index + 1}:${line.productId}${line.variantId ? `:${line.variantId}` : ""}`,
+    amount: afterDiscount[index] - credits[index],
+    quantity: line.quantity
+  }));
+}
+function taxAddressFor(requiresShipping, shippingAddress, billingAddress) {
+  const given = requiresShipping ? shippingAddress : billingAddress;
+  if (!given || typeof given.country !== "string" || !given.country) throw new Error(TAX_ADDRESS_REQUIRED);
+  const address = { country: given.country };
+  for (const key of ["line1", "line2", "city", "state", "postalCode"]) {
+    const value = given[key];
+    if (typeof value === "string" && value.trim()) address[key] = value.trim();
+  }
+  return { address, addressSource: requiresShipping ? "shipping" : "billing" };
+}
+async function calculateOrderTax(adapter, input) {
+  const charged = input.lines.filter((line) => line.amount > 0);
+  const shippingOnly = !charged.length && input.shippingAmount > 0;
+  const params = {
+    currency: input.currency,
+    behavior: input.behavior,
+    taxCode: input.settings.taxCode,
+    lines: shippingOnly ? [{ reference: "shipping", amount: input.shippingAmount, quantity: 1, taxCode: SHIPPING_TAX_CODE }] : charged.length ? charged : input.lines.slice(0, 1),
+    shippingAmount: shippingOnly ? 0 : input.shippingAmount,
+    address: input.address,
+    addressSource: input.addressSource,
+    shipFromCountry: input.settings.shipFromCountry
+  };
+  const failed = (reason, cause) => {
+    console.error(`[Commerce] Tax could not be calculated for basket ${input.cartId}: ${reason}`);
+    return new TaxCalculationError(cause === void 0 ? void 0 : { cause });
+  };
+  if (!adapter.calculateTax || !adapter.recordTaxTransaction || !adapter.reverseTaxTransaction) {
+    throw failed(`payment provider ${adapter.providerId} cannot calculate, record and reverse tax`);
+  }
+  let calculation;
+  try {
+    calculation = await adapter.calculateTax(params);
+  } catch (cause) {
+    if (cause instanceof TaxAddressError) throw new Error(TAX_ADDRESS_UNUSABLE, { cause });
+    throw failed(describe(cause), cause);
+  }
+  const exclusive = input.behavior === "exclusive";
+  const amount = exclusive ? calculation.taxAmountExclusive : calculation.taxAmountInclusive;
+  const other = exclusive ? calculation.taxAmountInclusive : calculation.taxAmountExclusive;
+  const base = params.lines.reduce((sum, line) => sum + line.amount, 0) + params.shippingAmount;
+  if (typeof calculation.id !== "string" || !calculation.id || !Number.isSafeInteger(amount) || amount < 0 || other !== 0 || calculation.amountTotal !== base + (exclusive ? amount : 0) || !exclusive && amount > base) {
+    throw failed(`calculation ${calculation.id} totals ${calculation.amountTotal} with ${amount} tax ${input.behavior}, where the order expects ${base}${exclusive ? " plus the tax" : ""}`);
+  }
+  return { calculationId: calculation.id, amount, behavior: input.behavior };
+}
+function taxProvider(adapters, paymentProvider) {
+  const providerId = paymentProvider === "gift_card" ? "stripe" : paymentProvider ?? "stripe";
+  return adapters.find((adapter) => adapter.providerId === providerId);
+}
+var PAID_STATUSES = ["paid", "fulfilled", "partially_refunded", "refunded"];
+async function recordOrderTax(env, adapters, orderId) {
+  const order = await env.DB.prepare(`SELECT id, status, payment_provider, tax_calculation_id, tax_transaction_id,
+      (SELECT MIN(created_at) FROM _ecommerce_payments WHERE order_id = o.id) AS paid_at
+    FROM _ecommerce_orders o WHERE id = ?`).bind(orderId).first();
+  if (!order?.tax_calculation_id || order.tax_transaction_id || !PAID_STATUSES.includes(order.status)) return false;
+  const adapter = taxProvider(adapters, order.payment_provider);
+  if (!adapter?.recordTaxTransaction) throw new Error("Payment provider cannot record tax");
+  const late = order.paid_at !== null && order.paid_at < Math.floor(Date.now() / 1e3) - 300;
+  const { transactionId } = await adapter.recordTaxTransaction({
+    orderId: order.id,
+    calculationId: order.tax_calculation_id,
+    ...late ? { postedAt: order.paid_at } : {}
+  });
+  const stored = await env.DB.prepare(`UPDATE _ecommerce_orders SET tax_transaction_id = ?
+    WHERE id = ? AND tax_transaction_id IS NULL`).bind(transactionId, order.id).run();
+  return Number(stored.meta?.changes ?? 0) > 0;
+}
+async function recordConfirmedOrderTax(env, adapters, orderId) {
+  try {
+    await recordOrderTax(env, adapters, orderId);
+  } catch (error) {
+    console.error(`[Commerce] The tax transaction of order ${orderId} was not recorded: ${describe(error)}`);
+  }
+}
+var REVERSAL_TARGET = `CASE WHEN o.status = 'refunded' THEN o.gift_card_applied + o.total_amount
+  ELSE MIN(o.gift_card_applied + o.total_amount, o.provider_refunded_cents + o.gift_card_refunded_cents) END`;
+var REVERSED = "(SELECT COALESCE(SUM(r.amount), 0) FROM _ecommerce_tax_reversals r WHERE r.order_id = o.id)";
+async function reverseOrderTax(env, adapters, orderId) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const order = await env.DB.prepare(`SELECT o.id, o.payment_provider, o.tax_transaction_id,
+        ${REVERSAL_TARGET} AS target, ${REVERSED} AS reversed
+      FROM _ecommerce_orders o WHERE o.id = ?`).bind(orderId).first();
+    if (!order?.tax_transaction_id || order.target <= order.reversed) return null;
+    const adapter = taxProvider(adapters, order.payment_provider);
+    if (!adapter?.reverseTaxTransaction) throw new Error("Payment provider cannot reverse tax");
+    const reversal = {
+      orderId: order.id,
+      transactionId: order.tax_transaction_id,
+      reference: `${order.id}:reversal:${order.target}`,
+      amount: order.target - order.reversed
+    };
+    const recorded = await env.DB.prepare(`INSERT INTO _ecommerce_tax_reversals
+      (id, order_id, reference, amount, provider_reversal_id, created_at)
+      SELECT ?, ?, ?, ?, '', ? WHERE (SELECT COALESCE(SUM(amount), 0) FROM _ecommerce_tax_reversals
+        WHERE order_id = ?) = ?
+      ON CONFLICT(reference) DO NOTHING`).bind(
+      `taxrev_${crypto.randomUUID()}`,
+      order.id,
+      reversal.reference,
+      reversal.amount,
+      Math.floor(Date.now() / 1e3),
+      order.id,
+      order.reversed
+    ).run();
+    if (Number(recorded.meta?.changes ?? 0) > 0) {
+      await sendTaxReversal(env, adapter, reversal);
+      return { reference: reversal.reference, amount: reversal.amount };
+    }
+  }
+  return null;
+}
+async function sendTaxReversal(env, adapter, reversal) {
+  if (!adapter.reverseTaxTransaction) throw new Error("Payment provider cannot reverse tax");
+  const { reversalId } = await adapter.reverseTaxTransaction(reversal);
+  await env.DB.prepare(`UPDATE _ecommerce_tax_reversals SET provider_reversal_id = ?
+    WHERE reference = ? AND provider_reversal_id = ''`).bind(reversalId, reversal.reference).run();
+}
+async function reverseRefundedOrderTax(env, adapters, orderId) {
+  try {
+    await reverseOrderTax(env, adapters, orderId);
+  } catch (error) {
+    console.error(`[Commerce] The tax reversal of order ${orderId} was not recorded: ${describe(error)}`);
+  }
+}
+async function ordersMissingTaxTransaction(env, limit) {
+  const rows = await env.DB.prepare(`SELECT id FROM _ecommerce_orders
+    WHERE status IN (${PAID_STATUSES.map((status) => `'${status}'`).join(", ")})
+      AND tax_calculation_id IS NOT NULL AND tax_transaction_id IS NULL
+    ORDER BY created_at LIMIT ?`).bind(limit).all();
+  return rows.results ?? [];
+}
+async function ordersWithUnreversedTax(env, limit) {
+  const rows = await env.DB.prepare(`SELECT o.id FROM _ecommerce_orders o
+    WHERE o.status IN ('partially_refunded', 'refunded') AND o.tax_transaction_id IS NOT NULL
+      AND ${REVERSAL_TARGET} > ${REVERSED}
+    ORDER BY o.created_at LIMIT ?`).bind(limit).all();
+  return rows.results ?? [];
+}
+async function resendPendingTaxReversals(env, adapters, recordedBefore, limit) {
+  const pending = await env.DB.prepare(`SELECT r.order_id, r.reference, r.amount, o.payment_provider,
+      o.tax_transaction_id FROM _ecommerce_tax_reversals r JOIN _ecommerce_orders o ON o.id = r.order_id
+    WHERE r.provider_reversal_id = '' AND r.created_at < ?
+    ORDER BY r.created_at LIMIT ?`).bind(recordedBefore, limit).all();
+  const results = [];
+  for (const row of pending.results ?? []) {
+    try {
+      const adapter = taxProvider(adapters, row.payment_provider);
+      if (!adapter) throw new Error("Payment provider cannot reverse tax");
+      await sendTaxReversal(env, adapter, {
+        orderId: row.order_id,
+        transactionId: row.tax_transaction_id,
+        reference: row.reference,
+        amount: row.amount
+      });
+      results.push({ id: row.order_id, status: "tax_reversed" });
+    } catch (error) {
+      results.push({ id: row.order_id, status: "error", error: describe(error) });
+    }
+  }
+  return results;
 }
 
 // src/api.ts
@@ -311,6 +607,9 @@ function bindCommerceApi(options) {
     await env.DB.batch(statements);
     const current = await db.select().from(orders).where(eq(orders.id, params.orderId)).get();
     if (current?.status !== "paid") throw new Error("Order is no longer pending");
+    if (current.taxCalculationId && !current.taxTransactionId) {
+      await recordConfirmedOrderTax(env, paymentAdapters, params.orderId);
+    }
     return { success: true, orderId: params.orderId, status: "paid" };
   }
   async function recordProviderRefund(params) {
@@ -370,6 +669,7 @@ function bindCommerceApi(options) {
   return {
     carts: {
       async quote(cartId) {
+        const { currency } = readStoreSettings(env);
         const cart = await db.select().from(carts).where(eq(carts.id, cartId)).get();
         if (!cart) throw new Error("Cart not found");
         const lines = [];
@@ -401,7 +701,7 @@ function bindCommerceApi(options) {
           if (demand.available < demand.quantity) throw new Error(`Insufficient stock for component ${demand.name}`);
         }
         if (!Number.isSafeInteger(totalAmount)) throw new Error("Order total is too large");
-        return { lines, totalAmount, currency: "usd", requiresShipping, locked: Boolean(cart.checkoutSessionId) };
+        return { lines, totalAmount, currency, requiresShipping, locked: Boolean(cart.checkoutSessionId) };
       },
       async find(sessionToken, userId) {
         if (!sessionToken && !userId) return null;
@@ -618,6 +918,8 @@ function bindCommerceApi(options) {
         return { status: "pending", paymentUrl: session.status === "open" ? session.url : null };
       },
       async createFromCart(cartId, options2) {
+        const settings = readStoreSettings(env);
+        const { currency, deliveryCountries } = settings;
         const cart = await db.select().from(carts).where(eq(carts.id, cartId)).get();
         if (!cart || cart.items.length === 0) {
           throw new Error("Cart is empty or not found");
@@ -692,6 +994,14 @@ function bindCommerceApi(options) {
         if (requiresShipping && (!options2.shippingAddress || !["name", "line1", "city", "postalCode", "country"].every((key) => typeof options2.shippingAddress[key] === "string" && options2.shippingAddress[key].trim()))) {
           throw new Error("Shipping address is required for physical products");
         }
+        const shippingAddress = withCountryCode(options2.shippingAddress);
+        const billingAddress = withCountryCode(options2.billingAddress);
+        if (requiresShipping && deliveryCountries && !deliveryCountries.includes(shippingAddress.country)) {
+          throw new Error(UNDELIVERABLE_COUNTRY);
+        }
+        const shippingRate = requiresShipping && settings.shippingRates.length ? chooseShippingRate(settings, shippingAddress.country, options2.shippingRateId) : null;
+        const taxBehavior = settings.tax.mode === "none" || defaultAdapter.providerId === "admin_test" ? null : settings.tax.mode === "stripe-inclusive" ? "inclusive" : "exclusive";
+        const taxAddress = taxBehavior ? taxAddressFor(requiresShipping, shippingAddress, billingAddress) : null;
         const orderId = `ord_${crypto.randomUUID()}`;
         const referralsPolicy = await getReferralPolicy(env);
         const subtotalAmount = totalAmount;
@@ -703,6 +1013,8 @@ function bindCommerceApi(options) {
           subtotal: subtotalAmount
         }) : null;
         const discountAmount = discount?.amount ?? 0;
+        const merchandise = subtotalAmount - discountAmount;
+        const shippingAmount = shippingRate ? shippingCharge(shippingRate, merchandise) : 0;
         let creditApplied = 0;
         const owner = cart.userId ? await db.select({
           creditBalance: customerAccounts.creditBalance,
@@ -711,13 +1023,29 @@ function bindCommerceApi(options) {
         if (owner && defaultAdapter.providerId === "stripe") {
           creditApplied = Math.min(
             Math.max(0, owner.creditBalance),
-            Math.max(0, subtotalAmount - discountAmount - 50)
+            merchandise,
+            Math.max(0, merchandise + shippingAmount - minimumChargeAmount(currency))
           );
         }
-        totalAmount = subtotalAmount - discountAmount - creditApplied;
-        const giftCard = options2.giftCardCode && defaultAdapter.providerId === "stripe" ? await evaluateGiftCard(env, options2.giftCardCode, totalAmount) : null;
+        const tax = taxBehavior && taxAddress ? await calculateOrderTax(defaultAdapter, {
+          cartId,
+          currency,
+          behavior: taxBehavior,
+          settings: settings.tax,
+          shippingAmount,
+          ...taxAddress,
+          lines: taxableLines(
+            orderItems,
+            { amount: discountAmount, productIds: discount?.eligibleProductIds ?? [] },
+            creditApplied
+          )
+        }) : null;
+        const exclusiveTax = tax?.behavior === "exclusive" ? tax.amount : 0;
+        const amountDue = merchandise - creditApplied + shippingAmount + exclusiveTax;
+        if (!Number.isSafeInteger(amountDue)) throw new Error("Order total is too large");
+        const giftCard = options2.giftCardCode && defaultAdapter.providerId === "stripe" ? await evaluateGiftCard(env, options2.giftCardCode, amountDue) : null;
         const giftCardApplied = giftCard?.amount ?? 0;
-        totalAmount -= giftCardApplied;
+        totalAmount = amountDue - giftCardApplied;
         const internallyPaid = Boolean(giftCard && totalAmount === 0);
         let referralCode = null;
         if (referralsPolicy.enabled && options2.referralCode && defaultAdapter.providerId === "stripe" && !internallyPaid && subtotalAmount - discountAmount >= referralsPolicy.minOrderCents) {
@@ -748,6 +1076,7 @@ function bindCommerceApi(options) {
           providerDiscount = !internallyPaid && creditApplied + discountAmount + giftCardApplied > 0;
           session = internallyPaid ? { providerSessionId: `internal:${orderId}`, url: successUrl } : await defaultAdapter.createCheckoutSession({
             orderId,
+            currency,
             items: orderItems.map((i) => ({
               name: i.name,
               priceCents: i.priceAtPurchase,
@@ -757,6 +1086,12 @@ function bindCommerceApi(options) {
             creditApplied,
             discountApplied: discountAmount,
             giftCardApplied,
+            shipping: shippingRate ? {
+              label: shippingRate.label,
+              amount: shippingAmount,
+              description: deliveryEstimate(shippingRate) ?? void 0
+            } : void 0,
+            tax: exclusiveTax > 0 ? { amount: exclusiveTax } : void 0,
             metadata: {
               giftCardApplied: String(giftCardApplied),
               storeCreditApplied: String(creditApplied),
@@ -770,8 +1105,9 @@ function bindCommerceApi(options) {
           const statements = [
             env.DB.prepare(`INSERT INTO _ecommerce_orders
              (id, cart_id, user_id, checkout_session_id, payment_provider, status, items, total_amount, subtotal_amount, credit_applied, discount_code, discount_amount, gift_card_id, gift_card_applied, referral_code, referral_reward_cents, currency,
+              shipping_amount, shipping_rate_id, shipping_label, tax_amount, tax_behavior, tax_calculation_id,
               customer_email, shipping_address, billing_address, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'usd', ?, ?, ?, ?, ?) `).bind(
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) `).bind(
               orderId,
               cartId,
               cart.userId,
@@ -787,9 +1123,16 @@ function bindCommerceApi(options) {
               giftCardApplied,
               referralCode,
               referralCode ? referralsPolicy.rewardCents : 0,
+              currency,
+              shippingAmount,
+              shippingRate?.id ?? null,
+              shippingRate?.label ?? null,
+              tax?.amount ?? 0,
+              tax?.behavior ?? null,
+              tax?.calculationId ?? null,
               options2.customerEmail,
-              options2.shippingAddress ? JSON.stringify(options2.shippingAddress) : null,
-              options2.billingAddress ? JSON.stringify(options2.billingAddress) : null,
+              shippingAddress ? JSON.stringify(shippingAddress) : null,
+              billingAddress ? JSON.stringify(billingAddress) : null,
               timestamp,
               timestamp
             )
@@ -887,7 +1230,7 @@ function bindCommerceApi(options) {
           paymentProvider: null,
           status: data.status || "draft",
           totalAmount: data.totalAmount,
-          currency: data.currency || "usd",
+          currency: data.currency || readStoreSettings(env).currency,
           customerEmail: data.customerEmail,
           items: data.items,
           shippingAddress: data.shippingAddress,
@@ -1096,12 +1439,14 @@ function bindCommerceApi(options) {
             currency: charge.currency
           });
           if (giftPurchaseRefund) return giftPurchaseRefund;
-          return recordProviderRefund({
+          const refund = await recordProviderRefund({
             paymentIntentId: charge.payment_intent,
             amount: charge.amount,
             amountRefunded: charge.amount_refunded,
             currency: charge.currency
           });
+          await reverseRefundedOrderTax(env, paymentAdapters, refund.orderId);
+          return refund;
         }
         return { success: true, event: event.type, ignored: true };
       }
@@ -1160,6 +1505,22 @@ async function reconcileCommerce(options, limit = 10) {
       results.push({ id: row.id, status: result?.status ?? "unchanged" });
     } catch (error) {
       results.push({ id: row.id, status: "error", error: error instanceof Error ? error.message : "Recovery failed" });
+    }
+  }
+  const adapters = options.paymentAdapters ?? [];
+  for (const row of await ordersMissingTaxTransaction(env, count)) {
+    try {
+      results.push({ id: row.id, status: await recordOrderTax(env, adapters, row.id) ? "tax_recorded" : "unchanged" });
+    } catch (error) {
+      results.push({ id: row.id, status: "error", error: error instanceof Error ? error.message : "Tax recording failed" });
+    }
+  }
+  results.push(...await resendPendingTaxReversals(env, adapters, now - 5 * 60, count));
+  for (const row of await ordersWithUnreversedTax(env, count)) {
+    try {
+      results.push({ id: row.id, status: await reverseOrderTax(env, adapters, row.id) ? "tax_reversed" : "unchanged" });
+    } catch (error) {
+      results.push({ id: row.id, status: "error", error: error instanceof Error ? error.message : "Tax reversal failed" });
     }
   }
   try {
@@ -1249,6 +1610,11 @@ export {
   ProviderCheckLimitedError,
   providerCheckLimitResponse,
   mayAskPaymentProvider,
+  isCheckoutDetailsError,
+  checkoutSchema,
+  checkoutInputError,
+  shippingOptionsFor,
+  TaxCalculationError,
   CART_MAX_LINES,
   CART_MAX_LINE_QUANTITY,
   aggregateComponentDemand,

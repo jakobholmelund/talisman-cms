@@ -1,5 +1,5 @@
 import { TalismanEnv } from 'talisman-cms/client';
-import { P as PaymentProviderAdapter } from './payments-B8lp8sbe.js';
+import { P as PaymentProviderAdapter } from './payments-Dtu__rfy.js';
 import { orders } from './schema.js';
 import 'drizzle-orm';
 import 'drizzle-orm/sqlite-core';
@@ -53,6 +53,8 @@ type QualifyingOrder = Pick<typeof orders.$inferSelect, 'status' | 'subtotalAmou
 /**
  * What the shopper paid for the goods after promotions and refunds: the subtotal less the promotion
  * discount, provider refunds and gift card refunds. Store credit and gift card tender count as paid.
+ * Shipping and tax added to the price are not part of the goods, and a refund counts in full against
+ * them even when it returned shipping or tax, so this never exceeds what the order kept for its goods.
  */
 declare function referralNetAmount(order: Omit<QualifyingOrder, 'status'>): number;
 /**

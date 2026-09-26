@@ -1,25 +1,30 @@
 import {
-  checkoutSchema
-} from "../chunk-WVDCIW2W.js";
-import {
   AdminTestPaymentAdapter
 } from "../chunk-FK3KKBW6.js";
 import {
   runtimePaymentAdapters
-} from "../chunk-K47ZHGKG.js";
-import "../chunk-YXG3523I.js";
+} from "../chunk-R7FZZLF2.js";
+import "../chunk-C2SYF4CS.js";
 import {
-  bindCommerceApi
-} from "../chunk-ZCEC33U7.js";
-import "../chunk-BCWAVKQF.js";
+  bindCommerceApi,
+  checkoutInputError,
+  checkoutSchema,
+  isCheckoutDetailsError
+} from "../chunk-GDYU3454.js";
+import "../chunk-HAO6IOX2.js";
+import "../chunk-BGDJXEM5.js";
 import {
   readCartSessionToken
 } from "../chunk-MDTTSWBR.js";
-import "../chunk-YXNRHYNN.js";
-import "../chunk-2RLPKBNT.js";
-import "../chunk-MS53KKKY.js";
-import "../chunk-NITAPJVN.js";
-import "../chunk-CLEUXV3O.js";
+import "../chunk-63W5IYCB.js";
+import {
+  StoreSettingsError,
+  reportStoreSettingsError
+} from "../chunk-3I33VHHD.js";
+import "../chunk-2UYSCNNW.js";
+import "../chunk-6773WH54.js";
+import "../chunk-AASKNEFP.js";
+import "../chunk-U2UUCKVF.js";
 
 // src/routes/ecommerce-admin-test-checkout.ts
 import { authorizeCmsRequest } from "talisman-cms/auth/guard";
@@ -48,6 +53,7 @@ var ALL = async ({ request, cookies }) => {
         try {
           quote = await api.carts.quote(cart.id);
         } catch (error) {
+          if (error instanceof StoreSettingsError) throw error;
           quoteError = error instanceof Error ? error.message : "Basket cannot be quoted";
         }
       }
@@ -58,7 +64,7 @@ var ALL = async ({ request, cookies }) => {
     }
     if (!sessionToken) return Response.json({ error: "No basket session found" }, { status: 400 });
     const parsed = checkoutSchema.safeParse(await request.json());
-    if (!parsed.success) return Response.json({ error: "Invalid checkout details" }, { status: 400 });
+    if (!parsed.success) return Response.json({ error: checkoutInputError(parsed.error) }, { status: 400 });
     if (!cart?.items.length) return Response.json({ error: "Basket is empty" }, { status: 400 });
     let order;
     if (cart.checkoutSessionId) {
@@ -76,6 +82,7 @@ var ALL = async ({ request, cookies }) => {
         customerEmail: parsed.data.customerEmail || authorization.user.email,
         shippingAddress: parsed.data.shippingAddress,
         billingAddress: parsed.data.billingAddress,
+        shippingRateId: parsed.data.shippingRateId,
         successUrl: `${origin}/checkout/success?order={ORDER_ID}`,
         cancelUrl: `${origin}/checkout/cancel?order={ORDER_ID}`
       });
@@ -96,6 +103,10 @@ var ALL = async ({ request, cookies }) => {
       redirectUrl: `/checkout/success?order=${encodeURIComponent(order.id)}`
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
+    if (error instanceof StoreSettingsError) {
+      return Response.json({ error: reportStoreSettingsError(error) }, { status: 503 });
+    }
+    if (isCheckoutDetailsError(error)) return Response.json({ error: error.message }, { status: 400 });
     return Response.json({ error: error instanceof Error ? error.message : "Admin test checkout failed" }, { status: 409 });
   }
 };

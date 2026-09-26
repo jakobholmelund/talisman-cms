@@ -42,10 +42,11 @@ import {
   stocksRelations,
   tags,
   tagsRelations,
+  taxReversals,
   variantComponents,
   variants,
   variantsRelations
-} from "./chunk-CLEUXV3O.js";
+} from "./chunk-U2UUCKVF.js";
 export {
   carts,
   cartsRelations,
@@ -90,6 +91,7 @@ export {
   stocksRelations,
   tags,
   tagsRelations,
+  taxReversals,
   variantComponents,
   variants,
   variantsRelations

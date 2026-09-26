@@ -1,5 +1,5 @@
 import { TalismanEnv } from 'talisman-cms/client';
-import { P as PaymentProviderAdapter } from './payments-B8lp8sbe.js';
+import { P as PaymentProviderAdapter } from './payments-Dtu__rfy.js';
 
 declare function hashGiftCardSecret(value: string): Promise<string>;
 declare function issueAdminGiftCard(env: TalismanEnv, actor: string, input: unknown): Promise<{
@@ -18,7 +18,7 @@ declare function getGiftCardsAdmin(env: TalismanEnv): Promise<{
     initialCents: number;
     balanceCents: number;
     currency: string;
-    status: "void" | "active" | "suspended";
+    status: "active" | "void" | "suspended";
     createdAt: Date;
 }[]>;
 declare function setGiftCardActive(env: TalismanEnv, id: string, active: boolean): Promise<{
@@ -26,8 +26,11 @@ declare function setGiftCardActive(env: TalismanEnv, id: string, active: boolean
     status: string;
 }>;
 /** Why a gift card was refused. The reason is for server-side use; shoppers see one message. */
-type GiftCardRefusalReason = 'format' | 'unavailable' | 'nothing_due' | 'cannot_cover';
-/** A gift card refused for this order. `message` is the detailed reason for admin tools and logs. */
+type GiftCardRefusalReason = 'format' | 'unavailable' | 'nothing_due' | 'cannot_cover' | 'currency';
+/**
+ * A gift card refused for this order, or in a store whose currency gift cards do not support.
+ * `message` is the detailed reason for admin tools and logs.
+ */
 declare class GiftCardRefusal extends Error {
     readonly reason: GiftCardRefusalReason;
     constructor(reason: GiftCardRefusalReason, message: string);
@@ -42,7 +45,7 @@ declare function evaluateGiftCard(env: TalismanEnv, code: string, amountDue: num
 declare function getGiftCardBalance(env: TalismanEnv, code: string): Promise<{
     balanceCents: number;
     currency: string;
-    status: "void" | "active" | "suspended";
+    status: "active" | "void" | "suspended";
 }>;
 declare function startGiftCardPurchase(env: TalismanEnv, adapter: PaymentProviderAdapter, input: unknown, urls: {
     successUrl: string;
@@ -77,7 +80,7 @@ declare function reconcileGiftCardPurchase(env: TalismanEnv, adapter: PaymentPro
     status: string;
 } | null>;
 declare function getPurchasedGiftCard(env: TalismanEnv, id: string, accessToken: string | undefined): Promise<{
-    status: "paid" | "pending" | "cancelled" | "partially_refunded" | "refunded" | "review";
+    status: "cancelled" | "refunded" | "pending" | "paid" | "partially_refunded" | "review";
     amountCents: number;
     code: string | null;
     balanceCents: number | null;

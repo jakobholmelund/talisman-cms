@@ -1,6 +1,6 @@
 import { StripePaymentAdapter } from './adapters/stripe.js';
 import 'stripe';
-import './payments-B8lp8sbe.js';
+import './payments-Dtu__rfy.js';
 
 /** Worker secrets are read at request time, never serialized into the Astro build. */
 declare function runtimeStripeSecrets(env: Record<string, unknown>): {

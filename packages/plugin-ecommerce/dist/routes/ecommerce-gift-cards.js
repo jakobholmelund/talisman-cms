@@ -1,17 +1,21 @@
 import {
   runtimePaymentAdapters
-} from "../chunk-K47ZHGKG.js";
-import "../chunk-YXG3523I.js";
+} from "../chunk-R7FZZLF2.js";
+import "../chunk-C2SYF4CS.js";
+import "../chunk-BGDJXEM5.js";
 import {
   giftCardAccessCookie
 } from "../chunk-MDTTSWBR.js";
 import {
+  StoreSettingsError,
   getGiftCardBalance,
+  reportStoreSettingsError,
   startGiftCardPurchase
-} from "../chunk-2RLPKBNT.js";
-import "../chunk-MS53KKKY.js";
-import "../chunk-NITAPJVN.js";
-import "../chunk-CLEUXV3O.js";
+} from "../chunk-3I33VHHD.js";
+import "../chunk-2UYSCNNW.js";
+import "../chunk-6773WH54.js";
+import "../chunk-AASKNEFP.js";
+import "../chunk-U2UUCKVF.js";
 
 // src/routes/ecommerce-gift-cards.ts
 import { readSetting } from "talisman-cms/env";
@@ -46,6 +50,9 @@ var POST = async ({ request, cookies }) => {
     });
     return Response.json({ purchaseId: purchase.id, redirectUrl: purchase.paymentUrl }, { headers });
   } catch (error) {
+    if (error instanceof StoreSettingsError) {
+      return Response.json({ error: reportStoreSettingsError(error) }, { status: 503, headers });
+    }
     return Response.json(
       { error: error instanceof Error ? error.message : "Could not start gift card purchase" },
       { status: 400, headers }

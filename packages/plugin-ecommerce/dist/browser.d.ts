@@ -69,7 +69,10 @@ declare function startCheckout(input?: {
     discountCode?: string;
     giftCardCode?: string;
     shippingAddress?: Record<string, string>;
+    /** When the store charges tax and nothing ships, tax is calculated for this address, so it needs a country. */
     billingAddress?: Record<string, string>;
+    /** The id of one of the store's shipping options for the country. Without it, the first option. */
+    shippingRateId?: string;
 }): Promise<{
     orderId: string;
     redirectUrl: string;
@@ -83,6 +86,7 @@ declare function startAdminTestCheckout(input?: {
     customerEmail?: string;
     shippingAddress?: Record<string, string>;
     billingAddress?: Record<string, string>;
+    shippingRateId?: string;
 }, options?: {
     adminPath?: string;
 }): Promise<{
@@ -99,6 +103,10 @@ declare function getOrderStatus(orderId: string): Promise<{
     accountLinked: boolean;
     totalAmount: number;
     subtotalAmount: number;
+    shippingAmount: number;
+    shippingLabel: string | null;
+    taxAmount: number;
+    taxBehavior: "inclusive" | "exclusive" | null;
     creditApplied: number;
     discountCode: string | null;
     discountAmount: number;

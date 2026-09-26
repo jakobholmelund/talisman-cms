@@ -2,7 +2,7 @@ import {
   customerAccounts,
   customerSessions,
   orders
-} from "./chunk-CLEUXV3O.js";
+} from "./chunk-U2UUCKVF.js";
 
 // src/accounts.ts
 import { and, eq, gt, isNull } from "drizzle-orm";
@@ -302,6 +302,10 @@ async function listCustomerOrders(env, accountId) {
     status: orders.status,
     totalAmount: orders.totalAmount,
     subtotalAmount: orders.subtotalAmount,
+    shippingAmount: orders.shippingAmount,
+    shippingLabel: orders.shippingLabel,
+    taxAmount: orders.taxAmount,
+    taxBehavior: orders.taxBehavior,
     creditApplied: orders.creditApplied,
     currency: orders.currency,
     createdAt: orders.createdAt

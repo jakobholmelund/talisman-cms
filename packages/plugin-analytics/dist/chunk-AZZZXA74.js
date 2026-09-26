@@ -1,6 +1,6 @@
 import {
   fetchCommerceRange
-} from "./chunk-FESX4VX6.js";
+} from "./chunk-BC73DO2D.js";
 import {
   fetchTrafficRange
 } from "./chunk-MS4TVUJ4.js";
@@ -20,6 +20,12 @@ function formatRange(start, end, locale) {
   const firstDay = date.format(from);
   const lastDay = date.format(to);
   return firstDay === lastDay ? `${firstDay}, ${time.format(from)}\u2013${time.format(to)} UTC` : `${firstDay}, ${time.format(from)} \u2013 ${lastDay}, ${time.format(to)} UTC`;
+}
+
+// src/admin/money.ts
+function formatMoney(amount, currency, locale) {
+  const format = new Intl.NumberFormat(locale, { style: "currency", currency: currency.toUpperCase() });
+  return format.format(amount / 10 ** (format.resolvedOptions().maximumFractionDigits ?? 2));
 }
 
 // src/ask.ts
@@ -144,7 +150,7 @@ var titles = {
   traffic: "Traffic report",
   traffic_and_sales: "Traffic and sales"
 };
-var money = (cents, currency) => new Intl.NumberFormat("en", { style: "currency", currency: currency.toUpperCase() }).format(cents / 100);
+var money = (amount, currency) => formatMoney(amount, currency, "en");
 var plural = (count, word) => `${count.toLocaleString("en")} ${count === 1 ? word : `${word}s`}`;
 function currencyAmounts(rows) {
   if (!rows.length) return "There were no confirmed purchases.";
@@ -206,6 +212,7 @@ async function createAskReport(question, ai, db, env, adminBase = "/admin", prod
     stripeMode === "test" ? "Dates use UTC. Sales use the payment date and exclude pending orders and admin test orders. The store is in Stripe test mode, so Stripe test-mode orders are included." : "Dates use UTC. Sales use the payment date and exclude pending orders, admin test orders and Stripe test-mode orders.",
     "Currencies are reported separately; amounts from different currencies are never added together."
   ];
+  if (commerce) notes.push("Sales are the items after discounts, without the shipping and tax added to the price. A refund counts against sales only for the items' share of what it returned.");
   if (commerce?.refundBasis === "refund_date") {
     notes.push("Refunds count on the date they were issued, and net sales are gross sales less the refunds issued in the same period.");
     if (commerce.undatedRefunds || previousCommerce?.undatedRefunds) notes.push("Some refunds were recorded before refund dates were stored; those count on the payment date of the refunded order.");

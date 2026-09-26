@@ -168,6 +168,7 @@ declare const ecommerceActions: {
             postalCode?: string | undefined;
             country?: string | undefined;
         } | undefined;
+        shippingRateId?: string | undefined;
     }) => Promise<astro_actions.SafeResult<{
         customerEmail: string;
         discountCode?: string | undefined;
@@ -192,6 +193,7 @@ declare const ecommerceActions: {
             postalCode?: string | undefined;
             country?: string | undefined;
         } | undefined;
+        shippingRateId?: string | undefined;
     }, {
         success: boolean;
         redirectUrl: string;
@@ -223,6 +225,7 @@ declare const ecommerceActions: {
                 postalCode?: string | undefined;
                 country?: string | undefined;
             } | undefined;
+            shippingRateId?: string | undefined;
         }) => Promise<{
             success: boolean;
             redirectUrl: string;
@@ -252,6 +255,7 @@ declare const ecommerceActions: {
                 postalCode: z.ZodOptional<z.ZodString>;
                 country: z.ZodOptional<z.ZodString>;
             }, z.core.$loose>>;
+            shippingRateId: z.ZodOptional<z.ZodString>;
         }, z.core.$strip>;
     } & string;
 };

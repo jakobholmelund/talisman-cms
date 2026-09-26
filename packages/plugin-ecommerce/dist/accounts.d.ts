@@ -115,6 +115,10 @@ declare function listCustomerOrders(env: TalismanEnv, accountId: string): Promis
     status: string;
     totalAmount: number;
     subtotalAmount: number;
+    shippingAmount: number;
+    shippingLabel: string | null;
+    taxAmount: number;
+    taxBehavior: "inclusive" | "exclusive" | null;
     creditApplied: number;
     currency: string;
     createdAt: Date;

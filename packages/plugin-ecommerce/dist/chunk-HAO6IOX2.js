@@ -1,20 +1,24 @@
 import {
-  GiftCardRefusal
-} from "./chunk-2RLPKBNT.js";
+  GiftCardRefusal,
+  readStoreSettings
+} from "./chunk-3I33VHHD.js";
+import {
+  minimumChargeAmount
+} from "./chunk-2UYSCNNW.js";
 import {
   getReferralPolicy,
   referralTermsError
-} from "./chunk-MS53KKKY.js";
+} from "./chunk-6773WH54.js";
 import {
   hasPurchaseHistory
-} from "./chunk-NITAPJVN.js";
+} from "./chunk-AASKNEFP.js";
 import {
   customerAccounts,
   discountCodes,
   discountRedemptions,
   referralCodes,
   referralSettings
-} from "./chunk-CLEUXV3O.js";
+} from "./chunk-U2UUCKVF.js";
 
 // src/promotions.ts
 import { and, count, eq, inArray } from "drizzle-orm";
@@ -62,14 +66,14 @@ var referralSettingsSchema = z.object({
   const termsError = value.enabled ? referralTermsError(value) : null;
   if (termsError) ctx.addIssue({ code: "custom", path: ["rewardCents"], message: termsError });
 });
-function discountAmountForLines(code, lines, subtotal) {
+function discountAmountForLines(code, lines, subtotal, currency) {
   if (!Number.isSafeInteger(subtotal) || subtotal < code.minOrderCents) return 0;
   const eligible = code.eligibleProductIds.length ? lines.filter((line) => code.eligibleProductIds.includes(line.productId)) : lines;
   const eligibleSubtotal = eligible.reduce((sum, line) => sum + line.priceAtPurchase * line.quantity, 0);
   if (!Number.isSafeInteger(eligibleSubtotal) || eligibleSubtotal <= 0) return 0;
   const raw = code.type === "percent" ? Number(BigInt(eligibleSubtotal) * BigInt(code.value) / 10000n) : code.type === "credit" ? Math.min(code.remainingCents ?? 0, eligibleSubtotal) : Math.min(code.value, eligibleSubtotal);
   const capped = code.type === "percent" && code.maxDiscountCents !== null ? Math.min(raw, code.maxDiscountCents) : raw;
-  return Math.max(0, Math.min(capped, subtotal - 50));
+  return Math.max(0, Math.min(capped, subtotal - minimumChargeAmount(currency)));
 }
 var DiscountCodeRefusal = class extends Error {
   reason;
@@ -89,6 +93,7 @@ function codeRefusalBody(error) {
   return null;
 }
 async function evaluateDiscountCode(env, input) {
+  const { currency } = readStoreSettings(env);
   const normalizedCode = input.code.trim().toUpperCase();
   if (!/^[A-Z0-9][A-Z0-9_-]{2,31}$/.test(normalizedCode)) throw new DiscountCodeRefusal("format", "Invalid discount code");
   const db = createDbClient(env);
@@ -125,9 +130,9 @@ async function evaluateDiscountCode(env, input) {
       throw new DiscountCodeRefusal("customer_limit", "Discount code was already used by this shopper");
     }
   }
-  const amount = discountAmountForLines(code, input.lines, input.subtotal);
+  const amount = discountAmountForLines(code, input.lines, input.subtotal, currency);
   if (!amount) throw new DiscountCodeRefusal("not_applicable", "Discount code does not apply to this basket");
-  return { code: code.code, type: code.type, amount, emailNormalized };
+  return { code: code.code, type: code.type, amount, emailNormalized, eligibleProductIds: code.eligibleProductIds };
 }
 async function getPromotionsAdmin(env) {
   const db = createDbClient(env);

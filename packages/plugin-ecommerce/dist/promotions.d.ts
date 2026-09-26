@@ -2,7 +2,7 @@ import { ReferralPolicy } from './referrals.js';
 import { TalismanEnv } from 'talisman-cms/client';
 import { z } from 'zod';
 import { discountCodes } from './schema.js';
-import './payments-B8lp8sbe.js';
+import './payments-Dtu__rfy.js';
 import 'drizzle-orm';
 import 'drizzle-orm/sqlite-core';
 
@@ -22,60 +22,60 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     active: z.ZodBoolean;
 }, "strict", z.ZodTypeAny, {
     description: string | null;
-    type: "credit" | "amount" | "percent";
+    type: "amount" | "credit" | "percent";
     value: number;
-    active: boolean;
+    expiresAt: number | null;
     code: string;
-    maxDiscountCents: number | null;
+    active: boolean;
     minOrderCents: number;
+    maxDiscountCents: number | null;
     eligibleProductIds: string[];
     maxUses: number | null;
     maxUsesPerCustomer: number | null;
     firstOrderOnly: boolean;
     startsAt: number | null;
-    expiresAt: number | null;
 }, {
     description: string | null;
-    type: "credit" | "amount" | "percent";
+    type: "amount" | "credit" | "percent";
     value: number;
-    active: boolean;
+    expiresAt: number | null;
     code: string;
-    maxDiscountCents: number | null;
+    active: boolean;
     minOrderCents: number;
+    maxDiscountCents: number | null;
     eligibleProductIds: string[];
     maxUses: number | null;
     maxUsesPerCustomer: number | null;
     firstOrderOnly: boolean;
     startsAt: number | null;
-    expiresAt: number | null;
 }>, {
     description: string | null;
-    type: "credit" | "amount" | "percent";
+    type: "amount" | "credit" | "percent";
     value: number;
-    active: boolean;
+    expiresAt: number | null;
     code: string;
-    maxDiscountCents: number | null;
+    active: boolean;
     minOrderCents: number;
+    maxDiscountCents: number | null;
     eligibleProductIds: string[];
     maxUses: number | null;
     maxUsesPerCustomer: number | null;
     firstOrderOnly: boolean;
     startsAt: number | null;
-    expiresAt: number | null;
 }, {
     description: string | null;
-    type: "credit" | "amount" | "percent";
+    type: "amount" | "credit" | "percent";
     value: number;
-    active: boolean;
+    expiresAt: number | null;
     code: string;
-    maxDiscountCents: number | null;
+    active: boolean;
     minOrderCents: number;
+    maxDiscountCents: number | null;
     eligibleProductIds: string[];
     maxUses: number | null;
     maxUsesPerCustomer: number | null;
     firstOrderOnly: boolean;
     startsAt: number | null;
-    expiresAt: number | null;
 }>;
 type DiscountCodeInput = z.infer<typeof discountCodeSchema>;
 declare const referralSettingsSchema: z.ZodEffects<z.ZodObject<{
@@ -84,31 +84,31 @@ declare const referralSettingsSchema: z.ZodEffects<z.ZodObject<{
     minOrderCents: z.ZodNumber;
     attributionDays: z.ZodNumber;
 }, "strict", z.ZodTypeAny, {
-    minOrderCents: number;
     rewardCents: number;
     enabled: boolean;
+    minOrderCents: number;
     attributionDays: number;
 }, {
-    minOrderCents: number;
     rewardCents: number;
     enabled: boolean;
+    minOrderCents: number;
     attributionDays: number;
 }>, {
-    minOrderCents: number;
     rewardCents: number;
     enabled: boolean;
+    minOrderCents: number;
     attributionDays: number;
 }, {
-    minOrderCents: number;
     rewardCents: number;
     enabled: boolean;
+    minOrderCents: number;
     attributionDays: number;
 }>;
 declare function discountAmountForLines(code: Pick<typeof discountCodes.$inferSelect, 'type' | 'value' | 'remainingCents' | 'maxDiscountCents' | 'minOrderCents' | 'eligibleProductIds'>, lines: Array<{
     productId: string;
     quantity: number;
     priceAtPurchase: number;
-}>, subtotal: number): number;
+}>, subtotal: number, currency: string): number;
 /** Why a discount code was refused. The reason is for server-side use; shoppers see one message. */
 type DiscountRefusalReason = 'format' | 'unknown' | 'inactive' | 'dates' | 'email_required' | 'first_order' | 'use_limit' | 'customer_limit' | 'not_applicable';
 /** A discount code refused for this order. `message` is the detailed reason for admin tools and logs. */
@@ -147,9 +147,10 @@ declare function evaluateDiscountCode(env: TalismanEnv, input: {
     checkShopperHistory?: boolean;
 }): Promise<{
     code: string;
-    type: "credit" | "amount" | "percent";
+    type: "amount" | "credit" | "percent";
     amount: number;
     emailNormalized: string;
+    eligibleProductIds: string[];
 }>;
 declare function getPromotionsAdmin(env: TalismanEnv): Promise<{
     referral: ReferralPolicy;
@@ -161,7 +162,7 @@ declare function getPromotionsAdmin(env: TalismanEnv): Promise<{
     codes: {
         code: string;
         description: string | null;
-        type: "credit" | "amount" | "percent";
+        type: "amount" | "credit" | "percent";
         value: number;
         remainingCents: number | null;
         maxDiscountCents: number | null;
@@ -178,7 +179,7 @@ declare function getPromotionsAdmin(env: TalismanEnv): Promise<{
     }[];
     usage: {
         code: string;
-        status: "cancelled" | "refunded" | "reserved" | "confirmed";
+        status: "reserved" | "confirmed" | "cancelled" | "refunded";
         uses: number;
     }[];
 }>;
@@ -190,7 +191,7 @@ declare function saveReferralSettings(env: TalismanEnv, input: unknown): Promise
 declare function createDiscountCode(env: TalismanEnv, input: unknown): Promise<{
     code: string;
     description: string | null;
-    type: "credit" | "amount" | "percent";
+    type: "amount" | "credit" | "percent";
     value: number;
     remainingCents: number | null;
     maxDiscountCents: number | null;
@@ -208,7 +209,7 @@ declare function createDiscountCode(env: TalismanEnv, input: unknown): Promise<{
 declare function updateDiscountCode(env: TalismanEnv, code: string, input: unknown): Promise<{
     code: string;
     description: string | null;
-    type: "credit" | "amount" | "percent";
+    type: "amount" | "credit" | "percent";
     value: number;
     remainingCents: number | null;
     maxDiscountCents: number | null;

@@ -1,35 +1,42 @@
 import {
-  checkoutSchema
-} from "../chunk-WVDCIW2W.js";
-import {
   CODE_CHECK_LIMIT_MESSAGE,
   codeChecksOverBasketLimit,
   codeChecksOverNetworkLimit
-} from "../chunk-PIVUHCSX.js";
+} from "../chunk-6HILOGQM.js";
 import {
   runtimePaymentAdapters
-} from "../chunk-K47ZHGKG.js";
-import "../chunk-YXG3523I.js";
+} from "../chunk-R7FZZLF2.js";
+import "../chunk-C2SYF4CS.js";
 import {
+  TaxCalculationError,
   bindCommerceApi,
+  checkoutInputError,
+  checkoutSchema,
+  isCheckoutDetailsError,
   providerCheckLimitResponse
-} from "../chunk-ZCEC33U7.js";
+} from "../chunk-GDYU3454.js";
 import {
   codeRefusalBody
-} from "../chunk-BCWAVKQF.js";
+} from "../chunk-HAO6IOX2.js";
+import "../chunk-BGDJXEM5.js";
 import {
   readCartSessionToken
 } from "../chunk-MDTTSWBR.js";
-import "../chunk-YXNRHYNN.js";
-import "../chunk-2RLPKBNT.js";
+import "../chunk-63W5IYCB.js";
+import {
+  StoreSettingsError,
+  readStoreSettings,
+  reportStoreSettingsError
+} from "../chunk-3I33VHHD.js";
+import "../chunk-2UYSCNNW.js";
 import {
   REFERRAL_COOKIE
-} from "../chunk-MS53KKKY.js";
+} from "../chunk-6773WH54.js";
 import {
   CUSTOMER_SESSION_COOKIE,
   findCustomerSession
-} from "../chunk-NITAPJVN.js";
-import "../chunk-CLEUXV3O.js";
+} from "../chunk-AASKNEFP.js";
+import "../chunk-U2UUCKVF.js";
 
 // src/routes/ecommerce-checkout.ts
 import { readSetting } from "talisman-cms/env";
@@ -50,8 +57,9 @@ var POST = async ({ request, cookies }) => {
     });
   }
   try {
+    readStoreSettings(runtimeEnv);
     const parsed = checkoutSchema.safeParse(await request.json());
-    if (!parsed.success) return Response.json({ error: "Invalid checkout details" }, { status: 400 });
+    if (!parsed.success) return Response.json({ error: checkoutInputError(parsed.error) }, { status: 400 });
     const body = parsed.data;
     const api = bindCommerceApi({
       env: runtimeEnv,
@@ -95,6 +103,7 @@ var POST = async ({ request, cookies }) => {
       providerId: "stripe",
       shippingAddress: body.shippingAddress,
       billingAddress: body.billingAddress,
+      shippingRateId: body.shippingRateId,
       discountCode: body.discountCode,
       giftCardCode: body.giftCardCode,
       referralCode: cookies.get(REFERRAL_COOKIE)?.value,
@@ -113,8 +122,13 @@ var POST = async ({ request, cookies }) => {
       headers: { "Content-Type": "application/json" }
     });
   } catch (error) {
+    if (error instanceof StoreSettingsError) {
+      return Response.json({ error: reportStoreSettingsError(error) }, { status: 503 });
+    }
+    if (error instanceof TaxCalculationError) return Response.json({ error: error.message }, { status: 503 });
     const refusal = codeRefusalBody(error);
     if (refusal) return Response.json(refusal, { status: 409 });
+    if (isCheckoutDetailsError(error)) return Response.json({ error: error.message }, { status: 400 });
     const status = error.message === "Cart is empty or not found" || error.message === "Cart is closed" || error.message === "Checkout already started for this cart" || error.message?.startsWith("Insufficient stock for ") || error.message?.startsWith("Insufficient stock or checkout") || error.message?.startsWith("Product is not available") || error.message?.startsWith("Select an option for ") || error.message?.startsWith("A positive price is required") || error.message?.startsWith("Insufficient shared component stock") || error.message === "Shipping address is required for physical products" || error.message === "Store credit changed during checkout; please try again" || error.message?.startsWith("Discount code") || error.message?.startsWith("Gift card") || error.message === "A payment provider must be selected and configured before checkout" ? 409 : 500;
     return new Response(JSON.stringify({ error: error.message }), {
       status,

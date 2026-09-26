@@ -2,27 +2,34 @@ import {
   CODE_CHECK_LIMIT_MESSAGE,
   codeChecksOverBasketLimit,
   codeChecksOverNetworkLimit
-} from "../chunk-PIVUHCSX.js";
+} from "../chunk-6HILOGQM.js";
 import {
   bindCommerceApi
-} from "../chunk-ZCEC33U7.js";
+} from "../chunk-GDYU3454.js";
 import {
   codeRefusalBody,
   evaluateDiscountCode
-} from "../chunk-BCWAVKQF.js";
+} from "../chunk-HAO6IOX2.js";
+import "../chunk-BGDJXEM5.js";
 import {
   readCartSessionToken
 } from "../chunk-MDTTSWBR.js";
-import "../chunk-YXNRHYNN.js";
+import "../chunk-63W5IYCB.js";
 import {
-  evaluateGiftCard
-} from "../chunk-2RLPKBNT.js";
-import "../chunk-MS53KKKY.js";
+  StoreSettingsError,
+  evaluateGiftCard,
+  readStoreSettings,
+  reportStoreSettingsError
+} from "../chunk-3I33VHHD.js";
+import {
+  minimumChargeAmount
+} from "../chunk-2UYSCNNW.js";
+import "../chunk-6773WH54.js";
 import {
   CUSTOMER_SESSION_COOKIE,
   findCustomerSession
-} from "../chunk-NITAPJVN.js";
-import "../chunk-CLEUXV3O.js";
+} from "../chunk-AASKNEFP.js";
+import "../chunk-U2UUCKVF.js";
 
 // src/routes/ecommerce-discount.ts
 import { z } from "zod";
@@ -52,6 +59,7 @@ var POST = async ({ request, cookies }) => {
   const token = readCartSessionToken(cookies);
   if (!token) return Response.json({ error: "Basket not found" }, { status: 404, headers });
   try {
+    readStoreSettings(runtimeEnv);
     const account = await findCustomerSession(runtimeEnv, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
     const api = bindCommerceApi({ env: runtimeEnv });
     const cart = (account ? await api.carts.claim(token, account.id) : null) ?? await api.carts.find(token, account?.id);
@@ -72,7 +80,7 @@ var POST = async ({ request, cookies }) => {
     }) : null;
     const creditApplied = Math.min(
       Math.max(0, account?.creditBalance ?? 0),
-      Math.max(0, quote.totalAmount - (promotion?.amount ?? 0) - 50)
+      Math.max(0, quote.totalAmount - (promotion?.amount ?? 0) - minimumChargeAmount(quote.currency))
     );
     const afterCredit = quote.totalAmount - (promotion?.amount ?? 0) - creditApplied;
     const giftCard = parsed.data.giftCardCode ? await evaluateGiftCard(runtimeEnv, parsed.data.giftCardCode, afterCredit) : null;
@@ -86,6 +94,9 @@ var POST = async ({ request, cookies }) => {
       cardAmount: afterCredit - (giftCard?.amount ?? 0)
     }, { headers });
   } catch (error) {
+    if (error instanceof StoreSettingsError) {
+      return Response.json({ error: reportStoreSettingsError(error) }, { status: 503, headers });
+    }
     const refusal = codeRefusalBody(error);
     if (refusal) return Response.json(refusal, { status: 409, headers });
     return Response.json(

@@ -37,6 +37,14 @@ var orders = sqliteTable("_ecommerce_orders", {
   giftCardRefundedCents: integer("gift_card_refunded_cents").notNull().default(0),
   creditApplied: integer("credit_applied").notNull().default(0),
   subtotalAmount: integer("subtotal_amount").notNull().default(0),
+  shippingAmount: integer("shipping_amount").notNull().default(0),
+  shippingRateId: text("shipping_rate_id"),
+  shippingLabel: text("shipping_label"),
+  taxAmount: integer("tax_amount").notNull().default(0),
+  /** `exclusive` tax is added to the amount due; `inclusive` tax is already inside the amounts and only recorded. */
+  taxBehavior: text("tax_behavior").$type(),
+  taxCalculationId: text("tax_calculation_id"),
+  taxTransactionId: text("tax_transaction_id"),
   status: text("status").notNull().default("draft"),
   // draft, pending, paid, fulfilled, cancelled
   items: text("items", { mode: "json" }).$type().notNull().default([]),
@@ -278,7 +286,7 @@ var discountCodes = sqliteTable("_ecommerce_discount_codes", {
   description: text("description"),
   type: text("type").$type().notNull(),
   value: integer("value").notNull(),
-  // USD cents for credit/amount, basis points for percent.
+  // Store currency minor units for credit/amount, basis points for percent.
   remainingCents: integer("remaining_cents"),
   maxDiscountCents: integer("max_discount_cents"),
   minOrderCents: integer("min_order_cents").notNull().default(0),
@@ -363,6 +371,15 @@ var giftCardOrderRefunds = sqliteTable("_ecommerce_gift_card_order_refunds", {
   orderId: text("order_id").primaryKey().references(() => orders.id),
   adminActor: text("admin_actor").notNull(),
   reason: text("reason").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+});
+var taxReversals = sqliteTable("_ecommerce_tax_reversals", {
+  id: text("id").primaryKey(),
+  orderId: text("order_id").notNull().references(() => orders.id),
+  reference: text("reference").notNull().unique(),
+  amount: integer("amount").notNull(),
+  // Positive, in the order currency's minor units.
+  providerReversalId: text("provider_reversal_id").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull()
 });
 var cartsRelations = relations(carts, ({ many }) => ({
@@ -486,6 +503,7 @@ export {
   giftCardRedemptions,
   giftCardRefunds,
   giftCardOrderRefunds,
+  taxReversals,
   cartsRelations,
   ordersRelations,
   paymentsRelations,

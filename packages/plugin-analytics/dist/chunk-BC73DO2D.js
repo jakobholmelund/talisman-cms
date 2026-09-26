@@ -23,8 +23,13 @@ var paidOrders = (stripeMode) => `
   )`;
 var inPeriod = (column) => `${column} >= ? AND ${column} < ?`;
 var grossOf = (order) => `MAX(0, ${order}.subtotal_amount - ${order}.discount_amount)`;
+var paidOf = (order) => `(${grossOf(order)} + ${order}.shipping_amount
+  + CASE WHEN ${order}.tax_behavior = 'exclusive' THEN ${order}.tax_amount ELSE 0 END)`;
+var itemShareOf = (order, refunded) => `CASE WHEN ${paidOf(order)} > 0
+  THEN MIN(${grossOf(order)}, CAST(((${refunded}) * ${grossOf(order)} + ${paidOf(order)} / 2) / ${paidOf(order)} AS INTEGER))
+  ELSE 0 END`;
 var refundOf = (order) => `CASE WHEN ${order}.status = 'refunded' THEN ${grossOf(order)}
-  ELSE MIN(${grossOf(order)}, ${order}.provider_refunded_cents + ${order}.gift_card_refunded_cents) END`;
+  ELSE ${itemShareOf(order, `${order}.provider_refunded_cents + ${order}.gift_card_refunded_cents`)} END`;
 var refundsByPaymentDate = `
   refund_events AS (
     SELECT o.id AS order_id, LOWER(o.currency) AS currency, ${refundOf("o")} AS amount,
@@ -33,22 +38,31 @@ var refundsByPaymentDate = `
   )`;
 var refundsByRefundDate = `
   provider_refunds AS (
-    SELECT r.order_id, r.created_at, MIN(r.amount_cents, o.provider_refunded_cents + r.amount_cents -
+    SELECT r.id, r.order_id, r.created_at, MIN(r.amount_cents, o.provider_refunded_cents + r.amount_cents -
       SUM(r.amount_cents) OVER (PARTITION BY r.order_id ORDER BY r.created_at, r.id ROWS UNBOUNDED PRECEDING)) AS amount
     FROM ${providerRefundsTable} r JOIN paid_orders o ON o.id = r.order_id
   ),
   dated_refunds AS (
-    SELECT order_id, amount, created_at FROM provider_refunds WHERE amount > 0
-    UNION ALL
-    SELECT order_id, amount_cents, created_at FROM _ecommerce_gift_card_refunds
+    SELECT order_id, created_at, amount,
+      SUM(amount) OVER (PARTITION BY order_id ORDER BY created_at, id ROWS UNBOUNDED PRECEDING) AS refunded
+    FROM (
+      SELECT id, order_id, amount, created_at FROM provider_refunds WHERE amount > 0
+      UNION ALL
+      SELECT id, order_id, amount_cents, created_at FROM _ecommerce_gift_card_refunds
+    )
+  ),
+  dated_shares AS (
+    SELECT d.order_id, d.created_at,
+      ${itemShareOf("o", "d.refunded")} - ${itemShareOf("o", "d.refunded - d.amount")} AS amount
+    FROM dated_refunds d JOIN paid_orders o ON o.id = d.order_id
   ),
   dated_totals AS (
-    SELECT order_id, SUM(amount) AS amount, MAX(created_at) AS last_at FROM dated_refunds GROUP BY order_id
+    SELECT order_id, SUM(amount) AS amount, MAX(created_at) AS last_at FROM dated_shares GROUP BY order_id
   ),
   refund_events AS (
     SELECT o.id AS order_id, LOWER(o.currency) AS currency, d.amount AS amount,
       COALESCE(d.created_at, o.paid_at) AS refunded_at, d.created_at IS NOT NULL AS dated
-    FROM dated_refunds d JOIN paid_orders o ON o.id = d.order_id
+    FROM dated_shares d JOIN paid_orders o ON o.id = d.order_id WHERE d.amount > 0
     UNION ALL
     SELECT o.id, LOWER(o.currency), ${refundOf("o")} - COALESCE(t.amount, 0),
       CASE WHEN o.status = 'refunded' THEN COALESCE(full_refund.created_at, t.last_at, o.paid_at) ELSE o.paid_at END,

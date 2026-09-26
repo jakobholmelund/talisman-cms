@@ -1,26 +1,28 @@
 import {
   runtimePaymentAdapters
-} from "../chunk-K47ZHGKG.js";
-import "../chunk-YXG3523I.js";
+} from "../chunk-R7FZZLF2.js";
+import "../chunk-C2SYF4CS.js";
 import {
   PROVIDER_CHECK_MIN_ORDER_AGE_SECONDS,
   ProviderCheckLimitedError,
   bindCommerceApi,
   mayAskPaymentProvider,
   providerCheckLimitResponse
-} from "../chunk-ZCEC33U7.js";
-import "../chunk-BCWAVKQF.js";
+} from "../chunk-GDYU3454.js";
+import "../chunk-HAO6IOX2.js";
+import "../chunk-BGDJXEM5.js";
 import {
   readCartSessionToken
 } from "../chunk-MDTTSWBR.js";
-import "../chunk-YXNRHYNN.js";
-import "../chunk-2RLPKBNT.js";
-import "../chunk-MS53KKKY.js";
+import "../chunk-63W5IYCB.js";
+import "../chunk-3I33VHHD.js";
+import "../chunk-2UYSCNNW.js";
+import "../chunk-6773WH54.js";
 import {
   CUSTOMER_SESSION_COOKIE,
   findCustomerSession
-} from "../chunk-NITAPJVN.js";
-import "../chunk-CLEUXV3O.js";
+} from "../chunk-AASKNEFP.js";
+import "../chunk-U2UUCKVF.js";
 
 // src/routes/ecommerce-order.ts
 var ALL = async ({ request, cookies }) => {
@@ -71,6 +73,10 @@ var ALL = async ({ request, cookies }) => {
       accountLinked: Boolean(order.userId),
       totalAmount: order.totalAmount,
       subtotalAmount: order.subtotalAmount,
+      shippingAmount: order.shippingAmount,
+      shippingLabel: order.shippingLabel,
+      taxAmount: order.taxAmount,
+      taxBehavior: order.taxBehavior,
       creditApplied: order.creditApplied,
       discountCode: order.discountCode,
       discountAmount: order.discountAmount,

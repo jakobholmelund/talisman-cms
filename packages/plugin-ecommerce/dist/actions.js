@@ -1,38 +1,45 @@
 import {
   BASKET_LIMIT_MESSAGE,
   basketCreationOverLimit
-} from "./chunk-4H4JGRIV.js";
+} from "./chunk-GYJAI2DT.js";
 import {
   CODE_CHECK_LIMIT_MESSAGE,
   codeChecksOverBasketLimit,
   codeChecksOverNetworkLimit
-} from "./chunk-PIVUHCSX.js";
+} from "./chunk-6HILOGQM.js";
 import {
   runtimePaymentAdapters
-} from "./chunk-K47ZHGKG.js";
-import "./chunk-YXG3523I.js";
+} from "./chunk-R7FZZLF2.js";
+import "./chunk-C2SYF4CS.js";
 import {
   CART_MAX_LINE_QUANTITY,
   PROVIDER_CHECK_RETRY_MESSAGE,
+  TaxCalculationError,
   bindCommerceApi
-} from "./chunk-ZCEC33U7.js";
+} from "./chunk-GDYU3454.js";
 import {
   codeRefusalBody
-} from "./chunk-BCWAVKQF.js";
+} from "./chunk-HAO6IOX2.js";
+import "./chunk-BGDJXEM5.js";
 import {
   ensureCartSession,
   readCartSessionToken
 } from "./chunk-MDTTSWBR.js";
-import "./chunk-YXNRHYNN.js";
-import "./chunk-2RLPKBNT.js";
+import "./chunk-63W5IYCB.js";
+import {
+  StoreSettingsError,
+  readStoreSettings,
+  reportStoreSettingsError
+} from "./chunk-3I33VHHD.js";
+import "./chunk-2UYSCNNW.js";
 import {
   REFERRAL_COOKIE
-} from "./chunk-MS53KKKY.js";
+} from "./chunk-6773WH54.js";
 import {
   CUSTOMER_SESSION_COOKIE,
   findCustomerSession
-} from "./chunk-NITAPJVN.js";
-import "./chunk-CLEUXV3O.js";
+} from "./chunk-AASKNEFP.js";
+import "./chunk-U2UUCKVF.js";
 
 // src/actions.ts
 import { defineAction, ActionError } from "astro:actions";
@@ -153,7 +160,8 @@ var ecommerceActions = {
         state: z.string().optional(),
         postalCode: z.string().optional(),
         country: z.string().optional()
-      }).passthrough().optional()
+      }).passthrough().optional(),
+      shippingRateId: z.string().trim().max(40).optional()
     }),
     handler: async (input, context) => {
       const { env } = await import("cloudflare:workers");
@@ -162,6 +170,7 @@ var ecommerceActions = {
       }
       const sessionToken = context.cookies ? readCartSessionToken(context.cookies) : void 0;
       try {
+        readStoreSettings(env);
         const api = bindCommerceApi({
           env,
           paymentAdapters: runtimePaymentAdapters(env)
@@ -205,6 +214,7 @@ var ecommerceActions = {
           referralCode: context.cookies?.get?.(REFERRAL_COOKIE)?.value,
           shippingAddress: input.shippingAddress,
           billingAddress: input.billingAddress,
+          shippingRateId: input.shippingRateId,
           successUrl,
           cancelUrl
         });
@@ -216,6 +226,12 @@ var ecommerceActions = {
         };
       } catch (error) {
         if (error instanceof ActionError) throw error;
+        if (error instanceof StoreSettingsError) {
+          throw new ActionError({ code: "SERVICE_UNAVAILABLE", message: reportStoreSettingsError(error) });
+        }
+        if (error instanceof TaxCalculationError) {
+          throw new ActionError({ code: "SERVICE_UNAVAILABLE", message: error.message });
+        }
         const refusal = codeRefusalBody(error);
         if (refusal) throw new ActionError({ code: "CONFLICT", message: refusal.error });
         throw new ActionError({

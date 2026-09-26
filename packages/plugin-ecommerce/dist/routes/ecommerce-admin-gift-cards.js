@@ -1,13 +1,16 @@
 import {
+  StoreSettingsError,
   getGiftCardsAdmin,
   issueAdminGiftCard,
   refundGiftCardOnlyOrder,
   refundGiftCardTender,
+  reportStoreSettingsError,
   setGiftCardActive
-} from "../chunk-2RLPKBNT.js";
-import "../chunk-MS53KKKY.js";
-import "../chunk-NITAPJVN.js";
-import "../chunk-CLEUXV3O.js";
+} from "../chunk-3I33VHHD.js";
+import "../chunk-2UYSCNNW.js";
+import "../chunk-6773WH54.js";
+import "../chunk-AASKNEFP.js";
+import "../chunk-U2UUCKVF.js";
 
 // src/routes/ecommerce-admin-gift-cards.ts
 import { authorizeCmsRequest } from "talisman-cms/auth/guard";
@@ -36,6 +39,9 @@ var ALL = async ({ request }) => {
     else return Response.json({ error: "Invalid gift card action" }, { status: 400, headers });
     return Response.json({ result }, { headers });
   } catch (error) {
+    if (error instanceof StoreSettingsError) {
+      return Response.json({ error: reportStoreSettingsError(error) }, { status: 503, headers });
+    }
     return Response.json(
       { error: error instanceof Error ? error.message : "Gift card action failed" },
       { status: 400, headers }
