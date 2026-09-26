@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readBinding } from 'talisman-cms/env';
 import { isCountryCode } from './countries';
+import { SUPPORTED_CURRENCIES, isSupportedCurrency } from './money';
 
 /**
  * How the store sells, read from its `TALISMAN_COMMERCE_*` Worker settings. A store that sets none
@@ -96,9 +97,9 @@ function readCurrency(env: object) {
   const value = readText(env, 'COMMERCE_CURRENCY');
   if (value === undefined) return 'usd';
   const currency = value.toLowerCase();
-  if (!/^[a-z]{3}$/.test(currency) || !isIntlCurrency(currency)) {
-    throw new StoreSettingsError('TALISMAN_COMMERCE_CURRENCY must be a three-letter ISO 4217 code '
-      + `such as "usd", not ${JSON.stringify(value)}`);
+  if (!isSupportedCurrency(currency)) {
+    throw new StoreSettingsError('TALISMAN_COMMERCE_CURRENCY must be one of the supported ISO 4217 codes '
+      + `(${SUPPORTED_CURRENCIES.join(', ')}), not ${JSON.stringify(value)}`);
   }
   return currency;
 }
@@ -227,13 +228,4 @@ function readTax(env: object): TaxSettings {
       + `alpha-2 code such as "US", not ${JSON.stringify(shipFrom)}`);
   }
   return { mode: mode ?? 'none', taxCode: taxCode ?? null, shipFromCountry: shipFrom?.toUpperCase() ?? null };
-}
-
-function isIntlCurrency(code: string) {
-  try {
-    new Intl.NumberFormat('en', { style: 'currency', currency: code });
-    return true;
-  } catch {
-    return false;
-  }
 }

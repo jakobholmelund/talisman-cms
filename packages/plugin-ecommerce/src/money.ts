@@ -26,6 +26,9 @@ export function fromMinorUnits(amount: number, currency: string): number {
 
 // Stripe's minimum charge per currency, in minor units:
 // https://docs.stripe.com/currencies#minimum-and-maximum-charge-amounts
+// These are also the only store currencies: each has a known minimum, and Intl and Stripe agree on its
+// minor units. Some others differ (Stripe counts ISK in hundredths while Intl shows none) and would
+// be charged at the wrong scale.
 const MINIMUM_CHARGES = new Map<string, number>([
   ['usd', 50], ['aed', 200], ['aud', 50], ['bgn', 100], ['brl', 50], ['cad', 50], ['chf', 50],
   ['czk', 1500], ['dkk', 250], ['eur', 50], ['gbp', 30], ['hkd', 400], ['huf', 17500], ['inr', 50],
@@ -33,10 +36,17 @@ const MINIMUM_CHARGES = new Map<string, number>([
   ['sek', 300], ['sgd', 50], ['thb', 1000],
 ]);
 
+/** The currencies a store can use, in lowercase: see MINIMUM_CHARGES. */
+export const SUPPORTED_CURRENCIES: readonly string[] = Object.freeze([...MINIMUM_CHARGES.keys()]);
+
+export function isSupportedCurrency(currency: string): boolean {
+  return MINIMUM_CHARGES.has(currency.toLowerCase());
+}
+
 /**
  * The smallest card charge Stripe accepts in the currency, in minor units. Store credit, discounts
- * and gift cards leave at least this much to pay. A currency missing from the table uses 50; Stripe
- * still enforces its own minimum when it creates the payment.
+ * and gift cards leave at least this much to pay. Store currencies all have an entry; 50 is only a
+ * fallback for other input, and Stripe still enforces its own minimum when it creates the payment.
  */
 export function minimumChargeAmount(currency: string): number {
   return MINIMUM_CHARGES.get(currency.toLowerCase()) ?? 50;

@@ -22,7 +22,9 @@ test('the currency is case-insensitive and stored in lowercase', (t) => {
 
 test('an invalid currency throws StoreSettingsError naming the setting', () => {
   // A number or a list is refused rather than ignored, so the store never falls back to USD.
-  for (const value of ['US', 'dollars', 'U5D', 'us d', 840, ['eur'], { code: 'eur' }]) {
+  // 'xyz' is well formed but no currency; ISK has other minor units in Stripe than in Intl; KWD has
+  // three decimals, which Stripe accepts only in steps of ten.
+  for (const value of ['US', 'dollars', 'U5D', 'us d', 'xyz', 'ISK', 'kwd', 840, ['eur'], { code: 'eur' }]) {
     assert.throws(() => readStoreSettings({ TALISMAN_COMMERCE_CURRENCY: value }), (error) => {
       assert.ok(error instanceof StoreSettingsError, JSON.stringify(value));
       assert.equal(error.name, 'StoreSettingsError');

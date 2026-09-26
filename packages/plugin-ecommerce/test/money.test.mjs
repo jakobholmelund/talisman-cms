@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { currencyMinorUnits, formatMoney, fromMinorUnits, minimumChargeAmount, toMinorUnits } from '../dist/money.js';
+import { SUPPORTED_CURRENCIES, currencyMinorUnits, formatMoney, fromMinorUnits, isSupportedCurrency, minimumChargeAmount,
+  toMinorUnits } from '../dist/money.js';
 
 // Intl separates some symbols with a no-break space, and ICU versions differ in which space they use.
 const formatted = (...args) => formatMoney(...args).replace(/\s/g, ' ');
@@ -30,4 +31,15 @@ test("the minimum charge follows Stripe's table and falls back to 50", () => {
   const cases = [['usd', 50], ['eur', 50], ['gbp', 30], ['GBP', 30], ['jpy', 50], ['aed', 200],
     ['huf', 17500], ['czk', 1500], ['kwd', 50]];
   for (const [currency, minimum] of cases) assert.equal(minimumChargeAmount(currency), minimum, currency);
+});
+
+test('every supported currency has a minimum and the minor units Stripe uses', () => {
+  // Stripe treats JPY as zero-decimal and every other supported currency as two-decimal.
+  assert.ok(SUPPORTED_CURRENCIES.length > 0);
+  for (const currency of SUPPORTED_CURRENCIES) {
+    assert.equal(currencyMinorUnits(currency), currency === 'jpy' ? 0 : 2, currency);
+    assert.ok(minimumChargeAmount(currency) > 0, currency);
+  }
+  assert.equal(isSupportedCurrency('EUR'), true);
+  for (const currency of ['isk', 'kwd', 'xyz']) assert.equal(isSupportedCurrency(currency), false, currency);
 });

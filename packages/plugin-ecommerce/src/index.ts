@@ -10,7 +10,8 @@ export { readStoreSettings, StoreSettingsError } from './store-settings';
 export type { StoreSettings, ShippingRate, TaxSettings } from './store-settings';
 export { shippingOptionsFor } from './shipping';
 export type { ShippingOption } from './shipping';
-export { currencyMinorUnits, formatMoney, toMinorUnits, fromMinorUnits, minimumChargeAmount } from './money';
+export { currencyMinorUnits, formatMoney, toMinorUnits, fromMinorUnits, minimumChargeAmount,
+  SUPPORTED_CURRENCIES, isSupportedCurrency } from './money';
 export { COUNTRY_CODES, isCountryCode } from './countries';
 
 export interface EcommercePluginConfig {

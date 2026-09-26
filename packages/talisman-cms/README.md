@@ -109,7 +109,7 @@ Set secrets with `wrangler secret put` in production and in `.dev.vars` locally,
 | `TALISMAN_COMMERCE_STRIPE_MODE` | no | ecommerce | `test` (default) or `live`. |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | yes | ecommerce; the key also plugin-stripe | Stripe API key and the signing secret of the ecommerce webhook endpoint. |
 | `TALISMAN_COMMERCE_LOCAL_STRIPE_SECRET_KEY`, `TALISMAN_COMMERCE_LOCAL_STRIPE_WEBHOOK_SECRET` | yes | ecommerce | Test-mode fallbacks for local development, used only when the mode is `test` and the plain Stripe secrets are unset. |
-| `TALISMAN_COMMERCE_CURRENCY` | no | ecommerce; core: admin | The store currency, an ISO 4217 code such as `eur` (default `usd`). Commerce amounts are integers in its minor units, and the admin shows them in it. |
+| `TALISMAN_COMMERCE_CURRENCY` | no | ecommerce; core: admin | The store currency, an ISO 4217 code that the ecommerce plugin supports, such as `eur` (default `usd`). Commerce amounts are integers in its minor units, and the admin shows them in it. |
 | `TALISMAN_COMMERCE_DELIVERY_COUNTRIES` | no | ecommerce | ISO 3166-1 alpha-2 codes of the countries the store delivers to, such as `US, CA`. Unset: any country. |
 | `TALISMAN_COMMERCE_SHIPPING_RATES` | no | ecommerce | A JSON list of up to 10 shipping rates. Unset: no shipping charge. |
 | `TALISMAN_COMMERCE_TAX` | no | ecommerce | `none` (default), `stripe-inclusive` or `stripe-exclusive`: tax calculated with Stripe Tax. |

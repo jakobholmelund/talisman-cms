@@ -242,7 +242,7 @@ TALISMAN_COMMERCE_SHIP_FROM_COUNTRY = "US"
 
 | Setting | Default | Value |
 | --- | --- | --- |
-| `TALISMAN_COMMERCE_CURRENCY` | `usd` | An ISO 4217 code in any case, such as `eur` or `JPY`, stored and sent to Stripe in lowercase. |
+| `TALISMAN_COMMERCE_CURRENCY` | `usd` | An ISO 4217 code in any case, such as `eur` or `JPY`, stored and sent to Stripe in lowercase. It must be one of the supported currencies: aed, aud, bgn, brl, cad, chf, czk, dkk, eur, gbp, hkd, huf, inr, jpy, mxn, myr, nok, nzd, pln, ron, sek, sgd, thb and usd. |
 | `TALISMAN_COMMERCE_DELIVERY_COUNTRIES` | any country | Officially assigned ISO 3166-1 alpha-2 codes in any case, separated by commas and/or whitespace, or a list value such as `["US", "CA"]`. Stored in uppercase, in the order given, without duplicates. See [Delivery countries](#delivery-countries). |
 | `TALISMAN_COMMERCE_SHIPPING_RATES` | no shipping charge | A JSON list of at most 10 rates, as text or as a list value (a TOML array of inline tables). See [Shipping rates](#shipping-rates). |
 | `TALISMAN_COMMERCE_TAX` | `none` | `none`, `stripe-inclusive` (prices include tax) or `stripe-exclusive` (tax is added to prices), in any case. See [Tax](#tax). |
@@ -255,12 +255,13 @@ TALISMAN_COMMERCE_SHIP_FROM_COUNTRY = "US"
 
 ### Money in minor units
 
-Every amount is an integer in the minor units of its currency, as `Intl.NumberFormat` defines them: cents for USD, yen for JPY (no decimals), fils for KWD (three decimals). That covers product prices and price overrides, discount values, credit and voucher balances, the referral reward and minimum (whose settings and columns keep their `_CENTS` names), shipping rates and every order amount. Admin fields that hold such amounts are labelled "(smallest currency unit)". The CMS admin page renders the store currency as `<meta name="talisman-commerce-currency" content="usd">`, which the **Promotions** and **Gift cards** screens and the product editor read; the **Promotions** forms take amounts in major units, such as 12.50, with the currency's step and the server's bounds.
+Every amount is an integer in the minor units of its currency, as `Intl.NumberFormat` defines them: cents for USD, yen for JPY (no decimals). That covers product prices and price overrides, discount values, credit and voucher balances, the referral reward and minimum (whose settings and columns keep their `_CENTS` names), shipping rates and every order amount. Admin fields that hold such amounts are labelled "(smallest currency unit)". The CMS admin page renders the store currency as `<meta name="talisman-commerce-currency" content="usd">`, which the **Promotions** and **Gift cards** screens and the product editor read; the **Promotions** forms take amounts in major units, such as 12.50, with the currency's step and the server's bounds.
 
 `@talisman-cms/plugin-ecommerce/money` has no imports, so storefront and admin bundles can use it; the package root exports the same functions:
 
 - `formatMoney(amount, currency, locale = 'en-US')`: `formatMoney(1250, 'usd')` is "$12.50" and `formatMoney(1250, 'jpy')` is "¥1,250".
-- `currencyMinorUnits(currency)`: 2 for USD, 0 for JPY, 3 for KWD.
+- `currencyMinorUnits(currency)`: 2 for USD, 0 for JPY.
+- `SUPPORTED_CURRENCIES` and `isSupportedCurrency(currency)`: the currencies a store can use.
 - `toMinorUnits(major, currency)` and `fromMinorUnits(amount, currency)` convert between major and minor units.
 - `minimumChargeAmount(currency)`: Stripe's minimum card charge in the currency, or 50 for a currency missing from its table (Stripe still enforces its own minimum). Store credit, discount codes and a gift card that pays part of an order always leave at least this much to pay.
 
@@ -348,7 +349,8 @@ The admin test checkout route answers the country and shipping refusals with 400
 
 - **Gift cards are USD only.** Migration `0015` keeps gift cards and their purchases in USD, so a store whose currency is not USD refuses to issue them (HTTP 400 "Gift cards are available only in stores that use USD" from the admin gift card route), to sell them (the same from `POST /api/ecommerce/gift-cards`) and to redeem them (the 409 refusal above), until those tables are rebuilt for other currencies. Balance lookups, tender refunds and refunds of gift-card-only orders still work for existing cards. The **Gift cards** screen says so and disables **Issue**.
 - **Choose the currency before the first order, and keep it.** Store credit balances, referral terms, discount values and voucher balances are plain amounts without a currency, so after a change they are read in the new currency. Do not change `TALISMAN_COMMERCE_CURRENCY` once orders, gift cards, store credit or discount codes exist. Orders keep their own currency, which confirmation and refunds use.
-- **Minor units follow `Intl`.** The plugin takes a currency's minor units from `Intl` (ICU). For a few currencies Stripe expects another form: ICU gives ISK no decimals, but Stripe takes ISK amounts in two-decimal form. Check a currency against the special cases in [Stripe's currency list](https://docs.stripe.com/currencies) before using it. The currency setting is checked for its form only, so a well-formed code that Stripe does not support passes, and Stripe then refuses the session.
+- **Only supported currencies.** The store currency must be in `SUPPORTED_CURRENCIES`. Each of them has a known Stripe minimum charge, and `Intl` and Stripe agree on its minor units. Other codes close checkout like any invalid setting. That includes typos, currencies whose minor units differ (Stripe takes ISK in two-decimal form while `Intl` shows no decimals), and three-decimal currencies such as KWD, which Stripe takes only in steps of ten.
+- **Promotion limits are sized for two-decimal currencies.** Discount values, referral rewards and minimum orders keep their upper limits in minor units, for example at most 100,000 for a referral reward. In a currency with low-value units, such as INR or THB, those limits are worth less.
 - **The discount preview has no destination.** Its `creditApplied` and `cardAmount` leave out shipping and tax, so checkout's credit and amount to pay can differ once rates or exclusive tax apply.
 - **A lost dispute does not reverse tax.** It voids the order's referral (see [Referral credit](#referral-credit)) but leaves its tax transaction as it is; reverse the tax in Stripe Tax by hand. [PRODUCTION_READINESS.md](https://github.com/jakobholmelund/talisman-cms/blob/main/packages/plugin-ecommerce/PRODUCTION_READINESS.md#known-limits) lists the other known limits.
 

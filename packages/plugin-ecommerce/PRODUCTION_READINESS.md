@@ -53,7 +53,7 @@ The plugin is suitable for a controlled production deployment with public checko
 - The referral and first-purchase checks compare canonical addresses by scanning purchased orders; an indexed canonical column needs a migration.
 - Gift cards and their purchases are kept in USD only (migration `0015`), so a store with another currency cannot issue, sell or redeem them until those tables are rebuilt.
 - Store credit, referral terms, discount values and voucher balances carry no currency. Changing `TALISMAN_COMMERCE_CURRENCY` after they exist reads them in the new currency.
-- The plugin takes a currency's minor units from `Intl` (ICU). For a few currencies, such as ISK, Stripe expects amounts in another form; check Stripe's special cases before choosing such a currency.
+- The store currency must be one of `SUPPORTED_CURRENCIES`: currencies with a known Stripe minimum charge whose minor units `Intl` and Stripe agree on. Any other code closes checkout.
 - The discount preview has no destination, so its credit and amount to pay leave out shipping and tax and can differ from checkout's.
 - A lost dispute does not reverse the order's tax transaction; reverse it in Stripe Tax by hand.
 - Stripe keeps idempotency keys for 24 hours and tax calculations for 90 days. A tax transaction or reversal that Stripe completed but whose id was not stored is refused as a duplicate reference when it is retried more than 24 hours later, and a transaction cannot be recorded once its calculation has expired; `reconcileCommerce` then reports an error for that order on every run until it is resolved by hand.
