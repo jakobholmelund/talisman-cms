@@ -17,9 +17,10 @@ Since the last public commit (`0d1d72d`), `main` has gained `HybridAuthAdapter`,
 - hardened the ecommerce plugin: exported cookie names, a bounded basket API, sign-in links that create an account only when used, per-address, per-network and store-wide sign-in limits, a discount preview that answers only while checkout is enabled, and a scheduled retention purge;
 - added a safe rich-text renderer, closed injection sinks in the daisyUI and Starwind plugins, and required a CMS session for plugin admin routes;
 - pinned CI actions, added a production dependency audit and SECURITY.md;
-- added migrations `0019` through `0025`;
+- added migrations `0019` through `0030`;
 - enforced the [incentives and abuse](#commerce-launch-incentives-and-abuse) rules in the ecommerce plugin without a further migration: referrals off by default with held awards, a rate-limited discount preview with one refusal, a Turnstile check and a reserved budget for sign-in email, a limit on new baskets per network, a throttled order status check and single-use Stripe coupons;
-- settled the [commerce launch decisions](#commerce-launch-decisions) in the ecommerce plugin: a configurable store currency, delivery countries, shipping rates and Stripe Tax, money scaled by each currency's minor units, and Stripe's presentment currency pinned to the order currency, with migration `0025` recording shipping and tax on orders.
+- settled the [commerce launch decisions](#commerce-launch-decisions) in the ecommerce plugin: a configurable store currency, delivery countries, shipping rates and Stripe Tax, money scaled by each currency's minor units, and Stripe's presentment currency pinned to the order currency, with migration `0025` recording shipping and tax on orders;
+- built the [order operations](#commerce-launch-order-operations) in the ecommerce plugin, with migrations `0026` to `0030`: fulfillment recorded apart from payment and a server-side queue of every order to ship, dispute handling, dated refunds and an audited restock, reconciliation that backs off and parks permanent failures for review, order confirmation and shipment emails, gift card claim links, review decisions, replacement cards and key rotation, batched option saves and checkout queries, and a stock concurrency token that moves on every write.
 
 [CHANGELOG.md](CHANGELOG.md) lists every change, the breaking changes and the upgrade steps.
 
@@ -30,9 +31,9 @@ Since the last public commit (`0d1d72d`), `main` has gained `HybridAuthAdapter`,
 | [Release](#release) | Publish the 0.1 preview | First. Maintainer steps only, no issues |
 | [After publish](#after-publish) | One auth copy per Worker, no route generation in installed packages, then publishing from CI instead of committing `dist/` | After the first publish. The CI publish comes last, once sites install from npm |
 | [Commerce launch: decisions](#commerce-launch-decisions) | Plugin support for currency, tax, shipping and delivery countries | Done before the 0.1 publish; follow-ups are listed in its items |
-| [Commerce launch: order operations](#commerce-launch-order-operations) | Queue, fulfillment, refunds, reconciliation, notifications, gift cards, inventory | Checkout stays disabled until the commerce workstreams are done |
+| [Commerce launch: order operations](#commerce-launch-order-operations) | Queue, fulfillment, refunds, reconciliation, notifications, gift cards, inventory | Done before the 0.1 publish; follow-ups are listed in its items |
 | [Commerce launch: incentives and abuse](#commerce-launch-incentives-and-abuse) | Rules for referrals, discounts, sign-in email and public endpoints | Done before the 0.1 publish; follow-ups are listed in its items |
-| [Commerce launch: shopper pages](#commerce-launch-shopper-pages) | Order access, basket handover, errors and catalog reads for storefronts | Same gate |
+| [Commerce launch: shopper pages](#commerce-launch-shopper-pages) | Order access, basket handover, errors and catalog reads for storefronts | Checkout stays disabled until the commerce workstreams are done |
 | [Commerce launch: data and GDPR](#commerce-launch-data-and-gdpr) | Shopper data export and erasure, ledger invariants, safe role defaults | Same gate |
 | [Commerce launch: tests](#commerce-launch-tests) | Race and negative tests for the money paths | Alongside the fixes they cover |
 | [Commerce launch: rehearsal](#commerce-launch-rehearsal) | One real low-value order end to end | Last |
@@ -43,7 +44,7 @@ Public checkout stays off (`TALISMAN_COMMERCE_CHECKOUT_ENABLED=false`) until the
 
 ## Release
 
-The maintainer steps for the 0.1 preview are in [RELEASE.md](RELEASE.md): verify a clean checkout of `main` (`pnpm release:verify`, `node scripts/check-dist-drift.mjs`, `pnpm audit --prod --audit-level high`), push `main`, run `pnpm release:publish --dry-run` and then publish. Sites that upgrade apply migrations `0019` through `0025` before deploying the new Worker, as the [deployment gate](RELEASE.md#deployment-gate) describes. The incentive and abuse rules ship in the same release and need no further migration; the deployment gate lists their settings and the Stripe webhook event to add. The currency, delivery, shipping and tax settings ship in it too, with migration `0025`; a site that sets none of them behaves as before.
+The maintainer steps for the 0.1 preview are in [RELEASE.md](RELEASE.md): verify a clean checkout of `main` (`pnpm release:verify`, `node scripts/check-dist-drift.mjs`, `pnpm audit --prod --audit-level high`), push `main`, run `pnpm release:publish --dry-run` and then publish. Sites that upgrade apply migrations `0019` through `0030` before deploying the new Worker, as the [deployment gate](RELEASE.md#deployment-gate) describes. The incentive and abuse rules ship in the same release and need no further migration; the deployment gate lists their settings and the Stripe webhook event to add. The currency, delivery, shipping and tax settings ship in it too, with migration `0025`; a site that sets none of them behaves as before. So do the order operations, with migrations `0026` to `0030`: they add the `charge.dispute.created` webhook event, and their emails need the email settings and store details.
 
 Three audit findings that were to be settled before the npm release are only partly fixed, and are accepted for 0.1: a built Worker still carries two copies of the auth modules, builds still print route-injection lines and the playground keeps scratch pages, and the schema types `media.updatedAt` as not null. Their remaining work is tracked below under [After publish](#after-publish) and [Maintenance](#maintenance) (`integration-contract/src-dist-dual-auth-modules`, `release-packaging/debug-leftovers`, `migrations-schema/drizzle-kit-snapshot-drift`).
 
@@ -113,9 +114,11 @@ Before a store opens checkout, its owner decides where it sells, in which curren
 
 ## Commerce launch: order operations
 
-The admin tools and background jobs a store needs to run orders every day. Suggested order: fulfillment status first (it adds a migration that replaces the guard the queue depends on), then the queue, refunds and reconciliation; order emails before gift card delivery, which reuses the sending path.
+The admin tools and background jobs a store needs to run orders every day. All items below are done on `main` before the 0.1 publish, with migrations `0026` to `0030`, and each lists the follow-ups it leaves. They were built in the suggested order: fulfillment status first (its migration replaces the guard the queue depends on), then the queue, refunds and reconciliation, and order emails before gift card delivery, which reuses the sending path.
 
 ### Record fulfillment separately from payment status
+
+**Status:** done on `main` before the 0.1 publish. Migration `0026` adds `_ecommerce_orders.fulfillment_status` (`unfulfilled`, `partially_fulfilled` or `fulfilled`), moves the old `fulfilled` status there, and rebuilds `_ecommerce_fulfillments` so that an order can ship in several parcels and a correction row restates a shipment's carrier and tracking number with the administrator and a reason. Its guard accepts `paid` and `partially_refunded` orders and refuses pending, cancelled, refunded, disputed and admin test orders; a refund never hides a shipment. Follow-ups: a completing shipment cannot be undone, even when the first of several parcels was recorded as the last; a partial shipment has no idempotency key, so a request retried after a lost answer records a second parcel; a partly shipped order whose remaining items are refunded needs a way to close without shipping; and fulfillment rows are append-only by convention, without triggers that enforce it.
 
 **Why:** The fulfillment guard accepts only `paid` orders, so a partially refunded order can never be shipped, and a partial refund after shipping replaces `fulfilled`. Each order also has a single immutable fulfillment row, so a wrong tracking number cannot be corrected and split shipments are impossible.
 
@@ -127,6 +130,8 @@ The admin tools and background jobs a store needs to run orders every day. Sugge
 
 ### Orders queue: every order awaiting shipment, with names and labelled amounts
 
+**Status:** done on `main` before the 0.1 publish. The Orders screen reads a server-side queue of every paid or partially refunded real order awaiting shipment, oldest first, with a server count, cursor pages of 50 and search by exact order ID or email, sent in the request body. Rows show product names, variant labels and SKUs, the labelled amounts with shipping, tax and refunds, the payment and fulfillment status, and each shipment with its corrections; shopper order reads return `fulfillmentStatus`. No migration beyond `0026`. Follow-ups: show the currency next to the amounts of the read-only Orders collection; list the gift card value and store credit that a full refund returned; show administrators by name rather than user id; let `GET` refuse email searches, which the `POST` list action keeps out of URLs; and accept the order ids that `orders.create` generates, which the shipment form refuses.
+
 **Why:** The queue loads the 100 newest orders and counts "Needs fulfillment" in the browser from that list, so older paid orders drop out of view. Rows show raw product and variant ids and the items subtotal without a label.
 
 **Approach:** Query unfulfilled orders separately with cursor paging and a server-side count. Join product names, variant labels and SKUs at query time. Label the items subtotal and show the charged total with the discount, credit and gift card breakdown. Each order's panel already lists these totals, with shipping and tax, in the order currency; the read-only Orders collection should show the currency next to its amounts too. Depends on the fulfillment status item.
@@ -136,6 +141,8 @@ The admin tools and background jobs a store needs to run orders every day. Sugge
 **Issue:** #TBD-commerce-orders-queue
 
 ### Refunds, restocking and disputes
+
+**Status:** done on `main` before the 0.1 publish. The webhook handles `charge.dispute.created` and `charge.dispute.closed`: a dispute holds its order as `disputed`, which the fulfillment guard refuses, and keeps its referral award pending; a won dispute gives the order back its status, and a lost one refunds it in full, reversing its referral awards and its Stripe Tax transaction. A dispute of a gift card purchase suspends its cards, and a lost one voids their unspent value. An audited **Return stock** action returns a refunded order's stock with relative updates, once per reservation row. Migration `0028` adds `_ecommerce_disputes` and `_ecommerce_restocks`. Follow-ups: decide whether a lost dispute should keep the gift card and store credit tender for review instead of returning it, as a full refund does; decide whether gift card tender can be refunded while a card's dispute is open; and show disputes on the Gift cards screen, where only the Disputes collection lists them.
 
 **Why:** Refunds never release stock, and chargebacks are handled only for referral awards, so a disputed order can still be shipped.
 
@@ -147,6 +154,8 @@ The admin tools and background jobs a store needs to run orders every day. Sugge
 
 ### Record the date of each provider refund
 
+**Status:** done on `main` before the 0.1 publish. Migration `0028` adds `_ecommerce_provider_refunds`, and each rise in an order's Stripe refund total adds a row dated by its Stripe event, computed in SQL in the batch that records the total, so retries and out-of-order events add nothing; a test races two refund events on a stale order. The analytics plugin counts refunds on those dates. Follow-ups: date a lost dispute by its close in analytics, which counts it on the payment date for now, and fill `provider_refund_id` on current Stripe API versions, whose `charge.refunded` events no longer list the refunds.
+
 **Why:** The analytics plugin can report refunds by the date they were issued once `_ecommerce_provider_refunds` exists, but nothing creates or writes that table, so reports still count refunds on the payment date.
 
 **Approach:** Add the table in a migration (id, order, provider, provider refund id, amount, created_at, with an index on the order). In `recordProviderRefund`, insert the difference between the new cumulative refund and the stored total in the same batch, guarded so retries and out-of-order webhooks add nothing. Test two refund events racing on a stale order.
@@ -156,6 +165,8 @@ The admin tools and background jobs a store needs to run orders every day. Sugge
 **Issue:** #TBD-commerce-refund-dates
 
 ### Reconciliation: indexes, backoff and a review state for stuck orders
+
+**Status:** done on `main` before the 0.1 publish. Migration `0029` adds attempt, last-attempt, last-error and review columns to orders and gift card purchases, and indexes on pending orders by age, gift card purchases by status and date, payments by order, orders by checkout session and `galaxy_auth_verification(identifier)`. A row waits 2^attempts minutes, at most six hours, between attempts, rows never tried first; a missing session, a session of the other Stripe mode and a mismatched payment park the row for review, and the scheduled run fails only for newly parked rows and transient failures. The Orders screen lists parked checkouts, whose retry or release an administrator records with a reason in `_ecommerce_reconcile_decisions`; a release never asks Stripe about a session of the other mode, and releases a completed checkout only once its payment was refunded in full or lost to a dispute. The preparing-lock query reads a range of the unique index. Tax transactions and reversals that Stripe refuses are not parked: they back off on attempt counts of their own. Follow-ups: show earlier decisions in the review panel; return `paymentUnderReview` from `listCustomerOrders`; reconcile or clean up pending gift card purchases that never recorded a session; and report the preparation and admin test passes with codes instead of raw error text.
 
 **Why:** The scheduled reconciliation picks the oldest pending orders and gift card purchases with `LIMIT 10`. A few that always fail block newer ones, and the queries scan whole tables because indexes are missing.
 
@@ -167,6 +178,8 @@ The admin tools and background jobs a store needs to run orders every day. Sugge
 
 ### Answer webhook events that match no order with 200
 
+**Status:** done on `main` before the 0.1 publish. Events that name none of the store's orders or gift card purchases are answered `200 {ignored: true}` and logged at info level with their type and id only; events for a record they cannot apply to are logged at error level and answered 200 with a reason; a refund or dispute that arrives before its payment is recorded is answered 409, so Stripe retries it; unexpected failures are answered 500. Checkout sessions put the order or purchase id on the PaymentIntent, so refunds and disputes carry it. No migration. Follow-up: payments of sessions created before this release carry no such reference, so their early refunds and disputes are ignored rather than retried.
+
 **Why:** A refund or completed session that does not belong to this store's orders is answered with 400 on every retry, and Stripe disables endpoints that keep failing.
 
 **Approach:** Return `200 {ignored: true}` for events without this plugin's references. Keep a non-2xx answer only for transient states worth a retry, such as a refund that arrives before the payment is finalized.
@@ -176,6 +189,8 @@ The admin tools and background jobs a store needs to run orders every day. Sugge
 **Issue:** #TBD-commerce-webhook-ignore-unlinked
 
 ### Order confirmation and shipment emails
+
+**Status:** done on `main` before the 0.1 publish. Paid orders get a confirmation with the items, the labelled amounts, the shipping address and the store's legal details and policy links, on every path that confirms a payment; recorded shipments get a notice with carrier and tracking number, and a correction made once it went out sends updated details. Each email is recorded in `_ecommerce_email_deliveries` (migration `0030`) in the batch of the change that calls for it, instead of a sent-at column, sent at once under a lease and retried by `reconcileCommerce` with backoff; a failed send never fails the payment, shipment or webhook. Stores override the templates with `ecommercePlugin({ emailTemplates })` and set their details with the `TALISMAN_COMMERCE_STORE_*`, `TALISMAN_COMMERCE_SUPPORT_EMAIL` and policy link settings. Follow-ups: counsel decides whether the confirmation must carry the terms' text rather than links; emails per market language, since the defaults are in English with UTC dates; format the default confirmation's amounts by the currency's minor units; a setting that turns order emails off; and each order's email status in the orders queue.
 
 **Why:** The plugin sends sign-in links only. Shoppers get no order confirmation and no dispatch notice, which most markets expect and which stores otherwise do by hand.
 
@@ -187,6 +202,8 @@ The admin tools and background jobs a store needs to run orders every day. Sugge
 
 ### Deliver gift card codes by email, with an admin resend
 
+**Status:** done on `main` before the 0.1 publish. A paid purchase emails its buyer a one-time link, valid for 7 days, to `/gift-cards/claim`, which shows the code once; only the link's hash is stored (migration `0030`), and the delivery log, instead of a `delivered_at` column, keeps duplicate webhooks from sending twice. Admin card rows show the purchase id, buyer email and claim link, and an audited resend stops earlier links only once its own email was sent. A replacement card names its purchase, so a later refund holds it too. Follow-ups: the link goes to the buyer address typed at purchase, which is not verified, so decide on a shorter lifetime or a verified address; limit balance lookups per client network, as claims are; and avoid the retried failure when two confirmations of one purchase run at once.
+
 **Why:** A purchased code can only be shown in the browser that paid, through a seven-day cookie. A buyer who changes device or clears cookies has no way to recover it.
 
 **Approach:** After a purchase is confirmed, email the buyer a one-time, expiring claim link (not the code) and record `delivered_at` so duplicate webhooks do not send twice. Add an audited admin action to resend the claim link, and show the purchase id and buyer email on admin card rows.
@@ -196,6 +213,8 @@ The admin tools and background jobs a store needs to run orders every day. Sugge
 **Issue:** #TBD-commerce-gift-card-delivery
 
 ### Admin action to resolve gift card purchases held for review
+
+**Status:** done on `main` before the 0.1 publish. Held purchases are listed under **Gift cards → Held for review**: Reinstate takes the refund not yet taken off from the card that holds the purchase's value and reactivates the cards the hold suspended, and Void voids the cards with matching reversals once no checkout in progress holds value on them. Each decision needs a reason, is recorded in `_ecommerce_gift_card_reviews` (migration `0027`), and changes nothing if a refund was recorded in between. Follow-ups: an order refund that restores value to a replaced, void card leaves value that cannot be spent (see [Enforce ledger and stock invariants](#enforce-ledger-and-stock-invariants-in-the-database)); `getPurchasedGiftCard` shows no code once a purchase is reinstated as partially refunded, although its card is active again; and the Outstanding balance tile counts active cards only.
 
 **Why:** A refunded purchase of a partly spent card puts the card in `suspended` and the purchase in `review`, and nothing can take it out again.
 
@@ -207,6 +226,8 @@ The admin tools and background jobs a store needs to run orders every day. Sugge
 
 ### Versioned gift card encryption key with rotation
 
+**Status:** done on `main` before the 0.1 publish. Codes are stored as `v2:<key id>:<iv>:<ciphertext>` with the card id as AES-GCM additional data. `TALISMAN_COMMERCE_GIFT_CARD_PREVIOUS_KEYS` keeps older keys readable, codes from before key ids stay readable, and the **Code encryption** panel on the Gift cards screen re-encrypts them with the current key. The plugin README documents the rotation. The format needs no migration. Follow-up: the gift card purchase route should answer a misconfigured key with a generic message (see [Typed errors](#typed-errors-and-safe-messages-for-checkout-and-gift-card-purchases)).
+
 **Why:** Codes are encrypted with one key and stored without a key id, so rotating or losing the key makes every code unreadable.
 
 **Approach:** Prefix ciphertext with a key id, read a keyring (current plus previous keys), bind the card id as AES-GCM additional data, and document rotation.
@@ -216,6 +237,8 @@ The admin tools and background jobs a store needs to run orders every day. Sugge
 **Issue:** #TBD-commerce-gift-card-key-rotation
 
 ### Save variant values and their stock in one batch
+
+**Status:** done on `main` before the 0.1 publish. `POST <adminPath>/api/ecommerce/variants` saves a value with its stock, deletes a value, and deletes a group with its values, stock and variant component rows, each in one D1 batch that checks the loaded tokens first. The product editor uses it, keeps the edits after a refusal that wrote nothing, and reloads the rows after any other outcome. No migration. Follow-ups: these changes run no collection hooks on the variant collections; groups and definitions are still created through the core API, so a lost answer there can still leave a duplicate group; and a create whose answer was lost can still be repeated, until creates take a client-chosen id.
 
 **Why:** The variant configurator saves a value and its stock in two requests and deletes groups one row at a time. A failure halfway leaves orphans, and a retry creates duplicates.
 
@@ -227,6 +250,8 @@ The admin tools and background jobs a store needs to run orders every day. Sugge
 
 ### Move the stock concurrency token on every stock write
 
+**Status:** done on `main` before the 0.1 publish. Every plugin write to a stock column (reservations, releases, restocks and the options endpoint) stamps `updated_at = MAX(updated_at + 1, ?)`, and native updates in the core keep moving a stamp that runs ahead of the clock forward instead of resetting it after five minutes. A test saves stale stock after a reservation in the same second and gets 409. No migration. Follow-ups: the demo seed writes millisecond stamps (see [Demo seed](#demo-seed-seconds-and-no-overwrite-of-collections)), and checkout's stock writes do not clear cached reads, so storefronts read stock with `cache: false`.
+
 **Why:** The admin's stale-edit check compares `updated_at`. Checkout reservations and releases set `updated_at = ?` to the current second, so an admin save in the same second as a reservation keeps the same token and can overwrite the reserved stock.
 
 **Approach:** Stamp `updated_at = MAX(updated_at + 1, ?)` in every write to a stock column (reservations, releases, refund restocks, reconciliation), as the core admin writes already do. Test an admin save and a reservation in the same second followed by the admin's stale write, which must get 409.
@@ -236,6 +261,8 @@ The admin tools and background jobs a store needs to run orders every day. Sugge
 **Issue:** #TBD-commerce-stock-concurrency-token
 
 ### Batch the checkout queries
+
+**Status:** done on `main` before the 0.1 publish. `quote()` and `createFromCart()` read a basket's catalog in one batch of `IN` queries chunked at 90 ids and reserve stock with one statement per stock table, so a quote takes 6 statements and a checkout at most 17 for any basket, as a test counts through the D1 shim. No migration. Follow-ups: index `_ecommerce_product_variants.product_id` and `_ecommerce_product_variant_values.product_variant_id`, which each quote scans, and make `orders.cancel` set-based like the reservations.
 
 **Why:** Quoting and creating an order run several sequential D1 queries per basket line, plus one per component, so checkout latency grows with the basket and large baskets can exceed per-request query limits.
 
