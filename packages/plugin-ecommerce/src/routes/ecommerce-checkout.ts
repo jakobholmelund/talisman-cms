@@ -10,6 +10,7 @@ import { readCartSessionToken } from '../cookies';
 import { codeRefusalBody } from '../promotions';
 import { CODE_CHECK_LIMIT_MESSAGE, codeChecksOverBasketLimit, codeChecksOverNetworkLimit } from '../code-check-limits';
 import { providerCheckLimitResponse } from '../provider-checks';
+import { StoreSettingsError, readStoreSettings, reportStoreSettingsError } from '../store-settings';
 
 export const POST: APIRoute = async ({ request, cookies }) => {
   const { env } = await import('cloudflare:workers');
@@ -30,6 +31,8 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   }
 
   try {
+    // Invalid store settings stop checkout before the basket is read or written.
+    readStoreSettings(runtimeEnv);
     const parsed = checkoutSchema.safeParse(await request.json());
     if (!parsed.success) return Response.json({ error: 'Invalid checkout details' }, { status: 400 });
     const body = parsed.data;
@@ -103,6 +106,9 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       headers: { 'Content-Type': 'application/json' }
     });
   } catch (error: any) {
+    if (error instanceof StoreSettingsError) {
+      return Response.json({ error: reportStoreSettingsError(error) }, { status: 503 });
+    }
     // A refused discount or gift card code gets one answer, whatever the reason.
     const refusal = codeRefusalBody(error);
     if (refusal) return Response.json(refusal, { status: 409 });

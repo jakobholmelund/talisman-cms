@@ -36,6 +36,7 @@ export class StripePaymentAdapter implements PaymentProviderAdapter {
 
   async createCheckoutSession(params: {
     orderId: string;
+    currency: string;
     items: Array<{ name: string; description?: string; priceCents: number; quantity: number }>;
     customerEmail?: string;
     successUrl: string;
@@ -47,7 +48,7 @@ export class StripePaymentAdapter implements PaymentProviderAdapter {
   }): Promise<{ url: string; providerSessionId: string }> {
     const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = params.items.map(item => ({
       price_data: {
-        currency: 'usd',
+        currency: params.currency,
         product_data: {
           name: item.name,
           description: item.description,
@@ -67,7 +68,7 @@ export class StripePaymentAdapter implements PaymentProviderAdapter {
     const coupon = totalDiscount ? await this.stripe.coupons.create({
       id: checkoutCouponId(params.orderId),
       amount_off: totalDiscount,
-      currency: 'usd',
+      currency: params.currency,
       duration: 'once',
       max_redemptions: 1,
       redeem_by: expiresAt,
@@ -78,6 +79,10 @@ export class StripePaymentAdapter implements PaymentProviderAdapter {
       payment_method_types: ['card'],
       line_items: lineItems,
       mode: 'payment',
+      // Confirmation and refunds compare the amount and currency with the order, so the buyer is
+      // never shown another currency (Adaptive Pricing), whatever the account's dashboard setting.
+      currency: params.currency,
+      adaptive_pricing: { enabled: false },
       expires_at: expiresAt,
       success_url: params.successUrl,
       cancel_url: params.cancelUrl,

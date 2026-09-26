@@ -5,6 +5,9 @@ export { bindCommerceApi, reconcileCommerce, CART_MAX_LINES, CART_MAX_LINE_QUANT
 export type { PaymentProviderAdapter, ValidatedWebhookEvent } from './payments';
 export { StripePaymentAdapter } from './adapters/stripe';
 export { AdminTestPaymentAdapter } from './adapters/admin-test';
+export { readStoreSettings, StoreSettingsError } from './store-settings';
+export type { StoreSettings } from './store-settings';
+export { currencyMinorUnits, formatMoney, toMinorUnits, fromMinorUnits, minimumChargeAmount } from './money';
 
 export interface EcommercePluginConfig {
   /**

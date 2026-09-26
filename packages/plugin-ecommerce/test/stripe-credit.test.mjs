@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { StripePaymentAdapter } from '../dist/adapters/stripe.js';
 
-test('Stripe checkout applies the reserved credit as an exact fixed coupon', async () => {
+/** An adapter whose Stripe client records the coupons and sessions it is asked to create. */
+function recordingAdapter() {
   const adapter = new StripePaymentAdapter({ secretKey: 'sk_test_fake' });
   const calls = [];
   adapter.stripe = {
@@ -15,10 +16,16 @@ test('Stripe checkout applies the reserved credit as an exact fixed coupon', asy
       return { id: 'cs_test', url: 'https://checkout.stripe.com/test' };
     } } }
   };
+  return { adapter, calls };
+}
+
+const urls = { successUrl: 'https://example.test/success', cancelUrl: 'https://example.test/cancel' };
+
+test('Stripe checkout applies the reserved credit as an exact fixed coupon', async () => {
+  const { adapter, calls } = recordingAdapter();
   const result = await adapter.createCheckoutSession({
-    orderId: 'ord_test', items: [{ name: 'Frames', priceCents: 12000, quantity: 1 }],
-    creditApplied: 1000, discountApplied: 2000, successUrl: 'https://example.test/success',
-    cancelUrl: 'https://example.test/cancel'
+    orderId: 'ord_test', currency: 'usd', items: [{ name: 'Frames', priceCents: 12000, quantity: 1 }],
+    creditApplied: 1000, discountApplied: 2000, ...urls
   });
   assert.equal(result.providerSessionId, 'cs_test');
   assert.deepEqual(calls[0].input, {
@@ -30,9 +37,8 @@ test('Stripe checkout applies the reserved credit as an exact fixed coupon', asy
   assert.equal(calls[1].options.idempotencyKey, 'ord_test');
   calls.length = 0;
   await adapter.createCheckoutSession({
-    orderId: 'ord_gift', items: [{ name: 'Frames', priceCents: 12000, quantity: 1 }],
-    creditApplied: 1000, discountApplied: 2000, giftCardApplied: 4000,
-    successUrl: 'https://example.test/success', cancelUrl: 'https://example.test/cancel'
+    orderId: 'ord_gift', currency: 'usd', items: [{ name: 'Frames', priceCents: 12000, quantity: 1 }],
+    creditApplied: 1000, discountApplied: 2000, giftCardApplied: 4000, ...urls
   });
   assert.equal(calls[0].input.amount_off, 7000);
   assert.equal(calls[0].input.name, 'Gift card and checkout adjustments');
@@ -57,4 +63,27 @@ test('Stripe dispute status is looked up by payment intent and settled disputes 
     assert.equal(await adapter.getDisputeStatus('pi_test'), expected, statuses.join(','));
   }
   assert.ok(calls.every((params) => params.payment_intent === 'pi_test'));
+});
+
+test('Stripe charges every line, coupon and session in the order currency and never presents another', async () => {
+  const { adapter, calls } = recordingAdapter();
+  await adapter.createCheckoutSession({
+    orderId: 'ord_eur', currency: 'eur', creditApplied: 1000, ...urls,
+    items: [{ name: 'Frames', priceCents: 12000, quantity: 2 }, { name: 'Case', priceCents: 2000, quantity: 1 }],
+  });
+  const [coupon, session] = calls;
+  assert.equal(coupon.input.currency, 'eur');
+  assert.deepEqual(session.input.line_items.map(line => line.price_data.currency), ['eur', 'eur']);
+  assert.equal(session.input.currency, 'eur');
+  // Adaptive Pricing would let Stripe charge a local currency that the order cannot confirm.
+  assert.deepEqual(session.input.adaptive_pricing, { enabled: false });
+
+  // A session without adjustments, such as a gift card purchase, is pinned too.
+  calls.length = 0;
+  await adapter.createCheckoutSession({ orderId: 'gp_test', currency: 'usd', ...urls,
+    items: [{ name: 'Digital gift card', priceCents: 5000, quantity: 1 }], metadata: { giftCardPurchaseId: 'gp_test' } });
+  assert.deepEqual(calls.map(call => call.type), ['session']);
+  assert.equal(calls[0].input.line_items[0].price_data.currency, 'usd');
+  assert.equal(calls[0].input.currency, 'usd');
+  assert.deepEqual(calls[0].input.adaptive_pricing, { enabled: false });
 });

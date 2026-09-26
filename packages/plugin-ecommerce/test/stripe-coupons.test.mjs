@@ -110,7 +110,7 @@ async function discountedOrder(DB, adapter, browser = 'credit-browser') {
 test('a discounted Stripe checkout creates a single-use coupon that ends with its session', async () => {
   const { adapter, calls } = fakeStripe();
   await adapter.createCheckoutSession({
-    orderId: 'ord_single', items: [{ name: 'Frames', priceCents: 12000, quantity: 1 }],
+    orderId: 'ord_single', currency: 'usd', items: [{ name: 'Frames', priceCents: 12000, quantity: 1 }],
     creditApplied: 1000, discountApplied: 500, successUrl: 'https://example.test/success',
     cancelUrl: 'https://example.test/cancel'
   });
@@ -128,7 +128,7 @@ test('a discounted Stripe checkout creates a single-use coupon that ends with it
 
   calls.length = 0;
   await adapter.createCheckoutSession({
-    orderId: 'ord_plain', items: [{ name: 'Frames', priceCents: 12000, quantity: 1 }],
+    orderId: 'ord_plain', currency: 'usd', items: [{ name: 'Frames', priceCents: 12000, quantity: 1 }],
     successUrl: 'https://example.test/success', cancelUrl: 'https://example.test/cancel'
   });
   assert.equal(calls.some((call) => call.type === 'coupon.create'), false);
@@ -144,7 +144,7 @@ test('a discounted session still expires at least 30 minutes after it is created
     // The coupon request takes 45 seconds, including a retry.
     const { adapter, calls } = fakeStripe({ async onCouponCreate() { clock += 45_000; } });
     await adapter.createCheckoutSession({
-      orderId: 'ord_slow', items: [{ name: 'Frames', priceCents: 12000, quantity: 1 }],
+      orderId: 'ord_slow', currency: 'usd', items: [{ name: 'Frames', priceCents: 12000, quantity: 1 }],
       creditApplied: 1000, successUrl: 'https://example.test/success', cancelUrl: 'https://example.test/cancel'
     });
     const coupon = calls.find((call) => call.type === 'coupon.create');

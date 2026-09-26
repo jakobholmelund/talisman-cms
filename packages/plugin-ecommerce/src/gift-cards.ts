@@ -5,6 +5,8 @@ import { readSetting } from 'talisman-cms/env';
 import { giftCardPurchases, giftCards, giftCardLedger } from './schema';
 import type { PaymentProviderAdapter } from './payments';
 import { getReferralPolicy, referralReversalStatements } from './referrals';
+import { readStoreSettings } from './store-settings';
+import { minimumChargeAmount } from './money';
 
 const amountSchema = z.number().int().min(500).max(100_000);
 const purchaseSchema = z.object({
@@ -50,7 +52,19 @@ async function decryptCardSecret(env: TalismanEnv, encrypted: string) {
   return new TextDecoder().decode(plaintext);
 }
 
+/**
+ * Migration 0015 keeps gift cards and their purchases in USD only, so a store that sells in another
+ * currency cannot issue, sell or redeem them. At checkout this is a refusal of the entered code like
+ * any other, so shoppers get the one message.
+ */
+function giftCardCurrency(env: TalismanEnv) {
+  const { currency } = readStoreSettings(env);
+  if (currency !== 'usd') throw new GiftCardRefusal('currency', 'Gift cards are available only in stores that use USD');
+  return currency;
+}
+
 export async function issueAdminGiftCard(env: TalismanEnv, actor: string, input: unknown) {
+  const currency = giftCardCurrency(env);
   const { amountCents, reason } = adminIssueSchema.parse(input);
   if (!actor.trim()) throw new Error('Administrator identity is required');
   const secret = await newCardSecret(env);
@@ -59,13 +73,14 @@ export async function issueAdminGiftCard(env: TalismanEnv, actor: string, input:
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO _ecommerce_gift_cards
       (id,code_hash,code_suffix,encrypted_code,source,admin_actor,admin_reason,initial_cents,balance_cents,currency,status,created_at,updated_at)
-      VALUES (?,?,?,?, 'admin',?,?,?,0,'usd','active',?,?)`)
-      .bind(id, secret.codeHash, secret.codeSuffix, secret.encryptedCode, actor, reason, amountCents, timestamp, timestamp),
+      VALUES (?,?,?,?, 'admin',?,?,?,0,?,'active',?,?)`)
+      .bind(id, secret.codeHash, secret.codeSuffix, secret.encryptedCode, actor, reason, amountCents, currency,
+        timestamp, timestamp),
     env.DB.prepare(`INSERT INTO _ecommerce_gift_card_ledger
       (id,card_id,kind,amount_cents,created_at) VALUES (?,?,'issue',?,?)`)
       .bind(`gcl_issue_${id}`, id, amountCents, timestamp),
   ]);
-  return { id, code: secret.code, amountCents, currency: 'usd' };
+  return { id, code: secret.code, amountCents, currency };
 }
 
 export async function getGiftCardsAdmin(env: TalismanEnv) {
@@ -98,9 +113,12 @@ export async function setGiftCardActive(env: TalismanEnv, id: string, active: bo
 }
 
 /** Why a gift card was refused. The reason is for server-side use; shoppers see one message. */
-export type GiftCardRefusalReason = 'format' | 'unavailable' | 'nothing_due' | 'cannot_cover';
+export type GiftCardRefusalReason = 'format' | 'unavailable' | 'nothing_due' | 'cannot_cover' | 'currency';
 
-/** A gift card refused for this order. `message` is the detailed reason for admin tools and logs. */
+/**
+ * A gift card refused for this order, or in a store whose currency gift cards do not support.
+ * `message` is the detailed reason for admin tools and logs.
+ */
 export class GiftCardRefusal extends Error {
   readonly reason: GiftCardRefusalReason;
   constructor(reason: GiftCardRefusalReason, message: string) {
@@ -112,17 +130,18 @@ export class GiftCardRefusal extends Error {
 
 /** Checks a gift card against the amount still due and returns what it pays, or throws a GiftCardRefusal. */
 export async function evaluateGiftCard(env: TalismanEnv, code: string, amountDue: number) {
+  const currency = giftCardCurrency(env);
   const normalized = code.trim().toUpperCase();
   if (!/^GIFT-[A-F0-9]{32}$/.test(normalized)) throw new GiftCardRefusal('format', 'Invalid gift card code');
   const db = createDbClient(env);
   const card = await db.select().from(giftCards)
     .where(eq(giftCards.codeHash, await hashGiftCardSecret(normalized))).get();
-  if (!card || card.status !== 'active' || card.currency !== 'usd' || card.balanceCents <= 0) {
+  if (!card || card.status !== 'active' || card.currency !== currency || card.balanceCents <= 0) {
     throw new GiftCardRefusal('unavailable', 'Gift card is unavailable');
   }
   if (!Number.isSafeInteger(amountDue) || amountDue <= 0) throw new GiftCardRefusal('nothing_due', 'No balance remains to pay');
   const amount = card.balanceCents >= amountDue ? amountDue
-    : Math.min(card.balanceCents, Math.max(0, amountDue - 50));
+    : Math.min(card.balanceCents, Math.max(0, amountDue - minimumChargeAmount(currency)));
   if (amount <= 0) throw new GiftCardRefusal('cannot_cover', 'Gift card cannot cover this order or a valid split payment');
   return { id: card.id, codeSuffix: card.codeSuffix, amount, remainingCents: card.balanceCents };
 }
@@ -141,6 +160,7 @@ export async function getGiftCardBalance(env: TalismanEnv, code: string) {
 export async function startGiftCardPurchase(env: TalismanEnv, adapter: PaymentProviderAdapter,
   input: unknown, urls: { successUrl: string; cancelUrl: string }) {
   if (adapter.providerId !== 'stripe') throw new Error('Gift card purchases require Stripe');
+  const currency = giftCardCurrency(env);
   await encryptionKey(env);
   const values = purchaseSchema.parse(input);
   const id = `gp_${crypto.randomUUID()}`;
@@ -148,11 +168,12 @@ export async function startGiftCardPurchase(env: TalismanEnv, adapter: PaymentPr
   const timestamp = Math.floor(Date.now() / 1000);
   await env.DB.prepare(`INSERT INTO _ecommerce_gift_card_purchases
     (id,buyer_email,amount_cents,currency,status,access_token_hash,created_at,updated_at)
-    VALUES (?,?,?,'usd','pending',?,?,?)`)
-    .bind(id, values.buyerEmail, values.amountCents, await hashGiftCardSecret(accessToken), timestamp, timestamp).run();
+    VALUES (?,?,?,?,'pending',?,?,?)`)
+    .bind(id, values.buyerEmail, values.amountCents, currency, await hashGiftCardSecret(accessToken),
+      timestamp, timestamp).run();
   let providerSessionId: string | undefined;
   try {
-    const session = await adapter.createCheckoutSession({ orderId: id,
+    const session = await adapter.createCheckoutSession({ orderId: id, currency,
       items: [{ name: 'Talisman digital gift card', priceCents: values.amountCents, quantity: 1 }],
       customerEmail: values.buyerEmail,
       metadata: { giftCardPurchaseId: id },
@@ -185,7 +206,8 @@ export async function confirmGiftCardPurchase(env: TalismanEnv, session: {
   const db = createDbClient(env);
   const purchase = await db.select().from(giftCardPurchases).where(eq(giftCardPurchases.id, id)).get();
   if (!purchase || purchase.providerSessionId !== session.id ||
-    purchase.amountCents !== session.amount_total || session.currency?.toLowerCase() !== 'usd' ||
+    purchase.amountCents !== session.amount_total ||
+    session.currency?.toLowerCase() !== purchase.currency.toLowerCase() ||
     session.payment_status !== 'paid' || typeof session.payment_intent !== 'string') {
     throw new Error('Gift card payment does not match purchase');
   }
@@ -201,7 +223,7 @@ export async function confirmGiftCardPurchase(env: TalismanEnv, session: {
       .bind(session.payment_intent, timestamp, id, session.id),
     env.DB.prepare(`INSERT INTO _ecommerce_gift_cards
       (id,code_hash,code_suffix,encrypted_code,source,purchase_id,initial_cents,balance_cents,currency,status,created_at,updated_at)
-      SELECT ?,?,?,?,'purchase',id,amount_cents,0,'usd','active',?,?
+      SELECT ?,?,?,?,'purchase',id,amount_cents,0,currency,'active',?,?
       FROM _ecommerce_gift_card_purchases WHERE id = ? AND status = 'paid'
       ON CONFLICT(purchase_id) DO NOTHING`)
       .bind(cardId, secret.codeHash, secret.codeSuffix, secret.encryptedCode, timestamp, timestamp, id),
@@ -265,7 +287,8 @@ export async function recordGiftCardPurchaseRefund(env: TalismanEnv, params: {
   const purchase = await db.select().from(giftCardPurchases)
     .where(eq(giftCardPurchases.paymentIntentId, params.paymentIntentId)).get();
   if (!purchase) return null;
-  if (purchase.amountCents !== params.amount || params.currency.toLowerCase() !== 'usd' ||
+  if (purchase.amountCents !== params.amount ||
+    params.currency.toLowerCase() !== purchase.currency.toLowerCase() ||
     !Number.isSafeInteger(params.amountRefunded) || params.amountRefunded < 0 ||
     params.amountRefunded > purchase.amountCents) throw new Error('Gift card refund does not match purchase');
   if (params.amountRefunded <= purchase.providerRefundedCents) return { success: true, duplicate: true };

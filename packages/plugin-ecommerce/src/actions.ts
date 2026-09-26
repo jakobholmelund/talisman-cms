@@ -11,6 +11,7 @@ import { BASKET_LIMIT_MESSAGE, basketCreationOverLimit } from './basket-limits';
 import { PROVIDER_CHECK_RETRY_MESSAGE } from './provider-checks';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { readSetting } from 'talisman-cms/env';
+import { StoreSettingsError, readStoreSettings, reportStoreSettingsError } from './store-settings';
 
 function getOrCreateCartSession(context: any): string {
   if (!context.cookies) return `anon_${crypto.randomUUID()}`;
@@ -153,6 +154,8 @@ export const ecommerceActions = {
       const sessionToken = context.cookies ? readCartSessionToken(context.cookies) : undefined;
 
       try {
+        // Invalid store settings stop checkout before the basket is read.
+        readStoreSettings(env);
         const api = bindCommerceApi({
           env: env as unknown as TalismanEnv,
           paymentAdapters: runtimePaymentAdapters(env as Record<string, unknown>),
@@ -216,6 +219,9 @@ export const ecommerceActions = {
         };
       } catch (error: any) {
         if (error instanceof ActionError) throw error;
+        if (error instanceof StoreSettingsError) {
+          throw new ActionError({ code: 'SERVICE_UNAVAILABLE', message: reportStoreSettingsError(error) });
+        }
         // A refused discount or gift card code gets one answer, whatever the reason.
         const refusal = codeRefusalBody(error);
         if (refusal) throw new ActionError({ code: 'CONFLICT', message: refusal.error });

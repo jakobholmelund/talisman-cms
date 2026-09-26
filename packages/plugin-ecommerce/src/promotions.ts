@@ -5,6 +5,8 @@ import { customerAccounts, discountCodes, discountRedemptions, referralCodes, re
 import { getReferralPolicy, referralTermsError } from './referrals';
 import { hasPurchaseHistory } from './accounts';
 import { GiftCardRefusal } from './gift-cards';
+import { readStoreSettings } from './store-settings';
+import { minimumChargeAmount } from './money';
 
 const optionalLimit = z.number().int().positive().max(1_000_000).nullable();
 const optionalDate = z.number().int().positive().nullable();
@@ -54,7 +56,7 @@ export const referralSettingsSchema = z.object({
 
 export function discountAmountForLines(code: Pick<typeof discountCodes.$inferSelect,
   'type' | 'value' | 'remainingCents' | 'maxDiscountCents' | 'minOrderCents' | 'eligibleProductIds'>,
-  lines: Array<{ productId: string; quantity: number; priceAtPurchase: number }>, subtotal: number) {
+  lines: Array<{ productId: string; quantity: number; priceAtPurchase: number }>, subtotal: number, currency: string) {
   if (!Number.isSafeInteger(subtotal) || subtotal < code.minOrderCents) return 0;
   const eligible = code.eligibleProductIds.length
     ? lines.filter((line) => code.eligibleProductIds.includes(line.productId)) : lines;
@@ -65,8 +67,8 @@ export function discountAmountForLines(code: Pick<typeof discountCodes.$inferSel
     : Math.min(code.value, eligibleSubtotal);
   const capped = code.type === 'percent' && code.maxDiscountCents !== null
     ? Math.min(raw, code.maxDiscountCents) : raw;
-  // Keep the USD card charge at Stripe's minimum; store credit is applied afterward.
-  return Math.max(0, Math.min(capped, subtotal - 50));
+  // Leave at least Stripe's minimum charge for the currency to pay; store credit is applied afterward.
+  return Math.max(0, Math.min(capped, subtotal - minimumChargeAmount(currency)));
 }
 
 /** Why a discount code was refused. The reason is for server-side use; shoppers see one message. */
@@ -112,6 +114,7 @@ export async function evaluateDiscountCode(env: TalismanEnv, input: {
   lines: Array<{ productId: string; quantity: number; priceAtPurchase: number }>;
   subtotal: number; checkShopperHistory?: boolean;
 }) {
+  const { currency } = readStoreSettings(env);
   const normalizedCode = input.code.trim().toUpperCase();
   if (!/^[A-Z0-9][A-Z0-9_-]{2,31}$/.test(normalizedCode)) throw new DiscountCodeRefusal('format', 'Invalid discount code');
   const db = createDbClient(env);
@@ -149,7 +152,7 @@ export async function evaluateDiscountCode(env: TalismanEnv, input: {
       throw new DiscountCodeRefusal('customer_limit', 'Discount code was already used by this shopper');
     }
   }
-  const amount = discountAmountForLines(code, input.lines, input.subtotal);
+  const amount = discountAmountForLines(code, input.lines, input.subtotal, currency);
   if (!amount) throw new DiscountCodeRefusal('not_applicable', 'Discount code does not apply to this basket');
   return { code: code.code, type: code.type, amount, emailNormalized };
 }

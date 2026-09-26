@@ -14,6 +14,8 @@ export { PROVIDER_CHECK_RETRY_MESSAGE, ProviderCheckLimitedError } from './provi
 import { fulfillCommerceOrder } from './fulfillment';
 import { evaluateGiftCard, confirmGiftCardPurchase, expireGiftCardPurchase,
   recordGiftCardPurchaseRefund, reconcileGiftCardPurchase } from './gift-cards';
+import { readStoreSettings } from './store-settings';
+import { minimumChargeAmount } from './money';
 
 export interface CommerceApiOptions {
   env: TalismanEnv;
@@ -404,6 +406,7 @@ export function bindCommerceApi(options: CommerceApiOptions) {
   return {
     carts: {
       async quote(cartId: string) {
+        const { currency } = readStoreSettings(env);
         const cart = await db.select().from(schema.carts).where(eq(schema.carts.id, cartId)).get();
         if (!cart) throw new Error('Cart not found');
         const lines = [];
@@ -435,7 +438,7 @@ export function bindCommerceApi(options: CommerceApiOptions) {
           if (demand.available < demand.quantity) throw new Error(`Insufficient stock for component ${demand.name}`);
         }
         if (!Number.isSafeInteger(totalAmount)) throw new Error('Order total is too large');
-        return { lines, totalAmount, currency: 'usd', requiresShipping, locked: Boolean(cart.checkoutSessionId) };
+        return { lines, totalAmount, currency, requiresShipping, locked: Boolean(cart.checkoutSessionId) };
       },
 
       async find(sessionToken: string | undefined, userId?: string) {
@@ -669,6 +672,8 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         discountCode?: string;
         giftCardCode?: string;
       }) {
+         // Read before the basket is locked, so invalid store settings stop checkout without writes.
+         const { currency } = readStoreSettings(env);
          const cart = await db.select().from(schema.carts).where(eq(schema.carts.id, cartId)).get();
          if (!cart || cart.items.length === 0) {
            throw new Error('Cart is empty or not found');
@@ -776,9 +781,10 @@ export function bindCommerceApi(options: CommerceApiOptions) {
            emailNormalized: schema.customerAccounts.emailNormalized })
            .from(schema.customerAccounts).where(eq(schema.customerAccounts.id, cart.userId)).get() : undefined;
          if (owner && defaultAdapter.providerId === 'stripe') {
-           // Stripe requires a positive card charge. Credit is never offered to a guest basket.
+           // Credit leaves at least Stripe's minimum charge for the currency on the card. It is never
+           // offered to a guest basket.
            creditApplied = Math.min(Math.max(0, owner.creditBalance),
-             Math.max(0, subtotalAmount - discountAmount - 50));
+             Math.max(0, subtotalAmount - discountAmount - minimumChargeAmount(currency)));
          }
          totalAmount = subtotalAmount - discountAmount - creditApplied;
          const giftCard = options.giftCardCode && defaultAdapter.providerId === 'stripe'
@@ -827,6 +833,7 @@ export function bindCommerceApi(options: CommerceApiOptions) {
          session = internallyPaid ? { providerSessionId: `internal:${orderId}`, url: successUrl }
            : await defaultAdapter.createCheckoutSession({
             orderId,
+            currency,
             items: orderItems.map(i => ({
                name: i.name,
                priceCents: i.priceAtPurchase,
@@ -847,12 +854,12 @@ export function bindCommerceApi(options: CommerceApiOptions) {
            env.DB.prepare(`INSERT INTO _ecommerce_orders
              (id, cart_id, user_id, checkout_session_id, payment_provider, status, items, total_amount, subtotal_amount, credit_applied, discount_code, discount_amount, gift_card_id, gift_card_applied, referral_code, referral_reward_cents, currency,
               customer_email, shipping_address, billing_address, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'usd', ?, ?, ?, ?, ?) `)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) `)
              .bind(orderId, cartId, cart.userId, checkoutSessionId, internallyPaid ? 'gift_card' : defaultAdapter.providerId,
                JSON.stringify(orderItems.map(({ name, ...rest }) => rest)), totalAmount,
                subtotalAmount, creditApplied, discount?.code ?? null, discountAmount,
                giftCard?.id ?? null, giftCardApplied,
-               referralCode, referralCode ? referralsPolicy.rewardCents : 0,
+               referralCode, referralCode ? referralsPolicy.rewardCents : 0, currency,
                options.customerEmail, options.shippingAddress ? JSON.stringify(options.shippingAddress) : null,
                options.billingAddress ? JSON.stringify(options.billingAddress) : null,
                timestamp, timestamp)
@@ -964,7 +971,7 @@ export function bindCommerceApi(options: CommerceApiOptions) {
           paymentProvider: null,
           status: data.status || 'draft',
           totalAmount: data.totalAmount,
-          currency: data.currency || 'usd',
+          currency: data.currency || readStoreSettings(env).currency,
           customerEmail: data.customerEmail,
           items: data.items,
           shippingAddress: data.shippingAddress,

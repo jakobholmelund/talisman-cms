@@ -8,6 +8,8 @@ import { codeRefusalBody, evaluateDiscountCode } from '../promotions';
 import { evaluateGiftCard } from '../gift-cards';
 import { readCartSessionToken } from '../cookies';
 import { CODE_CHECK_LIMIT_MESSAGE, codeChecksOverBasketLimit, codeChecksOverNetworkLimit } from '../code-check-limits';
+import { minimumChargeAmount } from '../money';
+import { StoreSettingsError, readStoreSettings, reportStoreSettingsError } from '../store-settings';
 
 // `customerEmail` is still accepted in any form so existing storefronts keep working, but the preview
 // ignores it: it decides only from the basket and the signed-in shopper's own account. The code
@@ -39,6 +41,8 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   const token = readCartSessionToken(cookies);
   if (!token) return Response.json({ error: 'Basket not found' }, { status: 404, headers });
   try {
+    // Invalid store settings stop the preview before the basket or account is read.
+    readStoreSettings(runtimeEnv);
     const account = await findCustomerSession(runtimeEnv, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
     const api = bindCommerceApi({ env: runtimeEnv });
     // Links the browser basket to a signed-in account like the cart route, but never creates a basket.
@@ -56,7 +60,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
         quantity: line.quantity, priceAtPurchase: line.unitAmount }))
     }) : null;
     const creditApplied = Math.min(Math.max(0, account?.creditBalance ?? 0),
-      Math.max(0, quote.totalAmount - (promotion?.amount ?? 0) - 50));
+      Math.max(0, quote.totalAmount - (promotion?.amount ?? 0) - minimumChargeAmount(quote.currency)));
     const afterCredit = quote.totalAmount - (promotion?.amount ?? 0) - creditApplied;
     const giftCard = parsed.data.giftCardCode
       ? await evaluateGiftCard(runtimeEnv, parsed.data.giftCardCode, afterCredit) : null;
@@ -65,6 +69,9 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       giftCardApplied: giftCard?.amount ?? 0, giftCardSuffix: giftCard?.codeSuffix ?? null,
       cardAmount: afterCredit - (giftCard?.amount ?? 0) }, { headers });
   } catch (error) {
+    if (error instanceof StoreSettingsError) {
+      return Response.json({ error: reportStoreSettingsError(error) }, { status: 503, headers });
+    }
     // Every refusal of an entered code gets one answer; basket problems keep their own.
     const refusal = codeRefusalBody(error);
     if (refusal) return Response.json(refusal, { status: 409, headers });

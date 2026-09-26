@@ -299,7 +299,7 @@ export const discountCodes = sqliteTable('_ecommerce_discount_codes', {
   code: text('code').primaryKey(),
   description: text('description'),
   type: text('type').$type<'credit' | 'amount' | 'percent'>().notNull(),
-  value: integer('value').notNull(), // USD cents for credit/amount, basis points for percent.
+  value: integer('value').notNull(), // Store currency minor units for credit/amount, basis points for percent.
   remainingCents: integer('remaining_cents'),
   maxDiscountCents: integer('max_discount_cents'),
   minOrderCents: integer('min_order_cents').notNull().default(0),

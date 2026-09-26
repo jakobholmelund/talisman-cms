@@ -1454,3 +1454,76 @@ test('signed Stripe webhook dispatch issues gift cards once and expires unpaid p
     .get(expired.id).status, 'cancelled');
   sqlite.close();
 });
+
+test('a store that sells in another currency refuses to issue, sell or redeem gift cards', async () => {
+  const { sqlite, DB } = database();
+  seed(sqlite, 10);
+  // A card issued while the store still sold in USD.
+  const gift = await issueAdminGiftCard(giftEnv(DB), 'admin-1', { amountCents: 10000,
+    reason: 'Customer service goodwill' });
+  const env = { ...giftEnv(DB), TALISMAN_COMMERCE_CURRENCY: 'eur' };
+  // A typed refusal, so checkout and the preview answer it like any other refused code.
+  const refusal = { name: 'GiftCardRefusal', reason: 'currency',
+    message: 'Gift cards are available only in stores that use USD' };
+  const sessions = [];
+  const adapter = { providerId: 'stripe',
+    async createCheckoutSession(input) {
+      sessions.push(input);
+      return { providerSessionId: `session-${input.orderId}`, url: `https://checkout.stripe.com/${input.orderId}` };
+    }, async expireCheckoutSession() {} };
+
+  await assert.rejects(issueAdminGiftCard(env, 'admin-1', { amountCents: 10000,
+    reason: 'Customer service goodwill' }), refusal);
+  await assert.rejects(startGiftCardPurchase(env, adapter, { amountCents: 5000, buyerEmail: 'buyer@example.com' },
+    { successUrl: 'https://example.test/gift-cards/success?purchase={PURCHASE_ID}',
+      cancelUrl: 'https://example.test/gift-cards' }), refusal);
+  await assert.rejects(evaluateGiftCard(env, gift.code, 12000), refusal);
+  const api = bindCommerceApi({ env, paymentAdapters: [adapter] });
+  const cart = await api.carts.getOrCreate('euro-gift');
+  await api.carts.updateItems(cart.id, [{ productId: 'mycelium', variantId: 'mycelium-amber', quantity: 1 }]);
+  await assert.rejects(api.orders.createFromCart(cart.id, { ...address, giftCardCode: gift.code }), refusal);
+  assert.equal(sessions.length, 0);
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM _ecommerce_gift_card_purchases').get().n, 0);
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM _ecommerce_gift_cards').get().n, 1);
+  assert.equal(sqlite.prepare('SELECT balance_cents FROM _ecommerce_gift_cards WHERE id = ?')
+    .get(gift.id).balance_cents, 10000);
+  assert.equal((await api.carts.find('euro-gift')).checkoutSessionId, null);
+
+  // Without the card the basket checks out in the store currency.
+  const { order } = await api.orders.createFromCart(cart.id, address);
+  assert.deepEqual([order.currency, order.giftCardApplied, sessions[0].currency], ['eur', 0, 'eur']);
+  sqlite.close();
+});
+
+test("store credit and credit vouchers leave Stripe's minimum charge for the store currency", async () => {
+  const { sqlite, DB } = database();
+  seed(sqlite, 10);
+  sqlite.exec('UPDATE _ecommerce_components SET quantity = 10');
+  const now = Math.floor(Date.now() / 1000);
+  sqlite.prepare(`INSERT INTO _ecommerce_customer_accounts
+    (id, email, email_normalized, credit_balance, created_at, updated_at)
+    VALUES ('pound-shopper', 'pound-shopper@example.com', 'pound-shopper@example.com', 20000, ?, ?)`).run(now, now);
+  const env = { DB, TALISMAN_COMMERCE_CURRENCY: 'GBP' };
+  const sessions = [];
+  const api = bindCommerceApi({ env, paymentAdapters: [{ providerId: 'stripe',
+    async createCheckoutSession(input) {
+      sessions.push(input);
+      return { providerSessionId: `session-${input.orderId}`, url: `https://example.test/${input.orderId}` };
+    }, async expireCheckoutSession() {} }] });
+
+  // Stripe's minimum is 30 pence, where a USD store keeps 50 cents.
+  const cart = await api.carts.getOrCreate('pound-browser', 'pound-shopper');
+  await api.carts.updateItems(cart.id, [{ productId: 'mycelium', variantId: 'mycelium-amber', quantity: 1 }]);
+  const credited = (await api.orders.createFromCart(cart.id, { ...address,
+    customerEmail: 'pound-shopper@example.com' })).order;
+  assert.deepEqual([credited.currency, credited.creditApplied, credited.totalAmount], ['gbp', 11970, 30]);
+  assert.deepEqual([sessions[0].currency, sessions[0].creditApplied], ['gbp', 11970]);
+
+  const voucher = await createDiscountCode(env, discountInput('', 'credit', 20000));
+  const guest = await api.carts.getOrCreate('pound-guest');
+  await api.carts.updateItems(guest.id, [{ productId: 'forrest', variantId: 'forrest-amber', quantity: 1 }]);
+  const discounted = (await api.orders.createFromCart(guest.id, { ...address,
+    customerEmail: 'guest@example.com', discountCode: voucher.code })).order;
+  assert.deepEqual([discounted.discountAmount, discounted.totalAmount], [11970, 30]);
+  sqlite.close();
+});

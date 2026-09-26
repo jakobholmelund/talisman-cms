@@ -6,6 +6,7 @@ import { checkoutSchema } from '../checkout-input';
 import { runtimePaymentAdapters } from '../runtime';
 import { readCartSessionToken } from '../cookies';
 import { AdminTestPaymentAdapter } from '../adapters/admin-test';
+import { StoreSettingsError, reportStoreSettingsError } from '../store-settings';
 
 // Injected only with ecommercePlugin({ adminTestCheckout: true }).
 
@@ -35,6 +36,7 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
         try {
           quote = await api.carts.quote(cart.id);
         } catch (error) {
+          if (error instanceof StoreSettingsError) throw error;
           quoteError = error instanceof Error ? error.message : 'Basket cannot be quoted';
         }
       }
@@ -82,6 +84,9 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
       redirectUrl: `/checkout/success?order=${encodeURIComponent(order.id)}`
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
+    if (error instanceof StoreSettingsError) {
+      return Response.json({ error: reportStoreSettingsError(error) }, { status: 503 });
+    }
     return Response.json({ error: error instanceof Error ? error.message : 'Admin test checkout failed' }, { status: 409 });
   }
 };

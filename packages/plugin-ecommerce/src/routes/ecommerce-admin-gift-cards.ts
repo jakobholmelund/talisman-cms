@@ -3,6 +3,7 @@ import type { TalismanEnv } from 'talisman-cms/client';
 import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
 import { getGiftCardsAdmin, issueAdminGiftCard, setGiftCardActive,
   refundGiftCardTender, refundGiftCardOnlyOrder } from '../gift-cards';
+import { StoreSettingsError, reportStoreSettingsError } from '../store-settings';
 
 export const ALL: APIRoute = async ({ request }) => {
   const authorization = await authorizeCmsRequest(request, 'admin');
@@ -29,6 +30,9 @@ export const ALL: APIRoute = async ({ request }) => {
     else return Response.json({ error: 'Invalid gift card action' }, { status: 400, headers });
     return Response.json({ result }, { headers });
   } catch (error) {
+    if (error instanceof StoreSettingsError) {
+      return Response.json({ error: reportStoreSettingsError(error) }, { status: 503, headers });
+    }
     return Response.json({ error: error instanceof Error ? error.message : 'Gift card action failed' },
       { status: 400, headers });
   }

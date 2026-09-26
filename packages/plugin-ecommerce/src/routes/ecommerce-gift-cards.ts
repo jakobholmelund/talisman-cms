@@ -4,6 +4,7 @@ import { readSetting } from 'talisman-cms/env';
 import { runtimePaymentAdapters } from '../runtime';
 import { getGiftCardBalance, startGiftCardPurchase } from '../gift-cards';
 import { giftCardAccessCookie } from '../cookies';
+import { StoreSettingsError, reportStoreSettingsError } from '../store-settings';
 
 export const POST: APIRoute = async ({ request, cookies }) => {
   const headers = { 'Cache-Control': 'no-store' };
@@ -34,6 +35,9 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     });
     return Response.json({ purchaseId: purchase.id, redirectUrl: purchase.paymentUrl }, { headers });
   } catch (error) {
+    if (error instanceof StoreSettingsError) {
+      return Response.json({ error: reportStoreSettingsError(error) }, { status: 503, headers });
+    }
     return Response.json({ error: error instanceof Error ? error.message : 'Could not start gift card purchase' },
       { status: 400, headers });
   }

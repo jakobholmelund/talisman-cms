@@ -18,9 +18,12 @@ export interface PaymentProviderAdapter {
    */
   createCheckoutSession(params: {
     orderId: string;
+    /** Lowercase ISO 4217 code of the order. The provider must charge in it and in no other currency. */
+    currency: string;
     items: Array<{
       name: string;
       description?: string;
+      /** Unit price in the currency's minor units, like every amount here. */
       priceCents: number;
       quantity: number;
     }>;

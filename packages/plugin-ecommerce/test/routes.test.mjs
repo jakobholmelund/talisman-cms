@@ -35,6 +35,7 @@ const webhookRoute = (await import('../dist/routes/ecommerce-webhook.js')).POST;
 const giftCardsRoute = (await import('../dist/routes/ecommerce-gift-cards.js')).POST;
 const discountRoute = (await import('../dist/routes/ecommerce-discount.js')).POST;
 const adminTestCheckoutRoute = (await import('../dist/routes/ecommerce-admin-test-checkout.js')).ALL;
+const adminGiftCardsRoute = (await import('../dist/routes/ecommerce-admin-gift-cards.js')).ALL;
 const { ecommerceActions } = await import('../dist/actions.js');
 
 const ORIGIN = 'https://shop.test';
@@ -169,11 +170,11 @@ function signInShopper(sqlite, accountId, token) {
 const stripeEnv = (DB) => ({ DB, TALISMAN_COMMERCE_STRIPE_MODE: 'test',
   STRIPE_SECRET_KEY: 'sk_test_route_tests', STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET });
 
-function completedEvent(order) {
+function completedEvent(order, currency = 'usd') {
   return JSON.stringify({ id: `evt_${order.id}`, object: 'event', type: 'checkout.session.completed', data: { object: {
     id: order.checkoutSessionId, object: 'checkout.session', client_reference_id: order.id,
     metadata: { orderId: order.id }, payment_status: 'paid', amount_total: order.totalAmount,
-    currency: 'usd', payment_intent: `pi_${order.id}`, customer_details: { email: 'owner@example.test' },
+    currency, payment_intent: `pi_${order.id}`, customer_details: { email: 'owner@example.test' },
   } } });
 }
 
@@ -233,6 +234,36 @@ test('webhooks with a wrong secret, a stale timestamp, a changed payload or no s
 
   assert.equal(sqlite.prepare('SELECT status FROM _ecommerce_orders WHERE id = ?').get(order.id).status, 'pending');
   assert.equal(count(sqlite, '_ecommerce_payments'), 0);
+  sqlite.close();
+});
+
+test('a store that sells in EUR records its orders in EUR and confirms only a payment in EUR', async () => {
+  const { sqlite, DB } = database();
+  const settings = { TALISMAN_COMMERCE_CURRENCY: 'EUR' };
+  const sessions = [];
+  const adapter = { ...hostedCheckout, async createCheckoutSession(input) {
+    sessions.push(input);
+    return hostedCheckout.createCheckoutSession(input);
+  } };
+  const api = bindCommerceApi({ env: { DB, ...settings }, paymentAdapters: [adapter] });
+  const cart = await api.carts.getOrCreate('euro-browser');
+  await api.carts.updateItems(cart.id, [{ productId: 'frame', variantId: 'frame-amber', quantity: 1 }]);
+  assert.equal((await api.carts.quote(cart.id)).currency, 'eur');
+  const { order } = await api.orders.createFromCart(cart.id, { ...checkoutDetails, providerId: 'stripe' });
+  assert.equal(order.currency, 'eur');
+  assert.equal(sessions[0].currency, 'eur');
+  assert.equal((await api.orders.create({ totalAmount: 100, items: [] })).currency, 'eur');
+
+  // Stripe reports the currency it charged; a payment in another currency never confirms the order.
+  const env = { ...stripeEnv(DB), ...settings };
+  const inDollars = completedEvent(order);
+  const refused = await postWebhook(env, inDollars, signed(inDollars));
+  assert.deepEqual([refused.status, refused.json], [400, { error: 'Payment currency does not match order' }]);
+  assert.equal(sqlite.prepare('SELECT status FROM _ecommerce_orders WHERE id = ?').get(order.id).status, 'pending');
+  assert.equal(count(sqlite, '_ecommerce_payments'), 0);
+  const inEuros = completedEvent(order, 'eur');
+  const confirmed = await postWebhook(env, inEuros, signed(inEuros));
+  assert.deepEqual([confirmed.status, confirmed.json], [200, { success: true, orderId: order.id, status: 'paid' }]);
   sqlite.close();
 });
 
@@ -368,6 +399,74 @@ test('with checkout enabled, the discount preview keeps its checks and prices th
   // A preview reserves nothing.
   assert.equal(count(sqlite, '_ecommerce_discount_redemptions'), 0);
   assert.equal(count(sqlite, '_ecommerce_orders'), 0);
+  sqlite.close();
+});
+
+test('the discount preview leaves the minimum charge of the store currency on the card', async () => {
+  const { sqlite, DB } = await discountFixture();
+  signInShopper(sqlite, 'pound-shopper', 'pound-token');
+  sqlite.prepare("UPDATE _ecommerce_customer_accounts SET credit_balance = 20000 WHERE id = 'pound-shopper'").run();
+  const env = { DB, TALISMAN_COMMERCE_CHECKOUT_ENABLED: 'true', TALISMAN_COMMERCE_CURRENCY: 'gbp' };
+  const response = await call(discountRoute, env, { path: '/api/ecommerce/discount', body: { code: 'SAVE10' },
+    cookies: { [CART_SESSION_COOKIE]: 'discount-browser', [CUSTOMER_SESSION_COOKIE]: 'pound-token' } });
+  // Stripe's minimum is 30 pence, where a USD store keeps 50 cents.
+  assert.deepEqual([response.status, response.json], [200, { code: 'SAVE10', type: 'percent', discountAmount: 1200,
+    creditApplied: 10770, giftCardApplied: 0, giftCardSuffix: null, cardAmount: 30 }]);
+  sqlite.close();
+});
+
+test('invalid store settings close checkout with a generic 503 and log the setting for the operator', async (t) => {
+  const logged = [];
+  t.mock.method(console, 'error', (message) => { logged.push(message); });
+  t.after(() => { delete globalThis.cmsUser; });
+  const { sqlite, DB } = database();
+  const { order } = await placeOrder(DB, 'earlier-browser');
+  const api = bindCommerceApi({ env: { DB } });
+  const cart = await api.carts.getOrCreate('misconfigured-browser');
+  await api.carts.updateItems(cart.id, [{ productId: 'frame', variantId: 'frame-amber', quantity: 1 }]);
+  const before = sqlite.prepare('SELECT * FROM _ecommerce_carts').all();
+  const env = { ...stripeEnv(DB), TALISMAN_COMMERCE_CHECKOUT_ENABLED: 'true', TALISMAN_COMMERCE_GIFT_CARDS_ENABLED: 'true',
+    TALISMAN_COMMERCE_GIFT_CARD_KEY: 'a'.repeat(64), TALISMAN_COMMERCE_CURRENCY: 'dollars' };
+  const cookies = { [CART_SESSION_COOKIE]: 'misconfigured-browser' };
+  globalThis.cmsUser = { id: 'admin-1', email: 'admin@shop.test', role: 'admin' };
+
+  const requests = [
+    [checkoutRoute, { path: '/api/ecommerce/checkout', cookies, body: { customerEmail: 'owner@example.test', shippingAddress } }],
+    [discountRoute, { path: '/api/ecommerce/discount', cookies, body: { code: 'SAVE10', customerEmail: 'owner@example.test' } }],
+    [giftCardsRoute, { path: '/api/ecommerce/gift-cards', body: { amountCents: 5000, buyerEmail: 'buyer@example.test' } }],
+    [adminGiftCardsRoute, { path: '/admin/api/ecommerce/gift-cards-admin',
+      body: { action: 'issue', data: { amountCents: 5000, reason: 'Customer service goodwill' } } }],
+    [adminTestCheckoutRoute, { method: 'GET', path: '/admin/api/ecommerce/test-checkout', cookies }],
+    [adminTestCheckoutRoute, { path: '/admin/api/ecommerce/test-checkout', cookies,
+      body: { customerEmail: 'admin@shop.test', shippingAddress } }],
+  ];
+  for (const [route, request] of requests) {
+    const response = await call(route, env, request);
+    assert.deepEqual([response.status, response.json], [503, { error: 'Checkout is temporarily unavailable.' }],
+      `${request.method ?? 'POST'} ${request.path}`);
+    assert.deepEqual(response.jar.writes, []);
+  }
+  globalThis.workerEnv = env;
+  const jar = cookieJar();
+  await assert.rejects(ecommerceActions.checkout.handler({ customerEmail: 'owner@example.test', shippingAddress },
+    { cookies: jar, url: new URL(`${ORIGIN}/_actions/checkout`) }),
+    { code: 'SERVICE_UNAVAILABLE', message: 'Checkout is temporarily unavailable.' });
+  assert.deepEqual(jar.writes, []);
+
+  // The details reach the Worker log only, once per refusal.
+  assert.equal(logged.length, requests.length + 1);
+  for (const message of logged) {
+    assert.match(message, /^\[Commerce\] Store settings are invalid: TALISMAN_COMMERCE_CURRENCY must be /);
+  }
+  assert.deepEqual(sqlite.prepare('SELECT * FROM _ecommerce_carts').all(), before);
+  assert.equal(count(sqlite, '_ecommerce_orders'), 1);
+  assert.equal(count(sqlite, '_ecommerce_gift_card_purchases'), 0);
+  assert.equal(count(sqlite, '_ecommerce_gift_cards'), 0);
+
+  // A payment for an order placed earlier is still recorded against the order's own currency.
+  const payload = completedEvent(order);
+  const settled = await postWebhook(env, payload, signed(payload));
+  assert.deepEqual([settled.status, settled.json], [200, { success: true, orderId: order.id, status: 'paid' }]);
   sqlite.close();
 });
 
