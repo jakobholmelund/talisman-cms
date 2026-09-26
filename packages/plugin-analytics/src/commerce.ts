@@ -32,6 +32,12 @@ export type CommerceOverview = {
   stripeMode: StripeMode;
   /** True when some refunds in the period have no recorded date and were counted on the payment date. */
   undatedRefunds: boolean;
+  /**
+   * Amounts are in each currency's minor units. `grossSales` is the items after discounts, without
+   * the shipping and tax added to the price. `refunds` counts only the items' share of what was
+   * refunded, and `netSales` is gross sales less those refunds. `charged` is what payment providers
+   * charged, shipping and tax included.
+   */
   currencies: Array<{
     currency: string; orders: number; grossSales: number; netSales: number; refunds: number;
     refundedOrders: number; charged: number; averageOrderValue: number;
@@ -72,12 +78,29 @@ const paidOrders = (stripeMode: StripeMode) => `
 
 const inPeriod = (column: string) => `${column} >= ? AND ${column} < ?`;
 const grossOf = (order: string) => `MAX(0, ${order}.subtotal_amount - ${order}.discount_amount)`;
-/** Everything refunded on an order so far, in any tender. A full refund returns the whole gross. */
+/**
+ * Everything paid for an order, in any tender: the items after discounts plus the shipping and the
+ * tax added to the price. Inclusive tax is already part of the items and the shipping.
+ */
+const paidOf = (order: string) => `(${grossOf(order)} + ${order}.shipping_amount
+  + CASE WHEN ${order}.tax_behavior = 'exclusive' THEN ${order}.tax_amount ELSE 0 END)`;
+/**
+ * The items' share of `refunded`, an amount refunded on an order in any tender. A refund does not
+ * record what it returned, so it is split in proportion to what was paid for the items, the
+ * shipping and the tax, and only the items' share counts against sales. Integer arithmetic, rounded
+ * half up. The CAST keeps the share whole if the multiplication overflows 64 bits, where SQLite
+ * falls back to floating point.
+ */
+const itemShareOf = (order: string, refunded: string) => `CASE WHEN ${paidOf(order)} > 0
+  THEN MIN(${grossOf(order)}, CAST(((${refunded}) * ${grossOf(order)} + ${paidOf(order)} / 2) / ${paidOf(order)} AS INTEGER))
+  ELSE 0 END`;
+/** The items' share of everything refunded on an order so far. A full refund returns the whole gross. */
 const refundOf = (order: string) => `CASE WHEN ${order}.status = 'refunded' THEN ${grossOf(order)}
-  ELSE MIN(${grossOf(order)}, ${order}.provider_refunded_cents + ${order}.gift_card_refunded_cents) END`;
+  ELSE ${itemShareOf(order, `${order}.provider_refunded_cents + ${order}.gift_card_refunded_cents`)} END`;
 
-// One row per refund: order_id, currency, amount, refunded_at (unix seconds) and dated (1 when
-// refunded_at is when the refund was issued, 0 when it falls back to the payment date).
+// One row per refund: order_id, currency, amount (the items' share of the refund), refunded_at
+// (unix seconds) and dated (1 when refunded_at is when the refund was issued, 0 when it falls back
+// to the payment date).
 const refundsByPaymentDate = `
   refund_events AS (
     SELECT o.id AS order_id, LOWER(o.currency) AS currency, ${refundOf('o')} AS amount,
@@ -88,27 +111,39 @@ const refundsByPaymentDate = `
 // Provider and gift-card refunds carry their own dates. Provider refunds of an order never count
 // for more than its provider_refunded_cents: taken earliest first, a row past that total is
 // trimmed, so a refund recorded twice (for example by two webhooks racing) is not counted twice.
+// Each refund counts for the items' share of the order's dated refunds up to and including it,
+// less the share of those before it, so the shares add up to the share of their total and
+// rounding leaves nothing over.
 // Whatever is left of an order's refund total has no record of its own: tender returned by a
 // full refund (store credit, the rest of a gift card) is dated when the order was fully
 // refunded, and refunds recorded before refund dates were stored fall back to the payment date.
 const refundsByRefundDate = `
   provider_refunds AS (
-    SELECT r.order_id, r.created_at, MIN(r.amount_cents, o.provider_refunded_cents + r.amount_cents -
+    SELECT r.id, r.order_id, r.created_at, MIN(r.amount_cents, o.provider_refunded_cents + r.amount_cents -
       SUM(r.amount_cents) OVER (PARTITION BY r.order_id ORDER BY r.created_at, r.id ROWS UNBOUNDED PRECEDING)) AS amount
     FROM ${providerRefundsTable} r JOIN paid_orders o ON o.id = r.order_id
   ),
   dated_refunds AS (
-    SELECT order_id, amount, created_at FROM provider_refunds WHERE amount > 0
-    UNION ALL
-    SELECT order_id, amount_cents, created_at FROM _ecommerce_gift_card_refunds
+    SELECT order_id, created_at, amount,
+      SUM(amount) OVER (PARTITION BY order_id ORDER BY created_at, id ROWS UNBOUNDED PRECEDING) AS refunded
+    FROM (
+      SELECT id, order_id, amount, created_at FROM provider_refunds WHERE amount > 0
+      UNION ALL
+      SELECT id, order_id, amount_cents, created_at FROM _ecommerce_gift_card_refunds
+    )
+  ),
+  dated_shares AS (
+    SELECT d.order_id, d.created_at,
+      ${itemShareOf('o', 'd.refunded')} - ${itemShareOf('o', 'd.refunded - d.amount')} AS amount
+    FROM dated_refunds d JOIN paid_orders o ON o.id = d.order_id
   ),
   dated_totals AS (
-    SELECT order_id, SUM(amount) AS amount, MAX(created_at) AS last_at FROM dated_refunds GROUP BY order_id
+    SELECT order_id, SUM(amount) AS amount, MAX(created_at) AS last_at FROM dated_shares GROUP BY order_id
   ),
   refund_events AS (
     SELECT o.id AS order_id, LOWER(o.currency) AS currency, d.amount AS amount,
       COALESCE(d.created_at, o.paid_at) AS refunded_at, d.created_at IS NOT NULL AS dated
-    FROM dated_refunds d JOIN paid_orders o ON o.id = d.order_id
+    FROM dated_shares d JOIN paid_orders o ON o.id = d.order_id WHERE d.amount > 0
     UNION ALL
     SELECT o.id, LOWER(o.currency), ${refundOf('o')} - COALESCE(t.amount, 0),
       CASE WHEN o.status = 'refunded' THEN COALESCE(full_refund.created_at, t.last_at, o.paid_at) ELSE o.paid_at END,

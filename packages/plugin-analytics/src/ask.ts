@@ -210,6 +210,8 @@ export async function createAskReport(
       : 'Dates use UTC. Sales use the payment date and exclude pending orders, admin test orders and Stripe test-mode orders.',
     'Currencies are reported separately; amounts from different currencies are never added together.',
   ];
+  if (commerce) notes.push('Sales are the items after discounts, without the shipping and tax added to the price. ' +
+    'A refund counts against sales only for the items\' share of what it returned.');
   if (commerce?.refundBasis === 'refund_date') {
     notes.push('Refunds count on the date they were issued, and net sales are gross sales less the refunds issued in the same period.');
     if (commerce.undatedRefunds || previousCommerce?.undatedRefunds) notes.push('Some refunds were recorded before refund dates were stored; those count on the payment date of the refunded order.');

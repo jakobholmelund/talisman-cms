@@ -14,12 +14,14 @@ const lens = (quantity = 2, price = 1000) => JSON.stringify([{ productId: 'p1', 
 
 function sqliteD1({ refundDates = false } = {}) {
   const sqlite = new DatabaseSync(':memory:');
+  // Migration 0025 added shipping and tax; orders placed before it have 0 and no tax behavior.
   sqlite.exec(`
     CREATE TABLE _ecommerce_orders (
       id TEXT PRIMARY KEY, status TEXT, payment_provider TEXT, checkout_session_id TEXT,
       subtotal_amount INTEGER, discount_amount INTEGER, total_amount INTEGER,
       provider_refunded_cents INTEGER, gift_card_id TEXT, gift_card_refunded_cents INTEGER,
-      currency TEXT, items TEXT
+      currency TEXT, items TEXT, shipping_amount INTEGER NOT NULL DEFAULT 0,
+      tax_amount INTEGER NOT NULL DEFAULT 0, tax_behavior TEXT
     );
     CREATE TABLE _ecommerce_payments (order_id TEXT, status TEXT, created_at INTEGER);
     CREATE TABLE _ecommerce_products (id TEXT PRIMARY KEY, name TEXT);
@@ -35,16 +37,19 @@ function sqliteD1({ refundDates = false } = {}) {
     amount_cents INTEGER NOT NULL, created_at INTEGER)`);
   const insertOrder = sqlite.prepare(`INSERT INTO _ecommerce_orders
     (id, status, payment_provider, checkout_session_id, subtotal_amount, discount_amount, total_amount,
-     provider_refunded_cents, gift_card_id, gift_card_refunded_cents, currency, items)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+     provider_refunded_cents, gift_card_id, gift_card_refunded_cents, currency, items,
+     shipping_amount, tax_amount, tax_behavior)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const insertPayment = sqlite.prepare('INSERT INTO _ecommerce_payments VALUES (?, ?, ?)');
   function order(id, {
     status = 'paid', provider = 'stripe', session = `cs_live_${id}`, subtotal = 1000, discount = 0,
-    total = subtotal - discount, providerRefunded = 0, giftCard = null, giftCardRefunded = 0,
+    shipping = 0, tax = 0, taxBehavior = null,
+    total = subtotal - discount + shipping + (taxBehavior === 'exclusive' ? tax : 0),
+    providerRefunded = 0, giftCard = null, giftCardRefunded = 0,
     currency = 'usd', items = lens(1, subtotal), paid = paidAt, payment = 'success',
   } = {}) {
     insertOrder.run(id, status, provider, session, subtotal, discount, total, providerRefunded,
-      giftCard, giftCardRefunded, currency, items);
+      giftCard, giftCardRefunded, currency, items, shipping, tax, taxBehavior);
     if (paid !== null) insertPayment.run(id, payment, paid);
   }
   return {
@@ -392,6 +397,124 @@ test('provider refunds never count for more than the order\'s provider refund to
   assert.equal(refundsOn('2026-09-23'), 1000);
   assert.equal(refundsOn('2026-09-24'), 0);
   sqlite.close();
+});
+
+const dailyNetSales = ({ daily }) => daily.map(({ date, netSales }) => [date, netSales]);
+
+// Items 3000, 500 shipping and 350 tax added to the price: 3850 paid, 300 of it with store credit and
+// 3550 by Stripe, all refunded yesterday.
+function seedFullRefund({ sqlite, order }) {
+  order('returned', { status: 'refunded', subtotal: 3000, shipping: 500, tax: 350, taxBehavior: 'exclusive',
+    total: 3550, providerRefunded: 3550, paid: nowSeconds - 10 * day, payment: 'refunded' });
+  if (sqlite.prepare(`SELECT name FROM sqlite_master WHERE name = '_ecommerce_provider_refunds'`).all().length) {
+    sqlite.prepare(`INSERT INTO _ecommerce_provider_refunds VALUES (?, ?, 'stripe', NULL, ?, ?)`)
+      .run('prf_returned', 'returned', 3550, nowSeconds - day);
+  }
+}
+
+test('a partial refund of an order with shipping and exclusive tax counts only the items\' share', async () => {
+  for (const refundDates of [false, true]) {
+    const fixture = sqliteD1({ refundDates });
+    const { sqlite, order } = fixture;
+    const ago = days => nowSeconds - days * day;
+    // Items 12000 less a 2000 discount, 4000 shipping and 1000 tax added to the price: 15000 paid,
+    // 1500 of it by gift card. 1500 was refunded in three parts: 500 twice by Stripe, then 500 to the gift card.
+    order('shipped', { status: 'partially_refunded', subtotal: 12000, discount: 2000, shipping: 4000, tax: 1000,
+      taxBehavior: 'exclusive', total: 13500, giftCard: 'card', providerRefunded: 1000, giftCardRefunded: 500,
+      paid: ago(10), payment: 'partially_refunded' });
+    sqlite.prepare('INSERT INTO _ecommerce_gift_card_refunds VALUES (?, ?, ?, ?, ?)').run('gfr_shipped', 'card', 'shipped', 500, ago(1));
+    if (refundDates) {
+      const refund = sqlite.prepare(`INSERT INTO _ecommerce_provider_refunds VALUES (?, ?, 'stripe', NULL, ?, ?)`);
+      refund.run('prf_shipped_1', 'shipped', 500, ago(3));
+      refund.run('prf_shipped_2', 'shipped', 500, ago(2));
+    }
+    const result = await fetchCommerceOverview(fixture.d1, 30, '/admin', 'products', 'live', now);
+    // The items were 10000 of the 15000 paid, so they take 1000 of the 1500 refunded.
+    assert.deepEqual(result.currencies, [{
+      currency: 'usd', orders: 1, grossSales: 10000, netSales: 9000, refunds: 1000,
+      refundedOrders: 1, charged: 13500, averageOrderValue: 10000,
+    }]);
+    assert.equal(result.undatedRefunds, false);
+    // By refund date, each part counts for the share of the refunds up to it less the share of those
+    // before it, so the rounded parts add up to the share of the whole and leave no undated remainder.
+    assert.deepEqual(dailyNetSales(result), refundDates
+      ? [['2026-09-15', 10000], ['2026-09-22', -333], ['2026-09-23', -334], ['2026-09-24', -333]]
+      : [['2026-09-15', 9000]]);
+    sqlite.close();
+  }
+});
+
+test('a full refund of an order with shipping and exclusive tax counts all of its item sales and no more', async () => {
+  for (const refundDates of [false, true]) {
+    const fixture = sqliteD1({ refundDates });
+    seedFullRefund(fixture);
+    const result = await fetchCommerceOverview(fixture.d1, 30, '/admin', 'products', 'live', now);
+    assert.deepEqual(result.currencies, [{
+      currency: 'usd', orders: 1, grossSales: 3000, netSales: 0, refunds: 3000,
+      refundedOrders: 1, charged: 3550, averageOrderValue: 3000,
+    }]);
+    assert.equal(result.undatedRefunds, false);
+    // By refund date, the Stripe refund's share (2766) and the store credit's (234) count on the day of the refund.
+    assert.deepEqual(dailyNetSales(result), refundDates
+      ? [['2026-09-15', 3000], ['2026-09-24', -3000]]
+      : [['2026-09-15', 0]]);
+    fixture.sqlite.close();
+  }
+});
+
+test('refunds of orders without shipping or added tax count in full, as before', async () => {
+  for (const refundDates of [false, true]) {
+    const fixture = sqliteD1({ refundDates });
+    const { sqlite, order } = fixture;
+    const ago = days => nowSeconds - days * day;
+    // An order placed before shipping and tax were recorded, and one whose price includes its tax.
+    order('plain', { status: 'partially_refunded', subtotal: 2000, providerRefunded: 400, paid: ago(10), payment: 'partially_refunded' });
+    order('included', { status: 'partially_refunded', subtotal: 2200, tax: 200, taxBehavior: 'inclusive',
+      providerRefunded: 1100, paid: ago(10), payment: 'partially_refunded' });
+    if (refundDates) {
+      const refund = sqlite.prepare(`INSERT INTO _ecommerce_provider_refunds VALUES (?, ?, 'stripe', NULL, ?, ?)`);
+      refund.run('prf_plain', 'plain', 400, ago(2));
+      refund.run('prf_included', 'included', 1100, ago(1));
+    }
+    const result = await fetchCommerceOverview(fixture.d1, 30, '/admin', 'products', 'live', now);
+    assert.deepEqual(result.currencies, [{
+      currency: 'usd', orders: 2, grossSales: 4200, netSales: 2700, refunds: 1500,
+      refundedOrders: 2, charged: 4200, averageOrderValue: 2100,
+    }]);
+    assert.deepEqual(dailyNetSales(result), refundDates
+      ? [['2026-09-15', 4200], ['2026-09-23', -400], ['2026-09-24', -1100]]
+      : [['2026-09-15', 2700]]);
+    sqlite.close();
+  }
+});
+
+test('the items\' share of a refund stays a whole amount when its multiplication overflows 64 bits', async () => {
+  const { sqlite, d1, order } = sqliteD1();
+  // 2e9 × 5e9 is past the largest 64-bit integer, so SQLite falls back to floating point.
+  order('large', { status: 'partially_refunded', subtotal: 5_000_000_000, shipping: 100_000_000,
+    providerRefunded: 2_000_000_000, payment: 'partially_refunded' });
+  const result = await fetchCommerceOverview(d1, 7, '/admin', 'products', 'live', now);
+  // 2e9 × 5e9 / 5.1e9 is 1,960,784,313.7.
+  assert.equal(result.currencies[0].refunds, 1_960_784_314);
+  sqlite.close();
+});
+
+test('an Ask refunds report counts the items\' share of refunds and says that shipping and tax are left out', async () => {
+  const ai = { async run() { return { response: { subject: 'refunds', period: 'last_30_days', compare: false } }; } };
+  const summaries = [];
+  for (const refundDates of [false, true]) {
+    const fixture = sqliteD1({ refundDates });
+    seedFullRefund(fixture);
+    const report = await createAskReport('How much did we refund this month?', ai, fixture.d1, {}, '/admin', 'products', 'live', now);
+    summaries.push(report.summary);
+    assert.ok(report.notes.includes('Sales are the items after discounts, without the shipping and tax added to the price. ' +
+      'A refund counts against sales only for the items\' share of what it returned.'));
+    fixture.sqlite.close();
+  }
+  assert.deepEqual(summaries, [
+    'Orders paid in this period have $30.00 refunded across 1 order in USD.',
+    'Refunds issued: $30.00 on 1 order in USD.',
+  ]);
 });
 
 test('a products report names the best seller in each currency', async () => {

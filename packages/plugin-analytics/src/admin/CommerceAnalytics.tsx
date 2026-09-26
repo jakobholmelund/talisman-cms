@@ -48,7 +48,8 @@ export default function CommerceAnalytics() {
         {!data.products.length && <p className="talisman-analytics__muted">No product sales in this period.</p>}
       </div></Panel>
       <p className="talisman-analytics__muted">Dates are UTC. Sales are grouped by payment date. {refundWording(data.refundBasis).footnote}
-        {data.undatedRefunds && ' Some refunds were recorded before refund dates were stored; those count on the payment date.'} Product values are before discounts and partial refunds. Gift cards and store credit count as payment toward net sales.</p>
+        {data.undatedRefunds && ' Some refunds were recorded before refund dates were stored; those count on the payment date.'} Product values are before discounts and partial refunds. Gift cards and store credit count as payment toward net sales.
+        Sales leave out the shipping and tax added to the price, and a refund counts only for the items' share of what it returned.</p>
     </>}
   </div>;
 }
