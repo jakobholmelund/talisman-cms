@@ -3,8 +3,11 @@ import * as schema from './schema';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import type { PaymentProviderAdapter } from './payments';
-import { findReferralCode, getReferralPolicy } from './referrals';
+import { findReferralCode, getReferralPolicy, referralReversalStatements, releaseReferralAwards,
+  reverseReferralForOrder } from './referrals';
 import { PURCHASED_ORDER_STATUSES, hasPurchaseHistory } from './accounts';
+import { canonicalEmail, canonicalEmailSql, canonicalEmails, canonicalPurchaseParams, canonicalPurchaseSql,
+  hasCanonicalPurchase } from './email-identity';
 import { evaluateDiscountCode } from './promotions';
 import { fulfillCommerceOrder } from './fulfillment';
 import { evaluateGiftCard, confirmGiftCardPurchase, expireGiftCardPurchase,
@@ -249,39 +252,50 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         .bind(normalizedEmail, params.orderId));
     }
     if (order.referralCode && order.referralRewardCents > 0 && params.provider !== 'admin_test') {
-      // The referral pays out only on the buyer's first purchase: the order's account (new, signed up
-      // earlier or signed in) has no other paid order under that account or either email, and is not
-      // the referrer.
-      const purchased = PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(', ');
-      statements.push(env.DB.prepare(`INSERT INTO _ecommerce_referrals
-        (id, code, referrer_account_id, referred_account_id, order_id, reward_cents, currency, status, created_at, updated_at)
-        SELECT ?, rc.code, rc.account_id, o.user_id, o.id, ?, o.currency, 'approved', ?, ?
-        FROM _ecommerce_orders o
-        JOIN _ecommerce_referral_codes rc ON rc.code = o.referral_code
-        JOIN _ecommerce_customer_accounts referrer ON referrer.id = rc.account_id
-        JOIN _ecommerce_customer_accounts buyer ON buyer.id = o.user_id
-        WHERE o.id = ? AND o.status = 'paid' AND rc.account_id <> o.user_id
-          AND referrer.email_normalized NOT IN (?, buyer.email_normalized)
-          AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders prior
-            WHERE prior.id <> o.id AND prior.status IN (${purchased})
-              AND COALESCE(prior.payment_provider, 'stripe') <> 'admin_test'
-              AND (prior.user_id = o.user_id OR lower(prior.customer_email) IN (?, buyer.email_normalized)
-                OR prior.user_id IN (SELECT id FROM _ecommerce_customer_accounts WHERE email_normalized = ?)))
-        ON CONFLICT DO NOTHING`)
-        .bind(`ref_${order.id}`, order.referralRewardCents, timestamp, timestamp,
-          params.orderId, normalizedEmail, normalizedEmail, normalizedEmail));
-      statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
-        (id, account_id, order_id, kind, amount_cents, created_at)
-        SELECT ?, referrer_account_id, order_id, 'referral_award', reward_cents, ?
-        FROM _ecommerce_referrals WHERE order_id = ? AND status = 'approved'
-        ON CONFLICT(order_id, kind) DO NOTHING`)
-        .bind(`credit_ref_${order.id}`, timestamp, params.orderId));
-      statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
-        (id, account_id, order_id, kind, amount_cents, created_at)
-        SELECT ?, referred_account_id, order_id, 'welcome_award', reward_cents, ?
-        FROM _ecommerce_referrals WHERE order_id = ? AND status = 'approved'
-        ON CONFLICT(order_id, kind) DO NOTHING`)
-        .bind(`credit_welcome_${order.id}`, timestamp, params.orderId));
+      // The referral is recorded for the buyer's first purchase only: the order's account (new, signed up
+      // earlier or signed in) has no other paid order under that account or any of its addresses, is not
+      // the referrer, and none of its addresses matches the referrer's, exactly or in canonical form.
+      // Each referrer has at most maxPerPeriod referrals within periodDays, counted across the accounts
+      // whose addresses share the referrer's canonical form. The awards stay pending
+      // until releaseReferralAwards releases them after the hold.
+      const policy = await getReferralPolicy(env);
+      const referrer = await db.select({ emailNormalized: schema.customerAccounts.emailNormalized })
+        .from(schema.referralCodes)
+        .innerJoin(schema.customerAccounts, eq(schema.customerAccounts.id, schema.referralCodes.accountId))
+        .where(eq(schema.referralCodes.code, order.referralCode)).get();
+      const buyerAccount = order.userId ? await db.select({ emailNormalized: schema.customerAccounts.emailNormalized })
+        .from(schema.customerAccounts).where(eq(schema.customerAccounts.id, order.userId)).get() : undefined;
+      const checkoutEmail = (order.customerEmail || '').trim().toLowerCase();
+      const buyerCanonicals = canonicalEmails([checkoutEmail, normalizedEmail, buyerAccount?.emailNormalized]);
+      const referrerCanonical = canonicalEmail(referrer?.emailNormalized);
+      if (referrerCanonical && buyerCanonicals.length && !buyerCanonicals.includes(referrerCanonical)) {
+        const purchased = PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(', ');
+        statements.push(env.DB.prepare(`INSERT INTO _ecommerce_referrals
+          (id, code, referrer_account_id, referred_account_id, order_id, reward_cents, currency, status, created_at, updated_at)
+          SELECT ?, rc.code, rc.account_id, o.user_id, o.id, ?, o.currency, 'approved', ?, ?
+          FROM _ecommerce_orders o
+          JOIN _ecommerce_referral_codes rc ON rc.code = o.referral_code
+          JOIN _ecommerce_customer_accounts referrer ON referrer.id = rc.account_id
+          JOIN _ecommerce_customer_accounts buyer ON buyer.id = o.user_id
+          WHERE o.id = ? AND o.status = 'paid' AND rc.account_id <> o.user_id
+            AND referrer.email_normalized NOT IN (?, ?, buyer.email_normalized)
+            AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders prior
+              WHERE prior.id <> o.id AND prior.status IN (${purchased})
+                AND COALESCE(prior.payment_provider, 'stripe') <> 'admin_test'
+                AND (prior.user_id = o.user_id OR lower(prior.customer_email) IN (?, ?, buyer.email_normalized)
+                  OR prior.user_id IN (SELECT id FROM _ecommerce_customer_accounts WHERE email_normalized IN (?, ?))))
+            AND NOT ${canonicalPurchaseSql(buyerCanonicals.length)}
+            AND (SELECT COUNT(*) FROM _ecommerce_referrals recent
+              JOIN _ecommerce_customer_accounts recent_referrer ON recent_referrer.id = recent.referrer_account_id
+              WHERE recent.status = 'approved' AND recent.created_at > ?
+                AND (recent.referrer_account_id = rc.account_id
+                  OR ${canonicalEmailSql('recent_referrer.email_normalized')} = ?)) < ?
+          ON CONFLICT DO NOTHING`)
+          .bind(`ref_${order.id}`, order.referralRewardCents, timestamp, timestamp, params.orderId,
+            normalizedEmail, checkoutEmail, normalizedEmail, checkoutEmail, normalizedEmail, checkoutEmail,
+            ...canonicalPurchaseParams(buyerCanonicals, params.orderId),
+            timestamp - policy.periodDays * 24 * 60 * 60, referrerCanonical, policy.maxPerPeriod));
+      }
     }
     statements.push(
       env.DB.prepare(`UPDATE _ecommerce_discount_redemptions SET status = 'confirmed', updated_at = ?
@@ -328,6 +342,7 @@ export function bindCommerceApi(options: CommerceApiOptions) {
     }
     const now = Math.floor(Date.now() / 1000);
     const full = params.amountRefunded === order.totalAmount;
+    const referralPolicy = order.referralCode ? await getReferralPolicy(env) : null;
     const statements: D1PreparedStatement[] = [
       env.DB.prepare(`UPDATE _ecommerce_orders
         SET provider_refunded_cents = ?, status = ?, updated_at = ?
@@ -358,22 +373,12 @@ export function bindCommerceApi(options: CommerceApiOptions) {
           AND credit_applied > 0 AND user_id IS NOT NULL
         ON CONFLICT(order_id, kind) DO NOTHING`)
         .bind(`credit_refund_${order.id}`, now, order.id));
-      for (const [awardKind, reversalKind] of [
-        ['referral_award', 'referral_reversal'], ['welcome_award', 'welcome_reversal']
-      ]) {
-        statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
-          (id, account_id, order_id, kind, amount_cents, created_at)
-          SELECT ?, l.account_id, l.order_id, ?, -l.amount_cents, ?
-          FROM _ecommerce_credit_ledger l
-          JOIN _ecommerce_orders o ON o.id = l.order_id AND o.status = 'refunded'
-          WHERE l.order_id = ? AND l.kind = ?
-          ON CONFLICT(order_id, kind) DO NOTHING`)
-          .bind(`credit_${reversalKind}_${order.id}`, reversalKind, now, order.id, awardKind));
-      }
-      statements.push(env.DB.prepare(`UPDATE _ecommerce_referrals SET status = 'void', updated_at = ?
-        WHERE order_id = ? AND EXISTS
-          (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'refunded')`)
-        .bind(now, order.id, order.id));
+    }
+    // A full refund, or a partial one that leaves less than the minimum paid, voids the referral and
+    // reverses released awards.
+    if (referralPolicy) {
+      statements.push(...referralReversalStatements(env, order.id,
+        { minOrderCents: referralPolicy.minOrderCents, now }));
     }
     await env.DB.batch(statements);
     return { success: true, orderId: order.id, status: full ? 'refunded' : 'partially_refunded' };
@@ -757,13 +762,18 @@ export function bindCommerceApi(options: CommerceApiOptions) {
          const internallyPaid = Boolean(giftCard && totalAmount === 0);
          let referralCode: string | null = null;
          if (referralsPolicy.enabled && options.referralCode && defaultAdapter.providerId === 'stripe' &&
-             !internallyPaid && subtotalAmount >= referralsPolicy.minOrderCents) {
+             !internallyPaid && subtotalAmount - discountAmount >= referralsPolicy.minOrderCents) {
            // A referral is for a first purchase. A shopper who signed up first still qualifies;
-           // only past paid orders under the account or either email rule it out.
+           // only past paid orders under the account or either email rule it out. Addresses are
+           // compared exactly and in canonical form, for the referrer and for earlier buyers.
            const referral = await findReferralCode(env, options.referralCode);
            const buyerEmails = [options.customerEmail.trim().toLowerCase(), owner?.emailNormalized];
-           if (referral && referral.accountId !== cart.userId && !buyerEmails.includes(referral.emailNormalized) &&
-               !await hasPurchaseHistory(env, { emails: buyerEmails, accountIds: [cart.userId] })) {
+           const referrerCanonical = canonicalEmail(referral?.emailNormalized);
+           if (referral && referrerCanonical && referral.accountId !== cart.userId &&
+               !buyerEmails.includes(referral.emailNormalized) &&
+               !canonicalEmails(buyerEmails).includes(referrerCanonical) &&
+               !await hasPurchaseHistory(env, { emails: buyerEmails, accountIds: [cart.userId] }) &&
+               !await hasCanonicalPurchase(env, buyerEmails)) {
              referralCode = referral.code;
            }
          }
@@ -1124,6 +1134,21 @@ export function bindCommerceApi(options: CommerceApiOptions) {
           }
         }
 
+        if (event.type === 'charge.dispute.closed') {
+          // A lost dispute voids the order's referral and reverses released awards.
+          const dispute = event.data as any; // Stripe.Dispute
+          const paymentIntentId = typeof dispute.payment_intent === 'string'
+            ? dispute.payment_intent : dispute.payment_intent?.id;
+          if (dispute.status !== 'lost' || typeof paymentIntentId !== 'string') {
+            return { success: true, event: event.type, ignored: true };
+          }
+          const order = await db.select({ id: schema.orders.id, referralCode: schema.orders.referralCode })
+            .from(schema.orders).where(eq(schema.orders.paymentIntentId, paymentIntentId)).get();
+          if (!order) return { success: true, event: event.type, ignored: true };
+          if (order.referralCode) await reverseReferralForOrder(env, order.id, { disputeLost: true });
+          return { success: true, event: event.type, orderId: order.id };
+        }
+
         if (event.type === 'charge.refunded') {
           const charge = event.data as any;
           if (typeof charge.payment_intent !== 'string') {
@@ -1207,6 +1232,13 @@ export async function reconcileCommerce(options: CommerceApiOptions, limit = 10)
     } catch (error) {
       results.push({ id: row.id, status: 'error', error: error instanceof Error ? error.message : 'Recovery failed' });
     }
+  }
+  // Pending referral awards whose hold has passed. Held and voided awards are outcomes, not failures.
+  try {
+    results.push(...await releaseReferralAwards(options, { limit: count }));
+  } catch (error) {
+    results.push({ id: 'referral_awards', status: 'error',
+      error: error instanceof Error ? error.message : 'Referral release failed' });
   }
   await env.DB.prepare(`DELETE FROM _ecommerce_customer_sessions
     WHERE (purpose = 'email_challenge' AND expires_at < ?)

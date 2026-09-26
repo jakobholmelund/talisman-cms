@@ -54,4 +54,10 @@ export interface PaymentProviderAdapter {
     paymentIntentId?: string | null;
     customerEmail?: string | null;
   }>;
+
+  /**
+   * Whether the payment is disputed: 'open' while the dispute is undecided, 'lost' once the payment
+   * was taken back, otherwise 'none'. Referral awards are released only after it answers 'none'.
+   */
+  getDisputeStatus?(paymentIntentId: string): Promise<'none' | 'open' | 'lost'>;
 }

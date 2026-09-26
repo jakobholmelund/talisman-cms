@@ -36,3 +36,24 @@ test('Stripe checkout applies the reserved credit as an exact fixed coupon', asy
   assert.equal(calls[0].input.amount_off, 7000);
   assert.equal(calls[0].input.name, 'Gift card and checkout adjustments');
 });
+
+test('Stripe dispute status is looked up by payment intent and settled disputes count as none', async () => {
+  const adapter = new StripePaymentAdapter({ secretKey: 'sk_test_fake' });
+  const calls = [];
+  let disputes = [];
+  adapter.stripe = { disputes: { async list(params) {
+    calls.push(params);
+    return { data: disputes.map((status) => ({ status })) };
+  } } };
+  const cases = [
+    [[], 'none'], [['won'], 'none'], [['prevented'], 'none'], [['warning_closed'], 'none'],
+    [['needs_response'], 'open'], [['under_review'], 'open'], [['warning_needs_response'], 'open'],
+    [['warning_under_review'], 'open'], [['won', 'needs_response'], 'open'], [['won', 'lost'], 'lost'],
+    [['needs_response', 'lost'], 'lost'],
+  ];
+  for (const [statuses, expected] of cases) {
+    disputes = statuses;
+    assert.equal(await adapter.getDisputeStatus('pi_test'), expected, statuses.join(','));
+  }
+  assert.ok(calls.every((params) => params.payment_intent === 'pi_test'));
+});

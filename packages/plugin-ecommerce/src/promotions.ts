@@ -2,7 +2,7 @@ import { and, count, eq, inArray } from 'drizzle-orm';
 import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
 import { z } from 'zod';
 import { customerAccounts, discountCodes, discountRedemptions, referralCodes, referralSettings } from './schema';
-import { getReferralPolicy } from './referrals';
+import { getReferralPolicy, referralTermsError } from './referrals';
 import { hasPurchaseHistory } from './accounts';
 
 const optionalLimit = z.number().int().positive().max(1_000_000).nullable();
@@ -45,7 +45,11 @@ export const referralSettingsSchema = z.object({
   rewardCents: z.number().int().min(1).max(100_000),
   minOrderCents: z.number().int().min(1).max(10_000_000),
   attributionDays: z.number().int().min(1).max(90),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  // Terms saved while off are not in force, and a policy with invalid terms attributes nothing.
+  const termsError = value.enabled ? referralTermsError(value) : null;
+  if (termsError) ctx.addIssue({ code: 'custom', path: ['rewardCents'], message: termsError });
+});
 
 export function discountAmountForLines(code: Pick<typeof discountCodes.$inferSelect,
   'type' | 'value' | 'remainingCents' | 'maxDiscountCents' | 'minOrderCents' | 'eligibleProductIds'>,
@@ -128,7 +132,9 @@ export async function setReferralCodeActive(env: TalismanEnv, code: string, acti
 }
 
 export async function saveReferralSettings(env: TalismanEnv, input: unknown) {
-  const values = referralSettingsSchema.parse(input);
+  const parsed = referralSettingsSchema.safeParse(input);
+  if (!parsed.success) throw new Error(parsed.error.issues.map((issue) => issue.message).join('; '));
+  const values = parsed.data;
   const db = createDbClient(env);
   await db.insert(referralSettings).values({ id: 'default', ...values, updatedAt: new Date() })
     .onConflictDoUpdate({ target: referralSettings.id, set: { ...values, updatedAt: new Date() } });

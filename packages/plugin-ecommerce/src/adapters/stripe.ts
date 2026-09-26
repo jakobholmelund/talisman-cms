@@ -122,4 +122,12 @@ export class StripePaymentAdapter implements PaymentProviderAdapter {
       customerEmail: session.customer_details?.email ?? session.customer_email,
     };
   }
+
+  async getDisputeStatus(paymentIntentId: string): Promise<'none' | 'open' | 'lost'> {
+    const disputes = await this.stripe.disputes.list({ payment_intent: paymentIntentId, limit: 10 });
+    if (disputes.data.some((dispute) => dispute.status === 'lost')) return 'lost';
+    // Won, prevented and closed inquiries are settled; any other status is still open.
+    const settled = new Set(['won', 'prevented', 'warning_closed']);
+    return disputes.data.some((dispute) => !settled.has(dispute.status)) ? 'open' : 'none';
+  }
 }

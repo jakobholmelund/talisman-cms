@@ -456,7 +456,8 @@ export const ecommercePlugin = (
 
         collections.push({
           name: 'Qualified Referrals', slug: '_ecommerce_referrals',
-          description: 'First paid purchases attributed to a referral code', adminSection: 'commerce', readOnly: true,
+          description: 'First paid purchases attributed to a referral code. An approved referral is pending until its awards appear in the credit ledger; a void one earns nothing.',
+          adminSection: 'commerce', readOnly: true,
           fields: [
             { name: 'id', label: 'ID', type: 'text', required: true },
             { name: 'code', label: 'Code', type: 'text' },

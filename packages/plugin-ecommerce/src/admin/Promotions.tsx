@@ -9,7 +9,9 @@ type Code = {
   startsAt: string | null; expiresAt: string | null; active: boolean;
 };
 type PromotionsData = {
-  referral: { enabled: boolean; rewardCents: number; minOrderCents: number; attributionDays: number };
+  referral: { enabled: boolean; switchedOn: boolean; termsError: string | null; source: 'saved' | 'settings';
+    rewardCents: number; minOrderCents: number; attributionDays: number;
+    holdDays: number; maxPerPeriod: number; periodDays: number };
   referralLinks: Array<{ code: string; email: string; active: boolean }>;
   codes: Code[]; usage: Array<{ code: string; status: string; uses: number }>;
 };
@@ -78,11 +80,14 @@ export default function Promotions() {
     <Feedback message={message} error={error} />
     {data && <>
       <Panel title="Referral program">
-        <form key={`${data.referral.enabled}-${data.referral.rewardCents}-${data.referral.minOrderCents}-${data.referral.attributionDays}`} onSubmit={event => void saveReferral(event)}>
-          <label className="ecom-admin__check"><input type="checkbox" name="enabled" defaultChecked={data.referral.enabled} /> Enable new referral awards</label>
+        <p className="ecom-admin__muted">Referrals are off until they are enabled here, or by the <code>TALISMAN_COMMERCE_REFERRALS_ENABLED</code> Worker setting while nothing is saved. {data.referral.source === 'settings' ? 'Nothing is saved yet, so the Worker settings apply.' : 'The saved settings apply.'} The reward can be at most half the minimum first order.</p>
+        {data.referral.termsError && <Feedback message={`New referrals are paused. ${data.referral.termsError}.`} error />}
+        <form key={`${data.referral.switchedOn}-${data.referral.rewardCents}-${data.referral.minOrderCents}-${data.referral.attributionDays}`} onSubmit={event => void saveReferral(event)}>
+          <label className="ecom-admin__check"><input type="checkbox" name="enabled" defaultChecked={data.referral.switchedOn} /> Enable new referral awards</label>
           <div className="ecom-admin__grid"><Field label="Reward per shopper (USD)"><input name="reward" type="number" min="0.01" max="1000" step="0.01" defaultValue={data.referral.rewardCents / 100} required /></Field><Field label="Minimum first order (USD)"><input name="minimum" type="number" min="0.01" max="100000" step="0.01" defaultValue={data.referral.minOrderCents / 100} required /></Field><Field label="Referral window (days)"><input name="days" type="number" min="1" max="90" step="1" defaultValue={data.referral.attributionDays} required /></Field></div>
           <div className="ecom-admin__actions"><button type="submit" disabled={busy}>Save referral settings</button></div>
         </form>
+        <p className="ecom-admin__muted">Awards stay pending for {data.referral.holdDays} days after payment and are then released by the scheduled job, unless the order was refunded below the minimum or disputed. Each shopper can refer at most {data.referral.maxPerPeriod} new shoppers in {data.referral.periodDays} days. These limits are Worker settings.</p>
         <h3>Shopper links</h3>
         {data.referralLinks.length ? data.referralLinks.map(link => <div className="ecom-admin__row" key={link.code}><span><strong>{link.code}</strong><small>{link.email} · {link.active ? 'Active' : 'Paused'}</small></span><button className="ecom-admin__secondary" type="button" disabled={busy} onClick={() => void toggleReferral(link.code, !link.active)}>{link.active ? 'Pause' : 'Resume'}</button></div>) : <p className="ecom-admin__muted">No shopper links yet.</p>}
       </Panel>

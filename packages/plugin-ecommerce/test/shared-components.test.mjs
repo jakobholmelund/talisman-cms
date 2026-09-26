@@ -6,7 +6,7 @@ import { bindCommerceApi, reconcileCommerce } from '../dist/api.js';
 import { activateNewCustomer, consumeCustomerEmailSignIn, findCustomerSession,
   listCustomerOrders, requestCustomerEmailSignIn, revokeCustomerSession } from '../dist/accounts.js';
 import { AdminTestPaymentAdapter } from '../dist/adapters/admin-test.js';
-import { getOrCreateReferralCode, getReferralDashboard, referralPolicy } from '../dist/referrals.js';
+import { getOrCreateReferralCode, getReferralDashboard, referralPolicy, releaseReferralAwards } from '../dist/referrals.js';
 import { createDiscountCode, updateDiscountCode, evaluateDiscountCode,
   saveReferralSettings, setReferralCodeActive, getPromotionsAdmin } from '../dist/promotions.js';
 import { issueAdminGiftCard, evaluateGiftCard, getGiftCardBalance, startGiftCardPurchase,
@@ -80,6 +80,12 @@ test('the sign-in migration revokes basket-granted sessions without verified ema
   assert.equal(sqlite.prepare(`SELECT revoked_at FROM _ecommerce_customer_sessions WHERE id = 'verified'`).get().revoked_at, null);
   sqlite.close();
 });
+
+/** Referral awards are released by the scheduled job once the hold has passed and no dispute is open. */
+function releaseAfterHold(DB) {
+  return releaseReferralAwards({ env: { DB }, paymentAdapters: [{ providerId: 'stripe',
+    async getDisputeStatus() { return 'none'; } }] }, { now: new Date(Date.now() + 31 * 24 * 60 * 60 * 1000) });
+}
 
 function seed(sqlite, lensQuantity = 2) {
   const now = Math.floor(Date.now() / 1000);
@@ -628,7 +634,7 @@ test('an expired shopper session cannot use its browser token to edit the accoun
   sqlite.close();
 });
 
-test('referral awards both shoppers once and store credit reduces only the provider charge', async () => {
+test('a released referral awards both shoppers once and store credit reduces only the provider charge', async () => {
   const { sqlite, DB } = database();
   seed(sqlite, 10);
   sqlite.exec('UPDATE _ecommerce_components SET quantity = 10');
@@ -639,7 +645,7 @@ test('referral awards both shoppers once and store credit reduces only the provi
   const code = await getOrCreateReferralCode({ DB }, 'referrer');
   assert.equal(await getOrCreateReferralCode({ DB }, 'referrer'), code);
   const sessions = [];
-  const api = bindCommerceApi({ env: { DB }, paymentAdapters: [{
+  const api = bindCommerceApi({ env: { DB, TALISMAN_COMMERCE_REFERRALS_ENABLED: 'true' }, paymentAdapters: [{
     providerId: 'stripe',
     async createCheckoutSession(input) {
       sessions.push(input);
@@ -663,6 +669,11 @@ test('referral awards both shoppers once and store credit reduces only the provi
     amount: 12000, currency: 'usd'
   });
   const friend = await api.orders.find(first.id);
+  // The awards are pending until the hold has passed.
+  assert.equal((await getReferralDashboard({ DB }, 'referrer')).creditBalance, 0);
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM _ecommerce_credit_ledger').get().count, 0);
+  await releaseAfterHold(DB);
+  await releaseAfterHold(DB);
   assert.equal((await getReferralDashboard({ DB }, 'referrer')).creditBalance, 1000);
   assert.equal((await getReferralDashboard({ DB }, friend.userId)).creditBalance, 1000);
   assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM _ecommerce_referrals').get().count, 1);
@@ -732,7 +743,7 @@ test('self-referrals and existing shoppers do not earn referral credit', async (
     (id, email, email_normalized, created_at, updated_at) VALUES ('owner', 'owner@example.com', 'owner@example.com', ?, ?)`)
     .run(now, now);
   const code = await getOrCreateReferralCode({ DB }, 'owner');
-  const api = bindCommerceApi({ env: { DB }, paymentAdapters: [{
+  const api = bindCommerceApi({ env: { DB, TALISMAN_COMMERCE_REFERRALS_ENABLED: 'true' }, paymentAdapters: [{
     providerId: 'stripe',
     async createCheckoutSession({ orderId }) {
       return { providerSessionId: `session-${orderId}`, url: `https://example.test/${orderId}` };
@@ -747,8 +758,9 @@ test('self-referrals and existing shoppers do not earn referral credit', async (
   assert.equal(self.referralCode, null);
   await api.orders.finalizePayment(self.id, {
     provider: 'stripe', providerId: self.checkoutSessionId, paymentStatus: 'success',
-    amount: self.totalAmount, currency: 'usd'
+    amount: self.totalAmount, currency: 'usd', paymentIntentId: 'pi_self_referral'
   });
+  await releaseAfterHold(DB);
   assert.equal((await getReferralDashboard({ DB }, 'owner')).creditBalance, 0);
   assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM _ecommerce_referrals').get().count, 0);
   sqlite.close();
@@ -769,6 +781,9 @@ function referralShop(sqlite, DB) {
   sqlite.prepare(`INSERT INTO _ecommerce_customer_accounts
     (id, email, email_normalized, email_verified_at, created_at, updated_at)
     VALUES ('referrer', 'referrer@example.com', 'referrer@example.com', ?, ?, ?)`).run(now, now, now);
+  sqlite.prepare(`INSERT INTO _ecommerce_referral_settings
+    (id, enabled, reward_cents, min_order_cents, attribution_days, updated_at)
+    VALUES ('default', 1, 1000, 5000, 30, ?)`).run(now);
   return stripeWithRefunds(DB);
 }
 
@@ -780,7 +795,8 @@ async function buy(api, browser, details, { accountId, productId = 'mycelium' } 
 }
 
 const pay = (api, order) => api.orders.finalizePayment(order.id, { provider: 'stripe',
-  providerId: order.checkoutSessionId, paymentStatus: 'success', amount: order.totalAmount, currency: 'usd' });
+  providerId: order.checkoutSessionId, paymentStatus: 'success', amount: order.totalAmount, currency: 'usd',
+  paymentIntentId: `pi_${order.id}` });
 const firstOrderLines = { lines: [{ productId: 'mycelium', quantity: 1, priceAtPurchase: 12000 }], subtotal: 12000 };
 
 test('asking for a sign-in link before a first purchase keeps the first-order code and the referral', async () => {
@@ -806,6 +822,7 @@ test('asking for a sign-in link before a first purchase keeps the first-order co
   const order = await buy(api, 'friend-browser', { customerEmail: 'friend@example.com', discountCode: 'WELCOME10', referralCode: code });
   assert.deepEqual([order.discountAmount, order.referralCode], [1000, code]);
   await pay(api, order);
+  await releaseAfterHold(DB);
   const friend = (await api.orders.find(order.id)).userId;
   assert.equal((await getReferralDashboard({ DB }, 'referrer')).creditBalance, 1000);
   assert.equal((await getReferralDashboard({ DB }, friend)).creditBalance, 1000);
@@ -832,6 +849,7 @@ test('a shopper who signs up and buys signed in gets the first-order code and th
   await pay(api, order);
   assert.deepEqual({ ...sqlite.prepare('SELECT referrer_account_id, referred_account_id FROM _ecommerce_referrals').get() },
     { referrer_account_id: 'referrer', referred_account_id: member });
+  await releaseAfterHold(DB);
   assert.equal((await getReferralDashboard({ DB }, member)).creditBalance, 1000);
 
   const cart = await api.carts.getOrCreate('member-browser', member);
@@ -862,6 +880,7 @@ test('only the first paid purchase earns a referral when two checkouts overlap',
   // The second order is paid by the same buyer under another account, so it is not a first purchase.
   await pay(api, signedIn);
   assert.deepEqual(sqlite.prepare('SELECT order_id FROM _ecommerce_referrals').all().map((row) => row.order_id), [guest.id]);
+  await releaseAfterHold(DB);
   assert.equal((await getReferralDashboard({ DB }, second)).creditBalance, 0);
   assert.equal((await getReferralDashboard({ DB }, 'referrer')).creditBalance, 1000);
   sqlite.close();
@@ -934,12 +953,15 @@ test('a product with variant groups is never sold without a variant', async () =
 });
 
 test('referral terms are validated and snapshotted on the pending order', async () => {
+  const limits = { holdDays: 30, maxPerPeriod: 10, periodDays: 30 };
   assert.deepEqual(referralPolicy({ TALISMAN_COMMERCE_REFERRAL_REWARD_CENTS: '-100',
     TALISMAN_COMMERCE_REFERRAL_MIN_ORDER_CENTS: 'not-a-number' }),
-    { enabled: true, rewardCents: 1000, minOrderCents: 5000, attributionDays: 30 });
+    { enabled: false, switchedOn: false, termsError: null, source: 'settings',
+      rewardCents: 1000, minOrderCents: 5000, attributionDays: 30, ...limits });
   assert.deepEqual(referralPolicy({ GALAXY_COMMERCE_REFERRAL_REWARD_CENTS: '1200',
-    TALISMAN_COMMERCE_REFERRAL_MIN_ORDER_CENTS: ' 100 ' }),
-    { enabled: true, rewardCents: 1200, minOrderCents: 100, attributionDays: 30 });
+    TALISMAN_COMMERCE_REFERRAL_MIN_ORDER_CENTS: ' 2400 ', TALISMAN_COMMERCE_REFERRALS_ENABLED: 'true' }),
+    { enabled: true, switchedOn: true, termsError: null, source: 'settings',
+      rewardCents: 1200, minOrderCents: 2400, attributionDays: 30, ...limits });
   const { sqlite, DB } = database();
   seed(sqlite);
   const now = Math.floor(Date.now() / 1000);
@@ -948,7 +970,7 @@ test('referral terms are validated and snapshotted on the pending order', async 
     .run(now, now);
   const code = await getOrCreateReferralCode({ DB }, 'owner');
   const settings = { DB, TALISMAN_COMMERCE_REFERRAL_REWARD_CENTS: '1500',
-    TALISMAN_COMMERCE_REFERRAL_MIN_ORDER_CENTS: '10000' };
+    TALISMAN_COMMERCE_REFERRAL_MIN_ORDER_CENTS: '10000', TALISMAN_COMMERCE_REFERRALS_ENABLED: 'true' };
   const adapter = { providerId: 'stripe',
     async createCheckoutSession({ orderId }) {
       return { providerSessionId: `session-${orderId}`, url: `https://example.test/${orderId}` };
@@ -963,8 +985,9 @@ test('referral terms are validated and snapshotted on the pending order', async 
   settings.TALISMAN_COMMERCE_REFERRAL_REWARD_CENTS = '2000';
   await bindCommerceApi({ env: settings, paymentAdapters: [adapter] }).orders.finalizePayment(order.id, {
     provider: 'stripe', providerId: order.checkoutSessionId, paymentStatus: 'success',
-    amount: order.totalAmount, currency: 'usd'
+    amount: order.totalAmount, currency: 'usd', paymentIntentId: 'pi_terms_snapshot'
   });
+  await releaseAfterHold(DB);
   assert.equal((await getReferralDashboard({ DB }, 'owner')).creditBalance, 1500);
   sqlite.close();
 });
@@ -1078,7 +1101,8 @@ test('admin referral settings override defaults and can disable new attribution'
   await saveReferralSettings({ DB }, { enabled: false, rewardCents: 700,
     minOrderCents: 10000, attributionDays: 14 });
   assert.deepEqual((await getPromotionsAdmin({ DB })).referral,
-    { enabled: false, rewardCents: 700, minOrderCents: 10000, attributionDays: 14 });
+    { enabled: false, switchedOn: false, termsError: null, source: 'saved', rewardCents: 700,
+      minOrderCents: 10000, attributionDays: 14, holdDays: 30, maxPerPeriod: 10, periodDays: 30 });
   const now = Math.floor(Date.now() / 1000);
   sqlite.prepare(`INSERT INTO _ecommerce_customer_accounts
     (id, email, email_normalized, created_at, updated_at) VALUES ('owner', 'owner@example.com', 'owner@example.com', ?, ?)`)

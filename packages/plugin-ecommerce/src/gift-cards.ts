@@ -4,6 +4,7 @@ import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
 import { readSetting } from 'talisman-cms/env';
 import { giftCardPurchases, giftCards, giftCardLedger } from './schema';
 import type { PaymentProviderAdapter } from './payments';
+import { getReferralPolicy, referralReversalStatements } from './referrals';
 
 const amountSchema = z.number().int().min(500).max(100_000);
 const purchaseSchema = z.object({
@@ -286,21 +287,27 @@ const refundSchema = z.object({
 export async function refundGiftCardTender(env: TalismanEnv, actor: string, input: unknown) {
   const values = refundSchema.parse(input);
   if (!actor.trim()) throw new Error('Administrator identity is required');
-  const row = await env.DB.prepare(`SELECT id,gift_card_id,gift_card_applied,gift_card_refunded_cents,status
+  const row = await env.DB.prepare(`SELECT id,gift_card_id,gift_card_applied,gift_card_refunded_cents,status,referral_code
     FROM _ecommerce_orders WHERE id = ?`).bind(values.orderId).all();
   const current = row.results?.[0] as { gift_card_id: string | null; gift_card_applied: number;
-    gift_card_refunded_cents: number; status: string } | undefined;
+    gift_card_refunded_cents: number; status: string; referral_code: string | null } | undefined;
   if (!current?.gift_card_id || !['paid', 'fulfilled', 'partially_refunded'].includes(current.status)) {
     throw new Error('Order is unavailable for a gift card refund');
   }
   const remaining = current.gift_card_applied - current.gift_card_refunded_cents;
   if (!values.amountCents || values.amountCents > remaining) throw new Error('Refund exceeds gift card payment');
   const id = `gfr_${crypto.randomUUID()}`;
-  await env.DB.prepare(`INSERT INTO _ecommerce_gift_card_refunds
+  const now = Math.floor(Date.now() / 1000);
+  const statements: D1PreparedStatement[] = [env.DB.prepare(`INSERT INTO _ecommerce_gift_card_refunds
     (id,card_id,order_id,amount_cents,admin_actor,reason,created_at)
     VALUES (?,?,?,?,?,?,?)`)
-    .bind(id, current.gift_card_id, values.orderId, values.amountCents, actor, values.reason,
-      Math.floor(Date.now() / 1000)).run();
+    .bind(id, current.gift_card_id, values.orderId, values.amountCents, actor, values.reason, now)];
+  // A refund that leaves less than the referral minimum paid voids the referral and reverses released awards.
+  if (current.referral_code) {
+    const policy = await getReferralPolicy(env);
+    statements.push(...referralReversalStatements(env, values.orderId, { minOrderCents: policy.minOrderCents, now }));
+  }
+  await env.DB.batch(statements);
   return { id, orderId: values.orderId, amountCents: values.amountCents };
 }
 
