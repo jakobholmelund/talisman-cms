@@ -61,7 +61,7 @@ Settings are read at request time with `readSetting` from `talisman-cms/env`. Pu
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `TALISMAN_COMMERCE_CHECKOUT_ENABLED` | off | `true` enables the public checkout route and action. Otherwise the route answers HTTP 503 "Checkout is disabled" and the action refuses with `FORBIDDEN`, before the basket is read. |
+| `TALISMAN_COMMERCE_CHECKOUT_ENABLED` | off | `true` enables the public checkout and discount preview routes and the checkout action. Otherwise both routes answer HTTP 503 "Checkout is disabled" and the action refuses with `FORBIDDEN`, before the basket is read. |
 | `TALISMAN_COMMERCE_STRIPE_MODE` | `test` | `live` accepts real payments and requires an `sk_live_...` key. |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | none | Stripe secret key for the mode (`sk_test_...` or `sk_live_...`) and the webhook signing secret (`whsec_...`). Stripe is unavailable unless both are set. |
 | `TALISMAN_COMMERCE_LOCAL_STRIPE_SECRET_KEY`, `TALISMAN_COMMERCE_LOCAL_STRIPE_WEBHOOK_SECRET` | none | Test-mode fallbacks for local development. Ignored in live mode. |
@@ -81,9 +81,10 @@ The plugin injects the API routes below; the site renders its own pages. Stripe 
 | --- | --- | --- |
 | `GET`, `POST /api/ecommerce/cart` | public | Read or replace the basket. See [Basket limits](#basket-limits). |
 | `POST /api/ecommerce/checkout` | public, enable flag | Start or resume hosted Stripe Checkout. |
+| `POST /api/ecommerce/discount` | public, enable flag | Preview a discount or gift card code against the basket. |
 | `GET`, `POST /api/ecommerce/order` | the placing basket or account | Order status, or release an open payment session. |
 | `POST /api/ecommerce/webhooks/stripe` | Stripe-signed | Payment completion, expiry and refunds. |
-| `/api/ecommerce/account`, `/api/ecommerce/discount`, `/api/ecommerce/gift-cards` | public | Shopper sign-in, discount preview, gift card purchase and balance. |
+| `/api/ecommerce/account`, `/api/ecommerce/gift-cards` | public | Shopper sign-in, gift card purchase and balance. |
 | `/admin/api/ecommerce/fulfillment`, `reconcile`, `promotions`, `gift-cards-admin` | CMS admin | The commerce admin screens. `test-checkout` is added with `adminTestCheckout: true`. |
 
 ### 6. Components and helpers
@@ -107,7 +108,7 @@ The components use Tailwind utility classes, including `brand-*` colors, and `Ca
 
 ### Basket limits
 
-A basket holds at most 50 lines (`CART_MAX_LINES`) of 1 to 99 units each (`CART_MAX_LINE_QUANTITY`); `bindCommerceApi().carts.updateItems` enforces this for every caller. The cart route answers HTTP 413 to a request body over 64 KB and HTTP 400 to other violations; the actions answer `BAD_REQUEST`. A line must name a product in `_ecommerce_products` that is not archived, so draft products can go in a concept basket. Its `variantId` must be a variant value of that product, or a legacy variant group of it (a group with no values). A product that has variant groups is sold only as one of its variants: a line without a `variantId`, or naming a group that has values, is refused ("Cart items must choose one of the variants of ..."), and the quote and checkout refuse such a line saved earlier with "Select an option for ..." (HTTP 409 from the checkout route), before anything is reserved. Lines already in the basket are not checked again, so a shopper can still change or remove a product that was archived later. Only `productId`, `variantId` and `quantity` are stored. A rejected request creates no basket and sets no cookie, and reading never creates one. The cart API needs no sign-in, so also rate-limit `/api/ecommerce/*` and `/_actions/*` per IP address with a Cloudflare rate limiting rule.
+A basket holds at most 50 lines (`CART_MAX_LINES`) of 1 to 99 units each (`CART_MAX_LINE_QUANTITY`); `bindCommerceApi().carts.updateItems` enforces this for every caller. The cart route answers HTTP 413 to a request body over 64 KB and HTTP 400 to other violations; the actions answer `BAD_REQUEST`. A line must name a product in `_ecommerce_products` that is not archived, so draft products can go in a concept basket. Its `variantId` must be a variant value of that product, or a legacy variant group of it (a group with no values). A product that has variant groups is sold only as one of its variants: a line without a `variantId`, or naming a group that has values, is refused ("Cart items must choose one of the variants of ..."), and the quote and checkout refuse such a line saved earlier with "Select an option for ..." (HTTP 409 from the checkout route), before anything is reserved. Lines already in the basket are not checked again, so a shopper can still change or remove a product that was archived later. Only `productId`, `variantId` and `quantity` are stored. A rejected request creates no basket and sets no cookie, and reading never creates one. The cart API needs no sign-in, so also add a Cloudflare rate limiting rule, keyed on the client IP, for every public path under `/api/ecommerce/` except `/api/ecommerce/webhooks/` (today `account`, `cart`, `checkout`, `discount`, `gift-cards` and `order`, for every request method), and for `/_actions/*` if the site uses the plugin's Astro actions. Leave the Stripe webhook paths `/api/ecommerce/webhooks/*` and `/api/stripe/webhooks` out of every per-IP rule: Stripe sends webhooks from a small set of addresses, so a per-IP limit would drop deliveries. Launch gate 8 in [PRODUCTION_READINESS.md](https://github.com/jakobholmelund/talisman-cms/blob/main/packages/plugin-ecommerce/PRODUCTION_READINESS.md) has the details.
 
 ## Code-first catalog, then Commerce editing
 

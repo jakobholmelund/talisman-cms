@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import type { TalismanEnv } from 'talisman-cms/client';
+import { readSetting } from 'talisman-cms/env';
 import { bindCommerceApi } from '../api';
 import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from '../accounts';
 import { evaluateDiscountCode } from '../promotions';
@@ -13,6 +14,13 @@ const previewSchema = z.object({ code: z.string().trim().max(32).optional(),
 
 export const POST: APIRoute = async ({ request, cookies }) => {
   const headers = { 'Cache-Control': 'no-store' };
+  const { env } = await import('cloudflare:workers');
+  const runtimeEnv = env as unknown as TalismanEnv & Record<string, unknown>;
+  // Checked before anything else, as in the checkout route: while checkout is disabled the preview
+  // reads no basket, account, discount code or gift card.
+  if (readSetting(runtimeEnv, 'COMMERCE_CHECKOUT_ENABLED') !== 'true') {
+    return Response.json({ error: 'Checkout is disabled' }, { status: 503, headers });
+  }
   if (request.headers.get('origin') !== new URL(request.url).origin) {
     return Response.json({ error: 'Same-origin request required' }, { status: 403, headers });
   }
@@ -23,8 +31,6 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   const token = readCartSessionToken(cookies);
   if (!token) return Response.json({ error: 'Basket not found' }, { status: 404, headers });
   try {
-    const { env } = await import('cloudflare:workers');
-    const runtimeEnv = env as unknown as TalismanEnv;
     const account = await findCustomerSession(runtimeEnv, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
     const api = bindCommerceApi({ env: runtimeEnv });
     const cart = account ? await api.carts.getOrCreate(token, account.id) : await api.carts.find(token);

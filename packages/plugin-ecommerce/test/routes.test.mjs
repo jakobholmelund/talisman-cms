@@ -33,6 +33,7 @@ const checkoutRoute = (await import('../dist/routes/ecommerce-checkout.js')).POS
 const orderRoute = (await import('../dist/routes/ecommerce-order.js')).ALL;
 const webhookRoute = (await import('../dist/routes/ecommerce-webhook.js')).POST;
 const giftCardsRoute = (await import('../dist/routes/ecommerce-gift-cards.js')).POST;
+const discountRoute = (await import('../dist/routes/ecommerce-discount.js')).POST;
 const adminTestCheckoutRoute = (await import('../dist/routes/ecommerce-admin-test-checkout.js')).ALL;
 const { ecommerceActions } = await import('../dist/actions.js');
 
@@ -300,6 +301,73 @@ test('gift card purchases are refused unless both checkout and gift card sales a
     assert.deepEqual(response.jar.writes, []);
   }
   assert.equal(count(sqlite, '_ecommerce_gift_card_purchases'), 0);
+  sqlite.close();
+});
+
+/** A basket with one frame ($120) and an active 10% code, for the discount preview. */
+async function discountFixture() {
+  const { sqlite, DB } = database();
+  const now = Math.floor(Date.now() / 1000);
+  sqlite.prepare(`INSERT INTO _ecommerce_discount_codes (code, type, value, created_at, updated_at)
+    VALUES ('SAVE10', 'percent', 1000, ?, ?)`).run(now, now);
+  const api = bindCommerceApi({ env: { DB } });
+  const cart = await api.carts.getOrCreate('discount-browser');
+  await api.carts.updateItems(cart.id, [{ productId: 'frame', variantId: 'frame-amber', quantity: 1 }]);
+  return { sqlite, DB };
+}
+
+test('the discount preview answers 503 before reading anything while checkout is disabled', async () => {
+  const { sqlite, DB } = await discountFixture();
+  signInShopper(sqlite, 'preview-shopper', 'preview-token');
+  let statements = 0;
+  const countingDB = { prepare(sql) { statements += 1; return DB.prepare(sql); }, batch: (list) => DB.batch(list) };
+  const cookieSets = [{ [CART_SESSION_COOKIE]: 'discount-browser' },
+    { [CART_SESSION_COOKIE]: 'discount-browser', [CUSTOMER_SESSION_COOKIE]: 'preview-token' }, {}];
+  for (const settings of disabledSettings) {
+    for (const cookies of cookieSets) {
+      const response = await call(discountRoute, { DB: countingDB, ...settings }, { path: '/api/ecommerce/discount',
+        cookies, body: { code: 'SAVE10', customerEmail: 'someone@example.test' } });
+      assert.deepEqual([response.status, response.json], [503, { error: 'Checkout is disabled' }]);
+      assert.deepEqual(response.jar.writes, []);
+    }
+  }
+  // A cross-site, malformed or empty request gets the same answer.
+  for (const request of [{ origin: 'https://evil.test', raw: '{' }, { raw: '{' }, { body: {} }]) {
+    const response = await call(discountRoute, { DB: countingDB }, { path: '/api/ecommerce/discount', ...request });
+    assert.deepEqual([response.status, response.json], [503, { error: 'Checkout is disabled' }]);
+  }
+  assert.equal(statements, 0);
+  sqlite.close();
+});
+
+test('with checkout enabled, the discount preview keeps its checks and prices the basket', async () => {
+  const { sqlite, DB } = await discountFixture();
+  const env = { DB, TALISMAN_COMMERCE_CHECKOUT_ENABLED: 'true' };
+  const preview = (body, cookies = { [CART_SESSION_COOKIE]: 'discount-browser' }, options = {}) =>
+    call(discountRoute, env, { path: '/api/ecommerce/discount', cookies, body, ...options });
+
+  const crossSite = await preview({ code: 'SAVE10' }, undefined, { origin: 'https://evil.test' });
+  assert.deepEqual([crossSite.status, crossSite.json], [403, { error: 'Same-origin request required' }]);
+  const empty = await preview({});
+  assert.deepEqual([empty.status, empty.json], [400, { error: 'Enter a discount or gift card code' }]);
+  const noBasket = await preview({ code: 'SAVE10' }, {});
+  assert.deepEqual([noBasket.status, noBasket.json], [404, { error: 'Basket not found' }]);
+  const unknown = await preview({ code: 'NOPE10', customerEmail: 'guest@example.test' });
+  assert.deepEqual([unknown.status, unknown.json], [409, { error: 'Discount code is unavailable' }]);
+
+  const priced = { code: 'SAVE10', type: 'percent', discountAmount: 1200, creditApplied: 0,
+    giftCardApplied: 0, giftCardSuffix: null, cardAmount: 10800 };
+  const guest = await preview({ code: 'save10', customerEmail: 'guest@example.test' });
+  assert.deepEqual([guest.status, guest.json], [200, priced]);
+  // A signed-in shopper is checked against their own account's address.
+  signInShopper(sqlite, 'preview-shopper', 'preview-token');
+  const shopper = await preview({ code: 'SAVE10' },
+    { [CART_SESSION_COOKIE]: 'discount-browser', [CUSTOMER_SESSION_COOKIE]: 'preview-token' });
+  assert.deepEqual([shopper.status, shopper.json], [200, priced]);
+  assert.deepEqual(shopper.jar.writes, []);
+  // A preview reserves nothing.
+  assert.equal(count(sqlite, '_ecommerce_discount_redemptions'), 0);
+  assert.equal(count(sqlite, '_ecommerce_orders'), 0);
   sqlite.close();
 });
 
