@@ -111,9 +111,14 @@ Set secrets with `wrangler secret put` in production and in `.dev.vars` locally,
 | `TALISMAN_COMMERCE_LOCAL_STRIPE_SECRET_KEY`, `TALISMAN_COMMERCE_LOCAL_STRIPE_WEBHOOK_SECRET` | yes | ecommerce | Test-mode fallbacks for local development, used only when the mode is `test` and the plain Stripe secrets are unset. |
 | `TALISMAN_COMMERCE_EMAIL_FROM`, `TALISMAN_COMMERCE_PUBLIC_ORIGIN` | no | ecommerce | Override `TALISMAN_EMAIL_FROM` and `TALISMAN_PUBLIC_ORIGIN` for shopper email. |
 | `TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT` | no | ecommerce | Store-wide cap on sign-in emails per 24 hours (default 200). |
+| `TALISMAN_COMMERCE_EMAIL_RESERVED_DAILY` | no | ecommerce | Part of the daily cap kept for shoppers with a verified account or an order (default a quarter of it). |
+| `TALISMAN_COMMERCE_TURNSTILE_SITE_KEY` | no | ecommerce | Cloudflare Turnstile site key for the shopper sign-in check. Set together with the secret. |
+| `TALISMAN_COMMERCE_TURNSTILE_SECRET_KEY` | yes | ecommerce | Turnstile secret; with it set, email sign-in requests need a valid token. |
 | `TALISMAN_COMMERCE_GIFT_CARDS_ENABLED` | no | ecommerce | `true` turns gift card purchases on, together with checkout. |
 | `TALISMAN_COMMERCE_GIFT_CARD_KEY` | yes | ecommerce | 64 hex characters that encrypt gift card codes. Keep it stable and backed up. |
-| `TALISMAN_COMMERCE_REFERRAL_REWARD_CENTS`, `TALISMAN_COMMERCE_REFERRAL_MIN_ORDER_CENTS` | no | ecommerce | Referral defaults; settings saved in the admin override them. |
+| `TALISMAN_COMMERCE_REFERRALS_ENABLED` | no | ecommerce | `true` turns referrals on while no referral settings are saved in the admin. Off by default. |
+| `TALISMAN_COMMERCE_REFERRAL_REWARD_CENTS`, `TALISMAN_COMMERCE_REFERRAL_MIN_ORDER_CENTS` | no | ecommerce | Referral defaults; settings saved in the admin override them. The reward must be at most half the minimum. |
+| `TALISMAN_COMMERCE_REFERRAL_HOLD_DAYS`, `TALISMAN_COMMERCE_REFERRAL_MAX_PER_PERIOD`, `TALISMAN_COMMERCE_REFERRAL_PERIOD_DAYS` | no | ecommerce | Days referral awards stay pending (default 30), and the cap of referrals per referrer (default 10) per period (default 30 days). |
 | `TALISMAN_STRIPE_SECRET_KEY` | yes | plugin-stripe | Optional restricted key that takes precedence over `STRIPE_SECRET_KEY`. |
 | `TALISMAN_STRIPE_WEBHOOK_SECRET` | yes | plugin-stripe | Signing secret of the `/api/stripe/webhooks` endpoint. |
 | `CLOUDFLARE_ANALYTICS_ACCOUNT_ID`, `CLOUDFLARE_ANALYTICS_SITE_TAG` | no | plugin-analytics | Web Analytics account and site. |

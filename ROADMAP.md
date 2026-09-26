@@ -17,7 +17,8 @@ Since the last public commit (`0d1d72d`), `main` has gained `HybridAuthAdapter`,
 - hardened the ecommerce plugin: exported cookie names, a bounded basket API, sign-in links that create an account only when used, per-address, per-network and store-wide sign-in limits, a discount preview that answers only while checkout is enabled, and a scheduled retention purge;
 - added a safe rich-text renderer, closed injection sinks in the daisyUI and Starwind plugins, and required a CMS session for plugin admin routes;
 - pinned CI actions, added a production dependency audit and SECURITY.md;
-- added migrations `0019` through `0024`.
+- added migrations `0019` through `0024`;
+- enforced the [incentives and abuse](#commerce-launch-incentives-and-abuse) rules in the ecommerce plugin without a further migration: referrals off by default with held awards, a rate-limited discount preview with one refusal, a Turnstile check and a reserved budget for sign-in email, a limit on new baskets per network, a throttled order status check and single-use Stripe coupons.
 
 [CHANGELOG.md](CHANGELOG.md) lists every change, the breaking changes and the upgrade steps.
 
@@ -29,7 +30,7 @@ Since the last public commit (`0d1d72d`), `main` has gained `HybridAuthAdapter`,
 | [After publish](#after-publish) | One auth copy per Worker, no route generation in installed packages, then publishing from CI instead of committing `dist/` | After the first publish. The CI publish comes last, once sites install from npm |
 | [Commerce launch: decisions](#commerce-launch-decisions) | Plugin support for currency, tax, shipping and delivery countries | Before the other commerce work that touches totals |
 | [Commerce launch: order operations](#commerce-launch-order-operations) | Queue, fulfillment, refunds, reconciliation, notifications, gift cards, inventory | Checkout stays disabled until the commerce workstreams are done |
-| [Commerce launch: incentives and abuse](#commerce-launch-incentives-and-abuse) | Rules for referrals, discounts, sign-in email and public endpoints | Same gate |
+| [Commerce launch: incentives and abuse](#commerce-launch-incentives-and-abuse) | Rules for referrals, discounts, sign-in email and public endpoints | Done before the 0.1 publish; follow-ups are listed in its items |
 | [Commerce launch: shopper pages](#commerce-launch-shopper-pages) | Order access, basket handover, errors and catalog reads for storefronts | Same gate |
 | [Commerce launch: data and GDPR](#commerce-launch-data-and-gdpr) | Shopper data export and erasure, ledger invariants, safe role defaults | Same gate |
 | [Commerce launch: tests](#commerce-launch-tests) | Race and negative tests for the money paths | Alongside the fixes they cover |
@@ -41,7 +42,7 @@ Public checkout stays off (`TALISMAN_COMMERCE_CHECKOUT_ENABLED=false`) until the
 
 ## Release
 
-The maintainer steps for the 0.1 preview are in [RELEASE.md](RELEASE.md): verify a clean checkout of `main` (`pnpm release:verify`, `node scripts/check-dist-drift.mjs`, `pnpm audit --prod --audit-level high`), push `main`, run `pnpm release:publish --dry-run` and then publish. Sites that upgrade apply migrations `0019` through `0024` before deploying the new Worker, as the [deployment gate](RELEASE.md#deployment-gate) describes.
+The maintainer steps for the 0.1 preview are in [RELEASE.md](RELEASE.md): verify a clean checkout of `main` (`pnpm release:verify`, `node scripts/check-dist-drift.mjs`, `pnpm audit --prod --audit-level high`), push `main`, run `pnpm release:publish --dry-run` and then publish. Sites that upgrade apply migrations `0019` through `0024` before deploying the new Worker, as the [deployment gate](RELEASE.md#deployment-gate) describes. The incentive and abuse rules ship in the same release and need no further migration; the deployment gate lists their settings and the Stripe webhook event to add.
 
 Three audit findings that were to be settled before the npm release are only partly fixed, and are accepted for 0.1: a built Worker still carries two copies of the auth modules, builds still print route-injection lines and the playground keeps scratch pages, and the schema types `media.updatedAt` as not null. Their remaining work is tracked below under [After publish](#after-publish) and [Maintenance](#maintenance) (`integration-contract/src-dist-dual-auth-modules`, `release-packaging/debug-leftovers`, `migrations-schema/drizzle-kit-snapshot-drift`).
 
@@ -131,9 +132,9 @@ The admin tools and background jobs a store needs to run orders every day. Sugge
 
 ### Refunds, restocking and disputes
 
-**Why:** Refunds never release stock, and chargebacks are not handled, so a disputed order can still be shipped.
+**Why:** Refunds never release stock, and chargebacks are handled only for referral awards, so a disputed order can still be shipped.
 
-**Approach:** Subscribe to `charge.dispute.created` and `charge.dispute.closed`, add a `disputed` status that the fulfillment guard rejects, and reverse awards on a lost dispute. Add an audited admin "restock" action for refunded orders that releases stock with relative updates.
+**Approach:** Subscribe to `charge.dispute.created`, add a `disputed` status that the fulfillment guard rejects, and extend the `charge.dispute.closed` handling, which already reverses referral awards on a lost dispute, to the order itself. Add an audited admin "restock" action for refunded orders that releases stock with relative updates.
 
 **Audit refs:** `commerce-checkout/refund-dispute-gaps`
 
@@ -245,7 +246,9 @@ Rules that keep promotions, referrals, gift cards and the public endpoints from 
 
 ### Referral awards: off by default, held until the return window closes
 
-**Why:** Referral awards become spendable store credit, so the programme needs firm rules on who can earn them and when they become final. With no saved settings the programme is currently on, which operators may not expect.
+**Status:** done on `main` before the 0.1 publish. Referrals are off unless a saved policy or `TALISMAN_COMMERCE_REFERRALS_ENABLED` enables them; the reward is at most half the minimum, which applies after the promotion discount; self-referral and repeat-buyer checks compare canonical addresses; each referrer has a cap per period (`TALISMAN_COMMERCE_REFERRAL_MAX_PER_PERIOD`, `TALISMAN_COMMERCE_REFERRAL_PERIOD_DAYS`); awards stay pending for `TALISMAN_COMMERCE_REFERRAL_HOLD_DAYS` and `reconcileCommerce` releases them when the provider reports no dispute; a refund below the qualifying amount or a lost dispute (`charge.dispute.closed`) reverses them. No migration. Follow-ups: store the minimum in force at checkout on the order (needs a migration), and list a referred shopper's own welcome award in `getReferralDashboard` before a site enables referrals.
+
+**Why:** Referral awards become spendable store credit, so the programme needs firm rules on who can earn them and when they become final, and it should run only when an operator turns it on.
 
 **Approach:** Rules: referrals are off until an admin enables them; self-referral is refused after normalizing addresses (sub-addressing and provider-specific rules); the reward stays below the minimum order; each referrer has a cap per period; awards stay pending until a configurable return or dispute window closes and are released by the scheduled job; any refund that takes the order below the minimum, and any lost dispute, reverses them.
 
@@ -254,6 +257,8 @@ Rules that keep promotions, referrals, gift cards and the public endpoints from 
 **Issue:** #TBD-commerce-referral-awards
 
 ### Discount preview: rate-limited, with one generic refusal
+
+**Status:** done on `main` before the 0.1 publish. The preview and every checkout that carries a code share 30 code checks per client network and 10 per basket per hour (HTTP 429 over either), every refused code gets 409 "This code is not valid for this order.", and the preview ignores `customerEmail`, checks order-history rules only against a signed-in account and never creates a basket. No migration.
 
 **Why:** A discount preview should tell a shopper whether a code applies to their basket and nothing more. Like the checkout route, it answers only while checkout is enabled (`TALISMAN_COMMERCE_CHECKOUT_ENABLED=true`), so these rules must hold before a store opens checkout.
 
@@ -265,6 +270,8 @@ Rules that keep promotions, referrals, gift cards and the public endpoints from 
 
 ### Sign-in email: bot check, and a reserved budget for existing customers
 
+**Status:** done on `main` before the 0.1 publish. With `TALISMAN_COMMERCE_TURNSTILE_SITE_KEY` and `TALISMAN_COMMERCE_TURNSTILE_SECRET_KEY` set, a Turnstile token is verified before any counter, link or email; `TALISMAN_COMMERCE_EMAIL_RESERVED_DAILY` (default a quarter of the daily limit) is kept for addresses with a verified account or an order, at most two emails per address a day; once the rest is spent every request answers `{ accepted: true, limited: true }`. The Cloudflare rule stays documented as defence in depth. No migration.
+
 **Why:** Sign-in links are limited per address, per network and per store per day. The store-wide cap protects the sending quota, but it should not stand between existing customers and their accounts, and automated requests should be stopped before they count against it.
 
 **Approach:** Rules: when configured, a bot check (Turnstile) passes before any email is sent; part of the daily budget is reserved for addresses that already have a verified account or an order. Document a Cloudflare rate-limiting rule on the account route as defence in depth.
@@ -275,9 +282,11 @@ Rules that keep promotions, referrals, gift cards and the public endpoints from 
 
 ### Rate-limit public basket writes
 
-**Why:** The basket API bounds each request and never creates a row on reads, but has no request-rate limit, so each basket-creating POST still adds a row until the 30-day purge.
+**Status:** done on `main` before the 0.1 publish. The cart route and the `addToCart` action allow 20 new baskets per client network per hour (HTTP 429 over the limit), and checkout never creates a basket. The Cloudflare rule in launch gate 8 stays as defence in depth. No migration.
 
-**Approach:** Rule: basket-creating requests are limited per client network. Use the shared limiter (or an optional Workers rate-limit binding) in the cart route and the cart actions. Until then, the plugin README and launch gate 8 in [PRODUCTION_READINESS.md](packages/plugin-ecommerce/PRODUCTION_READINESS.md) recommend a Cloudflare rate-limiting rule per client IP on every public path under `/api/ecommerce/` except `/api/ecommerce/webhooks/`; no per-IP rule may cover the Stripe webhook paths (`/api/ecommerce/webhooks/*`, `/api/stripe/webhooks`).
+**Why:** Each basket-creating request adds a row that stays until the 30-day purge, so basket creation needs a request-rate limit next to the per-request bounds.
+
+**Approach:** Rule: basket-creating requests are limited per client network. Use the shared limiter (or an optional Workers rate-limit binding) in the cart route and the cart actions. As defence in depth, the plugin README and launch gate 8 in [PRODUCTION_READINESS.md](packages/plugin-ecommerce/PRODUCTION_READINESS.md) recommend a Cloudflare rate-limiting rule per client IP on every public path under `/api/ecommerce/` except `/api/ecommerce/webhooks/`; no per-IP rule may cover the Stripe webhook paths (`/api/ecommerce/webhooks/*`, `/api/stripe/webhooks`).
 
 **Audit refs:** `perf-edge/public-cart-api-unbounded-rows`
 
@@ -285,9 +294,11 @@ Rules that keep promotions, referrals, gift cards and the public endpoints from 
 
 ### Throttle payment-provider checks from the order status route
 
-**Why:** Every status request for a pending order asks Stripe for the checkout session.
+**Status:** done on `main` before the 0.1 publish: `GET /api/ecommerce/order`, checkout resume and session release (`POST /api/ecommerce/order`) share one slot per order, so the provider is asked at most once per order every 15 seconds, and the status route does not ask before the order is 60 seconds old. The slot is kept in `_ecommerce_rate_limits` instead of a new column. No migration.
 
-**Approach:** Rule: at most one provider check per order per interval (for example 15 seconds, tracked in a `last_checked_at` column), and none for orders younger than about a minute, which the webhook normally settles. Until then, the rate-limiting rule in launch gate 8 also covers `/api/ecommerce/order`.
+**Why:** Status requests for a pending order should not each ask the payment provider for the checkout session.
+
+**Approach:** Rule: at most one provider check per order per interval (15 seconds, tracked in `_ecommerce_rate_limits`), and none from the order status route for orders younger than a minute, which the webhook normally settles. The rate-limiting rule in launch gate 8 also covers `/api/ecommerce/order` as defence in depth.
 
 **Audit refs:** `commerce-checkout/order-status-get-calls-stripe-unthrottled`
 
@@ -295,7 +306,9 @@ Rules that keep promotions, referrals, gift cards and the public endpoints from 
 
 ### Single-use, expiring Stripe coupons
 
-**Why:** Each discounted checkout creates a permanent Stripe coupon with no redemption limit, which clutters the account and could be reused.
+**Status:** done on `main` before the 0.1 publish. Each discounted Stripe checkout creates coupon `<order id>_discount` with `max_redemptions: 1` and `redeem_by` at the session's expiry (sessions now last 31 minutes), and the coupon is deleted when the checkout expires, is cancelled or fails. No migration.
+
+**Why:** A checkout discount should apply to that one checkout only, and leave nothing behind in the Stripe account once the checkout ends.
 
 **Approach:** Create coupons with `max_redemptions: 1` and `redeem_by` at the session's expiry, and delete them when the session expires or is cancelled. Alternatively pass the discount without coupons.
 
