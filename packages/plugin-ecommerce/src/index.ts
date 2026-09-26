@@ -62,6 +62,10 @@ function resolveAdminFulfillmentEndpointPath() {
   return resolveRouteEntrypoint('ecommerce-admin-fulfillment');
 }
 
+function resolveAdminVariantsEndpointPath() {
+  return resolveRouteEntrypoint('ecommerce-admin-variants');
+}
+
 function resolveOrderEndpointPath() {
   return resolveRouteEntrypoint('ecommerce-order');
 }
@@ -145,6 +149,7 @@ export const ecommercePlugin = (
   const checkoutEndpointPath = resolveCheckoutEndpointPath();
   const adminReconcileEndpointPath = resolveAdminReconcileEndpointPath();
   const adminFulfillmentEndpointPath = resolveAdminFulfillmentEndpointPath();
+  const adminVariantsEndpointPath = resolveAdminVariantsEndpointPath();
   const orderEndpointPath = resolveOrderEndpointPath();
   const accountEndpointPath = resolveAccountEndpointPath();
   const discountEndpointPath = resolveDiscountEndpointPath();
@@ -778,6 +783,11 @@ export const ecommercePlugin = (
       {
         path: '/ecommerce/fulfillment',
         entrypoint: adminFulfillmentEndpointPath
+      },
+      {
+        // The product editor's variant configurator saves values with their stock here.
+        path: '/ecommerce/variants',
+        entrypoint: adminVariantsEndpointPath
       },
       {
         path: '/ecommerce/order',

@@ -18,8 +18,10 @@ import { getSectionCollectionRoute, getSectionEntryRoute, type AdminSection } fr
 import { fetchCollectionConfigs, fetchEntriesBySlug } from '../../../lib/admin-api';
 import {
   describeSettledTransition,
+  describeVariantChangeFailure,
   getPagePath,
   getPendingSlugRename,
+  getVariantChangeRecovery,
   hasEntryMovedOn,
   isSlugConflict,
   isStaleRecordConflict,
@@ -1168,17 +1170,12 @@ function ProductVariantConfigurator({
 
   const variantDefinitions = relationSupportEntries._ecommerce_variants || [];
 
-  const requestCollection = async (collectionSlug: string, method: 'POST' | 'PUT' | 'DELETE', payload?: Record<string, any>, id?: string) => {
+  const requestCollection = async (collectionSlug: string, method: 'POST' | 'PUT', payload: Record<string, any>, id?: string) => {
     const url = id
       ? `${basePath}/api/collections/${collectionSlug}/entries/${id}`
       : `${basePath}/api/collections/${collectionSlug}/entries`;
 
-    const result = await requestEditorApi(url, {
-      method,
-      body: payload ? JSON.stringify(payload) : undefined,
-    }, `Failed to ${method === 'DELETE' ? 'delete' : 'save'} ${collectionSlug}`);
-
-    return method === 'DELETE' ? null : result;
+    return requestEditorApi(url, { method, body: JSON.stringify(payload) }, `Failed to save ${collectionSlug}`);
   };
 
   const showRequestError = (error: unknown) => {
@@ -1192,17 +1189,63 @@ function ProductVariantConfigurator({
     setLocalError(describeRequestError(error));
   };
 
-  const loadLatestRows = async () => {
-    setBusyKey('refresh');
-    setLocalError('');
+  /**
+   * Loads the saved groups, values and stock rows again: null when they loaded, or why they did not.
+   * The drafts are only rebuilt from a complete read. Until one succeeds, creating a value is refused,
+   * because a value saved a moment ago can be missing from the drafts.
+   */
+  const reloadRows = async (): Promise<Error | null> => {
     try {
       await onRefresh();
       setHasStaleRows(false);
+      return null;
     } catch (error) {
-      showRequestError(error);
-    } finally {
-      setBusyKey(null);
+      setHasStaleRows(true);
+      return error instanceof Error ? error : new Error(String(error));
     }
+  };
+
+  const loadLatestRows = async () => {
+    setBusyKey('refresh');
+    setLocalError('');
+    const loadError = await reloadRows();
+    if (loadError) setLocalError(`${describeRequestError(loadError).replace(/\.?$/, '.')} Your edits are still here.`);
+    setBusyKey(null);
+  };
+
+  /**
+   * Values with their stock rows, and deletes, go to the commerce plugin, which applies each change in
+   * one batch. A refusal the server answered wrote nothing, so the edits stay for another try. When the
+   * rows changed or are gone, or when no answer says what happened (the change may have been saved),
+   * the saved rows are loaded again, so a retry updates a value instead of creating it twice.
+   */
+  const sendVariantChange = async (key: string, change: Record<string, any>, messages: { failed: string; done: string }) => {
+    setBusyKey(key);
+    setLocalError('');
+    setLocalStatus('');
+    try {
+      await requestEditorApi(`${basePath}/api/ecommerce/variants`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(change),
+      }, messages.failed);
+    } catch (error) {
+      const failure = error instanceof EditorRequestError ? error : new EditorRequestError(describeRequestError(error), 0);
+      if (getVariantChangeRecovery(failure) === 'keep') {
+        // Includes an expired session: the edits wait until the admin has signed in again.
+        showRequestError(failure);
+      } else {
+        const loadError = await reloadRows();
+        setLocalError(describeVariantChangeFailure(failure, messages.failed, !loadError));
+      }
+      setBusyKey(null);
+      return;
+    }
+    setLocalStatus(messages.done);
+    if (await reloadRows()) {
+      setLocalError('The change is saved, but the saved options and stock could not be loaded again. Load them before creating another value.');
+    }
+    setBusyKey(null);
   };
 
   const updateGroupDraft = (localId: string, updates: Partial<ProductVariantGroupDraft>) => {
@@ -1350,52 +1393,32 @@ function ProductVariantConfigurator({
       return;
     }
 
-    setBusyKey(`value:${value.localId}`);
-    setLocalError('');
-    setLocalStatus('');
-
-    try {
-      const savedValue = await requestCollection(
-        '_ecommerce_product_variant_values',
-        value.id ? 'PUT' : 'POST',
-        {
-          data: {
-            productVariantId: group.id,
-            value: value.value.trim(),
-            sku: value.sku.trim() || null,
-            image: value.image.trim() || null,
-            priceOverride: toOptionalNumber(value.priceOverride) ?? null,
-          },
-          ...(value.id && value.updatedAt !== null ? { expectedUpdatedAt: value.updatedAt } : {}),
-        },
-        value.id || undefined
-      );
-
-      // Checkout reserves stock in place, so only write the quantity the user actually changed.
-      const stockChanged = !value.stockId || value.savedStockQuantity === null ||
-        toRequiredNumber(value.stockQuantity, 0) !== toRequiredNumber(value.savedStockQuantity, 0);
-      if (stockChanged) {
-        await requestCollection(
-          '_ecommerce_stocks',
-          value.stockId ? 'PUT' : 'POST',
-          {
-            data: {
-              productVariantValueId: savedValue.id,
-              quantity: toRequiredNumber(value.stockQuantity, 0),
-            },
-            ...(value.stockId && value.stockUpdatedAt !== null ? { expectedUpdatedAt: value.stockUpdatedAt } : {}),
-          },
-          value.stockId || undefined
-        );
-      }
-
-      await onRefresh();
-      setLocalStatus(`Saved variant value "${value.value.trim()}".`);
-    } catch (error) {
-      showRequestError(error);
-    } finally {
-      setBusyKey(null);
+    // A value whose save failed to answer may exist already; creating it again would duplicate it.
+    if (!value.id && hasStaleRows) {
+      setLocalError('Load the latest options and stock before creating a value: the ones shown may be out of date.');
+      return;
     }
+
+    // Checkout reserves stock in place, so only write the quantity the user actually changed.
+    const stockChanged = !value.stockId || value.savedStockQuantity === null ||
+      toRequiredNumber(value.stockQuantity, 0) !== toRequiredNumber(value.savedStockQuantity, 0);
+    await sendVariantChange(`value:${value.localId}`, {
+      action: 'saveValue',
+      groupId: group.id,
+      value: {
+        ...(value.id ? { id: value.id, ...(value.updatedAt !== null ? { expectedUpdatedAt: value.updatedAt } : {}) } : {}),
+        value: value.value.trim(),
+        sku: value.sku.trim() || null,
+        image: value.image.trim() || null,
+        priceOverride: toOptionalNumber(value.priceOverride) ?? null,
+      },
+      ...(stockChanged ? {
+        stock: {
+          ...(value.stockId ? { id: value.stockId, ...(value.stockUpdatedAt !== null ? { expectedUpdatedAt: value.stockUpdatedAt } : {}) } : {}),
+          quantity: toRequiredNumber(value.stockQuantity, 0),
+        },
+      } : {}),
+    }, { failed: 'Failed to save the variant value', done: `Saved variant value "${value.value.trim()}".` });
   };
 
   const deleteValue = async (groupLocalId: string, value: ProductVariantValueDraft) => {
@@ -1410,26 +1433,12 @@ function ProductVariantConfigurator({
       return;
     }
 
-    if (!window.confirm(`Delete variant value "${value.value || value.id}"?`)) {
+    if (!window.confirm(`Delete variant value "${value.value || value.id}" with its stock row and variant component rows?`)) {
       return;
     }
 
-    setBusyKey(`delete-value:${value.localId}`);
-    setLocalError('');
-    setLocalStatus('');
-
-    try {
-      if (value.stockId) {
-        await requestCollection('_ecommerce_stocks', 'DELETE', undefined, value.stockId);
-      }
-      await requestCollection('_ecommerce_product_variant_values', 'DELETE', undefined, value.id);
-      await onRefresh();
-      setLocalStatus(`Deleted variant value "${value.value || value.id}".`);
-    } catch (error) {
-      showRequestError(error);
-    } finally {
-      setBusyKey(null);
-    }
+    await sendVariantChange(`delete-value:${value.localId}`, { action: 'deleteValue', valueId: value.id },
+      { failed: 'Failed to delete the variant value', done: `Deleted variant value "${value.value || value.id}".` });
   };
 
   const deleteGroup = async (group: ProductVariantGroupDraft) => {
@@ -1438,32 +1447,12 @@ function ProductVariantConfigurator({
       return;
     }
 
-    if (!window.confirm(`Delete variant group "${group.name || group.id}" and all nested values/stock rows?`)) {
+    if (!window.confirm(`Delete variant group "${group.name || group.id}" and all its values, with their stock rows and variant component rows?`)) {
       return;
     }
 
-    setBusyKey(`delete-group:${group.localId}`);
-    setLocalError('');
-    setLocalStatus('');
-
-    try {
-      for (const value of group.values) {
-        if (value.stockId) {
-          await requestCollection('_ecommerce_stocks', 'DELETE', undefined, value.stockId);
-        }
-        if (value.id) {
-          await requestCollection('_ecommerce_product_variant_values', 'DELETE', undefined, value.id);
-        }
-      }
-
-      await requestCollection('_ecommerce_product_variants', 'DELETE', undefined, group.id);
-      await onRefresh();
-      setLocalStatus(`Deleted variant group "${group.name || group.id}".`);
-    } catch (error) {
-      showRequestError(error);
-    } finally {
-      setBusyKey(null);
-    }
+    await sendVariantChange(`delete-group:${group.localId}`, { action: 'deleteGroup', groupId: group.id },
+      { failed: 'Failed to delete the variant group', done: `Deleted variant group "${group.name || group.id}".` });
   };
 
   if (!productId) {
@@ -2762,10 +2751,11 @@ export function CollectionEntryEditor({
   };
 
   // Variant, value and stock rows are separate records: reload just those tables, without resetting
-  // the product form or reloading the entry and every other related collection.
+  // the product form or reloading the entry and every other related collection. The configurator
+  // rebuilds its drafts from the result, so a refused read throws instead of reading as empty.
   const refreshCommerceData = async () => {
     const collections = await fetchCollectionConfigs(basePath);
-    const latest = await fetchEntriesBySlug(basePath, PRODUCT_CONFIGURATOR_SLUGS, collections);
+    const latest = await fetchEntriesBySlug(basePath, PRODUCT_CONFIGURATOR_SLUGS, collections, { strict: true });
     setRelationSupportEntries((current) => ({ ...current, ...latest }));
   };
 

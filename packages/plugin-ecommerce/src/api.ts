@@ -32,6 +32,53 @@ type RequiredComponent = { id: string; name: string; quantity: number; available
 type InventoryTarget = { type: 'product' | 'variant' | 'stock'; id: string; quantity: number };
 export type CartItemInput = { productId: string; variantId?: string; quantity: number };
 
+/** The stock column checkout reserves from and releases to, by reservation target type. */
+const INVENTORY_COLUMNS = {
+  product: ['_ecommerce_products', 'inventory_quantity'],
+  variant: ['_ecommerce_product_variants', 'inventory_quantity'],
+  stock: ['_ecommerce_stocks', 'quantity'],
+} as const;
+
+/** The rows of a JSON list of reservations bound as the statement's last parameter. */
+const RESERVATION_ROWS = `SELECT json_extract(value, '$.target') AS target, json_extract(value, '$.amount') AS amount
+  FROM json_each(?)`;
+
+/** Most ids bound in one statement: D1 refuses a statement with more than 100 parameters. */
+const QUERY_ID_CHUNK = 90;
+
+type CatalogProduct = {
+  id: string; name: string; status: string; type: string;
+  basePrice: number; inventoryQuantity: number; isPhysical: boolean;
+};
+type CatalogGroup = {
+  id: string; productId: string; name: string; definitionName: string | null;
+  priceOverride: number | null; inventoryQuantity: number;
+};
+type CatalogValue = {
+  id: string; groupId: string; value: string; priceOverride: number | null;
+  stock: { id: string; quantity: number } | null;
+};
+type CatalogRequirement = { componentId: string; quantity: number; component: { id: string; name: string; quantity: number } | null };
+
+/** The catalog rows a basket's lines refer to, keyed by id (see loadBasketCatalog). */
+type BasketCatalog = {
+  products: Map<string, CatalogProduct>;
+  /** Every variant group of the basket's products. */
+  groups: Map<string, CatalogGroup>;
+  productsWithGroups: Set<string>;
+  /** The groups, among the lines' variant ids, that have values. */
+  groupsWithValues: Set<string>;
+  values: Map<string, CatalogValue>;
+  /** Each value's bill of materials, in component id order. */
+  requirements: Map<string, CatalogRequirement[]>;
+};
+
+function chunked<T>(values: T[], size = QUERY_ID_CHUNK) {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size));
+  return chunks;
+}
+
 /** Most distinct lines one basket can hold. */
 export const CART_MAX_LINES = 50;
 /** Most units of one line. Checkout still checks stock. */
@@ -91,27 +138,82 @@ export function bindCommerceApi(options: CommerceApiOptions) {
     }
   }
 
-  async function resolveSelectedVariant(
-    product: typeof schema.products.$inferSelect,
-    variantId: string
-  ) {
-    const variantValue = await db.select().from(schema.productVariantValues).where(eq(schema.productVariantValues.id, variantId)).get();
+  /**
+   * Load every catalog row a basket's lines refer to in one D1 batch: a fixed number of statements
+   * whatever the number of lines, so quoting and checkout do not slow down or run into D1's query
+   * limits as the basket grows. The lines are then checked in memory against this snapshot.
+   */
+  async function loadBasketCatalog(items: Array<{ productId: string; variantId?: string | null }>): Promise<BasketCatalog> {
+    const productIds = [...new Set(items.map((item) => String(item.productId)))];
+    const variantIds = [...new Set(items.flatMap((item) => item.variantId ? [String(item.variantId)] : []))];
+    const slots = (ids: string[]) => ids.map(() => '?').join(', ');
+    const queries: Array<{ kind: 'products' | 'groups' | 'values' | 'requirements' | 'groupsWithValues'; statement: D1PreparedStatement }> = [];
+    for (const ids of chunked(productIds)) {
+      queries.push({ kind: 'products', statement: env.DB.prepare(`SELECT id, name, status, type, base_price,
+        inventory_quantity, is_physical FROM _ecommerce_products WHERE id IN (${slots(ids)})`).bind(...ids) });
+      queries.push({ kind: 'groups', statement: env.DB.prepare(`SELECT g.id, g.product_id, g.name, g.price_override,
+        g.inventory_quantity, d.name AS definition_name
+        FROM _ecommerce_product_variants g LEFT JOIN _ecommerce_variants d ON d.id = g.variant_id
+        WHERE g.product_id IN (${slots(ids)})`).bind(...ids) });
+    }
+    for (const ids of chunked(variantIds)) {
+      queries.push({ kind: 'values', statement: env.DB.prepare(`SELECT v.id, v.product_variant_id, v.value,
+        v.price_override, s.id AS stock_id, s.quantity AS stock_quantity
+        FROM _ecommerce_product_variant_values v LEFT JOIN _ecommerce_stocks s ON s.product_variant_value_id = v.id
+        WHERE v.id IN (${slots(ids)})`).bind(...ids) });
+      queries.push({ kind: 'requirements', statement: env.DB.prepare(`SELECT r.product_variant_value_id, r.component_id,
+        r.quantity, c.id AS found_component_id, c.name AS component_name, c.quantity AS component_quantity
+        FROM _ecommerce_variant_components r LEFT JOIN _ecommerce_components c ON c.id = r.component_id
+        WHERE r.product_variant_value_id IN (${slots(ids)})
+        ORDER BY r.product_variant_value_id, r.component_id`).bind(...ids) });
+      // A line's variant id may name a legacy group instead of a value; such a group must have no values.
+      queries.push({ kind: 'groupsWithValues', statement: env.DB.prepare(`SELECT DISTINCT product_variant_id
+        FROM _ecommerce_product_variant_values WHERE product_variant_id IN (${slots(ids)})`).bind(...ids) });
+    }
+    const catalog: BasketCatalog = { products: new Map(), groups: new Map(), productsWithGroups: new Set(),
+      groupsWithValues: new Set(), values: new Map(), requirements: new Map() };
+    if (!queries.length) return catalog;
+    const results = await env.DB.batch<Record<string, any>>(queries.map((query) => query.statement));
+    queries.forEach(({ kind }, index) => {
+      for (const row of results[index]?.results ?? []) {
+        if (kind === 'products') {
+          catalog.products.set(row.id, { id: row.id, name: row.name, status: row.status, type: row.type,
+            basePrice: row.base_price, inventoryQuantity: row.inventory_quantity, isPhysical: Number(row.is_physical) === 1 });
+        } else if (kind === 'groups') {
+          catalog.groups.set(row.id, { id: row.id, productId: row.product_id, name: row.name,
+            definitionName: row.definition_name ?? null, priceOverride: row.price_override ?? null,
+            inventoryQuantity: row.inventory_quantity });
+          catalog.productsWithGroups.add(row.product_id);
+        } else if (kind === 'values') {
+          catalog.values.set(row.id, { id: row.id, groupId: row.product_variant_id, value: row.value,
+            priceOverride: row.price_override ?? null,
+            stock: row.stock_id === null || row.stock_id === undefined ? null : { id: row.stock_id, quantity: row.stock_quantity } });
+        } else if (kind === 'requirements') {
+          const list = catalog.requirements.get(row.product_variant_value_id) ?? [];
+          list.push({ componentId: row.component_id, quantity: row.quantity,
+            component: row.found_component_id === null || row.found_component_id === undefined ? null
+              : { id: row.found_component_id, name: row.component_name, quantity: row.component_quantity } });
+          catalog.requirements.set(row.product_variant_value_id, list);
+        } else {
+          catalog.groupsWithValues.add(row.product_variant_id);
+        }
+      }
+    });
+    return catalog;
+  }
+
+  function resolveSelectedVariant(catalog: BasketCatalog, product: CatalogProduct, variantId: string) {
+    const variantValue = catalog.values.get(String(variantId));
     if (variantValue) {
-      const productVariant = await db.select().from(schema.productVariants).where(eq(schema.productVariants.id, variantValue.productVariantId)).get();
+      const productVariant = catalog.groups.get(variantValue.groupId);
       if (!productVariant || productVariant.productId !== product.id) {
         throw new Error(`Variant value not found or mismatch: ${variantId}`);
       }
 
-      const stock = await db.select().from(schema.stocks).where(eq(schema.stocks.productVariantValueId, variantValue.id)).get();
-      const variantDefinition = productVariant.variantId
-        ? await db.select().from(schema.variants).where(eq(schema.variants.id, productVariant.variantId)).get()
-        : null;
-      const requirements = await db.select().from(schema.variantComponents)
-        .where(eq(schema.variantComponents.productVariantValueId, variantValue.id));
+      const stock = variantValue.stock;
       const components: RequiredComponent[] = [];
-      for (const requirement of requirements) {
-        const component = await db.select().from(schema.components)
-          .where(eq(schema.components.id, requirement.componentId)).get();
+      for (const requirement of catalog.requirements.get(variantValue.id) ?? []) {
+        const component = requirement.component;
         if (!component) throw new Error(`Component not found: ${requirement.componentId}`);
         components.push({
           id: component.id,
@@ -123,11 +225,10 @@ export function bindCommerceApi(options: CommerceApiOptions) {
 
       return {
         price: variantValue.priceOverride ?? productVariant.priceOverride ?? product.basePrice,
-        name: `${product.name} - ${variantDefinition?.name ?? productVariant.name}: ${variantValue.value}`,
+        name: `${product.name} - ${productVariant.definitionName ?? productVariant.name}: ${variantValue.value}`,
         availableQuantity: components.length
           ? Math.min(...components.map((component) => Math.floor(component.available / component.quantity)))
           : stock?.quantity ?? productVariant.inventoryQuantity,
-        stockRecordId: stock?.id,
         inventoryTarget: components.length ? null : stock
           ? { type: 'stock' as const, id: stock.id }
           : { type: 'variant' as const, id: productVariant.id },
@@ -135,32 +236,28 @@ export function bindCommerceApi(options: CommerceApiOptions) {
       };
     }
 
-    const legacyVariant = await db.select().from(schema.productVariants).where(eq(schema.productVariants.id, variantId)).get();
+    // Groups are loaded by product, so a group of another product is not found either.
+    const legacyVariant = catalog.groups.get(String(variantId));
     if (!legacyVariant || legacyVariant.productId !== product.id) {
       throw new Error(`Variant not found or mismatch: ${variantId}`);
     }
     // Only a group without values is a legacy variant. A group with values is the choice itself, so
     // its own price and stock never sell a unit that skips the values' components.
-    const groupValue = await db.select({ id: schema.productVariantValues.id }).from(schema.productVariantValues)
-      .where(eq(schema.productVariantValues.productVariantId, legacyVariant.id)).limit(1).get();
-    if (groupValue) throw new Error(`Select an option for ${product.name}`);
+    if (catalog.groupsWithValues.has(legacyVariant.id)) throw new Error(`Select an option for ${product.name}`);
 
     return {
       price: legacyVariant.priceOverride ?? product.basePrice,
       name: `${product.name} - ${legacyVariant.name}`,
       availableQuantity: legacyVariant.inventoryQuantity,
-      stockRecordId: null,
       inventoryTarget: { type: 'variant' as const, id: legacyVariant.id },
       components: [] as RequiredComponent[],
     };
   }
 
   /** A product with variant groups is sold only as one of its variants, never at its base price and stock. */
-  async function requireVariantChoice(product: { id: string; name: string }, variantId?: string | null) {
+  function requireVariantChoice(catalog: BasketCatalog, product: { id: string; name: string }, variantId?: string | null) {
     if (variantId) return;
-    const group = await db.select({ id: schema.productVariants.id }).from(schema.productVariants)
-      .where(eq(schema.productVariants.productId, product.id)).limit(1).get();
-    if (group) throw new Error(`Select an option for ${product.name}`);
+    if (catalog.productsWithGroups.has(product.id)) throw new Error(`Select an option for ${product.name}`);
   }
 
   /**
@@ -420,15 +517,16 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         const { currency } = readStoreSettings(env);
         const cart = await db.select().from(schema.carts).where(eq(schema.carts.id, cartId)).get();
         if (!cart) throw new Error('Cart not found');
+        const catalog = await loadBasketCatalog(cart.items);
         const lines = [];
         let totalAmount = 0;
         let requiresShipping = false;
         const componentItems: Array<{ quantity: number; components: RequiredComponent[] }> = [];
         for (const item of cart.items) {
-          const product = await db.select().from(schema.products).where(eq(schema.products.id, item.productId)).get();
+          const product = catalog.products.get(String(item.productId));
           if (!product || product.status !== 'active') throw new Error(`Product is not available: ${item.productId}`);
-          await requireVariantChoice(product, item.variantId);
-          const variant = item.variantId ? await resolveSelectedVariant(product, item.variantId) : null;
+          requireVariantChoice(catalog, product, item.variantId);
+          const variant = item.variantId ? resolveSelectedVariant(catalog, product, item.variantId) : null;
           const unitAmount = variant?.price ?? product.basePrice;
           const name = variant?.name ?? product.name;
           if (!Number.isSafeInteger(unitAmount) || unitAmount <= 0) {
@@ -711,8 +809,9 @@ export function bindCommerceApi(options: CommerceApiOptions) {
          const inventoryDemand = new Map<string, InventoryTarget>();
 
          // Fetch real product details from the database
+         const catalog = await loadBasketCatalog(cart.items);
          for (const item of cart.items) {
-            const product = await db.select().from(schema.products).where(eq(schema.products.id, item.productId)).get();
+            const product = catalog.products.get(String(item.productId));
             if (!product) {
                throw new Error(`Product not found: ${item.productId}`);
             }
@@ -720,7 +819,7 @@ export function bindCommerceApi(options: CommerceApiOptions) {
                throw new Error(`Product is not available: ${item.productId}`);
             }
             // A line saved before its product had variants must be changed to one of them first.
-            await requireVariantChoice(product, item.variantId);
+            requireVariantChoice(catalog, product, item.variantId);
 
             let price = product.basePrice;
             let finalName = product.name;
@@ -730,7 +829,7 @@ export function bindCommerceApi(options: CommerceApiOptions) {
               { type: 'product', id: product.id };
 
             if (item.variantId) {
-               const selectedVariant = await resolveSelectedVariant(product, item.variantId);
+               const selectedVariant = resolveSelectedVariant(catalog, product, item.variantId);
                price = selectedVariant.price;
                finalName = selectedVariant.name;
                availableQuantity = selectedVariant.availableQuantity;
@@ -932,23 +1031,41 @@ export function bindCommerceApi(options: CommerceApiOptions) {
              VALUES (?, ?, ?, 'checkout_reserve', ?, ?)`)
              .bind(`credit_hold_${orderId}`, cart.userId, orderId, -creditApplied, timestamp));
          }
-         for (const [componentId, demand] of defaultAdapter.reservesInventory === false ? [] : componentDemand) {
+         // One statement per table whatever the size of the basket: each reads its rows from a JSON list.
+         // Stock writes move updated_at by at least a second, so an admin save of stock loaded before
+         // this reservation is refused as stale instead of overwriting it.
+         const reserves = defaultAdapter.reservesInventory !== false;
+         const componentReservations = reserves ? [...componentDemand].map(([target, demand]) =>
+           ({ id: crypto.randomUUID(), target, amount: demand.quantity })) : [];
+         if (componentReservations.length) {
+           const list = JSON.stringify(componentReservations);
            statements.push(env.DB.prepare(`UPDATE _ecommerce_components
-             SET quantity = quantity - ?, updated_at = ? WHERE id = ?`)
-             .bind(demand.quantity, timestamp, componentId));
+             SET quantity = quantity - demand.amount, updated_at = MAX(updated_at + 1, ?)
+             FROM (${RESERVATION_ROWS}) AS demand WHERE _ecommerce_components.id = demand.target`)
+             .bind(timestamp, list));
            statements.push(env.DB.prepare(`INSERT INTO _ecommerce_component_reservations
-             (id, order_id, component_id, quantity) VALUES (?, ?, ?, ?)`)
-             .bind(crypto.randomUUID(), orderId, componentId, demand.quantity));
+             (id, order_id, component_id, quantity)
+             SELECT json_extract(value, '$.id'), ?, json_extract(value, '$.target'), json_extract(value, '$.amount')
+             FROM json_each(?)`)
+             .bind(orderId, list));
          }
-         for (const demand of defaultAdapter.reservesInventory === false ? [] : inventoryDemand.values()) {
-           const table = demand.type === 'product' ? '_ecommerce_products'
-             : demand.type === 'variant' ? '_ecommerce_product_variants' : '_ecommerce_stocks';
-           const column = demand.type === 'stock' ? 'quantity' : 'inventory_quantity';
-           statements.push(env.DB.prepare(`UPDATE ${table} SET ${column} = ${column} - ?, updated_at = ? WHERE id = ?`)
-             .bind(demand.quantity, timestamp, demand.id));
+         const inventoryReservations = reserves ? [...inventoryDemand.values()].map((demand) =>
+           ({ id: crypto.randomUUID(), type: demand.type, target: demand.id, amount: demand.quantity })) : [];
+         for (const [type, [table, column]] of Object.entries(INVENTORY_COLUMNS)) {
+           const list = inventoryReservations.filter((reservation) => reservation.type === type);
+           if (!list.length) continue;
+           statements.push(env.DB.prepare(`UPDATE ${table}
+             SET ${column} = ${column} - demand.amount, updated_at = MAX(updated_at + 1, ?)
+             FROM (${RESERVATION_ROWS}) AS demand WHERE ${table}.id = demand.target`)
+             .bind(timestamp, JSON.stringify(list)));
+         }
+         if (inventoryReservations.length) {
            statements.push(env.DB.prepare(`INSERT INTO _ecommerce_inventory_reservations
-             (id, order_id, target_type, target_id, quantity) VALUES (?, ?, ?, ?, ?)`)
-             .bind(crypto.randomUUID(), orderId, demand.type, demand.id, demand.quantity));
+             (id, order_id, target_type, target_id, quantity)
+             SELECT json_extract(value, '$.id'), ?, json_extract(value, '$.type'), json_extract(value, '$.target'),
+               json_extract(value, '$.amount')
+             FROM json_each(?)`)
+             .bind(orderId, JSON.stringify(inventoryReservations)));
          }
          statements.push(env.DB.prepare(`UPDATE _ecommerce_carts SET checkout_session_id = ?, updated_at = ?
            WHERE id = ? AND checkout_session_id = ?`)
@@ -1142,10 +1259,11 @@ export function bindCommerceApi(options: CommerceApiOptions) {
             ON CONFLICT(order_id, kind) DO NOTHING`)
             .bind(`credit_release_${id}`, timestamp, id));
         }
+        // Like reservations, releases move the stock rows' updated_at, so a stale admin save is refused.
         for (const reservation of reservations) {
           statements.push(env.DB.prepare(`UPDATE _ecommerce_components
             SET quantity = quantity + (SELECT quantity FROM _ecommerce_component_reservations
-              WHERE id = ? AND released_at IS NULL), updated_at = ?
+              WHERE id = ? AND released_at IS NULL), updated_at = MAX(updated_at + 1, ?)
             WHERE id = ? AND EXISTS (SELECT 1 FROM _ecommerce_component_reservations
               WHERE id = ? AND released_at IS NULL)
               AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'cancelled')`)
@@ -1156,12 +1274,10 @@ export function bindCommerceApi(options: CommerceApiOptions) {
             .bind(timestamp, reservation.id, id));
         }
         for (const reservation of inventoryReservations) {
-          const table = reservation.targetType === 'product' ? '_ecommerce_products'
-            : reservation.targetType === 'variant' ? '_ecommerce_product_variants' : '_ecommerce_stocks';
-          const column = reservation.targetType === 'stock' ? 'quantity' : 'inventory_quantity';
+          const [table, column] = INVENTORY_COLUMNS[reservation.targetType];
           statements.push(env.DB.prepare(`UPDATE ${table}
             SET ${column} = ${column} + (SELECT quantity FROM _ecommerce_inventory_reservations
-              WHERE id = ? AND released_at IS NULL), updated_at = ?
+              WHERE id = ? AND released_at IS NULL), updated_at = MAX(updated_at + 1, ?)
             WHERE id = ? AND EXISTS (SELECT 1 FROM _ecommerce_inventory_reservations
               WHERE id = ? AND released_at IS NULL)
               AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'cancelled')`)

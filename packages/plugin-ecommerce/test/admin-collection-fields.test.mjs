@@ -5,9 +5,12 @@ import { getTableColumns } from 'drizzle-orm';
 import ts from 'typescript';
 import { ecommercePlugin } from '../dist/index.js';
 import * as schema from '../dist/schema.js';
+import { variantChangeSchema } from '../dist/variants.js';
 
 // The core refuses a native write to a table column that is not a configured field, so every key
-// the admin sends to a commerce collection must be one. The keys are read from the admin source.
+// the admin sends to a commerce collection must be one. Variant values and their stock go to the
+// plugin's variants endpoint instead, which refuses keys it does not know. The keys are read from the
+// admin source.
 const adminUi = new URL('../../talisman-cms/ui/', import.meta.url);
 const entryEditorPath = 'routes/collections/$slug/$entryId.tsx';
 const commerceModelsPath = 'lib/commerce-models.ts';
@@ -64,6 +67,41 @@ function objectLiteralKeys(sourceFile, node) {
   return node.properties.flatMap((property) => ts.isSpreadAssignment(property)
     ? objectLiteralKeys(sourceFile, property.expression)
     : [propertyName(sourceFile, property)]);
+}
+
+/** The initializers of a property called `name`, following spreads of object literals and conditionals. */
+function propertyValues(sourceFile, node, name) {
+  node = resolve(sourceFile, node);
+  if (ts.isConditionalExpression(node)) {
+    return [...propertyValues(sourceFile, node.whenTrue, name), ...propertyValues(sourceFile, node.whenFalse, name)];
+  }
+  assert.ok(ts.isObjectLiteralExpression(node),
+    `${where(sourceFile, node)}: the data sent is not an object literal, so its keys cannot be checked`);
+  return node.properties.flatMap((property) => ts.isSpreadAssignment(property)
+    ? propertyValues(sourceFile, property.expression, name)
+    : ts.isPropertyAssignment(property) && propertyName(sourceFile, property) === name ? [property.initializer] : []);
+}
+
+/** The action and keys of each change the variant editor sends with sendVariantChange(key, change, messages). */
+function readVariantChanges() {
+  const sourceFile = parseAdminSource(entryEditorPath);
+  const changes = [];
+  const visit = (node) => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'sendVariantChange') {
+      const change = node.arguments[1];
+      assert.ok(change, `${where(sourceFile, node)}: the change is missing`);
+      const [action, ...more] = propertyValues(sourceFile, change, 'action');
+      assert.ok(action && ts.isStringLiteralLike(action) && !more.length,
+        `${where(sourceFile, node)}: name the action once, with a string literal`);
+      const nestedKeys = (name) => [...new Set(propertyValues(sourceFile, change, name)
+        .flatMap((value) => objectLiteralKeys(sourceFile, value)))];
+      changes.push({ action: action.text, keys: [...new Set(objectLiteralKeys(sourceFile, change))],
+        value: nestedKeys('value'), stock: nestedKeys('stock'), at: where(sourceFile, node) });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return changes;
 }
 
 /** The collection and `data` keys of each requestCollection(slug, method, payload) call that writes. */
@@ -134,7 +172,7 @@ function injectedCollection(slug) {
 test('every key the variant editor sends to a commerce collection is a configured field', () => {
   const writes = readConfiguratorWrites();
   const written = new Set(writes.map((write) => write.slug));
-  for (const slug of ['_ecommerce_variants', '_ecommerce_product_variants', '_ecommerce_product_variant_values', '_ecommerce_stocks']) {
+  for (const slug of ['_ecommerce_variants', '_ecommerce_product_variants']) {
     assert.ok(written.has(slug), `the variant editor no longer writes ${slug} through requestCollection; update this test to follow it`);
   }
 
@@ -153,6 +191,37 @@ test('every key the variant editor sends to a commerce collection is a configure
   for (const key of ['sku', 'priceOverride', 'inventoryQuantity']) {
     assert.ok(groupWrite.keys.includes(key), `the variant group save no longer sends ${key}`);
   }
+});
+
+test('every change the variant editor sends to the variants endpoint has the keys the endpoint accepts', () => {
+  const changes = readVariantChanges();
+  const actions = new Map(variantChangeSchema.options.map((option) => [option.shape.action.value, option.shape]));
+  assert.deepEqual([...new Set(changes.map((change) => change.action))].sort(), ['deleteGroup', 'deleteValue', 'saveValue'],
+    'the variant editor no longer sends these changes through sendVariantChange; update this test to follow it');
+  const required = (shape) => Object.keys(shape).filter((key) => !shape[key].isOptional());
+  const accepts = (shape, keys, what, at) => {
+    for (const key of keys) assert.ok(Object.hasOwn(shape, key), `${at}: ${what} does not accept ${key}, so the endpoint refuses the change`);
+    for (const key of required(shape)) assert.ok(keys.includes(key), `${at}: ${what} needs ${key}, which the editor does not send`);
+  };
+  for (const change of changes) {
+    const shape = actions.get(change.action);
+    assert.ok(shape, `${change.at}: the variants endpoint has no ${change.action} action`);
+    accepts(shape, change.keys, change.action, change.at);
+  }
+
+  const save = changes.find((change) => change.action === 'saveValue');
+  const saveShape = actions.get('saveValue');
+  accepts(saveShape.value.shape, save.value, 'a saved value', save.at);
+  accepts(saveShape.stock.unwrap().shape, save.stock, 'a saved stock row', save.at);
+  // A value save keeps writing the fields the Product Variant Values and Stock Levels screens edit.
+  for (const [slug, keys] of [['_ecommerce_product_variant_values', save.value], ['_ecommerce_stocks', save.stock]]) {
+    const { collection, columns, isField } = injectedCollection(slug);
+    for (const key of keys.filter((key) => !['id', 'expectedUpdatedAt'].includes(key))) {
+      assert.ok(Object.hasOwn(columns, key) && isField(key), `${save.at}: ${key} is not a field of ${collection.name}`);
+    }
+  }
+  assert.deepEqual(save.value.sort(), ['expectedUpdatedAt', 'id', 'image', 'priceOverride', 'sku', 'value']);
+  assert.deepEqual(save.stock.sort(), ['expectedUpdatedAt', 'id', 'quantity']);
 });
 
 test('the commerce collections the admin edits configure every column the server does not set', () => {

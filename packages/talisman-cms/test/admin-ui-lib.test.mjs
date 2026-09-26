@@ -25,6 +25,8 @@ const {
   describeSettledTransition,
   waitForPendingTransition,
   PENDING_TRANSITION_CHECK_DELAYS_MS,
+  getVariantChangeRecovery,
+  describeVariantChangeFailure,
 } =
   await loadAdminModule('lib/entry-save.ts');
 const { fetchAllEntries, fetchCollectionConfigs, fetchEntriesBySlug } = await loadAdminModule('lib/admin-api.ts');
@@ -159,6 +161,36 @@ test('only a stale edit counts as a conflict to reload; slug and unique clashes 
   assert.equal(isSlugConflict({ status: 409, code: null, message: 'Another entry in this collection already uses this slug.' }), true);
   assert.equal(isSlugConflict({ status: 409, code: 'constraint', message: 'Another record already uses this slug.' }), false);
   assert.equal(isSlugConflict({ status: 400, code: null, message: 'Slug is invalid' }), false);
+});
+
+test('the variant editor keeps edits only after a refusal that wrote nothing, and says what it shows', () => {
+  const failure = (status, message, code = null) => ({ status, code, message });
+  const lost = failure(0, 'Failed to save the variant value: the server could not be reached. Your edits are still here.');
+  const stale = failure(409, 'This record changed since it was opened. Reload it before saving.', 'stale_record');
+  const serverError = failure(500, 'The variant change could not be saved. Check the server logs for details.');
+  // A refusal wrote nothing: the edits stay, including after an expired session, whose reload would read nothing.
+  for (const status of [400, 401, 403, 428]) assert.equal(getVariantChangeRecovery(failure(status, 'Refused')), 'keep');
+  assert.equal(getVariantChangeRecovery(failure(409, 'Another record already uses this sku.')), 'keep');
+  // Rows that changed or are gone are loaded again.
+  assert.equal(getVariantChangeRecovery(stale), 'reload');
+  assert.equal(getVariantChangeRecovery(failure(404, 'Variant value not found')), 'reload');
+  // Without an answer that says what happened, the change may have been saved.
+  for (const unknown of [lost, serverError, failure(502, 'Bad gateway'), failure(200, 'unexpected response')]) {
+    assert.equal(getVariantChangeRecovery(unknown), 'unknown');
+  }
+
+  // After a lost answer the saved rows replace the edits, so the message must not say they are still here.
+  const reloaded = describeVariantChangeFailure(lost, 'Failed to save the variant value', true);
+  assert.doesNotMatch(reloaded, /edits are still here/);
+  assert.match(reloaded, /^Failed to save the variant value: the server could not be reached\. The saved options and stock are loaded again/);
+  // When they could not be loaded either, the edits are still shown, and a new value waits for the rows.
+  const kept = describeVariantChangeFailure(serverError, 'Failed to save the variant value', false);
+  assert.match(kept, /^The variant change could not be saved\. Check the server logs for details\. The saved options and stock could not be loaded/);
+  assert.match(kept, /Your edits are still here; load the latest options and stock before creating a value\.$/);
+  assert.match(describeVariantChangeFailure(stale, 'Failed', true), /The latest values are loaded now; make your change again\.$/);
+  assert.match(describeVariantChangeFailure(stale, 'Failed', false), /Load the latest values, then make your change again\.$/);
+  assert.equal(describeVariantChangeFailure(failure(404, 'Variant value not found'), 'Failed', true),
+    'Variant value not found. The latest options and stock are loaded now.');
 });
 
 test('a published entry with a different draft slug has a pending rename', () => {
@@ -327,6 +359,21 @@ test('fetchAllEntries treats a refused first page as empty and a failed later pa
     ? jsonResponse({ error: 'boom' }, 500)
     : jsonResponse({ docs: [{ id: 'a' }], nextCursor: 'p2' });
   await assert.rejects(fetchAllEntries('/admin', 'things'), /Failed to load every things record/);
+});
+
+test('a strict read does not take a refused first page for an empty collection', async () => {
+  globalThis.fetch = async () => jsonResponse({ error: 'Unauthorized' }, 401);
+  await assert.rejects(fetchAllEntries('/admin', 'things', { strict: true }), /^Error: Your session has expired/);
+  globalThis.fetch = async () => jsonResponse({ error: 'boom' }, 500);
+  await assert.rejects(fetchAllEntries('/admin', 'things', { strict: true }), /^Error: Failed to load things \(HTTP 500\)\.$/);
+  assert.deepEqual(await fetchAllEntries('/admin', 'things'), []);
+
+  // One refused list fails the whole strict read, so the variant editor keeps what it shows.
+  globalThis.fetch = async (url) => new URL(url, 'http://cms.test').pathname.includes('/refused/')
+    ? jsonResponse({ error: 'down' }, 503)
+    : jsonResponse({ docs: [{ id: 'a' }], nextCursor: null });
+  await assert.rejects(fetchEntriesBySlug('/admin', ['ok', 'refused'], [], { strict: true }), /Failed to load refused \(HTTP 503\)/);
+  assert.deepEqual(await fetchEntriesBySlug('/admin', ['ok', 'refused'], []), { ok: [{ id: 'a' }], refused: [] });
 });
 
 test('fetchEntriesBySlug loads collections in parallel and restores table order for native ones', async () => {

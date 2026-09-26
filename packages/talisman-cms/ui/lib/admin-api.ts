@@ -31,17 +31,22 @@ export function isNativeCollectionConfig(collection: any) {
   return Boolean(collection?.nativeSchemaMapping);
 }
 
+/** Options for reading a collection's entries (see fetchAllEntries). */
+export type FetchEntriesOptions = { oldestFirst?: boolean; pageSize?: number; strict?: boolean };
+
 /**
  * Every entry of a collection, read one bounded page at a time so no single request makes the
  * Worker load a whole table. Pages of native tables come newest first; `oldestFirst` restores the
  * table order the unpaged list used, which option lists and the variant editor are built around.
  * A refused first page (for example a collection this user may not read) gives an empty list, as
- * before; a later page that fails throws, because a partial list would look complete.
+ * before, unless `strict` is set: a screen that replaces what it shows with the result (the variant
+ * editor) must not mistake a refused read, such as an expired session, for an empty collection.
+ * A later page that fails always throws, because a partial list would look complete.
  */
 export async function fetchAllEntries(
   basePath: string,
   slug: string,
-  { oldestFirst = false, pageSize = ENTRIES_API_MAX_PAGE_SIZE }: { oldestFirst?: boolean; pageSize?: number } = {}
+  { oldestFirst = false, pageSize = ENTRIES_API_MAX_PAGE_SIZE, strict = false }: FetchEntriesOptions = {}
 ): Promise<any[]> {
   const entries: any[] = [];
   let cursor: string | null = null;
@@ -51,7 +56,12 @@ export async function fetchAllEntries(
     if (cursor) params.set('cursor', cursor);
     const res = await fetch(`${basePath}/api/collections/${slug}/entries?${params}`);
     if (!res.ok) {
-      if (entries.length === 0 && cursor === null) return [];
+      if (entries.length === 0 && cursor === null) {
+        if (!strict) return [];
+        throw new Error(res.status === 401
+          ? 'Your session has expired. Sign in again in another tab, then try again.'
+          : `Failed to load ${slug} (HTTP ${res.status}).`);
+      }
       throw new Error(`Failed to load every ${slug} record (HTTP ${res.status}). Reload the page to try again.`);
     }
 
@@ -63,11 +73,16 @@ export async function fetchAllEntries(
   return oldestFirst ? entries.reverse() : entries;
 }
 
-/** Loads several collections' entries in parallel, keyed by collection slug. */
-export async function fetchEntriesBySlug(basePath: string, slugs: string[], collections: any[]): Promise<Record<string, any[]>> {
+/** Loads several collections' entries in parallel, keyed by collection slug. `strict` as for fetchAllEntries. */
+export async function fetchEntriesBySlug(
+  basePath: string,
+  slugs: string[],
+  collections: any[],
+  { strict = false }: Pick<FetchEntriesOptions, 'strict'> = {}
+): Promise<Record<string, any[]>> {
   const nativeSlugs = new Set(collections.filter(isNativeCollectionConfig).map((collection) => collection.slug));
   const lists = await Promise.all(
-    slugs.map((slug) => fetchAllEntries(basePath, slug, { oldestFirst: nativeSlugs.has(slug) }))
+    slugs.map((slug) => fetchAllEntries(basePath, slug, { oldestFirst: nativeSlugs.has(slug), strict }))
   );
   return Object.fromEntries(slugs.map((slug, index) => [slug, lists[index]]));
 }

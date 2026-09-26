@@ -743,16 +743,21 @@ export function describeInvalidEntrySlug(value: unknown): string | null {
   return null;
 }
 
+// Writes that each add a second, such as checkouts reserving stock, can run a row's updatedAt minutes
+// or hours ahead of the clock, but not this far.
+const MAX_NATIVE_UPDATED_AT_LEAD_MS = 365 * 24 * 60 * 60_000;
+
 /**
  * The updatedAt a native update stores: now, or one second past the stored value when that is not
  * earlier. Native timestamps hold whole seconds, and an editor's save is checked against the
- * updatedAt it loaded, so each write must change the value even within the same second. A stored
- * value far in the future (a seed that wrote milliseconds, for example) is replaced by now.
+ * updatedAt it loaded, so each write must change the value even within the same second, and must
+ * never move it back to a value an editor may still hold. Only a stored value more than a year ahead
+ * (a seed that wrote milliseconds, for example) is replaced by now.
  */
 export function nextNativeUpdatedAt(stored: unknown, now = new Date()) {
   if (!(stored instanceof Date) || Number.isNaN(stored.getTime())) return now;
   const next = stored.getTime() + 1000;
-  return next > now.getTime() && next - now.getTime() <= 5 * 60_000 ? new Date(next) : now;
+  return next > now.getTime() && next - now.getTime() <= MAX_NATIVE_UPDATED_AT_LEAD_MS ? new Date(next) : now;
 }
 
 export function prepareNativeWritePayload(

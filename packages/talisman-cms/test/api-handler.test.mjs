@@ -1045,6 +1045,11 @@ test('every native save moves updatedAt forward, so a save in the same second is
     assert.equal(types.nextNativeUpdatedAt(null, new Date(5000)).getTime(), 5000);
     assert.equal(types.nextNativeUpdatedAt(new Date(1000), new Date(5000)).getTime(), 5000);
     assert.equal(types.nextNativeUpdatedAt(new Date(5000), new Date(5400)).getTime(), 6000);
+    // Bursts of plugin writes can run a stamp minutes ahead; moving it back to now could hand an
+    // editor's old stamp out again, so it keeps moving forward. Only an impossible stamp is reset.
+    const now = new Date(1_790_000_000_000);
+    assert.equal(types.nextNativeUpdatedAt(new Date(now.getTime() + 10 * 60_000), now).getTime(), now.getTime() + 10 * 60_000 + 1000);
+    assert.equal(types.nextNativeUpdatedAt(new Date(now.getTime() + 2 * 365 * 24 * 60 * 60_000), now).getTime(), now.getTime());
   } finally {
     sqlite.close();
   }
