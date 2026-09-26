@@ -16,6 +16,7 @@ import { evaluateGiftCard, confirmGiftCardPurchase, expireGiftCardPurchase,
   recordGiftCardPurchaseRefund, reconcileGiftCardPurchase } from './gift-cards';
 import { readStoreSettings } from './store-settings';
 import { minimumChargeAmount } from './money';
+import { UNDELIVERABLE_COUNTRY, withCountryCode } from './checkout-input';
 
 export interface CommerceApiOptions {
   env: TalismanEnv;
@@ -673,7 +674,7 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         giftCardCode?: string;
       }) {
          // Read before the basket is locked, so invalid store settings stop checkout without writes.
-         const { currency } = readStoreSettings(env);
+         const { currency, deliveryCountries } = readStoreSettings(env);
          const cart = await db.select().from(schema.carts).where(eq(schema.carts.id, cartId)).get();
          if (!cart || cart.items.length === 0) {
            throw new Error('Cart is empty or not found');
@@ -765,6 +766,13 @@ export function bindCommerceApi(options: CommerceApiOptions) {
            !['name', 'line1', 'city', 'postalCode', 'country'].every((key) =>
              typeof options.shippingAddress[key] === 'string' && options.shippingAddress[key].trim()))) {
             throw new Error('Shipping address is required for physical products');
+         }
+         // The same rule for every provider, the simulated one too. The billing country must be a
+         // country code but is not restricted, and a basket with nothing to ship is not held to the list.
+         const shippingAddress = withCountryCode(options.shippingAddress);
+         const billingAddress = withCountryCode(options.billingAddress);
+         if (requiresShipping && deliveryCountries && !deliveryCountries.includes(shippingAddress.country)) {
+           throw new Error(UNDELIVERABLE_COUNTRY);
          }
 
          const orderId = `ord_${crypto.randomUUID()}`;
@@ -860,8 +868,8 @@ export function bindCommerceApi(options: CommerceApiOptions) {
                subtotalAmount, creditApplied, discount?.code ?? null, discountAmount,
                giftCard?.id ?? null, giftCardApplied,
                referralCode, referralCode ? referralsPolicy.rewardCents : 0, currency,
-               options.customerEmail, options.shippingAddress ? JSON.stringify(options.shippingAddress) : null,
-               options.billingAddress ? JSON.stringify(options.billingAddress) : null,
+               options.customerEmail, shippingAddress ? JSON.stringify(shippingAddress) : null,
+               billingAddress ? JSON.stringify(billingAddress) : null,
                timestamp, timestamp)
          ];
          if (discount) {

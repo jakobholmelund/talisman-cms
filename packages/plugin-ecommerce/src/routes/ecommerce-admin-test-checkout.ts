@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
 import { bindCommerceApi } from '../api';
-import { checkoutSchema } from '../checkout-input';
+import { checkoutInputError, checkoutSchema, isCountryError } from '../checkout-input';
 import { runtimePaymentAdapters } from '../runtime';
 import { readCartSessionToken } from '../cookies';
 import { AdminTestPaymentAdapter } from '../adapters/admin-test';
@@ -45,7 +45,7 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
     }
     if (!sessionToken) return Response.json({ error: 'No basket session found' }, { status: 400 });
     const parsed = checkoutSchema.safeParse(await request.json());
-    if (!parsed.success) return Response.json({ error: 'Invalid checkout details' }, { status: 400 });
+    if (!parsed.success) return Response.json({ error: checkoutInputError(parsed.error) }, { status: 400 });
     if (!cart?.items.length) return Response.json({ error: 'Basket is empty' }, { status: 400 });
 
     let order;
@@ -87,6 +87,7 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
     if (error instanceof StoreSettingsError) {
       return Response.json({ error: reportStoreSettingsError(error) }, { status: 503 });
     }
+    if (isCountryError(error)) return Response.json({ error: error.message }, { status: 400 });
     return Response.json({ error: error instanceof Error ? error.message : 'Admin test checkout failed' }, { status: 409 });
   }
 };

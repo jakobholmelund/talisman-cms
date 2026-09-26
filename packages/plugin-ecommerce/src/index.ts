@@ -8,6 +8,7 @@ export { AdminTestPaymentAdapter } from './adapters/admin-test';
 export { readStoreSettings, StoreSettingsError } from './store-settings';
 export type { StoreSettings } from './store-settings';
 export { currencyMinorUnits, formatMoney, toMinorUnits, fromMinorUnits, minimumChargeAmount } from './money';
+export { COUNTRY_CODES, isCountryCode } from './countries';
 
 export interface EcommercePluginConfig {
   /**

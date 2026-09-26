@@ -470,6 +470,120 @@ test('invalid store settings close checkout with a generic 503 and log the setti
   sqlite.close();
 });
 
+// --- Delivery countries --------------------------------------------------------------------------
+
+const addressIn = (country) => ({ ...shippingAddress, country });
+
+/** Orders a frame from a basket of its own, with the given addresses. */
+async function orderTo(env, sessionToken, addresses, adapter = hostedCheckout) {
+  const api = bindCommerceApi({ env, paymentAdapters: [adapter] });
+  const cart = await api.carts.getOrCreate(sessionToken);
+  await api.carts.updateItems(cart.id, [{ productId: 'frame', variantId: 'frame-amber', quantity: 1 }]);
+  return api.orders.createFromCart(cart.id, { ...checkoutDetails, ...addresses, providerId: adapter.providerId });
+}
+
+/** The stored [shipping, billing] countries of an order. */
+function storedCountries(sqlite, orderId) {
+  const order = sqlite.prepare('SELECT shipping_address, billing_address FROM _ecommerce_orders WHERE id = ?')
+    .get(orderId);
+  return [order.shipping_address, order.billing_address].map((address) => address && JSON.parse(address).country);
+}
+
+test('checkout ships only to the delivery countries, for every provider, and stores codes in uppercase', async () => {
+  const { sqlite, DB } = database();
+  const env = { DB, TALISMAN_COMMERCE_DELIVERY_COUNTRIES: 'CA, us' };
+  // Any case is accepted. The billing country must be a country code but may be outside the list.
+  const { order } = await orderTo(env, 'canada-browser',
+    { shippingAddress: addressIn(' ca '), billingAddress: addressIn('gb') });
+  assert.deepEqual(storedCountries(sqlite, order.id), ['CA', 'GB']);
+
+  const refusals = [
+    [{ shippingAddress: addressIn('GB') }, 'We do not deliver to this country'],
+    [{ shippingAddress: addressIn('XX') }, 'Enter a valid country code'],
+    [{ shippingAddress: addressIn('uk') }, 'Enter a valid country code'],
+    [{ shippingAddress: addressIn('US'), billingAddress: addressIn('USA') }, 'Enter a valid country code'],
+  ];
+  for (const adapter of [hostedCheckout, new AdminTestPaymentAdapter()]) {
+    for (const [addresses, message] of refusals) {
+      await assert.rejects(orderTo(env, 'refused-browser', addresses, adapter), { message },
+        `${adapter.providerId} ${JSON.stringify(addresses)}`);
+    }
+  }
+  // Refused before anything was reserved: the basket is still open and only the first order holds stock.
+  assert.equal(count(sqlite, '_ecommerce_orders'), 1);
+  assert.equal(sqlite.prepare("SELECT checkout_session_id FROM _ecommerce_carts WHERE session_token = 'refused-browser'")
+    .get().checkout_session_id, null);
+  assert.equal(sqlite.prepare("SELECT inventory_quantity FROM _ecommerce_product_variants WHERE id = 'frame-lens'")
+    .get().inventory_quantity, 4);
+  sqlite.close();
+});
+
+test('without delivery countries, checkout accepts any assigned country code and refuses others', async () => {
+  const { sqlite, DB } = database();
+  const { order } = await orderTo({ DB }, 'anywhere-browser', { shippingAddress: addressIn('nz') });
+  assert.deepEqual(storedCountries(sqlite, order.id), ['NZ', null]);
+  await assert.rejects(orderTo({ DB }, 'nowhere-browser', { shippingAddress: addressIn('UK') }),
+    { message: 'Enter a valid country code' });
+  sqlite.close();
+});
+
+test('a basket with nothing to ship is not held to the delivery countries', async () => {
+  const { sqlite, DB } = database();
+  sqlite.exec("UPDATE _ecommerce_products SET is_physical = 0 WHERE id = 'case'");
+  const env = { DB, TALISMAN_COMMERCE_DELIVERY_COUNTRIES: 'CA' };
+  const api = bindCommerceApi({ env, paymentAdapters: [hostedCheckout] });
+  const cart = await api.carts.getOrCreate('digital-browser');
+  await api.carts.updateItems(cart.id, [{ productId: 'case', quantity: 1 }]);
+  const { order } = await api.orders.createFromCart(cart.id, { ...checkoutDetails, providerId: 'stripe',
+    shippingAddress: undefined, billingAddress: addressIn('fr') });
+  assert.deepEqual(storedCountries(sqlite, order.id), [null, 'FR']);
+  sqlite.close();
+});
+
+test('the checkout routes and action answer an unknown or undeliverable country as a bad request', async (t) => {
+  t.after(() => { delete globalThis.cmsUser; });
+  const { sqlite, DB } = database();
+  const api = bindCommerceApi({ env: { DB } });
+  const cart = await api.carts.getOrCreate('abroad-browser');
+  await api.carts.updateItems(cart.id, [{ productId: 'frame', variantId: 'frame-amber', quantity: 1 }]);
+  const env = { ...stripeEnv(DB), TALISMAN_COMMERCE_CHECKOUT_ENABLED: 'true',
+    TALISMAN_COMMERCE_DELIVERY_COUNTRIES: 'CA' };
+  const cookies = { [CART_SESSION_COOKIE]: 'abroad-browser' };
+
+  const cases = [
+    [{ shippingAddress }, 'We do not deliver to this country'],
+    [{ shippingAddress: addressIn('uk') }, 'Enter a valid country code'],
+    [{ shippingAddress: addressIn('CA'), billingAddress: addressIn('XX') }, 'Enter a valid country code'],
+    [{ shippingAddress: addressIn('CA'), customerEmail: 'not an email' }, 'Invalid checkout details'],
+  ];
+  for (const [details, error] of cases) {
+    const response = await call(checkoutRoute, env, { path: '/api/ecommerce/checkout', cookies,
+      body: { customerEmail: 'owner@example.test', ...details } });
+    assert.deepEqual([response.status, response.json], [400, { error }], JSON.stringify(details));
+  }
+
+  globalThis.workerEnv = env;
+  const refusals = [[shippingAddress, 'We do not deliver to this country'], [addressIn('xx'), 'Enter a valid country code']];
+  for (const [address, message] of refusals) {
+    await assert.rejects(ecommerceActions.checkout.handler({ customerEmail: 'owner@example.test', shippingAddress: address },
+      { cookies: cookieJar(cookies), url: new URL(`${ORIGIN}/_actions/checkout`) }), { code: 'BAD_REQUEST', message });
+  }
+
+  globalThis.cmsUser = { id: 'admin-1', email: 'admin@shop.test', role: 'admin' };
+  const adminCheckout = (address) => call(adminTestCheckoutRoute, env, { path: '/admin/api/ecommerce/test-checkout',
+    cookies, body: { customerEmail: 'admin@shop.test', shippingAddress: address } });
+  for (const [address, error] of refusals) {
+    const refused = await adminCheckout(address);
+    assert.deepEqual([refused.status, refused.json], [400, { error }]);
+  }
+  assert.equal(count(sqlite, '_ecommerce_orders'), 0);
+  assert.equal(sqlite.prepare('SELECT checkout_session_id FROM _ecommerce_carts').get().checkout_session_id, null);
+  const placed = await adminCheckout(addressIn('ca'));
+  assert.deepEqual([placed.status, placed.json.status], [200, 'paid']);
+  assert.deepEqual(storedCountries(sqlite, placed.json.orderId), ['CA', null]);
+  sqlite.close();
+});
+
 // --- Order status ownership ----------------------------------------------------------------------
 
 test('only the basket or signed-in account that placed an order can read or cancel it', async () => {
