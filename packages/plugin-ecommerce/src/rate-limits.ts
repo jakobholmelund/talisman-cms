@@ -82,3 +82,22 @@ export async function clientOverLimit(env: TalismanEnv, bucket: string, sourceIp
   const count = await countRequest(env, `${bucket}:${await sha256Hex(rateLimitSource(sourceIp))}`, now, windowSeconds);
   return (count ?? limit + 1) > limit;
 }
+
+/**
+ * Takes the slot for `key` when its last taken slot started at least `intervalSeconds` ago, and says
+ * whether this caller took it. One statement, so of several concurrent callers exactly one gets true.
+ * `now` is in Unix seconds; the interval follows the same 24-hour ceiling as the counters.
+ */
+export async function claimInterval(env: TalismanEnv, key: string, intervalSeconds: number,
+  now = Math.floor(Date.now() / 1000)) {
+  if (!(intervalSeconds > 0 && intervalSeconds <= MAX_RATE_LIMIT_WINDOW_SECONDS)) {
+    throw new RangeError('Rate-limit windows must be between 1 second and 24 hours');
+  }
+  const claimed = await env.DB.prepare(`INSERT INTO _ecommerce_rate_limits (key, count, window_start)
+    VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET count = 1, window_start = excluded.window_start
+      WHERE _ecommerce_rate_limits.window_start <= ?
+    RETURNING window_start`)
+    .bind(key, now, now - intervalSeconds)
+    .first<{ window_start: number }>();
+  return Boolean(claimed);
+}

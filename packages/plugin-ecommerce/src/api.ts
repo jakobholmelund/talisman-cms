@@ -9,6 +9,8 @@ import { PURCHASED_ORDER_STATUSES, hasPurchaseHistory } from './accounts';
 import { canonicalEmail, canonicalEmailSql, canonicalEmails, canonicalPurchaseParams, canonicalPurchaseSql,
   hasCanonicalPurchase } from './email-identity';
 import { evaluateDiscountCode } from './promotions';
+import { ProviderCheckLimitedError, mayAskPaymentProvider } from './provider-checks';
+export { PROVIDER_CHECK_RETRY_MESSAGE, ProviderCheckLimitedError } from './provider-checks';
 import { fulfillCommerceOrder } from './fulfillment';
 import { evaluateGiftCard, confirmGiftCardPurchase, expireGiftCardPurchase,
   recordGiftCardPurchaseRefund, reconcileGiftCardPurchase } from './gift-cards';
@@ -557,7 +559,13 @@ export function bindCommerceApi(options: CommerceApiOptions) {
     },
 
     orders: {
-      async resumeFromCart(cartId: string) {
+      /**
+       * The pending checkout that locks a basket: its payment URL while the provider session is open,
+       * or null once the lock is gone. Public routes pass `limitProviderChecks`, so the provider is asked
+       * only when the order's provider-check slot is free (see provider-checks.ts); otherwise the order is
+       * returned as stored, with `providerCheckLimited` and no payment URL.
+       */
+      async resumeFromCart(cartId: string, options: { limitProviderChecks?: boolean } = {}) {
         const cart = await db.select().from(schema.carts).where(eq(schema.carts.id, cartId)).get();
         if (!cart?.checkoutSessionId) return null;
         if (cart.checkoutSessionId.startsWith('preparing:')) {
@@ -580,6 +588,9 @@ export function bindCommerceApi(options: CommerceApiOptions) {
             providerId: order.checkoutSessionId!, paymentStatus: 'success', amount: 0,
             customerEmail: order.customerEmail ?? undefined });
           return { order: (await this.find(order.id))!, paymentUrl: `/checkout/success?order=${encodeURIComponent(order.id)}` };
+        }
+        if (options.limitProviderChecks && !await mayAskPaymentProvider(env, order, paymentAdapters)) {
+          return { order, paymentUrl: null, providerCheckLimited: true };
         }
         const reconciled = await this.reconcilePending(order.id);
         if (reconciled?.status === 'paid') {
@@ -994,7 +1005,12 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         });
       },
 
-      async cancel(id: string, options: { sessionExpired?: boolean } = {}) {
+      /**
+       * Release a pending order, its reservations and its basket lock. The public release route passes
+       * `limitProviderChecks`, so the provider is asked only when the order's provider-check slot is free;
+       * otherwise it throws ProviderCheckLimitedError and changes nothing.
+       */
+      async cancel(id: string, options: { sessionExpired?: boolean; limitProviderChecks?: boolean } = {}) {
         const order = await db.select().from(schema.orders).where(eq(schema.orders.id, id)).get();
         if (!order) return null;
         if (['paid', 'fulfilled', 'partially_refunded', 'refunded'].includes(order.status)) return order;
@@ -1010,6 +1026,9 @@ export function bindCommerceApi(options: CommerceApiOptions) {
           const adapter = paymentAdapters.find((candidate) => candidate.providerId === (order.paymentProvider ?? 'stripe'));
           if (!adapter?.expireCheckoutSession) {
             throw new Error('Payment provider must expire the checkout session before stock can be released');
+          }
+          if (options.limitProviderChecks && !await mayAskPaymentProvider(env, order, paymentAdapters)) {
+            throw new ProviderCheckLimitedError();
           }
           const session = await adapter.getCheckoutSession?.(order.checkoutSessionId);
           if (session?.status === 'complete') {

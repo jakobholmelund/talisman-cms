@@ -8,6 +8,7 @@ import { codeRefusalBody } from './promotions';
 import { CODE_CHECK_LIMIT_MESSAGE, codeChecksOverBasketLimit, codeChecksOverNetworkLimit } from './code-check-limits';
 import { ensureCartSession, readCartSessionToken } from './cookies';
 import { BASKET_LIMIT_MESSAGE, basketCreationOverLimit } from './basket-limits';
+import { PROVIDER_CHECK_RETRY_MESSAGE } from './provider-checks';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { readSetting } from 'talisman-cms/env';
 
@@ -168,7 +169,10 @@ export const ecommerceActions = {
         }
 
         if (cart.checkoutSessionId) {
-          const resumed = await api.orders.resumeFromCart(cart.id);
+          const resumed = await api.orders.resumeFromCart(cart.id, { limitProviderChecks: true });
+          if (resumed?.providerCheckLimited) {
+            throw new ActionError({ code: 'TOO_MANY_REQUESTS', message: PROVIDER_CHECK_RETRY_MESSAGE });
+          }
           if (resumed?.paymentUrl) {
             return { success: true, redirectUrl: resumed.paymentUrl, mode: 'redirect', orderId: resumed.order.id };
           }

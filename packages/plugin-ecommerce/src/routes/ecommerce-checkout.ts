@@ -9,6 +9,7 @@ import { REFERRAL_COOKIE } from '../referrals';
 import { readCartSessionToken } from '../cookies';
 import { codeRefusalBody } from '../promotions';
 import { CODE_CHECK_LIMIT_MESSAGE, codeChecksOverBasketLimit, codeChecksOverNetworkLimit } from '../code-check-limits';
+import { providerCheckLimitResponse } from '../provider-checks';
 
 export const POST: APIRoute = async ({ request, cookies }) => {
   const { env } = await import('cloudflare:workers');
@@ -49,7 +50,8 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     }
 
     if (cart.checkoutSessionId) {
-      const resumed = await api.orders.resumeFromCart(cart.id);
+      const resumed = await api.orders.resumeFromCart(cart.id, { limitProviderChecks: true });
+      if (resumed?.providerCheckLimited) return providerCheckLimitResponse();
       if (resumed?.paymentUrl) {
         return Response.json({ orderId: resumed.order.id, redirectUrl: resumed.paymentUrl, mode: 'redirect' });
       }

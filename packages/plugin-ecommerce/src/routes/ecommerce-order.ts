@@ -4,6 +4,8 @@ import { bindCommerceApi } from '../api';
 import { runtimePaymentAdapters } from '../runtime';
 import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from '../accounts';
 import { readCartSessionToken } from '../cookies';
+import { PROVIDER_CHECK_MIN_ORDER_AGE_SECONDS, ProviderCheckLimitedError, mayAskPaymentProvider,
+  providerCheckLimitResponse } from '../provider-checks';
 
 export const ALL: APIRoute = async ({ request, cookies }) => {
   const sessionToken = readCartSessionToken(cookies);
@@ -25,15 +27,25 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
     const runtimeEnv = env as unknown as TalismanEnv & Record<string, unknown>;
     const customer = await findCustomerSession(runtimeEnv, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
     if (!sessionToken && !customer) return Response.json({ error: 'Order not found' }, { status: 404 });
-    const api = bindCommerceApi({ env: runtimeEnv, paymentAdapters: runtimePaymentAdapters(runtimeEnv) });
+    const paymentAdapters = runtimePaymentAdapters(runtimeEnv);
+    const api = bindCommerceApi({ env: runtimeEnv, paymentAdapters });
     let order = await api.orders.findForSession(orderId, sessionToken, customer?.id);
     if (!order) return Response.json({ error: 'Order not found' }, { status: 404 });
 
     if (request.method === 'POST') {
-      const cancelled = await api.orders.cancel(order.id);
-      return Response.json({ orderId: order.id, status: cancelled?.status });
+      // A release asks the provider about the session first, so it shares the order's slot too.
+      try {
+        const cancelled = await api.orders.cancel(order.id, { limitProviderChecks: true });
+        return Response.json({ orderId: order.id, status: cancelled?.status });
+      } catch (error) {
+        if (error instanceof ProviderCheckLimitedError) return providerCheckLimitResponse();
+        throw error;
+      }
     }
-    if (order.status === 'pending') {
+    // The provider is asked at most once per order per interval, and not before the order is a minute
+    // old, which the webhook normally settles; any other request returns the stored status.
+    if (order.status === 'pending' && await mayAskPaymentProvider(runtimeEnv, order, paymentAdapters,
+      { minOrderAgeSeconds: PROVIDER_CHECK_MIN_ORDER_AGE_SECONDS })) {
       await api.orders.reconcilePending(order.id);
       order = await api.orders.findForSession(orderId, sessionToken, customer?.id);
       if (!order) return Response.json({ error: 'Order not found' }, { status: 404 });
