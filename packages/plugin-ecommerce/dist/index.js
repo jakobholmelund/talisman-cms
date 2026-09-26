@@ -3,18 +3,18 @@ import {
 } from "./chunk-FK3KKBW6.js";
 import {
   StripePaymentAdapter
-} from "./chunk-6LYWG22B.js";
+} from "./chunk-YXG3523I.js";
 import {
   CART_MAX_LINES,
   CART_MAX_LINE_QUANTITY,
   bindCommerceApi,
   reconcileCommerce
-} from "./chunk-V63N6CZ5.js";
-import "./chunk-QMKGVIUH.js";
-import "./chunk-LDDVV7H7.js";
-import "./chunk-NTGZYO6Q.js";
+} from "./chunk-ZCEC33U7.js";
+import "./chunk-BCWAVKQF.js";
 import "./chunk-YXNRHYNN.js";
-import "./chunk-4AHWGSV4.js";
+import "./chunk-2RLPKBNT.js";
+import "./chunk-MS53KKKY.js";
+import "./chunk-NITAPJVN.js";
 import "./chunk-CLEUXV3O.js";
 
 // src/index.ts
@@ -399,7 +399,7 @@ var ecommercePlugin = (config) => {
         collections.push({
           name: "Qualified Referrals",
           slug: "_ecommerce_referrals",
-          description: "First paid purchases attributed to a referral code",
+          description: "First paid purchases attributed to a referral code. An approved referral is pending until its awards appear in the credit ledger; a void one earns nothing.",
           adminSection: "commerce",
           readOnly: true,
           fields: [

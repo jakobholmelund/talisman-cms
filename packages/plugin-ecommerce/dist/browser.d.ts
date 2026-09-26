@@ -24,8 +24,18 @@ declare function getCustomerAccount(): Promise<{
 declare function activateNewCustomerAccount(orderId: string): Promise<{
     account: CustomerAccountSummary;
 }>;
-declare function requestCustomerEmailSignIn(email: string): Promise<{
+/**
+ * Asks for a sign-in link. Pass `turnstileToken` when the site configures a bot check (see
+ * `shopperSignInBotCheck` in `@talisman-cms/plugin-ecommerce/accounts`); a missing or failed check is
+ * refused with "The security check failed. Please try again." `limited: true` means today's general
+ * sign-in email budget is spent: only existing customers still receive a link, and every address
+ * gets this same answer.
+ */
+declare function requestCustomerEmailSignIn(email: string, options?: {
+    turnstileToken?: string;
+}): Promise<{
     accepted: true;
+    limited?: true;
 }>;
 type SignInLocation = Pick<Location, 'pathname' | 'search' | 'hash'>;
 type SignInHistory = Pick<History, 'replaceState' | 'state'>;

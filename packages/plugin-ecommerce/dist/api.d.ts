@@ -1,5 +1,13 @@
 import { TalismanEnv } from 'talisman-cms/client';
-import { P as PaymentProviderAdapter } from './payments-9Bikdd3h.js';
+import { P as PaymentProviderAdapter } from './payments-B8lp8sbe.js';
+
+/** The answer when an order's slot is taken; it never says anything about the payment itself. */
+declare const PROVIDER_CHECK_RETRY_MESSAGE = "The payment session was checked moments ago. Please try again in 15 seconds.";
+/** A limited release found the order's slot taken; nothing was asked or changed. */
+declare class ProviderCheckLimitedError extends Error {
+    readonly name = "ProviderCheckLimitedError";
+    constructor();
+}
 
 interface CommerceApiOptions {
     env: TalismanEnv;
@@ -127,7 +135,67 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
         } | undefined>;
     };
     orders: {
-        resumeFromCart(cartId: string): Promise<{
+        /**
+         * The pending checkout that locks a basket: its payment URL while the provider session is open,
+         * or null once the lock is gone. Public routes pass `limitProviderChecks`, so the provider is asked
+         * only when the order's provider-check slot is free (see provider-checks.ts); otherwise the order is
+         * returned as stored, with `providerCheckLimited` and no payment URL.
+         */
+        resumeFromCart(cartId: string, options?: {
+            limitProviderChecks?: boolean;
+        }): Promise<{
+            order: {
+                id: string;
+                cartId: string | null;
+                userId: string | null;
+                checkoutSessionId: string | null;
+                paymentIntentId: string | null;
+                providerRefundedCents: number;
+                paymentProvider: string | null;
+                referralCode: string | null;
+                referralRewardCents: number;
+                discountCode: string | null;
+                discountAmount: number;
+                giftCardId: string | null;
+                giftCardApplied: number;
+                giftCardRefundedCents: number;
+                creditApplied: number;
+                subtotalAmount: number;
+                status: string;
+                items: {
+                    productId: string;
+                    variantId?: string;
+                    quantity: number;
+                    priceAtPurchase: number;
+                    usesComponents?: boolean;
+                }[];
+                totalAmount: number;
+                currency: string;
+                customerEmail: string | null;
+                shippingAddress: {
+                    name?: string;
+                    line1?: string;
+                    line2?: string;
+                    city?: string;
+                    state?: string;
+                    postalCode?: string;
+                    country?: string;
+                } | null;
+                billingAddress: {
+                    name?: string;
+                    line1?: string;
+                    line2?: string;
+                    city?: string;
+                    state?: string;
+                    postalCode?: string;
+                    country?: string;
+                } | null;
+                createdAt: Date;
+                updatedAt: Date;
+            };
+            paymentUrl: null;
+            providerCheckLimited: boolean;
+        } | {
             order: {
                 id: string;
                 cartId: string | null;
@@ -178,6 +246,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 updatedAt: Date;
             };
             paymentUrl: string | null;
+            providerCheckLimited?: undefined;
         } | null>;
         reconcilePending(id: string): Promise<{
             status: string;
@@ -498,8 +567,14 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             status: string;
             duplicate?: undefined;
         }>;
+        /**
+         * Release a pending order, its reservations and its basket lock. The public release route passes
+         * `limitProviderChecks`, so the provider is asked only when the order's provider-check slot is free;
+         * otherwise it throws ProviderCheckLimitedError and changes nothing.
+         */
         cancel(id: string, options?: {
             sessionExpired?: boolean;
+            limitProviderChecks?: boolean;
         }): Promise<{
             id: string;
             cartId: string | null;
@@ -584,16 +659,25 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             event: string;
             ignored: boolean;
             cancelled?: undefined;
+            orderId?: undefined;
         } | {
             success: boolean;
             event: string;
             ignored?: undefined;
             cancelled?: undefined;
+            orderId?: undefined;
         } | {
             success: boolean;
             event: string;
             cancelled: boolean;
             ignored?: undefined;
+            orderId?: undefined;
+        } | {
+            success: boolean;
+            event: string;
+            orderId: string;
+            ignored?: undefined;
+            cancelled?: undefined;
         }>;
     };
 };
@@ -624,4 +708,4 @@ declare function purgeStaleCommerceData(options: CommercePurgeOptions): Promise<
     authRateLimits: number;
 }>;
 
-export { CART_MAX_LINES, CART_MAX_LINE_QUANTITY, type CartItemInput, type CommerceApiOptions, type CommercePurgeOptions, aggregateComponentDemand, bindCommerceApi, purgeStaleCommerceData, reconcileCommerce };
+export { CART_MAX_LINES, CART_MAX_LINE_QUANTITY, type CartItemInput, type CommerceApiOptions, type CommercePurgeOptions, PROVIDER_CHECK_RETRY_MESSAGE, ProviderCheckLimitedError, aggregateComponentDemand, bindCommerceApi, purgeStaleCommerceData, reconcileCommerce };

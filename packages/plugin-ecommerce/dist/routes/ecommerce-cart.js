@@ -1,18 +1,22 @@
 import {
-  bindCommerceApi
-} from "../chunk-V63N6CZ5.js";
-import "../chunk-QMKGVIUH.js";
-import "../chunk-LDDVV7H7.js";
+  basketCreationOverLimit,
+  basketLimitResponse
+} from "../chunk-4H4JGRIV.js";
 import {
-  CUSTOMER_SESSION_COOKIE,
-  findCustomerSession
-} from "../chunk-NTGZYO6Q.js";
+  bindCommerceApi
+} from "../chunk-ZCEC33U7.js";
+import "../chunk-BCWAVKQF.js";
 import {
   ensureCartSession,
   readCartSessionToken
 } from "../chunk-MDTTSWBR.js";
 import "../chunk-YXNRHYNN.js";
-import "../chunk-4AHWGSV4.js";
+import "../chunk-2RLPKBNT.js";
+import "../chunk-MS53KKKY.js";
+import {
+  CUSTOMER_SESSION_COOKIE,
+  findCustomerSession
+} from "../chunk-NITAPJVN.js";
 import "../chunk-CLEUXV3O.js";
 
 // src/routes/ecommerce-cart.ts
@@ -68,6 +72,9 @@ var ALL = async ({ request, cookies }) => {
         return Response.json(publicCart(null));
       }
       const checked = await api.carts.validateItems(items, existing?.items);
+      if (!existing && await basketCreationOverLimit(env, request.headers.get("cf-connecting-ip"))) {
+        return basketLimitResponse();
+      }
       const sessionToken = ensureCartSession(cookies, new URL(request.url).protocol === "https:");
       const cart = await api.carts.getOrCreate(sessionToken, customer?.id);
       if (!cart) {

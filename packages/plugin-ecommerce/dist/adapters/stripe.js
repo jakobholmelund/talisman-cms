@@ -1,6 +1,8 @@
 import {
-  StripePaymentAdapter
-} from "../chunk-6LYWG22B.js";
+  StripePaymentAdapter,
+  checkoutCouponId
+} from "../chunk-YXG3523I.js";
 export {
-  StripePaymentAdapter
+  StripePaymentAdapter,
+  checkoutCouponId
 };

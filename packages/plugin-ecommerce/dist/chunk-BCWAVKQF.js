@@ -1,9 +1,13 @@
 import {
-  getReferralPolicy
-} from "./chunk-LDDVV7H7.js";
+  GiftCardRefusal
+} from "./chunk-2RLPKBNT.js";
+import {
+  getReferralPolicy,
+  referralTermsError
+} from "./chunk-MS53KKKY.js";
 import {
   hasPurchaseHistory
-} from "./chunk-NTGZYO6Q.js";
+} from "./chunk-NITAPJVN.js";
 import {
   customerAccounts,
   discountCodes,
@@ -54,7 +58,10 @@ var referralSettingsSchema = z.object({
   rewardCents: z.number().int().min(1).max(1e5),
   minOrderCents: z.number().int().min(1).max(1e7),
   attributionDays: z.number().int().min(1).max(90)
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  const termsError = value.enabled ? referralTermsError(value) : null;
+  if (termsError) ctx.addIssue({ code: "custom", path: ["rewardCents"], message: termsError });
+});
 function discountAmountForLines(code, lines, subtotal) {
   if (!Number.isSafeInteger(subtotal) || subtotal < code.minOrderCents) return 0;
   const eligible = code.eligibleProductIds.length ? lines.filter((line) => code.eligibleProductIds.includes(line.productId)) : lines;
@@ -64,39 +71,62 @@ function discountAmountForLines(code, lines, subtotal) {
   const capped = code.type === "percent" && code.maxDiscountCents !== null ? Math.min(raw, code.maxDiscountCents) : raw;
   return Math.max(0, Math.min(capped, subtotal - 50));
 }
+var DiscountCodeRefusal = class extends Error {
+  reason;
+  constructor(reason, message) {
+    super(message);
+    this.name = "DiscountCodeRefusal";
+    this.reason = reason;
+  }
+};
+var CODE_REFUSAL_MESSAGE = "This code is not valid for this order.";
+function codeRefusalBody(error) {
+  if (error instanceof DiscountCodeRefusal) return { error: CODE_REFUSAL_MESSAGE, field: "code" };
+  if (error instanceof GiftCardRefusal) return { error: CODE_REFUSAL_MESSAGE, field: "giftCardCode" };
+  const message = error instanceof Error ? error.message : "";
+  if (message === "Discount code is no longer available") return { error: CODE_REFUSAL_MESSAGE, field: "code" };
+  if (message === "Gift card is no longer available") return { error: CODE_REFUSAL_MESSAGE, field: "giftCardCode" };
+  return null;
+}
 async function evaluateDiscountCode(env, input) {
   const normalizedCode = input.code.trim().toUpperCase();
-  if (!/^[A-Z0-9][A-Z0-9_-]{2,31}$/.test(normalizedCode)) throw new Error("Invalid discount code");
+  if (!/^[A-Z0-9][A-Z0-9_-]{2,31}$/.test(normalizedCode)) throw new DiscountCodeRefusal("format", "Invalid discount code");
   const db = createDbClient(env);
   const code = await db.select().from(discountCodes).where(eq(discountCodes.code, normalizedCode)).get();
-  if (!code || !code.active) throw new Error("Discount code is unavailable");
+  if (!code) throw new DiscountCodeRefusal("unknown", "Discount code is unavailable");
+  if (!code.active) throw new DiscountCodeRefusal("inactive", "Discount code is unavailable");
   const now = Date.now();
   if (code.startsAt && code.startsAt.getTime() > now || code.expiresAt && code.expiresAt.getTime() <= now) {
-    throw new Error("Discount code is outside its active dates");
+    throw new DiscountCodeRefusal("dates", "Discount code is outside its active dates");
   }
   const account = input.accountId ? await db.select().from(customerAccounts).where(eq(customerAccounts.id, input.accountId)).get() : null;
   const emailNormalized = account?.emailNormalized ?? input.customerEmail.trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNormalized)) throw new Error("Valid email required for a discount");
-  if (code.firstOrderOnly && await hasPurchaseHistory(env, { emails: [emailNormalized], accountIds: [account?.id] })) {
-    throw new Error("Discount is for a first purchase only");
+  const checkShopper = input.checkShopperHistory !== false;
+  if (checkShopper && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNormalized)) {
+    throw new DiscountCodeRefusal("email_required", "Valid email required for a discount");
+  }
+  if (checkShopper && code.firstOrderOnly && await hasPurchaseHistory(env, { emails: [emailNormalized], accountIds: [account?.id] })) {
+    throw new DiscountCodeRefusal("first_order", "Discount is for a first purchase only");
   }
   if (code.maxUses !== null) {
     const [{ uses }] = await db.select({ uses: count() }).from(discountRedemptions).where(and(
       eq(discountRedemptions.code, code.code),
       inArray(discountRedemptions.status, ["reserved", "confirmed"])
     ));
-    if (uses >= code.maxUses) throw new Error("Discount code has reached its use limit");
+    if (uses >= code.maxUses) throw new DiscountCodeRefusal("use_limit", "Discount code has reached its use limit");
   }
-  if (code.maxUsesPerCustomer !== null) {
+  if (checkShopper && code.maxUsesPerCustomer !== null) {
     const [{ uses }] = await db.select({ uses: count() }).from(discountRedemptions).where(and(
       eq(discountRedemptions.code, code.code),
       eq(discountRedemptions.emailNormalized, emailNormalized),
       inArray(discountRedemptions.status, ["reserved", "confirmed"])
     ));
-    if (uses >= code.maxUsesPerCustomer) throw new Error("Discount code was already used by this shopper");
+    if (uses >= code.maxUsesPerCustomer) {
+      throw new DiscountCodeRefusal("customer_limit", "Discount code was already used by this shopper");
+    }
   }
   const amount = discountAmountForLines(code, input.lines, input.subtotal);
-  if (!amount) throw new Error("Discount code does not apply to this basket");
+  if (!amount) throw new DiscountCodeRefusal("not_applicable", "Discount code does not apply to this basket");
   return { code: code.code, type: code.type, amount, emailNormalized };
 }
 async function getPromotionsAdmin(env) {
@@ -124,7 +154,9 @@ async function setReferralCodeActive(env, code, active) {
   return { code, active };
 }
 async function saveReferralSettings(env, input) {
-  const values = referralSettingsSchema.parse(input);
+  const parsed = referralSettingsSchema.safeParse(input);
+  if (!parsed.success) throw new Error(parsed.error.issues.map((issue) => issue.message).join("; "));
+  const values = parsed.data;
   const db = createDbClient(env);
   await db.insert(referralSettings).values({ id: "default", ...values, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({ target: referralSettings.id, set: { ...values, updatedAt: /* @__PURE__ */ new Date() } });
   return getReferralPolicy(env);
@@ -179,6 +211,9 @@ export {
   discountCodeSchema,
   referralSettingsSchema,
   discountAmountForLines,
+  DiscountCodeRefusal,
+  CODE_REFUSAL_MESSAGE,
+  codeRefusalBody,
   evaluateDiscountCode,
   getPromotionsAdmin,
   setReferralCodeActive,

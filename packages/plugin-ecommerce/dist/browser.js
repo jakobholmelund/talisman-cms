@@ -23,8 +23,12 @@ function getCustomerAccount() {
 function activateNewCustomerAccount(orderId) {
   return commerceRequest("/api/ecommerce/account", "POST", { orderId });
 }
-function requestCustomerEmailSignIn(email) {
-  return commerceRequest("/api/ecommerce/account", "POST", { email });
+function requestCustomerEmailSignIn(email, options = {}) {
+  return commerceRequest(
+    "/api/ecommerce/account",
+    "POST",
+    options.turnstileToken === void 0 ? { email } : { email, turnstileToken: options.turnstileToken }
+  );
 }
 function readCustomerSignInToken(loc = typeof window === "undefined" ? void 0 : window.location, hist = typeof window === "undefined" ? void 0 : window.history) {
   if (!loc) return null;

@@ -1,6 +1,8 @@
+import { ReferralPolicy } from './referrals.js';
 import { TalismanEnv } from 'talisman-cms/client';
 import { z } from 'zod';
 import { discountCodes } from './schema.js';
+import './payments-B8lp8sbe.js';
 import 'drizzle-orm';
 import 'drizzle-orm/sqlite-core';
 
@@ -76,12 +78,22 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     expiresAt: number | null;
 }>;
 type DiscountCodeInput = z.infer<typeof discountCodeSchema>;
-declare const referralSettingsSchema: z.ZodObject<{
+declare const referralSettingsSchema: z.ZodEffects<z.ZodObject<{
     enabled: z.ZodBoolean;
     rewardCents: z.ZodNumber;
     minOrderCents: z.ZodNumber;
     attributionDays: z.ZodNumber;
 }, "strict", z.ZodTypeAny, {
+    minOrderCents: number;
+    rewardCents: number;
+    enabled: boolean;
+    attributionDays: number;
+}, {
+    minOrderCents: number;
+    rewardCents: number;
+    enabled: boolean;
+    attributionDays: number;
+}>, {
     minOrderCents: number;
     rewardCents: number;
     enabled: boolean;
@@ -97,6 +109,31 @@ declare function discountAmountForLines(code: Pick<typeof discountCodes.$inferSe
     quantity: number;
     priceAtPurchase: number;
 }>, subtotal: number): number;
+/** Why a discount code was refused. The reason is for server-side use; shoppers see one message. */
+type DiscountRefusalReason = 'format' | 'unknown' | 'inactive' | 'dates' | 'email_required' | 'first_order' | 'use_limit' | 'customer_limit' | 'not_applicable';
+/** A discount code refused for this order. `message` is the detailed reason for admin tools and logs. */
+declare class DiscountCodeRefusal extends Error {
+    readonly reason: DiscountRefusalReason;
+    constructor(reason: DiscountRefusalReason, message: string);
+}
+/** The one answer a shopper gets when an entered discount or gift card code is refused. */
+declare const CODE_REFUSAL_MESSAGE = "This code is not valid for this order.";
+/**
+ * The shopper-facing body for an error that refuses an entered code, or null for any other error.
+ * Every reason gets the same message, so the answer does not tell codes apart; the reason stays on
+ * the error. A code used up between evaluation and reservation at checkout counts as refused too.
+ */
+declare function codeRefusalBody(error: unknown): {
+    error: string;
+    field: 'code' | 'giftCardCode';
+} | null;
+/**
+ * Checks a discount code against a basket and returns the discount, or throws a DiscountCodeRefusal.
+ * The shopper rules that need order history (first-order codes and per-customer limits) are checked
+ * against the account when `accountId` is given, otherwise against `customerEmail`. With
+ * `checkShopperHistory: false` they are skipped, for a guest preview that has no verified address;
+ * checkout always checks them.
+ */
 declare function evaluateDiscountCode(env: TalismanEnv, input: {
     code: string;
     customerEmail: string;
@@ -107,6 +144,7 @@ declare function evaluateDiscountCode(env: TalismanEnv, input: {
         priceAtPurchase: number;
     }>;
     subtotal: number;
+    checkShopperHistory?: boolean;
 }): Promise<{
     code: string;
     type: "credit" | "amount" | "percent";
@@ -114,12 +152,7 @@ declare function evaluateDiscountCode(env: TalismanEnv, input: {
     emailNormalized: string;
 }>;
 declare function getPromotionsAdmin(env: TalismanEnv): Promise<{
-    referral: {
-        enabled: boolean;
-        rewardCents: number;
-        minOrderCents: number;
-        attributionDays: number;
-    };
+    referral: ReferralPolicy;
     referralLinks: {
         code: string;
         active: boolean;
@@ -153,12 +186,7 @@ declare function setReferralCodeActive(env: TalismanEnv, code: string, active: b
     code: string;
     active: boolean;
 }>;
-declare function saveReferralSettings(env: TalismanEnv, input: unknown): Promise<{
-    enabled: boolean;
-    rewardCents: number;
-    minOrderCents: number;
-    attributionDays: number;
-}>;
+declare function saveReferralSettings(env: TalismanEnv, input: unknown): Promise<ReferralPolicy>;
 declare function createDiscountCode(env: TalismanEnv, input: unknown): Promise<{
     code: string;
     description: string | null;
@@ -196,4 +224,4 @@ declare function updateDiscountCode(env: TalismanEnv, code: string, input: unkno
     updatedAt: Date;
 } | undefined>;
 
-export { type DiscountCodeInput, createDiscountCode, discountAmountForLines, discountCodeSchema, evaluateDiscountCode, getPromotionsAdmin, referralSettingsSchema, saveReferralSettings, setReferralCodeActive, updateDiscountCode };
+export { CODE_REFUSAL_MESSAGE, type DiscountCodeInput, DiscountCodeRefusal, type DiscountRefusalReason, codeRefusalBody, createDiscountCode, discountAmountForLines, discountCodeSchema, evaluateDiscountCode, getPromotionsAdmin, referralSettingsSchema, saveReferralSettings, setReferralCodeActive, updateDiscountCode };

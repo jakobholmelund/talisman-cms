@@ -6,7 +6,10 @@ declare const CUSTOMER_SESSION_MAX_AGE: number;
 declare const CUSTOMER_EMAIL_DAILY_LIMIT = 200;
 /** Order statuses that count as a purchase for first-order promotions and referrals. */
 declare const PURCHASED_ORDER_STATUSES: readonly ["paid", "fulfilled", "partially_refunded", "refunded"];
-/** The store-wide daily sign-in email limit is used up; the request sent nothing. */
+/**
+ * Kept for compatibility: `requestCustomerEmailSignIn` no longer throws it and answers a spent daily
+ * budget with `{ limited: true }` instead.
+ */
 declare class CustomerEmailLimitError extends Error {
     readonly name = "CustomerEmailLimitError";
     constructor();
@@ -16,6 +19,12 @@ declare class CustomerRequestLimitError extends Error {
     readonly name = "CustomerRequestLimitError";
     constructor();
 }
+/**
+ * The lowercased address, or null. Only a bare address is accepted, checked with the same rule the
+ * email module applies to recipients, so a display name such as `a<victim@example.com>` can never
+ * change who receives the link.
+ */
+declare function normalizeShopperEmail(email: unknown): string | null;
 declare function findCustomerSession(env: TalismanEnv, token?: string | null): Promise<{
     id: string;
     cmsUserId: string | null;
@@ -27,6 +36,16 @@ declare function findCustomerSession(env: TalismanEnv, token?: string | null): P
     createdAt: Date;
     updatedAt: Date;
 } | null>;
+/**
+ * The bot check a storefront should render in its sign-in form, or null when none is configured.
+ * It is on when both `TALISMAN_COMMERCE_TURNSTILE_SITE_KEY` and `TALISMAN_COMMERCE_TURNSTILE_SECRET_KEY`
+ * are set; the account route then refuses email sign-in requests without a valid `turnstileToken`.
+ */
+declare function shopperSignInBotCheck(env: TalismanEnv): {
+    provider: 'turnstile';
+    siteKey: string;
+    action: string;
+} | null;
 /** Basket possession never proves ownership of the checkout email. */
 declare function activateNewCustomer(_env: TalismanEnv, _orderId: string, _basketToken: string): Promise<null>;
 /**
@@ -38,13 +57,33 @@ declare function hasPurchaseHistory(env: TalismanEnv, shopper: {
     emails?: Array<string | null | undefined>;
     accountIds?: Array<string | null | undefined>;
 }): Promise<boolean>;
+interface CustomerEmailSignInOptions {
+    /**
+     * Runs work after the response, such as the Worker's `waitUntil`. Once the general daily budget is
+     * spent, the customer lookup and any send from the reserved budget run through it, so the answer
+     * takes the same time for every address. Without it that work runs before the call returns.
+     */
+    waitUntil?: (task: Promise<unknown>) => void;
+    /**
+     * Receives a failed send from the reserved budget. That failure is never thrown, so the answer stays
+     * the same for every address. Defaults to logging the error's name.
+     */
+    onLimitedSendError?: (error: unknown) => void;
+}
 /**
  * Sends a one-time link to `email`. The caller must deliver it to the address it is given. Only the
  * token's hash and the address are stored; no shopper account exists until the link is used.
- * A rate-limited request returns without sending, so callers can answer it like any other. Throws
- * `CustomerEmailLimitError` once the store has sent its daily number of sign-in emails.
+ * A rate-limited request returns without sending, so callers can answer it like any other.
+ *
+ * The store-wide daily limit has two pools. The general pool (the limit minus the reserve) serves any
+ * address. Once it is spent the call returns `{ limited: true }` for every address, and sends only to
+ * an address with a verified account or a purchase, while the reserved pool lasts and at most
+ * twice a day per address. Otherwise it returns `{ limited: false }`. Send failures outside the
+ * limited state are thrown.
  */
-declare function requestCustomerEmailSignIn(env: TalismanEnv, email: string, linkForToken: (token: string) => string, sendLink: (to: string, link: string) => Promise<void>, sourceIp?: string | null): Promise<void>;
+declare function requestCustomerEmailSignIn(env: TalismanEnv, email: string, linkForToken: (token: string) => string, sendLink: (to: string, link: string) => Promise<void>, sourceIp?: string | null, options?: CustomerEmailSignInOptions): Promise<{
+    limited: boolean;
+}>;
 /**
  * The masked address an unused sign-in link was sent to, for example `j•••@example.com`, so a
  * storefront can show which account the link opens before the shopper confirms. The link stays
@@ -81,4 +120,4 @@ declare function listCustomerOrders(env: TalismanEnv, accountId: string): Promis
     createdAt: Date;
 }[]>;
 
-export { CUSTOMER_EMAIL_DAILY_LIMIT, CUSTOMER_SESSION_COOKIE, CUSTOMER_SESSION_MAX_AGE, CustomerEmailLimitError, CustomerRequestLimitError, PURCHASED_ORDER_STATUSES, activateNewCustomer, consumeCustomerEmailSignIn, findCustomerSession, hasPurchaseHistory, listCustomerOrders, previewCustomerEmailSignIn, requestCustomerEmailSignIn, revokeCustomerSession };
+export { CUSTOMER_EMAIL_DAILY_LIMIT, CUSTOMER_SESSION_COOKIE, CUSTOMER_SESSION_MAX_AGE, CustomerEmailLimitError, type CustomerEmailSignInOptions, CustomerRequestLimitError, PURCHASED_ORDER_STATUSES, activateNewCustomer, consumeCustomerEmailSignIn, findCustomerSession, hasPurchaseHistory, listCustomerOrders, normalizeShopperEmail, previewCustomerEmailSignIn, requestCustomerEmailSignIn, revokeCustomerSession, shopperSignInBotCheck };

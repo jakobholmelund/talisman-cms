@@ -1,5 +1,9 @@
 // src/adapters/stripe.ts
 import Stripe from "stripe";
+function checkoutCouponId(orderId) {
+  if (!/^[A-Za-z0-9_-]{1,120}$/.test(orderId)) throw new Error("Order id cannot name a checkout coupon");
+  return `${orderId}_discount`;
+}
 var StripePaymentAdapter = class {
   providerId = "stripe";
   stripe;
@@ -29,17 +33,21 @@ var StripePaymentAdapter = class {
       quantity: item.quantity
     }));
     const totalDiscount = (params.creditApplied ?? 0) + (params.discountApplied ?? 0) + (params.giftCardApplied ?? 0);
+    const expiresAt = Math.floor(Date.now() / 1e3) + 31 * 60;
     const coupon = totalDiscount ? await this.stripe.coupons.create({
+      id: checkoutCouponId(params.orderId),
       amount_off: totalDiscount,
       currency: "usd",
       duration: "once",
+      max_redemptions: 1,
+      redeem_by: expiresAt,
       name: params.giftCardApplied ? "Gift card and checkout adjustments" : "Promotion and store credit"
     }, { idempotencyKey: `${params.orderId}:discount` }) : null;
     const session = await this.stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: lineItems,
       mode: "payment",
-      expires_at: Math.floor(Date.now() / 1e3) + 30 * 60,
+      expires_at: expiresAt,
       success_url: params.successUrl,
       cancel_url: params.cancelUrl,
       customer_email: params.customerEmail,
@@ -81,6 +89,14 @@ var StripePaymentAdapter = class {
   async expireCheckoutSession(sessionId) {
     await this.stripe.checkout.sessions.expire(sessionId);
   }
+  async discardCheckoutDiscount(orderId) {
+    try {
+      await this.stripe.coupons.del(checkoutCouponId(orderId));
+    } catch (error) {
+      if (error?.code === "resource_missing" || error?.statusCode === 404) return;
+      throw error;
+    }
+  }
   async getCheckoutSession(sessionId) {
     const session = await this.stripe.checkout.sessions.retrieve(sessionId);
     return {
@@ -93,8 +109,15 @@ var StripePaymentAdapter = class {
       customerEmail: session.customer_details?.email ?? session.customer_email
     };
   }
+  async getDisputeStatus(paymentIntentId) {
+    const disputes = await this.stripe.disputes.list({ payment_intent: paymentIntentId, limit: 10 });
+    if (disputes.data.some((dispute) => dispute.status === "lost")) return "lost";
+    const settled = /* @__PURE__ */ new Set(["won", "prevented", "warning_closed"]);
+    return disputes.data.some((dispute) => !settled.has(dispute.status)) ? "open" : "none";
+  }
 };
 
 export {
+  checkoutCouponId,
   StripePaymentAdapter
 };

@@ -2,25 +2,33 @@ import {
   checkoutSchema
 } from "../chunk-WVDCIW2W.js";
 import {
+  CODE_CHECK_LIMIT_MESSAGE,
+  codeChecksOverBasketLimit,
+  codeChecksOverNetworkLimit
+} from "../chunk-PIVUHCSX.js";
+import {
   runtimePaymentAdapters
-} from "../chunk-CP2YO37X.js";
-import "../chunk-6LYWG22B.js";
+} from "../chunk-K47ZHGKG.js";
+import "../chunk-YXG3523I.js";
 import {
-  bindCommerceApi
-} from "../chunk-V63N6CZ5.js";
-import "../chunk-QMKGVIUH.js";
+  bindCommerceApi,
+  providerCheckLimitResponse
+} from "../chunk-ZCEC33U7.js";
 import {
-  REFERRAL_COOKIE
-} from "../chunk-LDDVV7H7.js";
-import {
-  CUSTOMER_SESSION_COOKIE,
-  findCustomerSession
-} from "../chunk-NTGZYO6Q.js";
+  codeRefusalBody
+} from "../chunk-BCWAVKQF.js";
 import {
   readCartSessionToken
 } from "../chunk-MDTTSWBR.js";
 import "../chunk-YXNRHYNN.js";
-import "../chunk-4AHWGSV4.js";
+import "../chunk-2RLPKBNT.js";
+import {
+  REFERRAL_COOKIE
+} from "../chunk-MS53KKKY.js";
+import {
+  CUSTOMER_SESSION_COOKIE,
+  findCustomerSession
+} from "../chunk-NITAPJVN.js";
 import "../chunk-CLEUXV3O.js";
 
 // src/routes/ecommerce-checkout.ts
@@ -50,7 +58,7 @@ var POST = async ({ request, cookies }) => {
       paymentAdapters: runtimePaymentAdapters(runtimeEnv)
     });
     const customer = await findCustomerSession(runtimeEnv, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
-    const cart = await api.carts.getOrCreate(sessionToken, customer?.id);
+    const cart = (customer?.id ? await api.carts.claim(sessionToken, customer.id) : null) ?? await api.carts.find(sessionToken, customer?.id);
     if (!cart || cart.items.length === 0) {
       return new Response(JSON.stringify({ error: "Cart is empty" }), {
         status: 400,
@@ -58,7 +66,8 @@ var POST = async ({ request, cookies }) => {
       });
     }
     if (cart.checkoutSessionId) {
-      const resumed = await api.orders.resumeFromCart(cart.id);
+      const resumed = await api.orders.resumeFromCart(cart.id, { limitProviderChecks: true });
+      if (resumed?.providerCheckLimited) return providerCheckLimitResponse();
       if (resumed?.paymentUrl) {
         return Response.json({ orderId: resumed.order.id, redirectUrl: resumed.paymentUrl, mode: "redirect" });
       }
@@ -74,6 +83,12 @@ var POST = async ({ request, cookies }) => {
         status: 400,
         headers: { "Content-Type": "application/json" }
       });
+    }
+    if (body.discountCode || body.giftCardCode) {
+      const now = Math.floor(Date.now() / 1e3);
+      if (await codeChecksOverNetworkLimit(runtimeEnv, request.headers.get("cf-connecting-ip"), now) || await codeChecksOverBasketLimit(runtimeEnv, cart.id, now)) {
+        return Response.json({ error: CODE_CHECK_LIMIT_MESSAGE }, { status: 429 });
+      }
     }
     const { order, paymentUrl } = await api.orders.createFromCart(cart.id, {
       customerEmail,
@@ -98,7 +113,9 @@ var POST = async ({ request, cookies }) => {
       headers: { "Content-Type": "application/json" }
     });
   } catch (error) {
-    const status = error.message === "Cart is empty or not found" || error.message === "Cart is closed" || error.message === "Checkout already started for this cart" || error.message?.startsWith("Insufficient stock for ") || error.message?.startsWith("Insufficient stock or checkout") || error.message?.startsWith("Product is not available") || error.message?.startsWith("Select an option for ") || error.message?.startsWith("A positive price is required") || error.message?.startsWith("Insufficient shared component stock") || error.message === "Shipping address is required for physical products" || error.message === "Discount code is no longer available" || error.message === "Gift card is no longer available" || error.message === "Store credit changed during checkout; please try again" || error.message?.startsWith("Discount code") || error.message?.startsWith("Gift card") || error.message === "A payment provider must be selected and configured before checkout" ? 409 : 500;
+    const refusal = codeRefusalBody(error);
+    if (refusal) return Response.json(refusal, { status: 409 });
+    const status = error.message === "Cart is empty or not found" || error.message === "Cart is closed" || error.message === "Checkout already started for this cart" || error.message?.startsWith("Insufficient stock for ") || error.message?.startsWith("Insufficient stock or checkout") || error.message?.startsWith("Product is not available") || error.message?.startsWith("Select an option for ") || error.message?.startsWith("A positive price is required") || error.message?.startsWith("Insufficient shared component stock") || error.message === "Shipping address is required for physical products" || error.message === "Store credit changed during checkout; please try again" || error.message?.startsWith("Discount code") || error.message?.startsWith("Gift card") || error.message === "A payment provider must be selected and configured before checkout" ? 409 : 500;
     return new Response(JSON.stringify({ error: error.message }), {
       status,
       headers: { "Content-Type": "application/json" }

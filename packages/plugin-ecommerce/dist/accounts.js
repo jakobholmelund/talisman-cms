@@ -10,10 +10,12 @@ import {
   findCustomerSession,
   hasPurchaseHistory,
   listCustomerOrders,
+  normalizeShopperEmail,
   previewCustomerEmailSignIn,
   requestCustomerEmailSignIn,
-  revokeCustomerSession
-} from "./chunk-NTGZYO6Q.js";
+  revokeCustomerSession,
+  shopperSignInBotCheck
+} from "./chunk-NITAPJVN.js";
 import "./chunk-CLEUXV3O.js";
 export {
   CUSTOMER_EMAIL_DAILY_LIMIT,
@@ -27,7 +29,9 @@ export {
   findCustomerSession,
   hasPurchaseHistory,
   listCustomerOrders,
+  normalizeShopperEmail,
   previewCustomerEmailSignIn,
   requestCustomerEmailSignIn,
-  revokeCustomerSession
+  revokeCustomerSession,
+  shopperSignInBotCheck
 };

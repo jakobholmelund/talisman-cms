@@ -1,4 +1,8 @@
 import {
+  getReferralPolicy,
+  referralReversalStatements
+} from "./chunk-MS53KKKY.js";
+import {
   giftCardPurchases,
   giftCards
 } from "./chunk-CLEUXV3O.js";
@@ -104,17 +108,25 @@ async function setGiftCardActive(env, id, active) {
   if (!result.results?.length) throw new Error("Gift card purchase requires review");
   return { id, status: active ? "active" : "suspended" };
 }
+var GiftCardRefusal = class extends Error {
+  reason;
+  constructor(reason, message) {
+    super(message);
+    this.name = "GiftCardRefusal";
+    this.reason = reason;
+  }
+};
 async function evaluateGiftCard(env, code, amountDue) {
   const normalized = code.trim().toUpperCase();
-  if (!/^GIFT-[A-F0-9]{32}$/.test(normalized)) throw new Error("Invalid gift card code");
+  if (!/^GIFT-[A-F0-9]{32}$/.test(normalized)) throw new GiftCardRefusal("format", "Invalid gift card code");
   const db = createDbClient(env);
   const card = await db.select().from(giftCards).where(eq(giftCards.codeHash, await hashGiftCardSecret(normalized))).get();
   if (!card || card.status !== "active" || card.currency !== "usd" || card.balanceCents <= 0) {
-    throw new Error("Gift card is unavailable");
+    throw new GiftCardRefusal("unavailable", "Gift card is unavailable");
   }
-  if (!Number.isSafeInteger(amountDue) || amountDue <= 0) throw new Error("No balance remains to pay");
+  if (!Number.isSafeInteger(amountDue) || amountDue <= 0) throw new GiftCardRefusal("nothing_due", "No balance remains to pay");
   const amount = card.balanceCents >= amountDue ? amountDue : Math.min(card.balanceCents, Math.max(0, amountDue - 50));
-  if (amount <= 0) throw new Error("Gift card cannot cover this order or a valid split payment");
+  if (amount <= 0) throw new GiftCardRefusal("cannot_cover", "Gift card cannot cover this order or a valid split payment");
   return { id: card.id, codeSuffix: card.codeSuffix, amount, remainingCents: card.balanceCents };
 }
 async function getGiftCardBalance(env, code) {
@@ -271,7 +283,7 @@ var refundSchema = z.object({
 async function refundGiftCardTender(env, actor, input) {
   const values = refundSchema.parse(input);
   if (!actor.trim()) throw new Error("Administrator identity is required");
-  const row = await env.DB.prepare(`SELECT id,gift_card_id,gift_card_applied,gift_card_refunded_cents,status
+  const row = await env.DB.prepare(`SELECT id,gift_card_id,gift_card_applied,gift_card_refunded_cents,status,referral_code
     FROM _ecommerce_orders WHERE id = ?`).bind(values.orderId).all();
   const current = row.results?.[0];
   if (!current?.gift_card_id || !["paid", "fulfilled", "partially_refunded"].includes(current.status)) {
@@ -280,17 +292,15 @@ async function refundGiftCardTender(env, actor, input) {
   const remaining = current.gift_card_applied - current.gift_card_refunded_cents;
   if (!values.amountCents || values.amountCents > remaining) throw new Error("Refund exceeds gift card payment");
   const id = `gfr_${crypto.randomUUID()}`;
-  await env.DB.prepare(`INSERT INTO _ecommerce_gift_card_refunds
+  const now = Math.floor(Date.now() / 1e3);
+  const statements = [env.DB.prepare(`INSERT INTO _ecommerce_gift_card_refunds
     (id,card_id,order_id,amount_cents,admin_actor,reason,created_at)
-    VALUES (?,?,?,?,?,?,?)`).bind(
-    id,
-    current.gift_card_id,
-    values.orderId,
-    values.amountCents,
-    actor,
-    values.reason,
-    Math.floor(Date.now() / 1e3)
-  ).run();
+    VALUES (?,?,?,?,?,?,?)`).bind(id, current.gift_card_id, values.orderId, values.amountCents, actor, values.reason, now)];
+  if (current.referral_code) {
+    const policy = await getReferralPolicy(env);
+    statements.push(...referralReversalStatements(env, values.orderId, { minOrderCents: policy.minOrderCents, now }));
+  }
+  await env.DB.batch(statements);
   return { id, orderId: values.orderId, amountCents: values.amountCents };
 }
 async function refundGiftCardOnlyOrder(env, actor, input) {
@@ -331,6 +341,7 @@ export {
   issueAdminGiftCard,
   getGiftCardsAdmin,
   setGiftCardActive,
+  GiftCardRefusal,
   evaluateGiftCard,
   getGiftCardBalance,
   startGiftCardPurchase,

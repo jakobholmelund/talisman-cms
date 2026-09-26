@@ -1,25 +1,37 @@
 import {
+  BASKET_LIMIT_MESSAGE,
+  basketCreationOverLimit
+} from "./chunk-4H4JGRIV.js";
+import {
+  CODE_CHECK_LIMIT_MESSAGE,
+  codeChecksOverBasketLimit,
+  codeChecksOverNetworkLimit
+} from "./chunk-PIVUHCSX.js";
+import {
   runtimePaymentAdapters
-} from "./chunk-CP2YO37X.js";
-import "./chunk-6LYWG22B.js";
+} from "./chunk-K47ZHGKG.js";
+import "./chunk-YXG3523I.js";
 import {
   CART_MAX_LINE_QUANTITY,
+  PROVIDER_CHECK_RETRY_MESSAGE,
   bindCommerceApi
-} from "./chunk-V63N6CZ5.js";
-import "./chunk-QMKGVIUH.js";
+} from "./chunk-ZCEC33U7.js";
 import {
-  REFERRAL_COOKIE
-} from "./chunk-LDDVV7H7.js";
-import {
-  CUSTOMER_SESSION_COOKIE,
-  findCustomerSession
-} from "./chunk-NTGZYO6Q.js";
+  codeRefusalBody
+} from "./chunk-BCWAVKQF.js";
 import {
   ensureCartSession,
   readCartSessionToken
 } from "./chunk-MDTTSWBR.js";
 import "./chunk-YXNRHYNN.js";
-import "./chunk-4AHWGSV4.js";
+import "./chunk-2RLPKBNT.js";
+import {
+  REFERRAL_COOKIE
+} from "./chunk-MS53KKKY.js";
+import {
+  CUSTOMER_SESSION_COOKIE,
+  findCustomerSession
+} from "./chunk-NITAPJVN.js";
 import "./chunk-CLEUXV3O.js";
 
 // src/actions.ts
@@ -62,8 +74,11 @@ var ecommerceActions = {
         const { env } = await import("cloudflare:workers");
         const api = bindCommerceApi({ env });
         await api.carts.validateItems([{ productId: input.productId, variantId: input.variantId, quantity: input.quantity }]);
-        const sessionToken = getOrCreateCartSession(context);
         const customer = await findCustomerSession(env, context.cookies?.get?.(CUSTOMER_SESSION_COOKIE)?.value);
+        if (!await currentCart(api, context, customer?.id) && await basketCreationOverLimit(env, context.request?.headers?.get?.("cf-connecting-ip"))) {
+          throw new ActionError({ code: "TOO_MANY_REQUESTS", message: BASKET_LIMIT_MESSAGE });
+        }
+        const sessionToken = getOrCreateCartSession(context);
         const cart = await api.carts.getOrCreate(sessionToken, customer?.id);
         if (!cart) {
           throw new ActionError({
@@ -145,14 +160,14 @@ var ecommerceActions = {
       if (readSetting(env, "COMMERCE_CHECKOUT_ENABLED") !== "true") {
         throw new ActionError({ code: "FORBIDDEN", message: "Checkout is disabled" });
       }
-      const sessionToken = getOrCreateCartSession(context);
+      const sessionToken = context.cookies ? readCartSessionToken(context.cookies) : void 0;
       try {
         const api = bindCommerceApi({
           env,
           paymentAdapters: runtimePaymentAdapters(env)
         });
         const customer = await findCustomerSession(env, context.cookies?.get?.(CUSTOMER_SESSION_COOKIE)?.value);
-        const cart = await api.carts.getOrCreate(sessionToken, customer?.id);
+        const cart = await currentCart(api, context, customer?.id);
         if (!cart || !Array.isArray(cart.items) || cart.items.length === 0) {
           throw new ActionError({
             code: "BAD_REQUEST",
@@ -160,7 +175,10 @@ var ecommerceActions = {
           });
         }
         if (cart.checkoutSessionId) {
-          const resumed = await api.orders.resumeFromCart(cart.id);
+          const resumed = await api.orders.resumeFromCart(cart.id, { limitProviderChecks: true });
+          if (resumed?.providerCheckLimited) {
+            throw new ActionError({ code: "TOO_MANY_REQUESTS", message: PROVIDER_CHECK_RETRY_MESSAGE });
+          }
           if (resumed?.paymentUrl) {
             return { success: true, redirectUrl: resumed.paymentUrl, mode: "redirect", orderId: resumed.order.id };
           }
@@ -172,6 +190,13 @@ var ecommerceActions = {
         const siteUrl = (context.url ? context.url.origin : "") || "http://localhost:4321";
         const successUrl = `${siteUrl}/checkout/success?order={ORDER_ID}`;
         const cancelUrl = `${siteUrl}/checkout/cancel?order={ORDER_ID}`;
+        if (input.discountCode || input.giftCardCode) {
+          const now = Math.floor(Date.now() / 1e3);
+          const sourceIp = context.request?.headers?.get?.("cf-connecting-ip");
+          if (await codeChecksOverNetworkLimit(env, sourceIp, now) || await codeChecksOverBasketLimit(env, cart.id, now)) {
+            throw new ActionError({ code: "TOO_MANY_REQUESTS", message: CODE_CHECK_LIMIT_MESSAGE });
+          }
+        }
         const result = await api.orders.createFromCart(cart.id, {
           customerEmail: input.customerEmail,
           providerId: "stripe",
@@ -191,6 +216,8 @@ var ecommerceActions = {
         };
       } catch (error) {
         if (error instanceof ActionError) throw error;
+        const refusal = codeRefusalBody(error);
+        if (refusal) throw new ActionError({ code: "CONFLICT", message: refusal.error });
         throw new ActionError({
           code: "BAD_REQUEST",
           message: error.message || "Failed to complete checkout"

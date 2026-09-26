@@ -1,5 +1,5 @@
 import { TalismanEnv } from 'talisman-cms/client';
-import { P as PaymentProviderAdapter } from './payments-9Bikdd3h.js';
+import { P as PaymentProviderAdapter } from './payments-B8lp8sbe.js';
 
 declare function hashGiftCardSecret(value: string): Promise<string>;
 declare function issueAdminGiftCard(env: TalismanEnv, actor: string, input: unknown): Promise<{
@@ -25,6 +25,14 @@ declare function setGiftCardActive(env: TalismanEnv, id: string, active: boolean
     id: string;
     status: string;
 }>;
+/** Why a gift card was refused. The reason is for server-side use; shoppers see one message. */
+type GiftCardRefusalReason = 'format' | 'unavailable' | 'nothing_due' | 'cannot_cover';
+/** A gift card refused for this order. `message` is the detailed reason for admin tools and logs. */
+declare class GiftCardRefusal extends Error {
+    readonly reason: GiftCardRefusalReason;
+    constructor(reason: GiftCardRefusalReason, message: string);
+}
+/** Checks a gift card against the amount still due and returns what it pays, or throws a GiftCardRefusal. */
 declare function evaluateGiftCard(env: TalismanEnv, code: string, amountDue: number): Promise<{
     id: string;
     codeSuffix: string;
@@ -102,4 +110,4 @@ declare function refundGiftCardOnlyOrder(env: TalismanEnv, actor: string, input:
     status: string;
 }>;
 
-export { confirmGiftCardPurchase, evaluateGiftCard, expireGiftCardPurchase, getGiftCardBalance, getGiftCardsAdmin, getPurchasedGiftCard, hashGiftCardSecret, issueAdminGiftCard, reconcileGiftCardPurchase, recordGiftCardPurchaseRefund, refundGiftCardOnlyOrder, refundGiftCardTender, setGiftCardActive, startGiftCardPurchase };
+export { GiftCardRefusal, type GiftCardRefusalReason, confirmGiftCardPurchase, evaluateGiftCard, expireGiftCardPurchase, getGiftCardBalance, getGiftCardsAdmin, getPurchasedGiftCard, hashGiftCardSecret, issueAdminGiftCard, reconcileGiftCardPurchase, recordGiftCardPurchaseRefund, refundGiftCardOnlyOrder, refundGiftCardTender, setGiftCardActive, startGiftCardPurchase };

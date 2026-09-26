@@ -1,6 +1,6 @@
 import {
   StripePaymentAdapter
-} from "./chunk-6LYWG22B.js";
+} from "./chunk-YXG3523I.js";
 
 // src/runtime.ts
 import { readSetting } from "talisman-cms/env";

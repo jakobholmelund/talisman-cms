@@ -1,6 +1,6 @@
 import { BlockDefinition, Plugin } from 'talisman-cms';
 export { CART_MAX_LINES, CART_MAX_LINE_QUANTITY, bindCommerceApi, reconcileCommerce } from './api.js';
-export { P as PaymentProviderAdapter, V as ValidatedWebhookEvent } from './payments-9Bikdd3h.js';
+export { P as PaymentProviderAdapter, V as ValidatedWebhookEvent } from './payments-B8lp8sbe.js';
 export { StripePaymentAdapter } from './adapters/stripe.js';
 export { AdminTestPaymentAdapter } from './adapters/admin-test.js';
 import 'talisman-cms/client';

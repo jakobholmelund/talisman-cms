@@ -1,14 +1,6 @@
 import {
   evaluateDiscountCode
-} from "./chunk-QMKGVIUH.js";
-import {
-  findReferralCode,
-  getReferralPolicy
-} from "./chunk-LDDVV7H7.js";
-import {
-  PURCHASED_ORDER_STATUSES,
-  hasPurchaseHistory
-} from "./chunk-NTGZYO6Q.js";
+} from "./chunk-BCWAVKQF.js";
 import {
   fulfillCommerceOrder
 } from "./chunk-YXNRHYNN.js";
@@ -18,7 +10,25 @@ import {
   expireGiftCardPurchase,
   reconcileGiftCardPurchase,
   recordGiftCardPurchaseRefund
-} from "./chunk-4AHWGSV4.js";
+} from "./chunk-2RLPKBNT.js";
+import {
+  canonicalEmail,
+  canonicalEmailSql,
+  canonicalEmails,
+  canonicalPurchaseParams,
+  canonicalPurchaseSql,
+  findReferralCode,
+  getReferralPolicy,
+  hasCanonicalPurchase,
+  referralReversalStatements,
+  releaseReferralAwards,
+  reverseReferralForOrder
+} from "./chunk-MS53KKKY.js";
+import {
+  PURCHASED_ORDER_STATUSES,
+  claimInterval,
+  hasPurchaseHistory
+} from "./chunk-NITAPJVN.js";
 import {
   carts,
   componentReservations,
@@ -29,6 +39,7 @@ import {
   productVariantValues,
   productVariants,
   products,
+  referralCodes,
   stocks,
   variantComponents,
   variants
@@ -37,6 +48,31 @@ import {
 // src/api.ts
 import { createDbClient } from "talisman-cms/client";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+
+// src/provider-checks.ts
+var PROVIDER_CHECK_INTERVAL_SECONDS = 15;
+var PROVIDER_CHECK_MIN_ORDER_AGE_SECONDS = 60;
+var PROVIDER_CHECK_RETRY_MESSAGE = "The payment session was checked moments ago. Please try again in 15 seconds.";
+var ProviderCheckLimitedError = class extends Error {
+  name = "ProviderCheckLimitedError";
+  constructor() {
+    super(PROVIDER_CHECK_RETRY_MESSAGE);
+  }
+};
+function providerCheckLimitResponse() {
+  return Response.json({ error: PROVIDER_CHECK_RETRY_MESSAGE }, {
+    status: 429,
+    headers: { "Retry-After": String(PROVIDER_CHECK_INTERVAL_SECONDS), "Cache-Control": "no-store" }
+  });
+}
+async function mayAskPaymentProvider(env, order, paymentAdapters, { minOrderAgeSeconds = 0, now = Math.floor(Date.now() / 1e3) } = {}) {
+  const provider = order.paymentProvider ?? "stripe";
+  if (!paymentAdapters.some((adapter) => adapter.providerId === provider)) return true;
+  if (now - Math.floor(order.createdAt.getTime() / 1e3) < minOrderAgeSeconds) return false;
+  return claimInterval(env, `order-status:${order.id}`, PROVIDER_CHECK_INTERVAL_SECONDS, now);
+}
+
+// src/api.ts
 var CART_MAX_LINES = 50;
 var CART_MAX_LINE_QUANTITY = 99;
 var CART_ID_MAX_LENGTH = 128;
@@ -71,6 +107,18 @@ function aggregateComponentDemand(items) {
 function bindCommerceApi(options) {
   const { env, paymentAdapters = [] } = options;
   const db = createDbClient(env);
+  async function discardCheckoutDiscount(adapter, orderId) {
+    if (!adapter?.discardCheckoutDiscount) return;
+    try {
+      await adapter.discardCheckoutDiscount(orderId);
+    } catch (error) {
+      console.warn("[commerce] Checkout discount could not be discarded", {
+        provider: adapter.providerId,
+        name: error instanceof Error ? error.name : typeof error,
+        code: typeof error?.code === "string" ? error.code : void 0
+      });
+    }
+  }
   async function resolveSelectedVariant(product, variantId) {
     const variantValue = await db.select().from(productVariantValues).where(eq(productVariantValues.id, variantId)).get();
     if (variantValue) {
@@ -196,41 +244,52 @@ function bindCommerceApi(options) {
         WHERE id = ? AND status = 'paid' AND user_id IS NULL`).bind(normalizedEmail, params.orderId));
     }
     if (order.referralCode && order.referralRewardCents > 0 && params.provider !== "admin_test") {
-      const purchased = PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(", ");
-      statements.push(env.DB.prepare(`INSERT INTO _ecommerce_referrals
-        (id, code, referrer_account_id, referred_account_id, order_id, reward_cents, currency, status, created_at, updated_at)
-        SELECT ?, rc.code, rc.account_id, o.user_id, o.id, ?, o.currency, 'approved', ?, ?
-        FROM _ecommerce_orders o
-        JOIN _ecommerce_referral_codes rc ON rc.code = o.referral_code
-        JOIN _ecommerce_customer_accounts referrer ON referrer.id = rc.account_id
-        JOIN _ecommerce_customer_accounts buyer ON buyer.id = o.user_id
-        WHERE o.id = ? AND o.status = 'paid' AND rc.account_id <> o.user_id
-          AND referrer.email_normalized NOT IN (?, buyer.email_normalized)
-          AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders prior
-            WHERE prior.id <> o.id AND prior.status IN (${purchased})
-              AND COALESCE(prior.payment_provider, 'stripe') <> 'admin_test'
-              AND (prior.user_id = o.user_id OR lower(prior.customer_email) IN (?, buyer.email_normalized)
-                OR prior.user_id IN (SELECT id FROM _ecommerce_customer_accounts WHERE email_normalized = ?)))
-        ON CONFLICT DO NOTHING`).bind(
-        `ref_${order.id}`,
-        order.referralRewardCents,
-        timestamp,
-        timestamp,
-        params.orderId,
-        normalizedEmail,
-        normalizedEmail,
-        normalizedEmail
-      ));
-      statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
-        (id, account_id, order_id, kind, amount_cents, created_at)
-        SELECT ?, referrer_account_id, order_id, 'referral_award', reward_cents, ?
-        FROM _ecommerce_referrals WHERE order_id = ? AND status = 'approved'
-        ON CONFLICT(order_id, kind) DO NOTHING`).bind(`credit_ref_${order.id}`, timestamp, params.orderId));
-      statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
-        (id, account_id, order_id, kind, amount_cents, created_at)
-        SELECT ?, referred_account_id, order_id, 'welcome_award', reward_cents, ?
-        FROM _ecommerce_referrals WHERE order_id = ? AND status = 'approved'
-        ON CONFLICT(order_id, kind) DO NOTHING`).bind(`credit_welcome_${order.id}`, timestamp, params.orderId));
+      const policy = await getReferralPolicy(env);
+      const referrer = await db.select({ emailNormalized: customerAccounts.emailNormalized }).from(referralCodes).innerJoin(customerAccounts, eq(customerAccounts.id, referralCodes.accountId)).where(eq(referralCodes.code, order.referralCode)).get();
+      const buyerAccount = order.userId ? await db.select({ emailNormalized: customerAccounts.emailNormalized }).from(customerAccounts).where(eq(customerAccounts.id, order.userId)).get() : void 0;
+      const checkoutEmail = (order.customerEmail || "").trim().toLowerCase();
+      const buyerCanonicals = canonicalEmails([checkoutEmail, normalizedEmail, buyerAccount?.emailNormalized]);
+      const referrerCanonical = canonicalEmail(referrer?.emailNormalized);
+      if (referrerCanonical && buyerCanonicals.length && !buyerCanonicals.includes(referrerCanonical)) {
+        const purchased = PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(", ");
+        statements.push(env.DB.prepare(`INSERT INTO _ecommerce_referrals
+          (id, code, referrer_account_id, referred_account_id, order_id, reward_cents, currency, status, created_at, updated_at)
+          SELECT ?, rc.code, rc.account_id, o.user_id, o.id, ?, o.currency, 'approved', ?, ?
+          FROM _ecommerce_orders o
+          JOIN _ecommerce_referral_codes rc ON rc.code = o.referral_code
+          JOIN _ecommerce_customer_accounts referrer ON referrer.id = rc.account_id
+          JOIN _ecommerce_customer_accounts buyer ON buyer.id = o.user_id
+          WHERE o.id = ? AND o.status = 'paid' AND rc.account_id <> o.user_id
+            AND referrer.email_normalized NOT IN (?, ?, buyer.email_normalized)
+            AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders prior
+              WHERE prior.id <> o.id AND prior.status IN (${purchased})
+                AND COALESCE(prior.payment_provider, 'stripe') <> 'admin_test'
+                AND (prior.user_id = o.user_id OR lower(prior.customer_email) IN (?, ?, buyer.email_normalized)
+                  OR prior.user_id IN (SELECT id FROM _ecommerce_customer_accounts WHERE email_normalized IN (?, ?))))
+            AND NOT ${canonicalPurchaseSql(buyerCanonicals.length)}
+            AND (SELECT COUNT(*) FROM _ecommerce_referrals recent
+              JOIN _ecommerce_customer_accounts recent_referrer ON recent_referrer.id = recent.referrer_account_id
+              WHERE recent.status = 'approved' AND recent.created_at > ?
+                AND (recent.referrer_account_id = rc.account_id
+                  OR ${canonicalEmailSql("recent_referrer.email_normalized")} = ?)) < ?
+          ON CONFLICT DO NOTHING`).bind(
+          `ref_${order.id}`,
+          order.referralRewardCents,
+          timestamp,
+          timestamp,
+          params.orderId,
+          normalizedEmail,
+          checkoutEmail,
+          normalizedEmail,
+          checkoutEmail,
+          normalizedEmail,
+          checkoutEmail,
+          ...canonicalPurchaseParams(buyerCanonicals, params.orderId),
+          timestamp - policy.periodDays * 24 * 60 * 60,
+          referrerCanonical,
+          policy.maxPerPeriod
+        ));
+      }
     }
     statements.push(
       env.DB.prepare(`UPDATE _ecommerce_discount_redemptions SET status = 'confirmed', updated_at = ?
@@ -265,6 +324,7 @@ function bindCommerceApi(options) {
     }
     const now = Math.floor(Date.now() / 1e3);
     const full = params.amountRefunded === order.totalAmount;
+    const referralPolicy = order.referralCode ? await getReferralPolicy(env) : null;
     const statements = [
       env.DB.prepare(`UPDATE _ecommerce_orders
         SET provider_refunded_cents = ?, status = ?, updated_at = ?
@@ -296,21 +356,13 @@ function bindCommerceApi(options) {
         FROM _ecommerce_orders WHERE id = ? AND status = 'refunded'
           AND credit_applied > 0 AND user_id IS NOT NULL
         ON CONFLICT(order_id, kind) DO NOTHING`).bind(`credit_refund_${order.id}`, now, order.id));
-      for (const [awardKind, reversalKind] of [
-        ["referral_award", "referral_reversal"],
-        ["welcome_award", "welcome_reversal"]
-      ]) {
-        statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
-          (id, account_id, order_id, kind, amount_cents, created_at)
-          SELECT ?, l.account_id, l.order_id, ?, -l.amount_cents, ?
-          FROM _ecommerce_credit_ledger l
-          JOIN _ecommerce_orders o ON o.id = l.order_id AND o.status = 'refunded'
-          WHERE l.order_id = ? AND l.kind = ?
-          ON CONFLICT(order_id, kind) DO NOTHING`).bind(`credit_${reversalKind}_${order.id}`, reversalKind, now, order.id, awardKind));
-      }
-      statements.push(env.DB.prepare(`UPDATE _ecommerce_referrals SET status = 'void', updated_at = ?
-        WHERE order_id = ? AND EXISTS
-          (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'refunded')`).bind(now, order.id, order.id));
+    }
+    if (referralPolicy) {
+      statements.push(...referralReversalStatements(
+        env,
+        order.id,
+        { minOrderCents: referralPolicy.minOrderCents, now }
+      ));
     }
     await env.DB.batch(statements);
     return { success: true, orderId: order.id, status: full ? "refunded" : "partially_refunded" };
@@ -472,7 +524,13 @@ function bindCommerceApi(options) {
       }
     },
     orders: {
-      async resumeFromCart(cartId) {
+      /**
+       * The pending checkout that locks a basket: its payment URL while the provider session is open,
+       * or null once the lock is gone. Public routes pass `limitProviderChecks`, so the provider is asked
+       * only when the order's provider-check slot is free (see provider-checks.ts); otherwise the order is
+       * returned as stored, with `providerCheckLimited` and no payment URL.
+       */
+      async resumeFromCart(cartId, options2 = {}) {
         const cart = await db.select().from(carts).where(eq(carts.id, cartId)).get();
         if (!cart?.checkoutSessionId) return null;
         if (cart.checkoutSessionId.startsWith("preparing:")) {
@@ -495,6 +553,9 @@ function bindCommerceApi(options) {
             customerEmail: order.customerEmail ?? void 0
           });
           return { order: await this.find(order.id), paymentUrl: `/checkout/success?order=${encodeURIComponent(order.id)}` };
+        }
+        if (options2.limitProviderChecks && !await mayAskPaymentProvider(env, order, paymentAdapters)) {
+          return { order, paymentUrl: null, providerCheckLimited: true };
         }
         const reconciled = await this.reconcilePending(order.id);
         if (reconciled?.status === "paid") {
@@ -659,10 +720,11 @@ function bindCommerceApi(options) {
         totalAmount -= giftCardApplied;
         const internallyPaid = Boolean(giftCard && totalAmount === 0);
         let referralCode = null;
-        if (referralsPolicy.enabled && options2.referralCode && defaultAdapter.providerId === "stripe" && !internallyPaid && subtotalAmount >= referralsPolicy.minOrderCents) {
+        if (referralsPolicy.enabled && options2.referralCode && defaultAdapter.providerId === "stripe" && !internallyPaid && subtotalAmount - discountAmount >= referralsPolicy.minOrderCents) {
           const referral = await findReferralCode(env, options2.referralCode);
           const buyerEmails = [options2.customerEmail.trim().toLowerCase(), owner?.emailNormalized];
-          if (referral && referral.accountId !== cart.userId && !buyerEmails.includes(referral.emailNormalized) && !await hasPurchaseHistory(env, { emails: buyerEmails, accountIds: [cart.userId] })) {
+          const referrerCanonical = canonicalEmail(referral?.emailNormalized);
+          if (referral && referrerCanonical && referral.accountId !== cart.userId && !buyerEmails.includes(referral.emailNormalized) && !canonicalEmails(buyerEmails).includes(referrerCanonical) && !await hasPurchaseHistory(env, { emails: buyerEmails, accountIds: [cart.userId] }) && !await hasCanonicalPurchase(env, buyerEmails)) {
             referralCode = referral.code;
           }
         }
@@ -681,7 +743,9 @@ function bindCommerceApi(options) {
         if (!lock.results?.length) throw new Error("Checkout already started for this cart");
         let session;
         let committed = false;
+        let providerDiscount = false;
         try {
+          providerDiscount = !internallyPaid && creditApplied + discountAmount + giftCardApplied > 0;
           session = internallyPaid ? { providerSessionId: `internal:${orderId}`, url: successUrl } : await defaultAdapter.createCheckoutSession({
             orderId,
             items: orderItems.map((i) => ({
@@ -800,8 +864,12 @@ function bindCommerceApi(options) {
           return { order, paymentUrl: session.url };
         } catch (error) {
           if (committed) throw error;
-          if (session?.providerSessionId && !internallyPaid) {
-            await defaultAdapter.expireCheckoutSession(session.providerSessionId);
+          try {
+            if (session?.providerSessionId && !internallyPaid) {
+              await defaultAdapter.expireCheckoutSession(session.providerSessionId);
+            }
+          } finally {
+            if (providerDiscount) await discardCheckoutDiscount(defaultAdapter, orderId);
           }
           await env.DB.prepare(`UPDATE _ecommerce_carts SET checkout_session_id = NULL
              WHERE id = ? AND checkout_session_id = ?`).bind(cartId, preparationLock).run();
@@ -867,6 +935,11 @@ function bindCommerceApi(options) {
           customerEmail: options2.customerEmail
         });
       },
+      /**
+       * Release a pending order, its reservations and its basket lock. The public release route passes
+       * `limitProviderChecks`, so the provider is asked only when the order's provider-check slot is free;
+       * otherwise it throws ProviderCheckLimitedError and changes nothing.
+       */
       async cancel(id, options2 = {}) {
         const order = await db.select().from(orders).where(eq(orders.id, id)).get();
         if (!order) return null;
@@ -879,6 +952,9 @@ function bindCommerceApi(options) {
           const adapter = paymentAdapters.find((candidate) => candidate.providerId === (order.paymentProvider ?? "stripe"));
           if (!adapter?.expireCheckoutSession) {
             throw new Error("Payment provider must expire the checkout session before stock can be released");
+          }
+          if (options2.limitProviderChecks && !await mayAskPaymentProvider(env, order, paymentAdapters)) {
+            throw new ProviderCheckLimitedError();
           }
           const session = await adapter.getCheckoutSession?.(order.checkoutSessionId);
           if (session?.status === "complete") {
@@ -939,7 +1015,14 @@ function bindCommerceApi(options) {
             WHERE id = ? AND status = 'cancelled'`).bind(id));
         }
         await env.DB.batch(statements);
-        return await this.find(id);
+        const cancelled = await this.find(id);
+        if (cancelled?.status === "cancelled" && order.creditApplied + order.discountAmount + order.giftCardApplied > 0) {
+          await discardCheckoutDiscount(
+            paymentAdapters.find((candidate) => candidate.providerId === (order.paymentProvider ?? "stripe")),
+            id
+          );
+        }
+        return cancelled;
       }
     },
     webhooks: {
@@ -984,7 +1067,22 @@ function bindCommerceApi(options) {
               const cancelled = await bindCommerceApi(options).orders.cancel(orderId, { sessionExpired: true });
               return { success: true, event: event.type, cancelled: cancelled?.status === "cancelled" };
             }
+            if (!order) {
+              await discardCheckoutDiscount(stripeAdapter, orderId);
+              return { success: true, event: event.type, cancelled: false };
+            }
           }
+        }
+        if (event.type === "charge.dispute.closed") {
+          const dispute = event.data;
+          const paymentIntentId = typeof dispute.payment_intent === "string" ? dispute.payment_intent : dispute.payment_intent?.id;
+          if (dispute.status !== "lost" || typeof paymentIntentId !== "string") {
+            return { success: true, event: event.type, ignored: true };
+          }
+          const order = await db.select({ id: orders.id, referralCode: orders.referralCode }).from(orders).where(eq(orders.paymentIntentId, paymentIntentId)).get();
+          if (!order) return { success: true, event: event.type, ignored: true };
+          if (order.referralCode) await reverseReferralForOrder(env, order.id, { disputeLost: true });
+          return { success: true, event: event.type, orderId: order.id };
         }
         if (event.type === "charge.refunded") {
           const charge = event.data;
@@ -1064,6 +1162,15 @@ async function reconcileCommerce(options, limit = 10) {
       results.push({ id: row.id, status: "error", error: error instanceof Error ? error.message : "Recovery failed" });
     }
   }
+  try {
+    results.push(...await releaseReferralAwards(options, { limit: count }));
+  } catch (error) {
+    results.push({
+      id: "referral_awards",
+      status: "error",
+      error: error instanceof Error ? error.message : "Referral release failed"
+    });
+  }
   await env.DB.prepare(`DELETE FROM _ecommerce_customer_sessions
     WHERE (purpose = 'email_challenge' AND expires_at < ?)
       OR (purpose = 'session' AND expires_at < ?)`).bind(now - 24 * 60 * 60, now - 30 * 24 * 60 * 60).run();
@@ -1137,6 +1244,11 @@ async function purgeStaleCommerceData(options) {
 }
 
 export {
+  PROVIDER_CHECK_MIN_ORDER_AGE_SECONDS,
+  PROVIDER_CHECK_RETRY_MESSAGE,
+  ProviderCheckLimitedError,
+  providerCheckLimitResponse,
+  mayAskPaymentProvider,
   CART_MAX_LINES,
   CART_MAX_LINE_QUANTITY,
   aggregateComponentDemand,

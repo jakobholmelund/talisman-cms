@@ -1,30 +1,36 @@
 import {
+  CODE_CHECK_LIMIT_MESSAGE,
+  codeChecksOverBasketLimit,
+  codeChecksOverNetworkLimit
+} from "../chunk-PIVUHCSX.js";
+import {
   bindCommerceApi
-} from "../chunk-V63N6CZ5.js";
+} from "../chunk-ZCEC33U7.js";
 import {
+  codeRefusalBody,
   evaluateDiscountCode
-} from "../chunk-QMKGVIUH.js";
-import "../chunk-LDDVV7H7.js";
-import {
-  CUSTOMER_SESSION_COOKIE,
-  findCustomerSession
-} from "../chunk-NTGZYO6Q.js";
+} from "../chunk-BCWAVKQF.js";
 import {
   readCartSessionToken
 } from "../chunk-MDTTSWBR.js";
 import "../chunk-YXNRHYNN.js";
 import {
   evaluateGiftCard
-} from "../chunk-4AHWGSV4.js";
+} from "../chunk-2RLPKBNT.js";
+import "../chunk-MS53KKKY.js";
+import {
+  CUSTOMER_SESSION_COOKIE,
+  findCustomerSession
+} from "../chunk-NITAPJVN.js";
 import "../chunk-CLEUXV3O.js";
 
 // src/routes/ecommerce-discount.ts
 import { z } from "zod";
 import { readSetting } from "talisman-cms/env";
 var previewSchema = z.object({
-  code: z.string().trim().max(32).optional(),
-  giftCardCode: z.string().trim().max(37).optional(),
-  customerEmail: z.string().trim().email().max(254).optional()
+  code: z.string().trim().max(200).optional(),
+  giftCardCode: z.string().trim().max(200).optional(),
+  customerEmail: z.unknown().optional()
 }).strict();
 var POST = async ({ request, cookies }) => {
   const headers = { "Cache-Control": "no-store" };
@@ -40,18 +46,23 @@ var POST = async ({ request, cookies }) => {
   if (!parsed.success || !(parsed.data.code || parsed.data.giftCardCode)) {
     return Response.json({ error: "Enter a discount or gift card code" }, { status: 400, headers });
   }
+  const tooMany = () => Response.json({ error: CODE_CHECK_LIMIT_MESSAGE }, { status: 429, headers });
+  const now = Math.floor(Date.now() / 1e3);
+  if (await codeChecksOverNetworkLimit(runtimeEnv, request.headers.get("cf-connecting-ip"), now)) return tooMany();
   const token = readCartSessionToken(cookies);
   if (!token) return Response.json({ error: "Basket not found" }, { status: 404, headers });
   try {
     const account = await findCustomerSession(runtimeEnv, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
     const api = bindCommerceApi({ env: runtimeEnv });
-    const cart = account ? await api.carts.getOrCreate(token, account.id) : await api.carts.find(token);
+    const cart = (account ? await api.carts.claim(token, account.id) : null) ?? await api.carts.find(token, account?.id);
+    if (cart && await codeChecksOverBasketLimit(runtimeEnv, cart.id, now)) return tooMany();
     if (!cart?.items.length || cart.checkoutSessionId) throw new Error("Basket is not available for discounts");
     const quote = await api.carts.quote(cart.id);
     const promotion = parsed.data.code ? await evaluateDiscountCode(runtimeEnv, {
       code: parsed.data.code,
-      customerEmail: parsed.data.customerEmail || account?.email || "",
+      customerEmail: "",
       accountId: account?.id,
+      checkShopperHistory: Boolean(account),
       subtotal: quote.totalAmount,
       lines: quote.lines.map((line) => ({
         productId: line.productId,
@@ -75,6 +86,8 @@ var POST = async ({ request, cookies }) => {
       cardAmount: afterCredit - (giftCard?.amount ?? 0)
     }, { headers });
   } catch (error) {
+    const refusal = codeRefusalBody(error);
+    if (refusal) return Response.json(refusal, { status: 409, headers });
     return Response.json(
       { error: error instanceof Error ? error.message : "Discount unavailable" },
       { status: 409, headers }

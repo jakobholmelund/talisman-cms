@@ -1,21 +1,25 @@
 import {
   runtimePaymentAdapters
-} from "../chunk-CP2YO37X.js";
-import "../chunk-6LYWG22B.js";
+} from "../chunk-K47ZHGKG.js";
+import "../chunk-YXG3523I.js";
 import {
-  bindCommerceApi
-} from "../chunk-V63N6CZ5.js";
-import "../chunk-QMKGVIUH.js";
-import "../chunk-LDDVV7H7.js";
-import {
-  CUSTOMER_SESSION_COOKIE,
-  findCustomerSession
-} from "../chunk-NTGZYO6Q.js";
+  PROVIDER_CHECK_MIN_ORDER_AGE_SECONDS,
+  ProviderCheckLimitedError,
+  bindCommerceApi,
+  mayAskPaymentProvider,
+  providerCheckLimitResponse
+} from "../chunk-ZCEC33U7.js";
+import "../chunk-BCWAVKQF.js";
 import {
   readCartSessionToken
 } from "../chunk-MDTTSWBR.js";
 import "../chunk-YXNRHYNN.js";
-import "../chunk-4AHWGSV4.js";
+import "../chunk-2RLPKBNT.js";
+import "../chunk-MS53KKKY.js";
+import {
+  CUSTOMER_SESSION_COOKIE,
+  findCustomerSession
+} from "../chunk-NITAPJVN.js";
 import "../chunk-CLEUXV3O.js";
 
 // src/routes/ecommerce-order.ts
@@ -36,14 +40,25 @@ var ALL = async ({ request, cookies }) => {
     const runtimeEnv = env;
     const customer = await findCustomerSession(runtimeEnv, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
     if (!sessionToken && !customer) return Response.json({ error: "Order not found" }, { status: 404 });
-    const api = bindCommerceApi({ env: runtimeEnv, paymentAdapters: runtimePaymentAdapters(runtimeEnv) });
+    const paymentAdapters = runtimePaymentAdapters(runtimeEnv);
+    const api = bindCommerceApi({ env: runtimeEnv, paymentAdapters });
     let order = await api.orders.findForSession(orderId, sessionToken, customer?.id);
     if (!order) return Response.json({ error: "Order not found" }, { status: 404 });
     if (request.method === "POST") {
-      const cancelled = await api.orders.cancel(order.id);
-      return Response.json({ orderId: order.id, status: cancelled?.status });
+      try {
+        const cancelled = await api.orders.cancel(order.id, { limitProviderChecks: true });
+        return Response.json({ orderId: order.id, status: cancelled?.status });
+      } catch (error) {
+        if (error instanceof ProviderCheckLimitedError) return providerCheckLimitResponse();
+        throw error;
+      }
     }
-    if (order.status === "pending") {
+    if (order.status === "pending" && await mayAskPaymentProvider(
+      runtimeEnv,
+      order,
+      paymentAdapters,
+      { minOrderAgeSeconds: PROVIDER_CHECK_MIN_ORDER_AGE_SECONDS }
+    )) {
       await api.orders.reconcilePending(order.id);
       order = await api.orders.findForSession(orderId, sessionToken, customer?.id);
       if (!order) return Response.json({ error: "Order not found" }, { status: 404 });
