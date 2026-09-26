@@ -338,6 +338,19 @@ const seeds = {
       ('cs-verified', 'shop-new', 'hash-1', ${T + 86_400}, ${T + 600}),
       ('cs-unverified', 'shop-unverified', 'hash-2', ${T + 86_400}, ${T + 600});
   `),
+  // 0017 kept one shipment per order and set a shipped order to 'fulfilled'; a refund after that
+  // replaced the status. An order could also read 'fulfilled' without a shipment record.
+  '0017_commerce_fulfillment': (db) => db.exec(`
+    INSERT INTO _ecommerce_orders (id, status, items, total_amount, payment_provider, created_at, updated_at) VALUES
+      ('order-shipped', 'paid', '[]', 9000, 'stripe', ${T + 10}, ${T + 10}),
+      ('order-shipped-refunded', 'paid', '[]', 9000, 'stripe', ${T + 20}, ${T + 20}),
+      ('order-marked-fulfilled', 'fulfilled', '[]', 9000, NULL, ${T + 30}, ${T + 30});
+    INSERT INTO _ecommerce_fulfillments (id, order_id, admin_actor, carrier, tracking_number, note, created_at) VALUES
+      ('ful-shipped', 'order-shipped', 'admin-1', 'USPS', 'TRACK-1', 'Packed and shipped', ${T + 100}),
+      ('ful-refunded', 'order-shipped-refunded', 'admin-1', NULL, NULL, 'Handed to the courier', ${T + 200});
+    UPDATE _ecommerce_orders SET status = 'partially_refunded', provider_refunded_cents = 1000, updated_at = ${T + 300}
+      WHERE id = 'order-shipped-refunded';
+  `),
   // Seeds and imports wrote entries straight to D1, without revisions.
   '0019_shared_customer_identity': (db) => db.exec(`
     INSERT INTO galaxy_entries (id, collection_id, slug, status, data, created_at, updated_at) VALUES
@@ -421,11 +434,80 @@ test('a database with data from earlier releases upgrades cleanly', () => {
       shipping_amount: 0, shipping_rate_id: null, shipping_label: null, tax_amount: 0, tax_behavior: null,
       tax_calculation_id: null, tax_transaction_id: null,
     });
+    // 0026: payment and fulfillment are separate. Shipments recorded before it completed their orders,
+    // and a refund no longer hides one. The shipment rows keep their ids and values.
+    assert.deepEqual(rows(db, `SELECT id, status, fulfillment_status, updated_at FROM _ecommerce_orders ORDER BY id`), [
+      { id: 'order-1', status: 'paid', fulfillment_status: 'unfulfilled', updated_at: T },
+      { id: 'order-marked-fulfilled', status: 'paid', fulfillment_status: 'fulfilled', updated_at: T + 30 },
+      { id: 'order-shipped', status: 'paid', fulfillment_status: 'fulfilled', updated_at: T + 100 },
+      { id: 'order-shipped-refunded', status: 'partially_refunded', fulfillment_status: 'fulfilled', updated_at: T + 300 },
+    ]);
+    assert.deepEqual(rows(db, `SELECT * FROM _ecommerce_fulfillments ORDER BY id`), [
+      { id: 'ful-refunded', order_id: 'order-shipped-refunded', admin_actor: 'admin-1', carrier: null, tracking_number: null,
+        note: 'Handed to the courier', created_at: T + 200, kind: 'shipment', corrects_id: null, completes_order: 1 },
+      { id: 'ful-shipped', order_id: 'order-shipped', admin_actor: 'admin-1', carrier: 'USPS', tracking_number: 'TRACK-1',
+        note: 'Packed and shipped', created_at: T + 100, kind: 'shipment', corrects_id: null, completes_order: 1 },
+    ]);
+    // A migrated shipment takes a correction, a shipped order takes no second shipment, and what the
+    // previous Worker inserts for a paid order is a shipment that completes it.
+    db.exec(`INSERT INTO _ecommerce_fulfillments
+      (id, order_id, kind, corrects_id, completes_order, admin_actor, carrier, tracking_number, note, created_at)
+      VALUES ('ful-shipped-fix', 'order-shipped', 'correction', 'ful-shipped', 0, 'admin-1', 'USPS', 'TRACK-2', 'Label was reprinted', ${T + 400})`);
+    assert.throws(() => db.exec(`INSERT INTO _ecommerce_fulfillments (id, order_id, admin_actor, note, created_at)
+      VALUES ('ful-again', 'order-shipped-refunded', 'admin-1', 'Second parcel sent', ${T + 400})`), /Order is not ready for fulfillment/);
+    db.exec(`INSERT INTO _ecommerce_fulfillments (id, order_id, admin_actor, carrier, tracking_number, note, created_at)
+      VALUES ('ful-previous-worker', 'order-1', 'admin-1', NULL, NULL, 'Packed and shipped', ${T + 500})`);
+    assert.deepEqual(row(db, `SELECT status, fulfillment_status, updated_at FROM _ecommerce_orders WHERE id = 'order-1'`),
+      { status: 'paid', fulfillment_status: 'fulfilled', updated_at: T + 500 });
+    assertIntegrity(db);
     migrate(empty);
     assert.deepEqual(fullSchema(db), fullSchema(empty));
   } finally {
     db.close();
     empty.close();
+  }
+});
+
+test('0026 lets an order ship in parcels and take appended corrections, with indexes for the orders queue', () => {
+  const db = openDatabase();
+  try {
+    migrate(db);
+    const schema = outline(db);
+    assert.equal(schema.columns._ecommerce_fulfillments,
+      'id order_id admin_actor carrier tracking_number note created_at kind corrects_id completes_order');
+    assert.match(schema.columns._ecommerce_orders, / fulfillment_status$/);
+    const touching = (name) => name.includes('_ecommerce_fulfillment') || name.includes('_ecommerce_orders_awaiting')
+      || name.includes('_ecommerce_orders_recent');
+    assert.deepEqual(schema.indexes.filter(touching), [
+      '_ecommerce_fulfillments_order_idx ON _ecommerce_fulfillments (order_id, created_at)',
+      '_ecommerce_orders_awaiting_idx ON _ecommerce_orders (created_at, id) WHERE ...',
+      '_ecommerce_orders_recent_idx ON _ecommerce_orders (created_at, id) WHERE ...',
+    ]);
+    assert.deepEqual(schema.foreignKeys.filter(touching), [
+      '_ecommerce_fulfillments.corrects_id -> _ecommerce_fulfillments.id',
+      '_ecommerce_fulfillments.order_id -> _ecommerce_orders.id',
+    ]);
+    assert.deepEqual(schema.triggers.filter(touching), [
+      '_ecommerce_fulfillment_complete ON _ecommerce_fulfillments',
+      '_ecommerce_fulfillment_correction_guard ON _ecommerce_fulfillments',
+      '_ecommerce_fulfillment_guard ON _ecommerce_fulfillments',
+    ]);
+
+    db.exec(`INSERT INTO _ecommerce_orders (id, status, items, total_amount, payment_provider, created_at, updated_at) VALUES
+      ('order-parcels', 'partially_refunded', '[]', 9000, 'stripe', ${T}, ${T}),
+      ('order-test', 'paid', '[]', 9000, 'admin_test', ${T}, ${T})`);
+    const ship = (id, orderId, completes) => db.exec(`INSERT INTO _ecommerce_fulfillments
+      (id, order_id, completes_order, admin_actor, note, created_at) VALUES ('${id}', '${orderId}', ${completes}, 'admin-1', 'Parcel handed over', ${T})`);
+    const state = () => row(db, `SELECT status, fulfillment_status, updated_at FROM _ecommerce_orders WHERE id = 'order-parcels'`);
+    ship('parcel-1', 'order-parcels', 0);
+    assert.deepEqual(state(), { status: 'partially_refunded', fulfillment_status: 'partially_fulfilled', updated_at: T + 1 });
+    ship('parcel-2', 'order-parcels', 1);
+    assert.deepEqual(state(), { status: 'partially_refunded', fulfillment_status: 'fulfilled', updated_at: T + 2 });
+    assert.throws(() => ship('parcel-3', 'order-parcels', 0), /Order is not ready for fulfillment/);
+    assert.throws(() => ship('test-parcel', 'order-test', 1), /Order is not ready for fulfillment/);
+    assertIntegrity(db);
+  } finally {
+    db.close();
   }
 });
 

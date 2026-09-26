@@ -648,7 +648,9 @@ export const ecommercePlugin = (
           { name: 'cartId', label: 'Cart', type: 'relation', relationTo: '_ecommerce_carts' },
           { name: 'checkoutSessionId', label: 'Checkout Session ID', type: 'text' },
           { name: 'paymentProvider', label: 'Payment Provider', type: 'text' },
-          { name: 'status', label: 'Status', type: 'select', options: ['draft', 'pending', 'paid', 'fulfilled', 'cancelled', 'partially_refunded', 'refunded'], required: true, defaultValue: 'draft' },
+          // 'fulfilled' stays an option for rows written before migration 0026 moved it to fulfillmentStatus.
+          { name: 'status', label: 'Payment Status', type: 'select', options: ['draft', 'pending', 'paid', 'fulfilled', 'cancelled', 'partially_refunded', 'refunded'], required: true, defaultValue: 'draft' },
+          { name: 'fulfillmentStatus', label: 'Fulfillment Status', type: 'select', options: ['unfulfilled', 'partially_fulfilled', 'fulfilled'], required: true, defaultValue: 'unfulfilled' },
           { name: 'subtotalAmount', label: 'Item Subtotal (smallest currency unit)', type: 'number' },
           { name: 'shippingLabel', label: 'Shipping Option', type: 'text' },
           { name: 'shippingRateId', label: 'Shipping Rate ID', type: 'text' },

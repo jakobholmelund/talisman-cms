@@ -1,38 +1,328 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
-import { fulfillments, orders } from './schema';
+import type { TalismanEnv } from 'talisman-cms/client';
+import { chunked, describeOrderItems, placeholders } from './order-items';
 
-const fulfillmentSchema = z.object({
-  orderId: z.string().regex(/^ord_[0-9a-f-]{36}$/),
-  carrier: z.string().trim().max(100).nullable(),
-  trackingNumber: z.string().trim().max(150).nullable(),
-  note: z.string().trim().min(8).max(500),
+/** Orders per page of the admin orders queue unless a request asks for another size. */
+export const ORDERS_PAGE_SIZE = 50;
+/** The largest page a request may ask for. */
+export const ORDERS_PAGE_MAX = 100;
+
+export type OrdersView = 'awaiting' | 'recent';
+export type FulfillmentStatus = 'unfulfilled' | 'partially_fulfilled' | 'fulfilled';
+
+/** Invalid input to the orders queue or to a shipment write. The admin route answers it with 400. */
+export class FulfillmentInputError extends Error {
+  override readonly name = 'FulfillmentInputError';
+}
+
+/** Payment statuses in which an order may ship; a disputed, refunded or cancelled order may not. */
+const SHIPPABLE_STATUSES = ['paid', 'partially_refunded'];
+
+// Each view repeats the WHERE clause of its partial index in migration 0026. SQLite uses a partial
+// index only for a query that states the same conditions, with the same literals.
+const REAL_ORDER = `COALESCE(payment_provider, 'stripe') <> 'admin_test'`;
+const VIEWS: Record<OrdersView, { where: string; ascending: boolean }> = {
+  // Every real order that can still ship, oldest first.
+  awaiting: { where: `status IN ('paid','partially_refunded') AND fulfillment_status <> 'fulfilled' AND ${REAL_ORDER}`, ascending: true },
+  // Real orders past checkout, newest first.
+  recent: { where: `status NOT IN ('pending','cancelled','draft') AND ${REAL_ORDER}`, ascending: false },
+};
+
+const ORDER_COLUMNS = `id, status, fulfillment_status, payment_provider, customer_email, currency, items,
+  shipping_address, subtotal_amount, discount_code, discount_amount, credit_applied, shipping_amount,
+  shipping_label, tax_amount, tax_behavior, gift_card_applied, total_amount, provider_refunded_cents, gift_card_refunded_cents, created_at`;
+
+type OrderRow = {
+  id: string; status: string; fulfillment_status: FulfillmentStatus; payment_provider: string | null;
+  customer_email: string | null; currency: string; items: string; shipping_address: string | null;
+  subtotal_amount: number; discount_code: string | null; discount_amount: number; credit_applied: number;
+  shipping_amount: number; shipping_label: string | null; tax_amount: number; tax_behavior: 'inclusive' | 'exclusive' | null;
+  gift_card_applied: number; total_amount: number; provider_refunded_cents: number;
+  gift_card_refunded_cents: number; created_at: number;
+};
+type StoredItem = { productId: string; variantId?: string; quantity: number; priceAtPurchase: number };
+type FulfillmentRow = {
+  id: string; order_id: string; kind: 'shipment' | 'correction'; corrects_id: string | null;
+  completes_order: number; admin_actor: string; carrier: string | null; tracking_number: string | null;
+  note: string; created_at: number;
+};
+type Correction = { id: string; createdAt: string; adminActor: string; carrier: string | null;
+  trackingNumber: string | null; reason: string };
+/** A shipment with the carrier and tracking number in force, as first recorded, and its corrections. */
+type Shipment = { id: string; createdAt: string; adminActor: string; note: string; completesOrder: boolean;
+  carrier: string | null; trackingNumber: string | null;
+  recorded: { carrier: string | null; trackingNumber: string | null }; corrections: Correction[] };
+
+const optionalText = (max: number) => z.string().trim().max(max).nullish().transform((value) => value || null);
+
+const listSchema = z.object({
+  view: z.enum(['awaiting', 'recent']).default('awaiting'),
+  // Room for an order id of about 3,000 ASCII characters; checkout writes ids of 40.
+  cursor: z.string().max(4096).nullish(),
+  limit: z.number().int().min(1).max(ORDERS_PAGE_MAX).default(ORDERS_PAGE_SIZE),
+  query: z.string().trim().max(254).nullish(),
 }).strict();
 
-export async function listCommerceOrdersAdmin(env: TalismanEnv) {
-  const db = createDbClient(env);
-  const recent = await db.select().from(orders)
-    .where(and(inArray(orders.status, ['paid', 'fulfilled', 'partially_refunded']),
-      sql`COALESCE(${orders.paymentProvider}, 'stripe') <> 'admin_test'`))
-    .orderBy(desc(orders.createdAt)).limit(100);
-  const shipmentRecords = await db.select().from(fulfillments).orderBy(desc(fulfillments.createdAt)).limit(100);
+const shipmentSchema = z.object({
+  orderId: z.string().regex(/^ord_[0-9a-f-]{36}$/),
+  carrier: optionalText(100),
+  trackingNumber: optionalText(150),
+  note: z.string().trim().min(8).max(500),
+  completesOrder: z.boolean().default(true),
+}).strict();
+
+const correctionSchema = z.object({
+  fulfillmentId: z.string().trim().min(1).max(128),
+  carrier: optionalText(100),
+  trackingNumber: optionalText(150),
+  reason: z.string().trim().min(8).max(500),
+}).strict().refine((values) => values.carrier || values.trackingNumber, { message: 'Enter a carrier or a tracking number' });
+
+function parseInput<T extends z.ZodTypeAny>(schema: T, input: unknown): z.output<T> {
+  const parsed = schema.safeParse(input);
+  if (parsed.success) return parsed.data;
+  const [issue] = parsed.error.issues;
+  throw new FulfillmentInputError(issue.path.length ? `${issue.path.join('.')}: ${issue.message}` : issue.message);
+}
+
+const isoTime = (seconds: number) => new Date(seconds * 1000).toISOString();
+
+function parseJson<T>(value: string | null, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+/** The page position after `row` as URL-safe base64, tied to its view so that it is never read in the other direction. */
+function encodeCursor(view: OrdersView, row: OrderRow) {
+  const bytes = new TextEncoder().encode(JSON.stringify([view, row.created_at, row.id]));
+  return btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+}
+
+function decodeCursor(view: OrdersView, cursor: string) {
+  try {
+    const bytes = Uint8Array.from(atob(cursor.replaceAll('-', '+').replaceAll('_', '/')), (char) => char.charCodeAt(0));
+    const [cursorView, createdAt, id] = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    // The id is only ever bound as a parameter, so any order id the page ended on is accepted.
+    if (cursorView === view && Number.isSafeInteger(createdAt) && typeof id === 'string') {
+      return [createdAt as number, id];
+    }
+  } catch {
+    // Reported below.
+  }
+  throw new FulfillmentInputError('The page cursor is invalid; reload the orders');
+}
+
+/** Each amount with its label, in the order the admin reads them. Deductions are negative. */
+function orderAmounts(row: OrderRow) {
+  // Orders placed before migration 0013 stored no subtotal; they had no deductions.
+  const amounts = [{ key: 'itemsSubtotal', label: 'Items subtotal', cents: row.subtotal_amount || row.total_amount }];
+  if (row.discount_amount > 0) {
+    amounts.push({ key: 'discount', label: row.discount_code ? `Discount (${row.discount_code})` : 'Discount', cents: -row.discount_amount });
+  }
+  if (row.credit_applied > 0) amounts.push({ key: 'storeCredit', label: 'Store credit', cents: -row.credit_applied });
+  // A free rate still shows, so the admin sees which one the buyer chose.
+  if (row.shipping_amount > 0 || row.shipping_label) {
+    amounts.push({ key: 'shipping', label: row.shipping_label ? `Shipping (${row.shipping_label})` : 'Shipping', cents: row.shipping_amount });
+  }
+  // Inclusive tax is already inside the prices above, so it is shown but adds nothing.
+  if (row.tax_amount > 0) {
+    amounts.push(row.tax_behavior === 'inclusive'
+      ? { key: 'taxIncluded', label: 'Tax included in the prices', cents: row.tax_amount }
+      : { key: 'tax', label: 'Tax', cents: row.tax_amount });
+  }
+  if (row.gift_card_applied > 0) amounts.push({ key: 'giftCard', label: 'Gift card', cents: -row.gift_card_applied });
+  amounts.push({ key: 'charged', label: 'Charged by the payment provider', cents: row.total_amount });
+  if (row.provider_refunded_cents > 0) {
+    amounts.push({ key: 'providerRefunded', label: 'Refunded by the payment provider', cents: row.provider_refunded_cents });
+  }
+  if (row.gift_card_refunded_cents > 0) {
+    amounts.push({ key: 'giftCardRefunded', label: 'Refunded to the gift card', cents: row.gift_card_refunded_cents });
+  }
+  return amounts;
+}
+
+// Fulfillment rows are only ever appended, so rowid is the order they were written in. `created_at`
+// comes from the clock of whichever Worker wrote a row, so it is shown but never decides the order.
+
+/** The shipments of these orders by order id, in the order recorded. The latest correction of a shipment is in force. */
+async function loadShipments(env: TalismanEnv, orderIds: string[]) {
+  const statements = chunked(orderIds).map((ids) => env.DB.prepare(`SELECT id, order_id, kind, corrects_id,
+      completes_order, admin_actor, carrier, tracking_number, note, created_at
+    FROM _ecommerce_fulfillments WHERE order_id IN (${placeholders(ids)})
+    ORDER BY rowid`).bind(...ids));
+  const rows = (statements.length ? await env.DB.batch(statements) : [])
+    .flatMap((result) => (result.results ?? []) as FulfillmentRow[]);
+  const shipments = new Map<string, Shipment>();
+  const byOrder = new Map<string, Shipment[]>();
+  for (const row of rows) {
+    if (row.kind === 'shipment') {
+      const shipment: Shipment = { id: row.id, createdAt: isoTime(row.created_at), adminActor: row.admin_actor,
+        note: row.note, completesOrder: row.completes_order === 1,
+        carrier: row.carrier, trackingNumber: row.tracking_number,
+        recorded: { carrier: row.carrier, trackingNumber: row.tracking_number }, corrections: [] };
+      shipments.set(row.id, shipment);
+      byOrder.set(row.order_id, [...byOrder.get(row.order_id) ?? [], shipment]);
+      continue;
+    }
+    // A correction comes after the shipment it names: the trigger requires that shipment to exist.
+    const shipment = row.corrects_id ? shipments.get(row.corrects_id) : undefined;
+    if (!shipment) continue;
+    shipment.corrections.push({ id: row.id, createdAt: isoTime(row.created_at), adminActor: row.admin_actor,
+      carrier: row.carrier, trackingNumber: row.tracking_number, reason: row.note });
+    shipment.carrier = row.carrier;
+    shipment.trackingNumber = row.tracking_number;
+  }
+  return byOrder;
+}
+
+/**
+ * One page of the admin orders queue. The `awaiting` view (the default) lists every real order that
+ * can still ship, oldest first; `recent` lists real orders past checkout, newest first. Neither lists
+ * admin test orders. Further pages follow `nextCursor`. `awaitingCount` counts every order awaiting
+ * shipment, whatever the view, page or query. `query` is an exact order id or an email address.
+ * Items carry the catalog's current names and SKUs, and each amount carries its label.
+ */
+export async function listCommerceOrdersAdmin(env: TalismanEnv, options: {
+  view?: OrdersView; cursor?: string | null; limit?: number; query?: string | null;
+} = {}) {
+  const values = parseInput(listSchema, options);
+  const view = VIEWS[values.view];
+  const conditions = [view.where];
+  const params: unknown[] = [];
+  if (values.query?.includes('@')) {
+    // Order emails have an index on lower(customer_email) since migration 0024.
+    conditions.push('lower(customer_email) = ?');
+    params.push(values.query.toLowerCase());
+  } else if (values.query) {
+    conditions.push('id = ?');
+    params.push(values.query);
+  }
+  if (values.cursor) {
+    conditions.push(`(created_at, id) ${view.ascending ? '>' : '<'} (?, ?)`);
+    params.push(...decodeCursor(values.view, values.cursor));
+  }
+  const direction = view.ascending ? 'ASC' : 'DESC';
+  const [counted, listed] = await env.DB.batch([
+    env.DB.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_orders WHERE ${VIEWS.awaiting.where}`),
+    env.DB.prepare(`SELECT ${ORDER_COLUMNS} FROM _ecommerce_orders WHERE ${conditions.join(' AND ')}
+      ORDER BY created_at ${direction}, id ${direction} LIMIT ?`).bind(...params, values.limit + 1),
+  ]);
+  const found = (listed.results ?? []) as OrderRow[];
+  const rows = found.slice(0, values.limit);
+  const storedItems = rows.map((row) => {
+    const items = parseJson<StoredItem[]>(row.items, []);
+    return Array.isArray(items) ? items.filter((item) => typeof item?.productId === 'string') : [];
+  });
+  const described = await describeOrderItems(env, storedItems.flat());
+  const shipments = await loadShipments(env, rows.map((row) => row.id));
+  let offset = 0;
+  const orders = rows.map((row, index) => {
+    const items = described.slice(offset, offset += storedItems[index].length);
+    const provider = row.payment_provider ?? 'stripe';
+    return {
+      id: row.id,
+      status: row.status,
+      fulfillmentStatus: row.fulfillment_status,
+      paymentProvider: provider,
+      customerEmail: row.customer_email,
+      currency: row.currency,
+      createdAt: isoTime(row.created_at),
+      shippingAddress: parseJson<Record<string, string> | null>(row.shipping_address, null),
+      canShip: SHIPPABLE_STATUSES.includes(row.status) && row.fulfillment_status !== 'fulfilled' && provider !== 'admin_test',
+      items: items.map((item) => ({
+        productId: item.productId, variantId: item.variantId ?? null, quantity: item.quantity,
+        unitAmount: item.priceAtPurchase, lineTotal: item.priceAtPurchase * item.quantity,
+        productName: item.productName, variantLabel: item.variantLabel, sku: item.sku,
+      })),
+      amounts: orderAmounts(row),
+      shipments: shipments.get(row.id) ?? [],
+    };
+  });
   return {
-    orders: recent,
-    fulfillments: shipmentRecords,
+    view: values.view,
+    pageSize: values.limit,
+    awaitingCount: Number((counted.results?.[0] as { count?: number } | undefined)?.count ?? 0),
+    nextCursor: found.length > values.limit ? encodeCursor(values.view, rows[rows.length - 1]) : null,
+    orders,
   };
 }
 
+/** The trigger's own message for its refusal; D1 wraps it in driver text. */
+function refusal(cause: unknown, message: string) {
+  return cause instanceof Error && cause.message.includes(message) ? new Error(message, { cause }) : cause;
+}
+
+/**
+ * Records a shipment of a paid real order that has not shipped in full. It completes the order
+ * unless `completesOrder` is false, which records one parcel of a split shipment. The database
+ * trigger enforces the same rules. A later refund or dispute changes only the payment status.
+ */
 export async function fulfillCommerceOrder(env: TalismanEnv, actor: string, input: unknown) {
-  const values = fulfillmentSchema.parse(input);
+  const values = parseInput(shipmentSchema, input);
   if (!actor.trim()) throw new Error('Administrator identity is required');
+  const order = await env.DB.prepare(`SELECT status, fulfillment_status, payment_provider
+    FROM _ecommerce_orders WHERE id = ?`).bind(values.orderId)
+    .first<{ status: string; fulfillment_status: FulfillmentStatus; payment_provider: string | null }>();
+  if (!order) throw new Error('Order not found');
+  if ((order.payment_provider ?? 'stripe') === 'admin_test') throw new Error('Admin test orders cannot be fulfilled');
+  if (order.fulfillment_status === 'fulfilled') throw new Error('Order has already shipped in full');
+  if (!SHIPPABLE_STATUSES.includes(order.status)) {
+    throw new Error(`A ${order.status.replaceAll('_', ' ')} order cannot ship`);
+  }
   const id = `ful_${crypto.randomUUID()}`;
-  const db = createDbClient(env);
-  await db.insert(fulfillments).values({
-    id, orderId: values.orderId, adminActor: actor,
-    carrier: values.carrier, trackingNumber: values.trackingNumber,
-    note: values.note, createdAt: new Date()
-  });
-  const order = await db.select().from(orders).where(eq(orders.id, values.orderId)).get();
-  return { fulfillmentId: id, orderId: values.orderId, status: order?.status };
+  try {
+    await env.DB.prepare(`INSERT INTO _ecommerce_fulfillments
+      (id, order_id, kind, completes_order, admin_actor, carrier, tracking_number, note, created_at)
+      VALUES (?, ?, 'shipment', ?, ?, ?, ?, ?, ?)`)
+      .bind(id, values.orderId, values.completesOrder ? 1 : 0, actor, values.carrier, values.trackingNumber,
+        values.note, Math.floor(Date.now() / 1000)).run();
+  } catch (cause) {
+    throw refusal(cause, 'Order is not ready for fulfillment');
+  }
+  const current = await env.DB.prepare(`SELECT status, fulfillment_status FROM _ecommerce_orders WHERE id = ?`)
+    .bind(values.orderId).first<{ status: string; fulfillment_status: FulfillmentStatus }>();
+  return { fulfillmentId: id, orderId: values.orderId, status: current?.status,
+    fulfillmentStatus: current?.fulfillment_status };
+}
+
+/**
+ * Appends a correction that restates a shipment's carrier and tracking number, with the reason.
+ * The shipment row never changes, so its history stays readable. A correction ships nothing, so any
+ * payment status allows it; admin test orders do not.
+ */
+export async function correctCommerceFulfillment(env: TalismanEnv, actor: string, input: unknown) {
+  const values = parseInput(correctionSchema, input);
+  if (!actor.trim()) throw new Error('Administrator identity is required');
+  const { results } = await env.DB.prepare(`SELECT f.id, f.order_id, f.kind, f.corrects_id, f.carrier,
+      f.tracking_number, o.payment_provider
+    FROM _ecommerce_fulfillments f JOIN _ecommerce_orders o ON o.id = f.order_id
+    WHERE f.order_id = (SELECT order_id FROM _ecommerce_fulfillments WHERE id = ?)
+    ORDER BY f.rowid`).bind(values.fulfillmentId)
+    .all<Pick<FulfillmentRow, 'id' | 'order_id' | 'kind' | 'corrects_id' | 'carrier' | 'tracking_number'>
+      & { payment_provider: string | null }>();
+  const rows = results ?? [];
+  const shipment = rows.find((row) => row.id === values.fulfillmentId);
+  if (!shipment || shipment.kind !== 'shipment') throw new Error('Shipment not found');
+  if ((shipment.payment_provider ?? 'stripe') === 'admin_test') throw new Error('Admin test orders cannot be fulfilled');
+  const current = rows.filter((row) => row.corrects_id === shipment.id).at(-1) ?? shipment;
+  // Shipments recorded before migration 0026 may hold an empty string where there is no value.
+  if ((current.carrier || null) === values.carrier && (current.tracking_number || null) === values.trackingNumber) {
+    throw new Error('The correction changes nothing');
+  }
+  const id = `ful_${crypto.randomUUID()}`;
+  try {
+    await env.DB.prepare(`INSERT INTO _ecommerce_fulfillments
+      (id, order_id, kind, corrects_id, completes_order, admin_actor, carrier, tracking_number, note, created_at)
+      VALUES (?, ?, 'correction', ?, 0, ?, ?, ?, ?, ?)`)
+      .bind(id, shipment.order_id, shipment.id, actor, values.carrier, values.trackingNumber, values.reason,
+        Math.floor(Date.now() / 1000)).run();
+  } catch (cause) {
+    throw refusal(cause, 'Shipment cannot be corrected');
+  }
+  return { correctionId: id, fulfillmentId: shipment.id, orderId: shipment.order_id,
+    carrier: values.carrier, trackingNumber: values.trackingNumber };
 }

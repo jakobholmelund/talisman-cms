@@ -19,7 +19,8 @@ const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.
   '0008_shared_components.sql', '0010_checkout_inventory.sql', '0011_order_payment_provider.sql',
   '0012_customer_accounts.sql', '0013_referrals_and_credit.sql', '0014_promotions.sql',
   '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
-  '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql', '0025_order_shipping_and_tax.sql'];
+  '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql', '0025_order_shipping_and_tax.sql',
+  '0026_order_fulfillment_status.sql'];
 
 function database(migrationCount = migrationFiles.length) {
   const sqlite = new DatabaseSync(':memory:');
@@ -390,7 +391,8 @@ test('duplicate paid webhooks record one payment and retain the reservation', as
   await api.orders.updateStatus(order.id, 'fulfilled', { actor: 'admin-1', carrier: 'USPS',
     trackingNumber: 'TRACK-1', note: 'Packed and shipped' });
   await api.webhooks.handleStripe('', '', 'secret');
-  assert.equal((await api.orders.find(order.id)).status, 'fulfilled');
+  const shipped = await api.orders.find(order.id);
+  assert.deepEqual([shipped.status, shipped.fulfillmentStatus], ['paid', 'fulfilled']);
   assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM _ecommerce_payments').get().count, 1);
   assert.equal(sqlite.prepare("SELECT quantity FROM _ecommerce_components WHERE id = 'amber-lens'").get().quantity, 0);
   assert.equal((await api.carts.getOrCreate('paid-browser')).items.length, 0);
@@ -511,13 +513,19 @@ test('fulfillment is audited once and only accepts confirmed real orders', async
   const { order } = await api.orders.createFromCart(cart.id, address);
   const input = { orderId: order.id, carrier: 'USPS', trackingNumber: 'TRACK-1',
     note: 'Parcel handed to carrier' };
-  await assert.rejects(fulfillCommerceOrder({ DB }, 'admin-1', input));
+  await assert.rejects(fulfillCommerceOrder({ DB }, 'admin-1', input), /A pending order cannot ship/);
   await api.orders.finalizePayment(order.id, { provider: 'test', providerId: order.checkoutSessionId,
     paymentStatus: 'success', amount: order.totalAmount });
   const result = await fulfillCommerceOrder({ DB }, 'admin-1', input);
-  assert.equal(result.status, 'fulfilled');
-  assert.equal((await listCommerceOrdersAdmin({ DB })).fulfillments[0].adminActor, 'admin-1');
-  await assert.rejects(fulfillCommerceOrder({ DB }, 'admin-1', input));
+  assert.deepEqual([result.status, result.fulfillmentStatus], ['paid', 'fulfilled']);
+  const [listed] = (await listCommerceOrdersAdmin({ DB }, { view: 'recent' })).orders;
+  assert.deepEqual([listed.id, listed.shipments[0].adminActor], [order.id, 'admin-1']);
+  assert.deepEqual((await listCommerceOrdersAdmin({ DB })).orders, [], 'a shipped order leaves the queue');
+  await assert.rejects(fulfillCommerceOrder({ DB }, 'admin-1', input), /Order has already shipped in full/);
+  // The trigger refuses a second completing shipment written straight to the table, too.
+  assert.throws(() => sqlite.prepare(`INSERT INTO _ecommerce_fulfillments
+    (id, order_id, admin_actor, note, created_at) VALUES ('ful_again', ?, 'admin-1', 'Parcel handed to carrier', 0)`)
+    .run(order.id), /Order is not ready for fulfillment/);
   sqlite.close();
 });
 

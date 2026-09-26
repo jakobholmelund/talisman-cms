@@ -53,6 +53,7 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
     return Response.json({
       orderId: order.id,
       status: order.status,
+      fulfillmentStatus: order.fulfillmentStatus,
       paymentProvider: order.paymentProvider,
       accountCreatedByOrder: order.userId === `acct_${order.id}`,
       accountLinked: Boolean(order.userId),

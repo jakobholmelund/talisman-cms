@@ -15,7 +15,8 @@ const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.
   '0008_shared_components.sql', '0010_checkout_inventory.sql', '0011_order_payment_provider.sql',
   '0012_customer_accounts.sql', '0013_referrals_and_credit.sql', '0014_promotions.sql',
   '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
-  '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql', '0025_order_shipping_and_tax.sql'];
+  '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql', '0025_order_shipping_and_tax.sql',
+  '0026_order_fulfillment_status.sql'];
 
 function database() {
   const sqlite = new DatabaseSync(':memory:');

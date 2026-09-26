@@ -183,6 +183,13 @@
       "when": 1789600000018,
       "tag": "0025_order_shipping_and_tax",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1789600000019,
+      "tag": "0026_order_fulfillment_status",
+      "breakpoints": true
     }
   ]
 }

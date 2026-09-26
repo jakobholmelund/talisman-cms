@@ -291,11 +291,13 @@ export async function revokeCustomerSession(env: TalismanEnv, token?: string | n
     .where(eq(customerSessions.tokenHash, await hashToken(token)));
 }
 
+/** The account's orders. `status` is the payment status; `fulfillmentStatus` says whether they shipped. */
 export async function listCustomerOrders(env: TalismanEnv, accountId: string) {
   const db = createDbClient(env);
   return db.select({
     id: orders.id,
     status: orders.status,
+    fulfillmentStatus: orders.fulfillmentStatus,
     totalAmount: orders.totalAmount,
     subtotalAmount: orders.subtotalAmount,
     shippingAmount: orders.shippingAmount,

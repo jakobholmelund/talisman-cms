@@ -1049,6 +1049,10 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         return cart?.sessionToken === sessionToken ? order : null;
       },
       
+      /**
+       * 'fulfilled' records a shipment that completes the order: it sets `fulfillmentStatus` and leaves
+       * the payment `status` as it is. Payment statuses change only through payment and cancellation.
+       */
       async updateStatus(id: string, status: string, fulfillment?: {
         actor: string; carrier: string | null; trackingNumber: string | null; note: string;
       }) {
