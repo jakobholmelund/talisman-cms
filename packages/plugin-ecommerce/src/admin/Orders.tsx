@@ -3,7 +3,7 @@ import { adminRequest, CommerceAdmin, errorText, Feedback, Field, money, Panel, 
 
 type Order = {
   id: string; status: string; customerEmail: string | null; currency: string;
-  subtotalAmount: number; totalAmount: number;
+  subtotalAmount: number; totalAmount: number; shippingAmount: number; shippingLabel: string | null;
   items: Array<{ productId: string; variantId?: string; quantity: number }>;
   shippingAddress?: { name?: string; line1?: string; line2?: string; city?: string; state?: string; postalCode?: string; country?: string } | null;
 };
@@ -75,6 +75,7 @@ export default function Orders() {
         <div className="ecom-admin__row"><span><code>{order.id}</code><small>{order.status.replaceAll('_', ' ')} · {order.items.length} line item{order.items.length === 1 ? '' : 's'}</small></span><strong>{money(order.subtotalAmount || order.totalAmount, order.currency)}</strong></div>
         <ul>{order.items.map((item, index) => <li key={index}>{item.quantity} × {item.productId}{item.variantId ? ` / ${item.variantId}` : ''}</li>)}</ul>
         {address && <address>{address.name}<br />{address.line1}<br />{address.line2 && <>{address.line2}<br /></>}{address.city}, {address.state} {address.postalCode}<br />{address.country}</address>}
+        {order.shippingLabel && <p className="ecom-admin__muted">Shipping: {order.shippingLabel} · {money(order.shippingAmount, order.currency)}</p>}
         {record && <p className="ecom-admin__muted">Fulfilled by {record.adminActor}. {[record.carrier, record.trackingNumber, record.note].filter(Boolean).join(' · ')}</p>}
         {order.status === 'paid' && <form onSubmit={event => void fulfill(event, order.id)}>
           <h3>Record shipment</h3><p className="ecom-admin__muted">Mark fulfilled only after this order has actually shipped.</p>

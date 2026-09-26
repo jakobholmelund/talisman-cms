@@ -45,6 +45,7 @@ export class StripePaymentAdapter implements PaymentProviderAdapter {
     creditApplied?: number;
     discountApplied?: number;
     giftCardApplied?: number;
+    shipping?: { label: string; amount: number; description?: string };
   }): Promise<{ url: string; providerSessionId: string }> {
     const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = params.items.map(item => ({
       price_data: {
@@ -57,6 +58,21 @@ export class StripePaymentAdapter implements PaymentProviderAdapter {
       },
       quantity: item.quantity,
     }));
+    // Shipping is a line of its own, so the one coupon below still covers every adjustment and the
+    // session's total is the order's.
+    if (params.shipping && params.shipping.amount > 0) {
+      lineItems.push({
+        price_data: {
+          currency: params.currency,
+          product_data: {
+            name: params.shipping.label,
+            description: params.shipping.description,
+          },
+          unit_amount: params.shipping.amount,
+        },
+        quantity: 1,
+      });
+    }
 
     const totalDiscount = (params.creditApplied ?? 0) + (params.discountApplied ?? 0)
       + (params.giftCardApplied ?? 0);

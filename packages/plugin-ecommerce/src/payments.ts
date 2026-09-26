@@ -37,6 +37,11 @@ export interface PaymentProviderAdapter {
     discountApplied?: number;
     /** Gift card tender reserved on the order; the provider charges only the remainder. */
     giftCardApplied?: number;
+    /**
+     * The order's shipping rate: its label, its charge in minor units and an optional delivery
+     * estimate. The provider charges the items and a charge above 0 together, less the adjustments above.
+     */
+    shipping?: { label: string; amount: number; description?: string };
   }): Promise<{ url: string; providerSessionId: string }>;
 
   /**

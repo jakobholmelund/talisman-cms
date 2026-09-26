@@ -4,7 +4,7 @@ import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from '../accounts';
 import { runtimePaymentAdapters } from '../runtime';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { readSetting } from 'talisman-cms/env';
-import { checkoutInputError, checkoutSchema, isCountryError } from '../checkout-input';
+import { checkoutInputError, checkoutSchema, isCheckoutDetailsError } from '../checkout-input';
 import { REFERRAL_COOKIE } from '../referrals';
 import { readCartSessionToken } from '../cookies';
 import { codeRefusalBody } from '../promotions';
@@ -87,6 +87,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       providerId: 'stripe',
       shippingAddress: body.shippingAddress,
       billingAddress: body.billingAddress,
+      shippingRateId: body.shippingRateId,
       discountCode: body.discountCode,
       giftCardCode: body.giftCardCode,
       referralCode: cookies.get(REFERRAL_COOKIE)?.value,
@@ -112,7 +113,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     // A refused discount or gift card code gets one answer, whatever the reason.
     const refusal = codeRefusalBody(error);
     if (refusal) return Response.json(refusal, { status: 409 });
-    if (isCountryError(error)) return Response.json({ error: error.message }, { status: 400 });
+    if (isCheckoutDetailsError(error)) return Response.json({ error: error.message }, { status: 400 });
     const status = (
       error.message === 'Cart is empty or not found' ||
       error.message === 'Cart is closed' ||

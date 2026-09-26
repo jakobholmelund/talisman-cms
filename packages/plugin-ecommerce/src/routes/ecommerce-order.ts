@@ -58,6 +58,8 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
       accountLinked: Boolean(order.userId),
       totalAmount: order.totalAmount,
       subtotalAmount: order.subtotalAmount,
+      shippingAmount: order.shippingAmount,
+      shippingLabel: order.shippingLabel,
       creditApplied: order.creditApplied,
       discountCode: order.discountCode,
       discountAmount: order.discountAmount,

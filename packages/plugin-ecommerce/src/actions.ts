@@ -144,6 +144,7 @@ export const ecommerceActions = {
         postalCode: z.string().optional(),
         country: z.string().optional(),
       }).passthrough().optional(),
+      shippingRateId: z.string().trim().max(40).optional(),
     }),
     handler: async (input: any, context: any) => {
       const { env } = await import('cloudflare:workers');
@@ -207,6 +208,7 @@ export const ecommerceActions = {
           referralCode: context.cookies?.get?.(REFERRAL_COOKIE)?.value,
           shippingAddress: input.shippingAddress,
           billingAddress: input.billingAddress,
+          shippingRateId: input.shippingRateId,
           successUrl,
           cancelUrl,
         });

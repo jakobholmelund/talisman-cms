@@ -87,3 +87,28 @@ test('Stripe charges every line, coupon and session in the order currency and ne
   assert.equal(calls[0].input.currency, 'usd');
   assert.deepEqual(calls[0].input.adaptive_pricing, { enabled: false });
 });
+
+test('Stripe charges shipping as its own line, which the one coupon can reduce like the items', async () => {
+  const { adapter, calls } = recordingAdapter();
+  await adapter.createCheckoutSession({
+    orderId: 'ord_shipped', currency: 'usd', items: [{ name: 'Frames', priceCents: 12000, quantity: 1 }],
+    creditApplied: 1000, giftCardApplied: 500, ...urls,
+    shipping: { label: 'Express shipping', amount: 2500, description: 'Delivery in 1–2 business days' },
+  });
+  const [coupon, session] = calls;
+  assert.deepEqual(session.input.line_items.at(-1), {
+    price_data: { currency: 'usd', product_data: { name: 'Express shipping', description: 'Delivery in 1–2 business days' },
+      unit_amount: 2500 },
+    quantity: 1,
+  });
+  assert.equal(coupon.input.amount_off, 1500);
+  const lines = session.input.line_items.reduce((sum, line) => sum + line.price_data.unit_amount * line.quantity, 0);
+  assert.equal(lines - coupon.input.amount_off, 13000);
+
+  // Free shipping adds no line.
+  calls.length = 0;
+  await adapter.createCheckoutSession({ orderId: 'ord_free_shipping', currency: 'usd', ...urls,
+    items: [{ name: 'Frames', priceCents: 12000, quantity: 1 }], shipping: { label: 'Standard shipping', amount: 0 } });
+  assert.deepEqual(calls.map(call => call.type), ['session']);
+  assert.deepEqual(calls[0].input.line_items.map(line => line.price_data.product_data.name), ['Frames']);
+});

@@ -17,6 +17,7 @@ import { evaluateGiftCard, confirmGiftCardPurchase, expireGiftCardPurchase,
 import { readStoreSettings } from './store-settings';
 import { minimumChargeAmount } from './money';
 import { UNDELIVERABLE_COUNTRY, withCountryCode } from './checkout-input';
+import { chooseShippingRate, deliveryEstimate, shippingCharge } from './shipping';
 
 export interface CommerceApiOptions {
   env: TalismanEnv;
@@ -667,6 +668,8 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         providerId?: string;
         shippingAddress?: any; 
         billingAddress?: any;
+        /** One of the store's shipping rates. Without it, the first rate that serves the country. */
+        shippingRateId?: string;
         successUrl: string;
         cancelUrl: string;
         referralCode?: string;
@@ -674,7 +677,8 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         giftCardCode?: string;
       }) {
          // Read before the basket is locked, so invalid store settings stop checkout without writes.
-         const { currency, deliveryCountries } = readStoreSettings(env);
+         const settings = readStoreSettings(env);
+         const { currency, deliveryCountries } = settings;
          const cart = await db.select().from(schema.carts).where(eq(schema.carts.id, cartId)).get();
          if (!cart || cart.items.length === 0) {
            throw new Error('Cart is empty or not found');
@@ -774,6 +778,10 @@ export function bindCommerceApi(options: CommerceApiOptions) {
          if (requiresShipping && deliveryCountries && !deliveryCountries.includes(shippingAddress.country)) {
            throw new Error(UNDELIVERABLE_COUNTRY);
          }
+         // With shipping rates, an order that ships goes only where a rate serves, at the one the
+         // shopper chose or else the first. Without rates, or with nothing to ship, shipping is free.
+         const shippingRate = requiresShipping && settings.shippingRates.length
+           ? chooseShippingRate(settings, shippingAddress.country, options.shippingRateId) : null;
 
          const orderId = `ord_${crypto.randomUUID()}`;
          const referralsPolicy = await getReferralPolicy(env);
@@ -784,21 +792,25 @@ export function bindCommerceApi(options: CommerceApiOptions) {
              accountId: cart.userId, lines: orderItems, subtotal: subtotalAmount
            }) : null;
          const discountAmount = discount?.amount ?? 0;
+         const merchandise = subtotalAmount - discountAmount;
+         const shippingAmount = shippingRate ? shippingCharge(shippingRate, merchandise) : 0;
          let creditApplied = 0;
          const owner = cart.userId ? await db.select({ creditBalance: schema.customerAccounts.creditBalance,
            emailNormalized: schema.customerAccounts.emailNormalized })
            .from(schema.customerAccounts).where(eq(schema.customerAccounts.id, cart.userId)).get() : undefined;
          if (owner && defaultAdapter.providerId === 'stripe') {
-           // Credit leaves at least Stripe's minimum charge for the currency on the card. It is never
-           // offered to a guest basket.
-           creditApplied = Math.min(Math.max(0, owner.creditBalance),
-             Math.max(0, subtotalAmount - discountAmount - minimumChargeAmount(currency)));
+           // Credit pays for items only, and leaves at least Stripe's minimum charge for the currency on
+           // the card. It is never offered to a guest basket.
+           creditApplied = Math.min(Math.max(0, owner.creditBalance), merchandise,
+             Math.max(0, merchandise + shippingAmount - minimumChargeAmount(currency)));
          }
-         totalAmount = subtotalAmount - discountAmount - creditApplied;
+         const amountDue = merchandise - creditApplied + shippingAmount;
+         if (!Number.isSafeInteger(amountDue)) throw new Error('Order total is too large');
+         // A gift card is a means of payment: it can pay for shipping too.
          const giftCard = options.giftCardCode && defaultAdapter.providerId === 'stripe'
-           ? await evaluateGiftCard(env, options.giftCardCode, totalAmount) : null;
+           ? await evaluateGiftCard(env, options.giftCardCode, amountDue) : null;
          const giftCardApplied = giftCard?.amount ?? 0;
-         totalAmount -= giftCardApplied;
+         totalAmount = amountDue - giftCardApplied;
          const internallyPaid = Boolean(giftCard && totalAmount === 0);
          let referralCode: string | null = null;
          if (referralsPolicy.enabled && options.referralCode && defaultAdapter.providerId === 'stripe' &&
@@ -851,6 +863,8 @@ export function bindCommerceApi(options: CommerceApiOptions) {
             creditApplied,
             discountApplied: discountAmount,
             giftCardApplied,
+            shipping: shippingRate ? { label: shippingRate.label, amount: shippingAmount,
+              description: deliveryEstimate(shippingRate) ?? undefined } : undefined,
             metadata: { giftCardApplied: String(giftCardApplied),
               storeCreditApplied: String(creditApplied), promotionDiscount: String(discountAmount) },
             successUrl,
@@ -861,13 +875,14 @@ export function bindCommerceApi(options: CommerceApiOptions) {
          const statements: D1PreparedStatement[] = [
            env.DB.prepare(`INSERT INTO _ecommerce_orders
              (id, cart_id, user_id, checkout_session_id, payment_provider, status, items, total_amount, subtotal_amount, credit_applied, discount_code, discount_amount, gift_card_id, gift_card_applied, referral_code, referral_reward_cents, currency,
-              customer_email, shipping_address, billing_address, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) `)
+              shipping_amount, shipping_rate_id, shipping_label, customer_email, shipping_address, billing_address, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) `)
              .bind(orderId, cartId, cart.userId, checkoutSessionId, internallyPaid ? 'gift_card' : defaultAdapter.providerId,
                JSON.stringify(orderItems.map(({ name, ...rest }) => rest)), totalAmount,
                subtotalAmount, creditApplied, discount?.code ?? null, discountAmount,
                giftCard?.id ?? null, giftCardApplied,
                referralCode, referralCode ? referralsPolicy.rewardCents : 0, currency,
+               shippingAmount, shippingRate?.id ?? null, shippingRate?.label ?? null,
                options.customerEmail, shippingAddress ? JSON.stringify(shippingAddress) : null,
                billingAddress ? JSON.stringify(billingAddress) : null,
                timestamp, timestamp)

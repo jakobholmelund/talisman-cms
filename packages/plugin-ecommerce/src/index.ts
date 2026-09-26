@@ -6,7 +6,9 @@ export type { PaymentProviderAdapter, ValidatedWebhookEvent } from './payments';
 export { StripePaymentAdapter } from './adapters/stripe';
 export { AdminTestPaymentAdapter } from './adapters/admin-test';
 export { readStoreSettings, StoreSettingsError } from './store-settings';
-export type { StoreSettings } from './store-settings';
+export type { StoreSettings, ShippingRate } from './store-settings';
+export { shippingOptionsFor } from './shipping';
+export type { ShippingOption } from './shipping';
 export { currencyMinorUnits, formatMoney, toMinorUnits, fromMinorUnits, minimumChargeAmount } from './money';
 export { COUNTRY_CODES, isCountryCode } from './countries';
 
@@ -646,6 +648,9 @@ export const ecommercePlugin = (
           { name: 'paymentProvider', label: 'Payment Provider', type: 'text' },
           { name: 'status', label: 'Status', type: 'select', options: ['draft', 'pending', 'paid', 'fulfilled', 'cancelled', 'partially_refunded', 'refunded'], required: true, defaultValue: 'draft' },
           { name: 'subtotalAmount', label: 'Item Subtotal (smallest currency unit)', type: 'number' },
+          { name: 'shippingLabel', label: 'Shipping Option', type: 'text' },
+          { name: 'shippingRateId', label: 'Shipping Rate ID', type: 'text' },
+          { name: 'shippingAmount', label: 'Shipping (smallest currency unit)', type: 'number' },
           { name: 'creditApplied', label: 'Store Credit Used (smallest currency unit)', type: 'number' },
           { name: 'discountCode', label: 'Discount Code', type: 'text' },
           { name: 'discountAmount', label: 'Code Discount (smallest currency unit)', type: 'number' },

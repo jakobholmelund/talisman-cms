@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import Stripe from 'stripe';
 import { bindCommerceApi, reconcileCommerce, CART_MAX_LINES, CART_MAX_LINE_QUANTITY } from '../dist/api.js';
 import { AdminTestPaymentAdapter } from '../dist/adapters/admin-test.js';
+import { StripePaymentAdapter } from '../dist/adapters/stripe.js';
 import { CUSTOMER_SESSION_COOKIE } from '../dist/accounts.js';
 import { CART_SESSION_COOKIE } from '../dist/cookies.js';
 
@@ -581,6 +582,222 @@ test('the checkout routes and action answer an unknown or undeliverable country 
   const placed = await adminCheckout(addressIn('ca'));
   assert.deepEqual([placed.status, placed.json.status], [200, 'paid']);
   assert.deepEqual(storedCountries(sqlite, placed.json.orderId), ['CA', null]);
+  sqlite.close();
+});
+
+// --- Shipping rates ------------------------------------------------------------------------------
+
+const shippingRates = [
+  { id: 'standard', label: 'Standard shipping', amount: 700, countries: ['US', 'CA'], freeOver: 20000,
+    minDays: 3, maxDays: 5 },
+  { id: 'express', label: 'Express shipping', amount: 2500, countries: ['US'], maxDays: 2 },
+  { id: 'international', label: 'International shipping', amount: 1500, countries: ['GB'] },
+];
+const withShipping = { TALISMAN_COMMERCE_SHIPPING_RATES: JSON.stringify(shippingRates) };
+const unavailableOption = 'This shipping option is not available for your country';
+
+/** The stored [rate id, label, shipping amount, total] of an order. */
+function storedShipping(sqlite, orderId) {
+  const order = sqlite.prepare(`SELECT shipping_rate_id, shipping_label, shipping_amount, total_amount
+    FROM _ecommerce_orders WHERE id = ?`).get(orderId);
+  return [order.shipping_rate_id, order.shipping_label, order.shipping_amount, order.total_amount];
+}
+
+/** The hosted checkout, recording what each session is asked to charge. */
+function recordingCheckout(sessions) {
+  return { ...hostedCheckout, async createCheckoutSession(input) {
+    sessions.push(input);
+    return hostedCheckout.createCheckoutSession(input);
+  } };
+}
+
+test('checkout charges the chosen shipping rate, or else the first that serves the country', async () => {
+  const { sqlite, DB } = database();
+  sqlite.exec('UPDATE _ecommerce_product_variants SET inventory_quantity = 20');
+  const sessions = [];
+  const cases = [
+    [{ shippingAddress: addressIn('us') }, ['standard', 'Standard shipping', 700, 12700]],
+    [{ shippingAddress: addressIn('US'), shippingRateId: 'express' }, ['express', 'Express shipping', 2500, 14500]],
+    [{ shippingAddress: addressIn('CA'), shippingRateId: ' standard ' }, ['standard', 'Standard shipping', 700, 12700]],
+    [{ shippingAddress: addressIn('gb'), shippingRateId: '' }, ['international', 'International shipping', 1500, 13500]],
+  ];
+  for (const [index, [details, stored]] of cases.entries()) {
+    const { order } = await orderTo({ DB, ...withShipping }, `shipping-browser-${index}`, details,
+      recordingCheckout(sessions));
+    assert.deepEqual(storedShipping(sqlite, order.id), stored, JSON.stringify(details));
+    assert.deepEqual([order.subtotalAmount, order.shippingAmount, order.totalAmount], [12000, stored[2], stored[3]]);
+  }
+  // The provider is given the rate and its delivery estimate, to charge as a line of its own.
+  assert.deepEqual(sessions.map((session) => session.shipping), [
+    { label: 'Standard shipping', amount: 700, description: 'Delivery in 3–5 business days' },
+    { label: 'Express shipping', amount: 2500, description: 'Delivery in up to 2 business days' },
+    { label: 'Standard shipping', amount: 700, description: 'Delivery in 3–5 business days' },
+    { label: 'International shipping', amount: 1500, description: undefined },
+  ]);
+
+  // A store without rates charges no shipping, as before, and ignores a requested option.
+  const { order } = await orderTo({ DB }, 'no-rates-browser', { shippingRateId: 'express' }, recordingCheckout(sessions));
+  assert.deepEqual(storedShipping(sqlite, order.id), [null, null, 0, 12000]);
+  assert.equal(sessions.at(-1).shipping, undefined);
+  sqlite.close();
+});
+
+test('a shipping rate is free once the items after discounts reach its freeOver', async () => {
+  const { sqlite, DB } = database();
+  sqlite.exec('UPDATE _ecommerce_product_variants SET inventory_quantity = 20');
+  const now = Math.floor(Date.now() / 1000);
+  sqlite.prepare(`INSERT INTO _ecommerce_discount_codes (code, type, value, created_at, updated_at)
+    VALUES ('SAVE50', 'amount', 5000, ?, ?)`).run(now, now);
+  const api = bindCommerceApi({ env: { DB, ...withShipping }, paymentAdapters: [hostedCheckout] });
+  const twoFrames = async (sessionToken, details = {}) => {
+    const cart = await api.carts.getOrCreate(sessionToken);
+    await api.carts.updateItems(cart.id, [{ productId: 'frame', variantId: 'frame-amber', quantity: 2 }]);
+    return (await api.orders.createFromCart(cart.id, { ...checkoutDetails, providerId: 'stripe', ...details })).order;
+  };
+  // $240 of items reach the $200 of the standard rate; the express rate is never free.
+  const free = await twoFrames('free-shipping-browser');
+  assert.deepEqual(storedShipping(sqlite, free.id), ['standard', 'Standard shipping', 0, 24000]);
+  const express = await twoFrames('express-browser', { shippingRateId: 'express' });
+  assert.deepEqual(storedShipping(sqlite, express.id), ['express', 'Express shipping', 2500, 26500]);
+  // A discount that takes the items below it brings the charge back. The discount redemption guard
+  // accepted the order, whose totals now include the shipping.
+  const discounted = await twoFrames('discounted-browser', { discountCode: 'SAVE50' });
+  assert.deepEqual([discounted.discountAmount, ...storedShipping(sqlite, discounted.id)],
+    [5000, 'standard', 'Standard shipping', 700, 19700]);
+  assert.equal(sqlite.prepare('SELECT status FROM _ecommerce_discount_redemptions WHERE order_id = ?')
+    .get(discounted.id).status, 'reserved');
+  sqlite.close();
+});
+
+test('checkout refuses an option that does not serve the country, and a country no rate serves', async () => {
+  const { sqlite, DB } = database();
+  const refusals = [
+    [{ shippingAddress: addressIn('GB'), shippingRateId: 'standard' }, unavailableOption],
+    [{ shippingAddress: addressIn('CA'), shippingRateId: 'express' }, unavailableOption],
+    [{ shippingAddress: addressIn('US'), shippingRateId: 'overnight' }, unavailableOption],
+    // No rate serves France, whichever option is asked for.
+    [{ shippingAddress: addressIn('FR') }, 'We do not deliver to this country'],
+    [{ shippingAddress: addressIn('FR'), shippingRateId: 'express' }, 'We do not deliver to this country'],
+  ];
+  for (const adapter of [hostedCheckout, new AdminTestPaymentAdapter()]) {
+    for (const [details, message] of refusals) {
+      await assert.rejects(orderTo({ DB, ...withShipping }, 'refused-browser', details, adapter), { message },
+        `${adapter.providerId} ${JSON.stringify(details)}`);
+    }
+  }
+  // Refused before anything was reserved.
+  assert.equal(count(sqlite, '_ecommerce_orders'), 0);
+  assert.equal(sqlite.prepare('SELECT checkout_session_id FROM _ecommerce_carts').get().checkout_session_id, null);
+  assert.equal(sqlite.prepare("SELECT inventory_quantity FROM _ecommerce_product_variants WHERE id = 'frame-lens'")
+    .get().inventory_quantity, 5);
+  sqlite.close();
+});
+
+test('an order with nothing to ship is charged no shipping, whatever option is sent', async () => {
+  const { sqlite, DB } = database();
+  sqlite.exec("UPDATE _ecommerce_products SET is_physical = 0 WHERE id = 'case'");
+  const sessions = [];
+  const api = bindCommerceApi({ env: { DB, ...withShipping }, paymentAdapters: [recordingCheckout(sessions)] });
+  const cart = await api.carts.getOrCreate('digital-shipping-browser');
+  await api.carts.updateItems(cart.id, [{ productId: 'case', quantity: 1 }]);
+  // No rate serves France, and nothing ships there.
+  const { order } = await api.orders.createFromCart(cart.id, { ...checkoutDetails, providerId: 'stripe',
+    shippingAddress: undefined, billingAddress: addressIn('FR'), shippingRateId: 'express' });
+  assert.deepEqual(storedShipping(sqlite, order.id), [null, null, 0, 2000]);
+  assert.equal(sessions[0].shipping, undefined);
+  sqlite.close();
+});
+
+test('the Stripe session charges the items and the shipping line less the coupon, which is the order total', async () => {
+  const { sqlite, DB } = database();
+  const now = Math.floor(Date.now() / 1000);
+  sqlite.prepare(`INSERT INTO _ecommerce_discount_codes (code, type, value, created_at, updated_at)
+    VALUES ('SAVE10', 'percent', 1000, ?, ?)`).run(now, now);
+  const stripe = new StripePaymentAdapter({ secretKey: 'sk_test_route_tests' });
+  const calls = {};
+  stripe.stripe = {
+    coupons: { async create(input) { calls.coupon = input; return { id: 'coupon_route_tests' }; } },
+    checkout: { sessions: { async create(input) {
+      calls.session = input;
+      return { id: 'cs_test_shipped', url: 'https://checkout.stripe.test/shipped' };
+    } } },
+  };
+  const { order } = await orderTo({ DB, ...withShipping }, 'stripe-shipping-browser',
+    { shippingRateId: 'express', discountCode: 'SAVE10' }, stripe);
+  assert.deepEqual(calls.session.line_items.map(({ price_data: price, quantity }) =>
+    [price.product_data.name, price.product_data.description, price.unit_amount, quantity]),
+    [['Frame - Lens: Amber', undefined, 12000, 1], ['Express shipping', 'Delivery in up to 2 business days', 2500, 1]]);
+  const lines = calls.session.line_items.reduce((sum, line) => sum + line.price_data.unit_amount * line.quantity, 0);
+  assert.deepEqual([calls.coupon.amount_off, lines - calls.coupon.amount_off], [1200, order.totalAmount]);
+  assert.deepEqual([order.discountAmount, order.shippingAmount, order.totalAmount], [1200, 2500, 13300]);
+  sqlite.close();
+});
+
+test('a Stripe payment of the total with shipping confirms the order, and one of the items alone does not', async () => {
+  const { sqlite, DB } = database();
+  const { order } = await orderTo({ DB, ...withShipping }, 'shipped-browser', { shippingAddress: addressIn('GB') });
+  assert.deepEqual([order.subtotalAmount, order.shippingAmount, order.totalAmount], [12000, 1500, 13500]);
+  const env = { ...stripeEnv(DB), ...withShipping };
+  const itemsOnly = completedEvent({ ...order, totalAmount: order.subtotalAmount });
+  const refused = await postWebhook(env, itemsOnly, signed(itemsOnly));
+  assert.deepEqual([refused.status, refused.json], [400, { error: 'Payment amount does not match order total' }]);
+  const payload = completedEvent(order);
+  const settled = await postWebhook(env, payload, signed(payload));
+  assert.deepEqual([settled.status, settled.json], [200, { success: true, orderId: order.id, status: 'paid' }]);
+  assert.equal(sqlite.prepare('SELECT amount FROM _ecommerce_payments WHERE order_id = ?').get(order.id).amount, 13500);
+
+  // The order status lists the shipping with the other totals.
+  const status = await call(orderRoute, { DB }, { method: 'GET', path: `/api/ecommerce/order?order=${order.id}`,
+    cookies: { [CART_SESSION_COOKIE]: 'shipped-browser' } });
+  assert.deepEqual([status.status, status.json.shippingAmount, status.json.shippingLabel, status.json.totalAmount],
+    [200, 1500, 'International shipping', 13500]);
+  sqlite.close();
+});
+
+test('the checkout routes and action pass the shipping option on and answer a refused one as a bad request', async (t) => {
+  t.after(() => { delete globalThis.cmsUser; });
+  const { sqlite, DB } = database();
+  const api = bindCommerceApi({ env: { DB } });
+  const cart = await api.carts.getOrCreate('option-browser');
+  await api.carts.updateItems(cart.id, [{ productId: 'frame', variantId: 'frame-amber', quantity: 1 }]);
+  const env = { ...stripeEnv(DB), TALISMAN_COMMERCE_CHECKOUT_ENABLED: 'true', ...withShipping };
+  const cookies = { [CART_SESSION_COOKIE]: 'option-browser' };
+  const refused = { shippingAddress: addressIn('GB'), shippingRateId: 'express' };
+
+  const response = await call(checkoutRoute, env, { path: '/api/ecommerce/checkout', cookies,
+    body: { customerEmail: 'owner@example.test', ...refused } });
+  assert.deepEqual([response.status, response.json], [400, { error: unavailableOption }]);
+  globalThis.workerEnv = env;
+  await assert.rejects(ecommerceActions.checkout.handler({ customerEmail: 'owner@example.test', ...refused },
+    { cookies: cookieJar(cookies), url: new URL(`${ORIGIN}/_actions/checkout`) }),
+    { code: 'BAD_REQUEST', message: unavailableOption });
+
+  globalThis.cmsUser = { id: 'admin-1', email: 'admin@shop.test', role: 'admin' };
+  const adminCheckout = (details) => call(adminTestCheckoutRoute, env, { path: '/admin/api/ecommerce/test-checkout',
+    cookies, body: { customerEmail: 'admin@shop.test', ...details } });
+  const adminRefused = await adminCheckout(refused);
+  assert.deepEqual([adminRefused.status, adminRefused.json], [400, { error: unavailableOption }]);
+  assert.equal(count(sqlite, '_ecommerce_orders'), 0);
+  const placed = await adminCheckout({ shippingAddress, shippingRateId: 'express' });
+  assert.deepEqual([placed.status, placed.json.status], [200, 'paid']);
+  assert.deepEqual(storedShipping(sqlite, placed.json.orderId), ['express', 'Express shipping', 2500, 14500]);
+  sqlite.close();
+});
+
+test('invalid shipping rates close checkout with the generic 503 and log the rate for the operator', async (t) => {
+  const logged = [];
+  t.mock.method(console, 'error', (message) => { logged.push(message); });
+  const { sqlite, DB } = database();
+  const api = bindCommerceApi({ env: { DB } });
+  const cart = await api.carts.getOrCreate('misrated-browser');
+  await api.carts.updateItems(cart.id, [{ productId: 'frame', variantId: 'frame-amber', quantity: 1 }]);
+  const env = { ...stripeEnv(DB), TALISMAN_COMMERCE_CHECKOUT_ENABLED: 'true',
+    TALISMAN_COMMERCE_SHIPPING_RATES: '[{"id":"standard","label":"Standard shipping"}]' };
+  const response = await call(checkoutRoute, env, { path: '/api/ecommerce/checkout',
+    cookies: { [CART_SESSION_COOKIE]: 'misrated-browser' }, body: { customerEmail: 'owner@example.test', shippingAddress } });
+  assert.deepEqual([response.status, response.json], [503, { error: 'Checkout is temporarily unavailable.' }]);
+  assert.deepEqual(logged, ['[Commerce] Store settings are invalid: TALISMAN_COMMERCE_SHIPPING_RATES[0].amount: Required']);
+  assert.equal(count(sqlite, '_ecommerce_orders'), 0);
   sqlite.close();
 });
 

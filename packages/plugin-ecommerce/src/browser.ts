@@ -114,6 +114,8 @@ export function startCheckout(input: {
   giftCardCode?: string;
   shippingAddress?: Record<string, string>;
   billingAddress?: Record<string, string>;
+  /** The id of one of the store's shipping options for the country. Without it, the first option. */
+  shippingRateId?: string;
 } = {}) {
   return commerceRequest<{ orderId: string; redirectUrl: string }>('/api/ecommerce/checkout', 'POST', input);
 }
@@ -127,6 +129,7 @@ export function startAdminTestCheckout(input: {
   customerEmail?: string;
   shippingAddress?: Record<string, string>;
   billingAddress?: Record<string, string>;
+  shippingRateId?: string;
 } = {}, options: { adminPath?: string } = {}) {
   const adminPath = (options.adminPath || '/admin').replace(/\/+$/, '');
   return commerceRequest<{ orderId: string; status: string; paymentProvider: 'admin_test'; redirectUrl: string }>(
@@ -134,7 +137,7 @@ export function startAdminTestCheckout(input: {
 }
 
 export function getOrderStatus(orderId: string) {
-  return commerceRequest<{ orderId: string; status: string; paymentProvider: string | null; accountCreatedByOrder: boolean; accountLinked: boolean; totalAmount: number; subtotalAmount: number; creditApplied: number; discountCode: string | null; discountAmount: number; giftCardApplied: number; giftCardRefundedCents: number; providerRefundedCents: number; currency: string }>(
+  return commerceRequest<{ orderId: string; status: string; paymentProvider: string | null; accountCreatedByOrder: boolean; accountLinked: boolean; totalAmount: number; subtotalAmount: number; shippingAmount: number; shippingLabel: string | null; creditApplied: number; discountCode: string | null; discountAmount: number; giftCardApplied: number; giftCardRefundedCents: number; providerRefundedCents: number; currency: string }>(
     `/api/ecommerce/order?order=${encodeURIComponent(orderId)}`, 'GET');
 }
 

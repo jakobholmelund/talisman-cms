@@ -92,6 +92,8 @@ type QualifyingOrder = Pick<typeof orders.$inferSelect, 'status' | 'subtotalAmou
 /**
  * What the shopper paid for the goods after promotions and refunds: the subtotal less the promotion
  * discount, provider refunds and gift card refunds. Store credit and gift card tender count as paid.
+ * Shipping is not part of the goods, and a refund counts in full against them even when it returned
+ * shipping, so this never exceeds what the order kept for its goods.
  */
 export function referralNetAmount(order: Omit<QualifyingOrder, 'status'>) {
   return order.subtotalAmount - order.discountAmount - order.providerRefundedCents - order.giftCardRefundedCents;

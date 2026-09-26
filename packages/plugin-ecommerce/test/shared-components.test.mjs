@@ -1527,3 +1527,57 @@ test("store credit and credit vouchers leave Stripe's minimum charge for the sto
   assert.deepEqual([discounted.discountAmount, discounted.totalAmount], [11970, 30]);
   sqlite.close();
 });
+
+test('shipping is charged with a discount, store credit and a gift card, and the redemption guards accept the order', async () => {
+  const { sqlite, DB } = database();
+  seed(sqlite, 10);
+  sqlite.exec('UPDATE _ecommerce_components SET quantity = 10');
+  const now = Math.floor(Date.now() / 1000);
+  for (const [id, credit] of [['credit-shopper', 2000], ['rich-shopper', 20000]]) {
+    sqlite.prepare(`INSERT INTO _ecommerce_customer_accounts
+      (id,email,email_normalized,credit_balance,created_at,updated_at) VALUES (?,?,?,?,?,?)`)
+      .run(id, `${id}@example.com`, `${id}@example.com`, credit, now, now);
+  }
+  const env = { ...giftEnv(DB), TALISMAN_COMMERCE_SHIPPING_RATES: JSON.stringify([
+    { id: 'standard', label: 'Standard shipping', amount: 1500, countries: ['US'] }]) };
+  await createDiscountCode(env, discountInput('SHIP10', 'amount', 1000));
+  const sessions = [];
+  const api = bindCommerceApi({ env, paymentAdapters: [{ providerId: 'stripe',
+    async createCheckoutSession(input) {
+      sessions.push(input);
+      return { providerSessionId: `session-${input.orderId}`, url: `https://example.test/${input.orderId}` };
+    }, async expireCheckoutSession() {} }] });
+  const buyWith = async (browser, accountId, details) => {
+    const cart = await api.carts.getOrCreate(browser, accountId);
+    await api.carts.updateItems(cart.id, [{ productId: 'mycelium', variantId: 'mycelium-amber', quantity: 1 }]);
+    return (await api.orders.createFromCart(cart.id, { ...address, customerEmail: `${accountId}@example.com`,
+      ...details })).order;
+  };
+  const totals = (order) => [order.subtotalAmount, order.shippingAmount, order.discountAmount, order.creditApplied,
+    order.giftCardApplied, order.totalAmount];
+
+  // $120 of items less the $10 code, $15 of shipping, $20 of credit and a $50 card leave $55 to pay.
+  const card = await issueAdminGiftCard(env, 'admin-1', { amountCents: 5000, reason: 'Customer service goodwill' });
+  const order = await buyWith('stacked-shipping', 'credit-shopper', { discountCode: 'SHIP10', giftCardCode: card.code });
+  assert.deepEqual(totals(order), [12000, 1500, 1000, 2000, 5000, 5500]);
+  // Both guards checked the totals, shipping included, when they reserved the code and the card.
+  const redemption = (table, id) => sqlite.prepare(`SELECT status FROM ${table} WHERE order_id = ?`).get(id)?.status;
+  assert.equal(redemption('_ecommerce_discount_redemptions', order.id), 'reserved');
+  assert.equal(redemption('_ecommerce_gift_card_redemptions', order.id), 'reserved');
+  assert.deepEqual([sessions[0].shipping, sessions[0].discountApplied, sessions[0].creditApplied,
+    sessions[0].giftCardApplied], [{ label: 'Standard shipping', amount: 1500, description: undefined }, 1000, 2000, 5000]);
+  await api.orders.finalizePayment(order.id, { provider: 'stripe', providerId: order.checkoutSessionId,
+    paymentStatus: 'success', amount: 5500, currency: 'usd' });
+  assert.equal(redemption('_ecommerce_gift_card_redemptions', order.id), 'confirmed');
+
+  // Credit pays only for the items, all of them here, because the shipping leaves the minimum charge
+  // to pay. A gift card can pay the shipping too, which settles the order without Stripe.
+  const covering = await issueAdminGiftCard(env, 'admin-1', { amountCents: 5000, reason: 'Replacement gift card' });
+  const settled = await buyWith('covered-shipping', 'rich-shopper', { giftCardCode: covering.code });
+  assert.deepEqual(totals(settled), [12000, 1500, 0, 12000, 1500, 0]);
+  assert.deepEqual([settled.status, settled.paymentProvider, sessions.length], ['paid', 'gift_card', 1]);
+  assert.equal(redemption('_ecommerce_gift_card_redemptions', settled.id), 'confirmed');
+  assert.equal(sqlite.prepare('SELECT balance_cents FROM _ecommerce_gift_cards WHERE id = ?').get(covering.id)
+    .balance_cents, 3500);
+  sqlite.close();
+});

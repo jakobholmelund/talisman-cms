@@ -217,6 +217,25 @@ test('the minimum order applies to the subtotal less the promotion discount', as
   assert.deepEqual([exact.discountAmount, exact.referralCode], [7000, code]);
 });
 
+test('shipping counts toward neither the minimum order nor what the order keeps', async () => {
+  const rates = { TALISMAN_COMMERCE_SHIPPING_RATES: JSON.stringify([
+    { id: 'standard', label: 'Standard shipping', amount: 1500 }]) };
+  // $120 of items with $15 of shipping stay below a $125 minimum.
+  const high = shop({ ...ENABLED, ...rates, TALISMAN_COMMERCE_REFERRAL_MIN_ORDER_CENTS: '12500' });
+  const highCode = await getOrCreateReferralCode(high.env, 'referrer');
+  const below = await checkout(high, { customerEmail: 'friend@example.com', referralCode: highCode });
+  assert.deepEqual([below.shippingAmount, below.totalAmount, below.referralCode], [1500, 13500, null]);
+
+  // At a $120 minimum the items qualify. A refund counts against the goods even when it returned
+  // the shipping, so refunding $15 leaves less than the minimum kept.
+  const store = shop({ ...ENABLED, ...rates, TALISMAN_COMMERCE_REFERRAL_MIN_ORDER_CENTS: '12000' });
+  const order = await referredPurchase(store);
+  assert.deepEqual([order.shippingAmount, order.totalAmount], [1500, 13500]);
+  assert.equal(referralStatus(store, order.id), 'approved');
+  await refund(store, order, 1500);
+  assert.equal(referralStatus(store, order.id), 'void');
+});
+
 test('addresses that reach the referrer\'s mailbox are refused at checkout', async () => {
   const store = shop();
   const code = await getOrCreateReferralCode(store.env, 'referrer');
