@@ -1,4 +1,5 @@
 import React, { type ReactNode } from 'react';
+import { formatMoney } from './money';
 import './analytics.css';
 
 export function adminBase() {
@@ -16,8 +17,8 @@ export async function analyticsRequest<T>(area: 'overview' | 'commerce', days: 7
 }
 
 export const number = (value: number) => new Intl.NumberFormat().format(value);
-export const money = (cents: number, currency: string) =>
-  new Intl.NumberFormat(undefined, { style: 'currency', currency: currency.toUpperCase() }).format(cents / 100);
+/** An amount in the currency's minor units, formatted for the admin's locale. */
+export const money = (amount: number, currency: string) => formatMoney(amount, currency);
 
 /**
  * Metric and footnote wording for how refunds are dated (see RefundBasis in ../commerce).
@@ -52,15 +53,17 @@ export function Panel({ title, children }: { title: string; children: ReactNode 
   return <section className="talisman-analytics__panel"><h2>{title}</h2>{children}</section>;
 }
 
-export function Trend({ points, value, label }: {
+export function Trend({ points, value, label, format = number }: {
   points: Array<{ date: string; [key: string]: string | number }>;
   value: string; label: string;
+  /** Formats a point's value for its tooltip, such as net sales in their currency. */
+  format?: (value: number) => string;
 }) {
   // Net sales can be negative on a day with more refunds than sales; those bars are marked.
   const max = Math.max(1, ...points.map(point => Math.abs(Number(point[value] || 0))));
   return <div className="talisman-analytics__trend" role="img" aria-label={label}>
     {points.map(point => <div key={point.date} className="talisman-analytics__bar-wrap"
-      title={`${point.date}: ${number(Number(point[value] || 0))}`}>
+      title={`${point.date}: ${format(Number(point[value] || 0))}`}>
       <div className={`talisman-analytics__bar${Number(point[value] || 0) < 0 ? ' talisman-analytics__bar--negative' : ''}`}
         style={{ height: `${Math.max(2, Math.abs(Number(point[value] || 0)) / max * 100)}%` }} />
       {points.length <= 10 && <span>{point.date.slice(5)}</span>}

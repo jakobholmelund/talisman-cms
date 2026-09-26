@@ -9,6 +9,7 @@ import {
   stocks,
   variants as variantDefinitions,
 } from '@talisman-cms/plugin-ecommerce/schema';
+import { formatMoney, getStoreCurrency } from '../../lib/commerce';
 import { getPrimaryProductImage } from '../../lib/product-media';
 import { getMediaImageSrcSet } from 'talisman-cms/helpers';
 
@@ -38,7 +39,8 @@ const stockRows = productVariantValueIds.length > 0
 
 const productName = product.data.name ?? product.data.title ?? 'Untitled product';
 const priceCents = product.data.basePrice ?? product.data.price ?? 0;
-const formattedPrice = (priceCents / 100).toFixed(2);
+const currency = getStoreCurrency(cfEnv as any);
+const formattedPrice = formatMoney(priceCents, currency);
 const imageUrl = getPrimaryProductImage(product.data);
 const inventory = product.data.inventoryQuantity ?? 0;
 const inStock = inventory > 0 || product.data.type === 'digital';
@@ -135,7 +137,7 @@ const initialHeroImageUrl = defaultVariant?.imageUrl ?? imageUrl;
           </span>
         </div>
         <h1 class="text-4xl sm:text-5xl font-extrabold text-gray-900 tracking-tight mb-4">{productName}</h1>
-        <p class="text-3xl font-black text-brand-600 mb-8">${formattedPrice}</p>
+        <p class="text-3xl font-black text-brand-600 mb-8" data-currency={currency}>{formattedPrice}</p>
         
         <div class="prose prose-lg text-gray-600 mb-10">
           <p>{product.data.description || 'This premium item does not have a detailed description yet.'}</p>
@@ -228,6 +230,7 @@ const initialHeroImageUrl = defaultVariant?.imageUrl ?? imageUrl;
 <script>
   import { actions } from 'astro:actions';
   import { dispatchCartUpdated } from '@talisman-cms/plugin-ecommerce/browser';
+  import { formatMoney } from '@talisman-cms/plugin-ecommerce/money';
 
   function initProductPage() {
     const addToCartButton = document.getElementById('add-to-cart-button');
@@ -270,8 +273,8 @@ const initialHeroImageUrl = defaultVariant?.imageUrl ?? imageUrl;
         const stock = Number(htmlBtn?.dataset.stock || 0);
         stockEl.textContent = button ? `${stock} ready to ship` : defaultVariantStock;
       }
-      if (priceHeading && htmlBtn?.dataset.price) {
-        priceHeading.textContent = `$${(Number(htmlBtn.dataset.price) / 100).toFixed(2)}`;
+      if (priceHeading instanceof HTMLElement && priceHeading.dataset.currency && htmlBtn?.dataset.price) {
+        priceHeading.textContent = formatMoney(Number(htmlBtn.dataset.price), priceHeading.dataset.currency);
       }
       if (heroImage instanceof HTMLImageElement) {
         const nextImageUrl = htmlBtn?.dataset.image || defaultProductImageUrl;

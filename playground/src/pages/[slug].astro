@@ -4,6 +4,7 @@ import BlocksRenderer from 'talisman-cms/render/BlocksRenderer.astro';
 import { buildPresetMap } from 'talisman-cms/render';
 import { getClient } from 'talisman-cms/client';
 import { env as cfEnv } from 'cloudflare:workers';
+import { getStoreCurrency } from '../lib/commerce';
 
 const env = { DB: (cfEnv as any).DB, KV: (cfEnv as any).KV };
 const cms = getClient(env);
@@ -39,6 +40,8 @@ const blockRenderers = {
 const rendererContext = {
   postsById: Object.fromEntries(allPosts.map((post) => [post.id, post])),
   productsById: Object.fromEntries(allProducts.map((product) => [product.id, product])),
+  // Product prices are in the store currency's minor units.
+  currency: getStoreCurrency(cfEnv as any),
 };
 const presetsById = buildPresetMap(allComponentPresets);
 ---

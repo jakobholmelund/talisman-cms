@@ -1,4 +1,5 @@
 import { dispatchCartUpdated } from '@talisman-cms/plugin-ecommerce/browser';
+import { formatMoney } from '@talisman-cms/plugin-ecommerce/money';
 
 interface CartItem {
   key: string;
@@ -18,13 +19,12 @@ interface CartItem {
 interface CartViewState {
   items: CartItem[];
   locked: boolean;
+  /** The store currency; prices are in its minor units. */
+  currency: string;
 }
 
-function formatMoney(cents: number, currency = 'usd') {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: currency.toUpperCase(),
-  }).format((Number(cents || 0)) / 100);
+function money(amount: number, currency: string) {
+  return formatMoney(Number(amount || 0), currency);
 }
 
 function matchesItem(candidate: CartItem, productId: string, variantId: string) {
@@ -45,7 +45,7 @@ function readState(root: HTMLElement): CartViewState | null {
   return JSON.parse(stateEl.textContent) as CartViewState;
 }
 
-function createItemArticle(item: CartItem, locked: boolean, template: HTMLTemplateElement) {
+function createItemArticle(item: CartItem, state: CartViewState, template: HTMLTemplateElement) {
   const fragment = template.content.cloneNode(true) as DocumentFragment;
   const article = fragment.firstElementChild;
   if (!(article instanceof HTMLElement)) return null;
@@ -78,18 +78,18 @@ function createItemArticle(item: CartItem, locked: boolean, template: HTMLTempla
   if (stockEl) stockEl.textContent = item.stockLabel;
 
   const lineTotalEl = article.querySelector<HTMLElement>('[data-cart-line-total]');
-  if (lineTotalEl) lineTotalEl.textContent = formatMoney(item.lineTotal);
+  if (lineTotalEl) lineTotalEl.textContent = money(item.lineTotal, state.currency);
 
   const quantityEl = article.querySelector<HTMLElement>('[data-cart-quantity]');
   if (quantityEl) quantityEl.textContent = String(item.quantity);
 
   const unitPriceEl = article.querySelector<HTMLElement>('[data-cart-unit-price]');
-  if (unitPriceEl) unitPriceEl.textContent = `${formatMoney(item.unitPrice)} each`;
+  if (unitPriceEl) unitPriceEl.textContent = `${money(item.unitPrice, state.currency)} each`;
 
   for (const button of article.querySelectorAll<HTMLButtonElement>('[data-cart-action]')) {
     button.dataset.productId = item.productId;
     button.dataset.variantId = item.variantId || '';
-    button.disabled = locked;
+    button.disabled = state.locked;
   }
 
   return article;
@@ -112,12 +112,12 @@ function renderCart(root: HTMLElement, state: CartViewState) {
   contentEl?.classList.toggle('hidden', itemCount === 0);
   if (summaryCountEl) summaryCountEl.textContent = String(itemCount);
   if (summaryShippingEl) summaryShippingEl.textContent = requiresShipping ? 'Calculated at checkout' : 'Not required';
-  if (summarySubtotalEl) summarySubtotalEl.textContent = formatMoney(subtotal);
+  if (summarySubtotalEl) summarySubtotalEl.textContent = money(subtotal, state.currency);
 
   if (!listEl || !templateEl) return;
   listEl.replaceChildren(
     ...state.items
-      .map((item) => createItemArticle(item, state.locked, templateEl))
+      .map((item) => createItemArticle(item, state, templateEl))
       .filter(Boolean) as HTMLElement[]
   );
 }

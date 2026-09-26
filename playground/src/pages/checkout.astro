@@ -114,7 +114,7 @@ const cancelled = Astro.url.searchParams.get('cancelled') === '1';
                   {item.variantLabel && <p class="text-sm text-gray-500">{item.variantLabel}</p>}
                   <p class="text-xs uppercase tracking-[0.2em] text-gray-400">Qty {item.quantity}</p>
                 </div>
-                <span class="text-sm font-semibold text-gray-900">{formatMoney(item.lineTotal)}</span>
+                <span class="text-sm font-semibold text-gray-900">{formatMoney(item.lineTotal, cartState.currency)}</span>
               </div>
             ))}
           </div>
@@ -129,7 +129,7 @@ const cancelled = Astro.url.searchParams.get('cancelled') === '1';
             </div>
             <div class="flex items-center justify-between border-t border-gray-100 pt-4 text-lg font-bold text-gray-900">
               <span>Total</span>
-              <span>{formatMoney(cartState.subtotal)}</span>
+              <span>{formatMoney(cartState.subtotal, cartState.currency)}</span>
             </div>
           </div>
         </aside>

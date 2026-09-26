@@ -5,9 +5,11 @@ import Button from '../components/Button.astro';
 import Card from '../components/Card.astro';
 import { getClient } from 'talisman-cms/client';
 import { env as cfEnv } from 'cloudflare:workers';
+import { formatMoney, getStoreCurrency } from '../lib/commerce';
 
 const env = { DB: (cfEnv as any).DB, KV: (cfEnv as any).KV };
 const cms = getClient(env);
+const currency = getStoreCurrency(cfEnv as any);
 
 const [products, posts] = await Promise.all([
   cms.entries.findMany('products', { depth: 0, limit: 3 }).catch(() => []),
@@ -65,7 +67,7 @@ function getProductPrice(product: any) {
               {product.data.description || 'A premium product powered by Talisman CMS.'}
             </p>
             <div class="flex items-center justify-between border-t border-gray-100 pt-4 mt-auto">
-              <span class="text-2xl font-black text-gray-900">${(getProductPrice(product) / 100).toFixed(2)}</span>
+              <span class="text-2xl font-black text-gray-900">{formatMoney(getProductPrice(product), currency)}</span>
               <Button size="sm" variant="secondary" class="group-hover:bg-brand-600 group-hover:text-white transition-colors">
                 View Details
               </Button>

@@ -1,4 +1,5 @@
 import { and, eq } from 'drizzle-orm';
+import { readStoreSettings } from '@talisman-cms/plugin-ecommerce';
 import { bindCommerceApi } from '@talisman-cms/plugin-ecommerce/api';
 import { StripePaymentAdapter } from '@talisman-cms/plugin-ecommerce/adapters/stripe';
 import {
@@ -12,6 +13,8 @@ import {
 import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
 import { ensureCartSession, readCartSessionToken, type CookieJar } from '@talisman-cms/plugin-ecommerce/cookies';
 import { getPrimaryProductImage } from './product-media';
+
+export { formatMoney } from '@talisman-cms/plugin-ecommerce/money';
 
 type RuntimeEnv = TalismanEnv & Record<string, unknown>;
 
@@ -62,11 +65,9 @@ export function getCartSessionToken(cookies: CookieJar, options?: { create?: boo
   return readCartSessionToken(cookies) ?? null;
 }
 
-export function formatMoney(cents: number, currency = 'usd') {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: currency.toUpperCase(),
-  }).format((cents || 0) / 100);
+/** The currency the store sells in (TALISMAN_COMMERCE_CURRENCY). Prices are integers in its minor units. */
+export function getStoreCurrency(env: RuntimeEnv) {
+  return readStoreSettings(env).currency;
 }
 
 async function resolveLineItem(
@@ -132,6 +133,7 @@ async function resolveLineItem(
 }
 
 export async function getHydratedCart(env: RuntimeEnv, sessionToken?: string | null) {
+  const currency = getStoreCurrency(env);
   if (!sessionToken) {
     return {
       cart: null,
@@ -140,6 +142,7 @@ export async function getHydratedCart(env: RuntimeEnv, sessionToken?: string | n
       itemCount: 0,
       requiresShipping: false,
       locked: false,
+      currency,
     };
   }
 
@@ -154,6 +157,7 @@ export async function getHydratedCart(env: RuntimeEnv, sessionToken?: string | n
       itemCount: 0,
       requiresShipping: false,
       locked: false,
+      currency,
     };
   }
 
@@ -167,6 +171,7 @@ export async function getHydratedCart(env: RuntimeEnv, sessionToken?: string | n
     itemCount: items.reduce((total, item) => total + item.quantity, 0),
     requiresShipping: items.some((item) => item.type !== 'digital'),
     locked: Boolean(cart.checkoutSessionId || cart.closed),
+    currency,
   };
 }
 

@@ -30,6 +30,7 @@ const pendingOrder = await getPendingOrderForCart(cfEnv as any, cartState.cart?.
       itemCount={cartState.itemCount}
       requiresShipping={cartState.requiresShipping}
       subtotal={cartState.subtotal}
+      currency={cartState.currency}
     />
   </section>
 </Layout>

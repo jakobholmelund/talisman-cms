@@ -3,7 +3,7 @@ import { adminRequest, CommerceAdmin, errorText, Feedback, Field, money, Panel }
 
 type BasketSummary = {
   cart: { id: string; items: Array<{ productId: string; quantity: number }>; checkoutSessionId: string | null } | null;
-  quote: { totalAmount: number; requiresShipping: boolean; lines: Array<{ name: string; quantity: number; lineTotal: number }> } | null;
+  quote: { totalAmount: number; currency: string; requiresShipping: boolean; lines: Array<{ name: string; quantity: number; lineTotal: number }> } | null;
   quoteError: string | null;
   adminEmail: string;
 };
@@ -51,7 +51,7 @@ export default function TestCheckout() {
         </div>}
         <div className="ecom-admin__actions"><button type="submit" disabled={busy}>Place test order</button></div>
       </form></Panel>
-      <Panel title="Order summary">{summary.quote.lines.map((line, index) => <div className="ecom-admin__row" key={index}><span>{line.name} × {line.quantity}</span><strong>{money(line.lineTotal)}</strong></div>)}<div className="ecom-admin__row"><strong>Simulated total</strong><strong>{money(summary.quote.totalAmount)}</strong></div></Panel>
+      <Panel title="Order summary">{summary.quote.lines.map((line, index) => <div className="ecom-admin__row" key={index}><span>{line.name} × {line.quantity}</span><strong>{money(line.lineTotal, summary.quote!.currency)}</strong></div>)}<div className="ecom-admin__row"><strong>Simulated total</strong><strong>{money(summary.quote.totalAmount, summary.quote.currency)}</strong></div></Panel>
     </div>}
   </CommerceAdmin>;
 }

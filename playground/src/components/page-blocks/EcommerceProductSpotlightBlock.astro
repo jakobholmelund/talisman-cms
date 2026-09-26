@@ -1,5 +1,6 @@
 ---
 import { getMediaImageSrcSet } from 'talisman-cms/helpers';
+import { formatMoney } from '@talisman-cms/plugin-ecommerce/money';
 import { getContainerClass, getProductHref, getProductImage, getSectionClass, getTheme } from './shared';
 
 const { rendererContext = {}, productId, mediaPosition = 'right', index = 0 } = Astro.props;
@@ -14,6 +15,7 @@ const mediaFirst = mediaPosition === 'left';
 const title = Astro.props.title || product.data.name;
 const description = Astro.props.description || product.data.description;
 const ctaHref = Astro.props.ctaHref || getProductHref(product);
+const price = formatMoney(product.data.basePrice || 0, rendererContext.currency || 'usd');
 ---
 
 <section class={getSectionClass(Astro.props, 'py-20', true, index)} data-theme={getTheme(Astro.props)}>
@@ -36,7 +38,7 @@ const ctaHref = Astro.props.ctaHref || getProductHref(product);
             <a href={ctaHref} class="inline-flex items-center justify-center rounded-full bg-brand-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-brand-500/20 transition-colors hover:bg-brand-700">
               {Astro.props.ctaLabel || 'View product'}
             </a>
-            <span class="text-sm font-semibold uppercase tracking-[0.25em] text-gray-500">${((product.data.basePrice || 0) / 100).toFixed(2)}</span>
+            <span class="text-sm font-semibold uppercase tracking-[0.25em] text-gray-500">{price}</span>
           </div>
         </div>
       )}
@@ -49,7 +51,7 @@ const ctaHref = Astro.props.ctaHref || getProductHref(product);
             <a href={ctaHref} class="inline-flex items-center justify-center rounded-full bg-brand-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-brand-500/20 transition-colors hover:bg-brand-700">
               {Astro.props.ctaLabel || 'View product'}
             </a>
-            <span class="text-sm font-semibold uppercase tracking-[0.25em] text-gray-500">${((product.data.basePrice || 0) / 100).toFixed(2)}</span>
+            <span class="text-sm font-semibold uppercase tracking-[0.25em] text-gray-500">{price}</span>
           </div>
         </div>
       ) : (

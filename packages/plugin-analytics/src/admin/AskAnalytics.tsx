@@ -103,8 +103,8 @@ export default function AskAnalytics() {
               {report.subject === 'sales' && refunds}
             </div>
             {report.subject !== 'refunds' && report.subject !== 'products' && <Panel title={`Net sales by day · ${row.currency.toUpperCase()}`}>
-              <Trend points={report.commerce!.daily.filter(item => item.currency === row.currency).map(item => ({ date: item.date, value: item.netSales / 100 }))}
-                value="value" label={`Daily net sales in ${row.currency.toUpperCase()}`} />
+              <Trend points={report.commerce!.daily.filter(item => item.currency === row.currency)} value="netSales"
+                format={amount => money(amount, row.currency)} label={`Daily net sales in ${row.currency.toUpperCase()}`} />
             </Panel>}
           </section>;
         })}

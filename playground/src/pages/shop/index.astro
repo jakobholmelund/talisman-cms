@@ -4,10 +4,12 @@ import Card from '../../components/Card.astro';
 import Hero from '../../components/Hero.astro';
 import { getClient } from 'talisman-cms/client';
 import { env as cfEnv } from 'cloudflare:workers';
+import { formatMoney, getStoreCurrency } from '../../lib/commerce';
 import { getPrimaryProductImage } from '../../lib/product-media';
 
 const env = { DB: (cfEnv as any).DB, KV: (cfEnv as any).KV };
 const cms = getClient(env);
+const currency = getStoreCurrency(cfEnv as any);
 const products = await cms.entries.findMany('products', { depth: 0, cache: false }).catch(() => []);
 
 function getProductName(product: any) {
@@ -72,7 +74,7 @@ function getInventory(product: any) {
               {product.data.description || 'A premium product powered by Talisman CMS.'}
             </p>
             <div class="flex flex-col mt-auto pt-4 border-t border-gray-100">
-              <span class="text-2xl font-black text-gray-900">${(getProductPrice(product) / 100).toFixed(2)}</span>
+              <span class="text-2xl font-black text-gray-900">{formatMoney(getProductPrice(product), currency)}</span>
             </div>
           </Card>
         ))}

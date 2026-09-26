@@ -1,6 +1,7 @@
 import React, { type ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 import { adminTestCheckout } from 'virtual:talisman-cms/ecommerce-admin';
+import { formatMoney, fromMinorUnits, toMinorUnits } from '@talisman-cms/plugin-ecommerce/money';
 import './commerce-admin.css';
 
 export type CommerceTool = 'orders' | 'promotions' | 'gift-cards' | 'test-checkout';
@@ -28,8 +29,37 @@ export function errorText(error: unknown) {
   return error instanceof Error ? error.message : 'Request failed';
 }
 
-export function money(cents: number, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase() }).format(cents / 100);
+/** An amount in the currency's minor units as text: money(1250, 'usd') is "$12.50", money(1250, 'jpy') "¥1,250". */
+export function money(amount: number, currency: string) {
+  return formatMoney(amount, currency);
+}
+
+/**
+ * The currency the store sells in, from the talisman-commerce-currency meta tag that the admin page
+ * renders from TALISMAN_COMMERCE_CURRENCY. Discount values, referral rewards and store credit are
+ * amounts in its minor units.
+ */
+export function storeCurrency() {
+  const content = typeof document === 'undefined' ? undefined
+    : document.querySelector('meta[name="talisman-commerce-currency"]')?.getAttribute('content')?.trim().toLowerCase();
+  return content && /^[a-z]{3}$/.test(content) ? content : 'usd';
+}
+
+/**
+ * Bounds and step for an amount typed in major units, from the server's limits in minor units.
+ * The step is one minor unit: 0.01 for USD, 1 for JPY, 0.001 for KWD.
+ */
+export function amountInput(currency: string, limits: { min: number; max?: number }) {
+  return {
+    min: fromMinorUnits(limits.min, currency),
+    max: limits.max === undefined ? undefined : fromMinorUnits(limits.max, currency),
+    step: fromMinorUnits(1, currency),
+  };
+}
+
+/** A form amount typed in major units, such as 12.50, in the currency's minor units: 1250 for USD. */
+export function formAmount(value: FormDataEntryValue | null, currency: string) {
+  return toMinorUnits(Number(value || 0), currency);
 }
 
 const tools: Array<{ key: CommerceTool; label: string }> = [

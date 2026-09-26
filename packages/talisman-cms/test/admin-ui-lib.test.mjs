@@ -28,6 +28,8 @@ const {
 } =
   await loadAdminModule('lib/entry-save.ts');
 const { fetchAllEntries, fetchCollectionConfigs, fetchEntriesBySlug } = await loadAdminModule('lib/admin-api.ts');
+const { describeCommerceEntry, formatMoney, getRelationOptionLabel } = await loadAdminModule('lib/commerce-models.ts');
+const { readCommerceCurrency } = await loadAdminModule('commerce-currency.ts');
 
 const fields = [
   { name: 'title', type: 'text', required: true },
@@ -251,6 +253,47 @@ test('waitForPendingTransition checks the entry after each delay until it moves 
   assert.equal(loads, 1);
   // The editor's own schedule waits a few seconds between checks.
   assert.ok(PENDING_TRANSITION_CHECK_DELAYS_MS.length > 0 && PENDING_TRANSITION_CHECK_DELAYS_MS.every((ms) => ms >= 1000));
+});
+
+test('commerce prices show in the store currency, scaled by its minor units', () => {
+  // The admin formats for the browser's locale, so the expected text comes from the same formatter.
+  const text = (major, currency) => new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(major);
+  assert.equal(formatMoney(1250, 'usd'), text(12.5, 'USD'));
+  assert.equal(formatMoney(1250, 'jpy'), text(1250, 'JPY'));
+  assert.equal(formatMoney(1250, 'kwd'), text(1.25, 'KWD'));
+  assert.equal(formatMoney(null, 'usd'), null);
+  assert.equal(formatMoney(1250, undefined), null);
+
+  const product = { id: 'p1', data: { name: 'Poster', slug: 'poster', basePrice: 1250 } };
+  assert.equal(describeCommerceEntry('products', product, {}, 'jpy').subtitle, `/poster • ${text(1250, 'JPY')}`);
+  assert.equal(getRelationOptionLabel('products', product, {}, 'kwd'), `Poster - /poster • ${text(1.25, 'KWD')}`);
+  const value = { id: 'v1', data: { value: 'Blue', priceOverride: 990 } };
+  assert.deepEqual(describeCommerceEntry('_ecommerce_product_variant_values', value, {}, 'jpy').details, [`Price override ${text(990, 'JPY')}`]);
+  // Without a currency a price is left out rather than shown in the wrong one; titles need none.
+  assert.equal(describeCommerceEntry('products', product, {}).subtitle, '/poster');
+  assert.deepEqual(describeCommerceEntry('_ecommerce_product_variant_values', value, {}).details, []);
+  assert.equal(describeCommerceEntry('products', product, {}).title, 'Poster');
+});
+
+test('the admin reads the store currency from the page meta tag, and USD without a usable one', () => {
+  const page = (content) => ({
+    querySelector: (selector) => selector === 'meta[name="talisman-commerce-currency"]' && content !== null
+      ? { getAttribute: (name) => (name === 'content' ? content : null) } : null,
+  });
+  try {
+    globalThis.document = page('jpy');
+    assert.equal(readCommerceCurrency(), 'jpy');
+    globalThis.document = page(' KWD ');
+    assert.equal(readCommerceCurrency(), 'kwd');
+    for (const content of [null, '', 'dollars', 'u$d']) {
+      globalThis.document = page(content);
+      assert.equal(readCommerceCurrency(), 'usd', `content ${JSON.stringify(content)}`);
+    }
+  } finally {
+    delete globalThis.document;
+  }
+  // Outside a browser there is no page to read.
+  assert.equal(readCommerceCurrency(), 'usd');
 });
 
 const realFetch = globalThis.fetch;

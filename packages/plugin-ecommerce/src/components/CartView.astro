@@ -1,13 +1,7 @@
 ---
+import { formatMoney } from '@talisman-cms/plugin-ecommerce/money';
 import CartItemCard from './CartItemCard.astro';
 import { serializeJsonForScript } from './json-script';
-
-function formatMoney(cents, currency = 'usd') {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: currency.toUpperCase(),
-  }).format((Number(cents || 0)) / 100);
-}
 
 const {
   items = [],
@@ -16,12 +10,15 @@ const {
   itemCount = 0,
   requiresShipping = false,
   subtotal = 0,
+  // The store currency, as a cart quote reports it. Every price is in its minor units.
+  currency = 'usd',
 } = Astro.props;
 
 // Product names are catalog data; escape them so a value cannot close the script tag.
 const serializedState = serializeJsonForScript({
   items,
   locked,
+  currency,
 });
 ---
 
@@ -44,7 +41,7 @@ const serializedState = serializeJsonForScript({
       )}
 
       <div data-cart-items-list class="space-y-4">
-        {items.map((item) => <CartItemCard item={item} locked={locked} />)}
+        {items.map((item) => <CartItemCard item={item} locked={locked} currency={currency} />)}
       </div>
 
       <p data-cart-feedback class="text-sm text-gray-500" aria-live="polite"></p>
@@ -63,7 +60,7 @@ const serializedState = serializeJsonForScript({
         </div>
         <div class="flex items-center justify-between border-t border-gray-100 pt-4 text-lg font-bold text-gray-900">
           <span>Subtotal</span>
-          <span data-cart-summary-subtotal>{formatMoney(subtotal)}</span>
+          <span data-cart-summary-subtotal>{formatMoney(Number(subtotal || 0), currency)}</span>
         </div>
       </div>
 

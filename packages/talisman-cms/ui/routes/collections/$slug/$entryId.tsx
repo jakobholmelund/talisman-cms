@@ -30,6 +30,7 @@ import {
 } from '../../../lib/entry-save';
 import {
   describeCommerceEntry,
+  formatMoney,
   getCommerceFlowSummary,
   getCommerceModelGuide,
   getCommerceSupportSlugs,
@@ -38,6 +39,7 @@ import {
   getRelationOptionLabel,
   type CommerceSupportEntries,
 } from '../../../lib/commerce-models';
+import { readCommerceCurrency } from '../../../commerce-currency';
 import {
   getRelationOptionKey,
   getRelationTargets,
@@ -553,6 +555,7 @@ function RelationFieldSummary({
   relationSupportEntries: CommerceSupportEntries;
 }) {
   const selections = normalizeRelationSelections(field, value);
+  const currency = readCommerceCurrency();
   if (!field.relationTo || selections.length === 0) {
     return null;
   }
@@ -583,7 +586,7 @@ function RelationFieldSummary({
           );
         }
 
-        const description = describeCommerceEntry(selection.collectionSlug, selection.entry, relationSupportEntries);
+        const description = describeCommerceEntry(selection.collectionSlug, selection.entry, relationSupportEntries, currency);
         return (
           <div key={`${selection.collectionSlug}:${selection.entry.id}`} className="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2">
             <div className="flex items-center gap-2">
@@ -632,12 +635,13 @@ function RelationshipPicker({
   describedBy?: string;
 }) {
   const [query, setQuery] = useState('');
+  const currency = readCommerceCurrency();
   const options = getRelationOptionsForField(field, relationOptions);
   const selections = normalizeRelationSelections(field, value);
   const selectedKeys = new Set(selections.map(getRelationSelectionKey));
   const filteredOptions = options.filter((option) => {
-    const label = getRelationOptionLabel(option.collectionSlug, option.entry, relationSupportEntries).toLowerCase();
-    const subtitle = describeCommerceEntry(option.collectionSlug, option.entry, relationSupportEntries).subtitle.toLowerCase();
+    const label = getRelationOptionLabel(option.collectionSlug, option.entry, relationSupportEntries, currency).toLowerCase();
+    const subtitle = describeCommerceEntry(option.collectionSlug, option.entry, relationSupportEntries, currency).subtitle.toLowerCase();
     const search = query.trim().toLowerCase();
 
     if (!search) return true;
@@ -690,7 +694,7 @@ function RelationshipPicker({
         <div className="space-y-2">
           {selections.map((selection, index) => {
             const entry = (relationSupportEntries[selection.relationTo] || []).find((candidate: any) => candidate.id === selection.value) || null;
-            const description = describeCommerceEntry(selection.relationTo, entry, relationSupportEntries);
+            const description = describeCommerceEntry(selection.relationTo, entry, relationSupportEntries, currency);
 
             return (
               <div key={getRelationSelectionKey(selection)} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-3">
@@ -731,7 +735,7 @@ function RelationshipPicker({
           <div className="px-3 py-4 text-sm text-zinc-500">No entries matched this search.</div>
         ) : (
           filteredOptions.map((option) => {
-            const description = describeCommerceEntry(option.collectionSlug, option.entry, relationSupportEntries);
+            const description = describeCommerceEntry(option.collectionSlug, option.entry, relationSupportEntries, currency);
             const selection = { relationTo: option.collectionSlug, value: option.entry.id };
             const isSelected = selectedKeys.has(getRelationSelectionKey(selection));
 
@@ -931,9 +935,8 @@ type PreviewVariantGroup = {
   values: PreviewVariantOption[];
 };
 
-function formatPreviewPrice(cents: number | null | undefined) {
-  const normalized = typeof cents === 'number' && !Number.isNaN(cents) ? cents : 0;
-  return `$${(normalized / 100).toFixed(2)}`;
+function formatPreviewPrice(amount: number | null | undefined, currency: string) {
+  return formatMoney(typeof amount === 'number' && !Number.isNaN(amount) ? amount : 0, currency);
 }
 
 function getProductImageUrls(productValues: Record<string, any>) {
@@ -998,6 +1001,7 @@ function ProductStorefrontPreview({
   const previewImageUrl = defaultVariant?.imageUrl ?? getProductPrimaryImageUrl(productValues);
   const inventory = typeof productValues.inventoryQuantity === 'number' ? productValues.inventoryQuantity : 0;
   const priceCents = defaultVariant?.priceCents ?? (typeof productValues.basePrice === 'number' ? productValues.basePrice : 0);
+  const currency = readCommerceCurrency();
   const title = productValues.name || productValues.title || 'Untitled product';
   const description = productValues.description || 'This product does not have a storefront description yet.';
   const productType = productValues.type || 'standard';
@@ -1047,7 +1051,7 @@ function ProductStorefrontPreview({
               <div>
                 <div className="text-xs uppercase tracking-[0.25em] text-zinc-500">{productType}</div>
                 <h4 className="mt-2 text-3xl font-semibold tracking-tight text-white">{title}</h4>
-                <div className="mt-3 text-3xl font-black text-fuchsia-300">{formatPreviewPrice(priceCents)}</div>
+                <div className="mt-3 text-3xl font-black text-fuchsia-300">{formatPreviewPrice(priceCents, currency)}</div>
               </div>
 
               <p className="text-sm leading-relaxed text-zinc-300">{description}</p>
@@ -1598,7 +1602,7 @@ function ProductVariantConfigurator({
                   />
                 </div>
                 <div className="space-y-2">
-                  <label htmlFor={controlId(group.localId, 'price')} className="text-sm font-medium text-zinc-300">Group Price Override (Cents)</label>
+                  <label htmlFor={controlId(group.localId, 'price')} className="text-sm font-medium text-zinc-300">Group Price Override (smallest currency unit)</label>
                   <input
                     id={controlId(group.localId, 'price')}
                     type="number"
@@ -1694,7 +1698,7 @@ function ProductVariantConfigurator({
                             />
                           </div>
                           <div className="space-y-2">
-                            <label htmlFor={controlId(value.localId, 'price')} className="text-sm font-medium text-zinc-300">Price Override (Cents)</label>
+                            <label htmlFor={controlId(value.localId, 'price')} className="text-sm font-medium text-zinc-300">Price Override (smallest currency unit)</label>
                             <input
                               id={controlId(value.localId, 'price')}
                               type="number"

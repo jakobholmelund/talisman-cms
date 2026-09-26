@@ -218,7 +218,7 @@ export const ecommercePlugin = (
         }
 
         productFields.push(
-          { name: 'basePrice', label: 'Base Price (Cents)', type: 'number', required: true, defaultValue: 0 },
+          { name: 'basePrice', label: 'Base Price (smallest currency unit)', type: 'number', required: true, defaultValue: 0 },
           { name: 'isPhysical', label: 'Is Physical Product', type: 'boolean', defaultValue: true },
           { name: 'inventoryQuantity', label: 'Inventory Quantity', type: 'number', defaultValue: 0 },
           { name: 'type', label: 'Product Type', type: 'select', options: ['standard', 'digital', 'subscription'], defaultValue: 'standard', required: true },
@@ -270,7 +270,7 @@ export const ecommercePlugin = (
             { name: 'variantId', label: 'Variant Definition', type: 'relation', relationTo: '_ecommerce_variants' },
             { name: 'name', label: 'Display Name', type: 'text', required: true },
             { name: 'sku', label: 'SKU', type: 'text', defaultValue: null },
-            { name: 'priceOverride', label: 'Price Override (Cents)', type: 'number', defaultValue: null },
+            { name: 'priceOverride', label: 'Price Override (smallest currency unit)', type: 'number', defaultValue: null },
             { name: 'inventoryQuantity', label: 'Inventory Quantity', type: 'number', defaultValue: 0 }
           ],
           nativeSchemaMapping: {
@@ -292,7 +292,7 @@ export const ecommercePlugin = (
             { name: 'value', label: 'Value', type: 'text', required: true },
             { name: 'sku', label: 'SKU', type: 'text', defaultValue: null },
             { name: 'image', label: 'Variant Image URL', type: 'media' },
-            { name: 'priceOverride', label: 'Price Override (Cents)', type: 'number', defaultValue: null }
+            { name: 'priceOverride', label: 'Price Override (smallest currency unit)', type: 'number', defaultValue: null }
           ],
           nativeSchemaMapping: {
              schemaPath: '@talisman-cms/plugin-ecommerce/schema',
@@ -437,7 +437,7 @@ export const ecommercePlugin = (
             { name: 'id', label: 'ID', type: 'text', required: true },
             { name: 'email', label: 'Email', type: 'text' },
             { name: 'name', label: 'Name', type: 'text' },
-            { name: 'creditBalance', label: 'Store Credit Balance (Cents)', type: 'number' }
+            { name: 'creditBalance', label: 'Store Credit Balance (smallest currency unit)', type: 'number' }
           ],
           nativeSchemaMapping: {
             schemaPath: '@talisman-cms/plugin-ecommerce/schema',
@@ -467,7 +467,7 @@ export const ecommercePlugin = (
             { name: 'referrerAccountId', label: 'Referrer Account ID', type: 'text' },
             { name: 'referredAccountId', label: 'Referred Account ID', type: 'text' },
             { name: 'orderId', label: 'Order ID', type: 'text' },
-            { name: 'rewardCents', label: 'Reward (Cents)', type: 'number' },
+            { name: 'rewardCents', label: 'Reward (smallest currency unit)', type: 'number' },
             { name: 'status', label: 'Status', type: 'text' }
           ],
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'referrals', idColumn: 'id' }
@@ -482,7 +482,7 @@ export const ecommercePlugin = (
             { name: 'accountId', label: 'Shopper Account ID', type: 'text' },
             { name: 'orderId', label: 'Order ID', type: 'text' },
             { name: 'kind', label: 'Kind', type: 'text' },
-            { name: 'amountCents', label: 'Amount (Cents)', type: 'number' }
+            { name: 'amountCents', label: 'Amount (smallest currency unit)', type: 'number' }
           ],
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'creditLedger', idColumn: 'id' }
         });
@@ -494,8 +494,8 @@ export const ecommercePlugin = (
           fields: [
             { name: 'id', label: 'ID', type: 'text', required: true },
             { name: 'enabled', label: 'Enabled', type: 'boolean' },
-            { name: 'rewardCents', label: 'Reward (Cents)', type: 'number' },
-            { name: 'minOrderCents', label: 'Minimum Order (Cents)', type: 'number' },
+            { name: 'rewardCents', label: 'Reward (smallest currency unit)', type: 'number' },
+            { name: 'minOrderCents', label: 'Minimum Order (smallest currency unit)', type: 'number' },
             { name: 'attributionDays', label: 'Attribution Window (Days)', type: 'number' }
           ],
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'referralSettings', idColumn: 'id' }
@@ -510,7 +510,7 @@ export const ecommercePlugin = (
             { name: 'description', label: 'Description', type: 'text' },
             { name: 'type', label: 'Type', type: 'text' },
             { name: 'value', label: 'Value', type: 'number' },
-            { name: 'remainingCents', label: 'Remaining Credit (Cents)', type: 'number' },
+            { name: 'remainingCents', label: 'Remaining Credit (smallest currency unit)', type: 'number' },
             { name: 'active', label: 'Active', type: 'boolean' }
           ],
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'discountCodes', idColumn: 'code' }
@@ -524,7 +524,7 @@ export const ecommercePlugin = (
             { name: 'id', label: 'ID', type: 'text', required: true },
             { name: 'code', label: 'Code', type: 'text' },
             { name: 'orderId', label: 'Order ID', type: 'text' },
-            { name: 'amountCents', label: 'Discount (Cents)', type: 'number' },
+            { name: 'amountCents', label: 'Discount (smallest currency unit)', type: 'number' },
             { name: 'status', label: 'Status', type: 'text' }
           ],
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'discountRedemptions', idColumn: 'id' }
@@ -538,8 +538,8 @@ export const ecommercePlugin = (
             { name: 'id', label: 'ID', type: 'text', required: true },
             { name: 'codeSuffix', label: 'Code Suffix', type: 'text' },
             { name: 'source', label: 'Source', type: 'text' },
-            { name: 'initialCents', label: 'Issued (Cents)', type: 'number' },
-            { name: 'balanceCents', label: 'Balance (Cents)', type: 'number' },
+            { name: 'initialCents', label: 'Issued (smallest currency unit)', type: 'number' },
+            { name: 'balanceCents', label: 'Balance (smallest currency unit)', type: 'number' },
             { name: 'status', label: 'Status', type: 'text' }
           ],
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCards', idColumn: 'id' }
@@ -551,9 +551,9 @@ export const ecommercePlugin = (
           fields: [
             { name: 'id', label: 'ID', type: 'text', required: true },
             { name: 'buyerEmail', label: 'Buyer Email', type: 'text' },
-            { name: 'amountCents', label: 'Amount (Cents)', type: 'number' },
+            { name: 'amountCents', label: 'Amount (smallest currency unit)', type: 'number' },
             { name: 'status', label: 'Status', type: 'text' },
-            { name: 'providerRefundedCents', label: 'Refunded (Cents)', type: 'number' }
+            { name: 'providerRefundedCents', label: 'Refunded (smallest currency unit)', type: 'number' }
           ],
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardPurchases', idColumn: 'id' }
         });
@@ -566,7 +566,7 @@ export const ecommercePlugin = (
             { name: 'cardId', label: 'Gift Card ID', type: 'text' },
             { name: 'orderId', label: 'Order ID', type: 'text' },
             { name: 'kind', label: 'Kind', type: 'text' },
-            { name: 'amountCents', label: 'Amount (Cents)', type: 'number' }
+            { name: 'amountCents', label: 'Amount (smallest currency unit)', type: 'number' }
           ],
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardLedger', idColumn: 'id' }
         });
@@ -578,7 +578,7 @@ export const ecommercePlugin = (
             { name: 'id', label: 'ID', type: 'text', required: true },
             { name: 'cardId', label: 'Gift Card ID', type: 'text' },
             { name: 'orderId', label: 'Order ID', type: 'text' },
-            { name: 'amountCents', label: 'Amount (Cents)', type: 'number' },
+            { name: 'amountCents', label: 'Amount (smallest currency unit)', type: 'number' },
             { name: 'status', label: 'Status', type: 'text' }
           ],
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardRedemptions', idColumn: 'id' }
@@ -591,7 +591,7 @@ export const ecommercePlugin = (
             { name: 'id', label: 'ID', type: 'text', required: true },
             { name: 'cardId', label: 'Gift Card ID', type: 'text' },
             { name: 'orderId', label: 'Order ID', type: 'text' },
-            { name: 'amountCents', label: 'Amount (Cents)', type: 'number' },
+            { name: 'amountCents', label: 'Amount (smallest currency unit)', type: 'number' },
             { name: 'adminActor', label: 'Administrator', type: 'text' },
             { name: 'reason', label: 'Reason', type: 'text' }
           ],
@@ -644,18 +644,18 @@ export const ecommercePlugin = (
           { name: 'checkoutSessionId', label: 'Checkout Session ID', type: 'text' },
           { name: 'paymentProvider', label: 'Payment Provider', type: 'text' },
           { name: 'status', label: 'Status', type: 'select', options: ['draft', 'pending', 'paid', 'fulfilled', 'cancelled', 'partially_refunded', 'refunded'], required: true, defaultValue: 'draft' },
-          { name: 'subtotalAmount', label: 'Item Subtotal (Cents)', type: 'number' },
-          { name: 'creditApplied', label: 'Store Credit Used (Cents)', type: 'number' },
+          { name: 'subtotalAmount', label: 'Item Subtotal (smallest currency unit)', type: 'number' },
+          { name: 'creditApplied', label: 'Store Credit Used (smallest currency unit)', type: 'number' },
           { name: 'discountCode', label: 'Discount Code', type: 'text' },
-          { name: 'discountAmount', label: 'Code Discount (Cents)', type: 'number' },
+          { name: 'discountAmount', label: 'Code Discount (smallest currency unit)', type: 'number' },
           { name: 'giftCardId', label: 'Gift Card ID', type: 'text' },
-          { name: 'giftCardApplied', label: 'Gift Card Used (Cents)', type: 'number' },
-          { name: 'giftCardRefundedCents', label: 'Gift Card Refunded (Cents)', type: 'number' },
-          { name: 'totalAmount', label: 'Provider Charge (Cents)', type: 'number', required: true },
-          { name: 'providerRefundedCents', label: 'Provider Refunded (Cents)', type: 'number' },
+          { name: 'giftCardApplied', label: 'Gift Card Used (smallest currency unit)', type: 'number' },
+          { name: 'giftCardRefundedCents', label: 'Gift Card Refunded (smallest currency unit)', type: 'number' },
+          { name: 'totalAmount', label: 'Provider Charge (smallest currency unit)', type: 'number', required: true },
+          { name: 'providerRefundedCents', label: 'Provider Refunded (smallest currency unit)', type: 'number' },
           { name: 'paymentIntentId', label: 'Payment Intent ID', type: 'text' },
           { name: 'referralCode', label: 'Referral Code', type: 'text' },
-          { name: 'referralRewardCents', label: 'Referral Reward (Cents)', type: 'number' },
+          { name: 'referralRewardCents', label: 'Referral Reward (smallest currency unit)', type: 'number' },
           { name: 'customerEmail', label: 'Customer Email', type: 'text' },
           { 
              name: 'items', 
@@ -665,7 +665,7 @@ export const ecommercePlugin = (
                { name: 'productId', label: 'Product ID', type: 'text', required: true },
                { name: 'variantId', label: 'Variant ID', type: 'text' },
                { name: 'quantity', label: 'Quantity', type: 'number', required: true },
-               { name: 'priceAtPurchase', label: 'Price At Purchase (Cents)', type: 'number', required: true }
+               { name: 'priceAtPurchase', label: 'Price At Purchase (smallest currency unit)', type: 'number', required: true }
              ]
           },
           { name: 'shippingAddress', label: 'Shipping Address', type: 'group', fields: addressFields },

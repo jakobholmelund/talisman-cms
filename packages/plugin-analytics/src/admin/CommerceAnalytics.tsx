@@ -35,8 +35,8 @@ export default function CommerceAnalytics() {
           <Metric label="Average order" value={money(row.averageOrderValue, row.currency)} detail="Gross sales per order" />
         </div>
         <Panel title={`Net sales by day · ${row.currency.toUpperCase()}`}>
-          <Trend points={data.daily.filter(item => item.currency === row.currency).map(item => ({ ...item, value: item.netSales / 100 }))}
-            value="value" label={`Daily net sales in ${row.currency.toUpperCase()}`} />
+          <Trend points={data.daily.filter(item => item.currency === row.currency)} value="netSales"
+            format={amount => money(amount, row.currency)} label={`Daily net sales in ${row.currency.toUpperCase()}`} />
         </Panel>
       </div>)}
       {!data.currencies.length && <Panel title="No confirmed purchases"><p className="talisman-analytics__muted">Paid orders will appear here after payment confirmation.</p></Panel>}

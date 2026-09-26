@@ -1,6 +1,7 @@
 import { fetchCommerceRange, type CommerceRange, type StripeMode } from './commerce';
 import { fetchTrafficRange, type TrafficRange } from './cloudflare';
 import { formatRange } from './admin/dates';
+import { formatMoney } from './admin/money';
 
 export { formatRange };
 
@@ -127,8 +128,7 @@ const titles: Record<Exclude<ReportSubject, 'unsupported'>, string> = {
   traffic: 'Traffic report', traffic_and_sales: 'Traffic and sales',
 };
 
-const money = (cents: number, currency: string) =>
-  new Intl.NumberFormat('en', { style: 'currency', currency: currency.toUpperCase() }).format(cents / 100);
+const money = (amount: number, currency: string) => formatMoney(amount, currency, 'en');
 const plural = (count: number, word: string) => `${count.toLocaleString('en')} ${count === 1 ? word : `${word}s`}`;
 
 function currencyAmounts(rows: CommerceRange['currencies']) {

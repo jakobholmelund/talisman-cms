@@ -404,6 +404,20 @@ test('a products report names the best seller in each currency', async () => {
   sqlite.close();
 });
 
+test('report amounts are scaled by each currency’s minor units', async () => {
+  const { sqlite, d1, order } = sqliteD1();
+  // Yen have no minor unit and Kuwaiti dinars have three decimals: 1250 is ¥1,250 and 12345 is KWD 12.345.
+  order('yen', { currency: 'jpy', subtotal: 1250, items: lens(1, 1250) });
+  order('dinar', { currency: 'kwd', subtotal: 12345, items: lens(1, 12345) });
+  const ai = { async run() { return { response: { subject: 'products', period: 'last_7_days', compare: false } }; } };
+  const report = await createAskReport('Which products sold best this week?', ai, d1, {}, '/admin', 'products', 'live', now);
+  assert.match(report.summary, /1 confirmed order and ¥1,250 net sales in JPY/);
+  assert.match(report.summary, /1 confirmed order and KWD\s12\.345 net sales in KWD/);
+  assert.match(report.summary, /Top product in JPY: Lens, with 1 unit and ¥1,250 in item sales\./);
+  assert.match(report.summary, /Top product in KWD: Lens, with 1 unit and KWD\s12\.345 in item sales\./);
+  sqlite.close();
+});
+
 test('generated sales report uses confirmed aggregate orders and no customer records', async () => {
   const { sqlite, d1, order } = sqliteD1();
   order('paid', { subtotal: 2400, items: lens(2, 1200) });

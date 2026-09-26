@@ -1,5 +1,6 @@
 import React, { useEffect, useState, type FormEvent } from 'react';
-import { adminRequest, CommerceAdmin, errorText, Feedback, Field, money, Panel, Stat } from './common';
+import { fromMinorUnits } from '@talisman-cms/plugin-ecommerce/money';
+import { adminRequest, amountInput, CommerceAdmin, errorText, Feedback, Field, formAmount, money, Panel, Stat, storeCurrency } from './common';
 
 type CodeType = 'amount' | 'percent' | 'credit';
 type Code = {
@@ -15,7 +16,18 @@ type PromotionsData = {
   referralLinks: Array<{ code: string; email: string; active: boolean }>;
   codes: Code[]; usage: Array<{ code: string; status: string; uses: number }>;
 };
-const cents = (value: FormDataEntryValue | null) => Math.round(Number(value || 0) * 100);
+// The server's limits in the store currency's minor units (referralSettingsSchema and
+// discountCodeSchema in promotions.ts).
+const limits = {
+  reward: { min: 1, max: 100_000 },
+  referralMinimum: { min: 1, max: 10_000_000 },
+  value: { min: 1, max: 1_000_000 },
+  maxDiscount: { min: 1, max: 1_000_000 },
+  minOrder: { min: 0, max: 10_000_000 },
+};
+// Percent codes store basis points: 1 is 0.01% and 10,000 is 100%.
+const percentInput = { min: 0.01, max: 100, step: 0.01 };
+const basisPoints = (value: FormDataEntryValue | null) => Math.round(Number(value || 0) * 100);
 const optionalNumber = (value: FormDataEntryValue | null) => String(value || '').trim() ? Number(value) : null;
 const optionalDate = (value: FormDataEntryValue | null) => value ? Math.floor(new Date(String(value)).getTime() / 1000) : null;
 const localDate = (value: string | null) => value
@@ -29,6 +41,8 @@ export default function Promotions() {
   const [editing, setEditing] = useState<Code | null>(null);
   const [type, setType] = useState<CodeType>('amount');
   const [search, setSearch] = useState('');
+  const currency = storeCurrency();
+  const currencyCode = currency.toUpperCase();
   const show = (value: string, failed = false) => { setMessage(value); setError(failed); };
   async function reload() { setData(await adminRequest<PromotionsData>('promotions')); }
   useEffect(() => { void reload().catch(cause => show(errorText(cause), true)); }, []);
@@ -37,8 +51,8 @@ export default function Promotions() {
     event.preventDefault(); const values = new FormData(event.currentTarget); setBusy(true);
     try {
       await adminRequest('promotions', { action: 'saveReferral', data: {
-        enabled: values.has('enabled'), rewardCents: cents(values.get('reward')),
-        minOrderCents: cents(values.get('minimum')), attributionDays: Number(values.get('days')) } });
+        enabled: values.has('enabled'), rewardCents: formAmount(values.get('reward'), currency),
+        minOrderCents: formAmount(values.get('minimum'), currency), attributionDays: Number(values.get('days')) } });
       await reload(); show('Referral settings saved.');
     } catch (cause) { show(errorText(cause), true); } finally { setBusy(false); }
   }
@@ -54,9 +68,9 @@ export default function Promotions() {
     const code = editing?.code || String(values.get('code') || '').trim().toUpperCase();
     const input = {
       code, type, description: String(values.get('description') || '').trim() || null,
-      value: editing ? editing.value : cents(values.get('value')),
-      maxDiscountCents: editing ? editing.maxDiscountCents : type === 'percent' && values.get('maxDiscount') ? cents(values.get('maxDiscount')) : null,
-      minOrderCents: editing ? editing.minOrderCents : cents(values.get('minOrder')),
+      value: editing ? editing.value : type === 'percent' ? basisPoints(values.get('value')) : formAmount(values.get('value'), currency),
+      maxDiscountCents: editing ? editing.maxDiscountCents : type === 'percent' && values.get('maxDiscount') ? formAmount(values.get('maxDiscount'), currency) : null,
+      minOrderCents: editing ? editing.minOrderCents : formAmount(values.get('minOrder'), currency),
       eligibleProductIds: editing ? editing.eligibleProductIds : String(values.get('products') || '').split(',').map(value => value.trim()).filter(Boolean),
       maxUses: optionalNumber(values.get('maxUses')),
       maxUsesPerCustomer: optionalNumber(values.get('perCustomer')),
@@ -84,7 +98,7 @@ export default function Promotions() {
         {data.referral.termsError && <Feedback message={`New referrals are paused. ${data.referral.termsError}.`} error />}
         <form key={`${data.referral.switchedOn}-${data.referral.rewardCents}-${data.referral.minOrderCents}-${data.referral.attributionDays}`} onSubmit={event => void saveReferral(event)}>
           <label className="ecom-admin__check"><input type="checkbox" name="enabled" defaultChecked={data.referral.switchedOn} /> Enable new referral awards</label>
-          <div className="ecom-admin__grid"><Field label="Reward per shopper (USD)"><input name="reward" type="number" min="0.01" max="1000" step="0.01" defaultValue={data.referral.rewardCents / 100} required /></Field><Field label="Minimum first order (USD)"><input name="minimum" type="number" min="0.01" max="100000" step="0.01" defaultValue={data.referral.minOrderCents / 100} required /></Field><Field label="Referral window (days)"><input name="days" type="number" min="1" max="90" step="1" defaultValue={data.referral.attributionDays} required /></Field></div>
+          <div className="ecom-admin__grid"><Field label={`Reward per shopper (${currencyCode})`}><input name="reward" type="number" {...amountInput(currency, limits.reward)} defaultValue={fromMinorUnits(data.referral.rewardCents, currency)} required /></Field><Field label={`Minimum first order (${currencyCode})`}><input name="minimum" type="number" {...amountInput(currency, limits.referralMinimum)} defaultValue={fromMinorUnits(data.referral.minOrderCents, currency)} required /></Field><Field label="Referral window (days)"><input name="days" type="number" min="1" max="90" step="1" defaultValue={data.referral.attributionDays} required /></Field></div>
           <div className="ecom-admin__actions"><button type="submit" disabled={busy}>Save referral settings</button></div>
         </form>
         <p className="ecom-admin__muted">Awards stay pending for {data.referral.holdDays} days after payment and are then released by the scheduled job, unless the order was refunded below the minimum or disputed. Each shopper can refer at most {data.referral.maxPerPeriod} new shoppers in {data.referral.periodDays} days. These limits are Worker settings.</p>
@@ -98,9 +112,9 @@ export default function Promotions() {
             <Field label="Code"><input name="code" pattern="[A-Za-z0-9][A-Za-z0-9_-]{2,31}" maxLength={32} defaultValue={editing?.code || ''} disabled={fixed || type === 'credit'} required={!fixed && type !== 'credit'} placeholder={type === 'credit' ? 'Generated when saved' : ''} /></Field>
             <Field label="Type"><select name="type" value={type} disabled={fixed} onChange={event => setType(event.target.value as CodeType)}><option value="amount">Fixed amount</option><option value="percent">Percentage</option><option value="credit">Promotional credit voucher</option></select></Field>
             <Field label="Description"><input name="description" maxLength={200} defaultValue={editing?.description || ''} /></Field>
-            <Field label={type === 'percent' ? 'Value (%)' : 'Value (USD)'}><input name="value" type="number" min="0.01" max={type === 'percent' ? '100' : '10000'} step="0.01" defaultValue={editing ? editing.value / 100 : ''} disabled={fixed} required /></Field>
-            <Field label="Maximum percentage discount (USD)"><input name="maxDiscount" type="number" min="0.01" step="0.01" defaultValue={editing?.maxDiscountCents ? editing.maxDiscountCents / 100 : ''} disabled={fixed || type !== 'percent'} /></Field>
-            <Field label="Minimum order (USD)"><input name="minOrder" type="number" min="0" step="0.01" defaultValue={editing ? editing.minOrderCents / 100 : 0} disabled={fixed} required /></Field>
+            <Field label={type === 'percent' ? 'Value (%)' : `Value (${currencyCode})`}><input name="value" type="number" {...(type === 'percent' ? percentInput : amountInput(currency, limits.value))} defaultValue={editing ? (type === 'percent' ? editing.value / 100 : fromMinorUnits(editing.value, currency)) : ''} disabled={fixed} required /></Field>
+            <Field label={`Maximum percentage discount (${currencyCode})`}><input name="maxDiscount" type="number" {...amountInput(currency, limits.maxDiscount)} defaultValue={editing?.maxDiscountCents ? fromMinorUnits(editing.maxDiscountCents, currency) : ''} disabled={fixed || type !== 'percent'} /></Field>
+            <Field label={`Minimum order (${currencyCode})`}><input name="minOrder" type="number" {...amountInput(currency, limits.minOrder)} defaultValue={editing ? fromMinorUnits(editing.minOrderCents, currency) : 0} disabled={fixed} required /></Field>
             <Field label="Eligible product IDs (comma separated)"><input name="products" defaultValue={editing?.eligibleProductIds.join(', ') || ''} disabled={fixed} /></Field>
             <Field label="Maximum uses"><input name="maxUses" type="number" min="1" step="1" defaultValue={editing?.maxUses ?? ''} /></Field>
             <Field label="Uses per shopper"><input name="perCustomer" type="number" min="1" step="1" defaultValue={editing?.maxUsesPerCustomer ?? ''} /></Field>
@@ -115,7 +129,7 @@ export default function Promotions() {
         <Field label="Find a code"><input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Code or description" /></Field>
         {visible.length ? visible.map(code => {
           const uses = data.usage.filter(item => item.code === code.code && ['reserved', 'confirmed'].includes(item.status)).reduce((total, item) => total + item.uses, 0);
-          return <div className="ecom-admin__row" key={code.code}><span><strong>{code.code} · {code.type === 'percent' ? `${code.value / 100}%` : money(code.value)}</strong><small>{code.active ? 'Active' : 'Paused'} · {uses}{code.maxUses ? ` / ${code.maxUses}` : ''} uses{code.type === 'credit' ? ` · ${money(code.remainingCents || 0)} remaining` : ''}{code.description ? ` · ${code.description}` : ''}</small></span><button type="button" className="ecom-admin__secondary" onClick={() => { setEditing(code); setType(code.type); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>Edit</button></div>;
+          return <div className="ecom-admin__row" key={code.code}><span><strong>{code.code} · {code.type === 'percent' ? `${code.value / 100}%` : money(code.value, currency)}</strong><small>{code.active ? 'Active' : 'Paused'} · {uses}{code.maxUses ? ` / ${code.maxUses}` : ''} uses{code.type === 'credit' ? ` · ${money(code.remainingCents || 0, currency)} remaining` : ''}{code.description ? ` · ${code.description}` : ''}</small></span><button type="button" className="ecom-admin__secondary" onClick={() => { setEditing(code); setType(code.type); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>Edit</button></div>;
         }) : <p className="ecom-admin__muted">{codes.length ? 'No codes match this search.' : 'No codes yet.'}</p>}
       </Panel>
     </>}

@@ -58,12 +58,14 @@ function findEntry(entriesBySlug: CommerceSupportEntries, slug: string, id: stri
   return (entriesBySlug[slug] || []).find((entry) => entry.id === id) || null;
 }
 
-function formatMoney(cents: number | null | undefined) {
-  if (typeof cents !== 'number' || Number.isNaN(cents)) return null;
-  return new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency: 'USD',
-  }).format(cents / 100);
+/**
+ * An amount in the currency's minor units as text, such as 1250 as $12.50 in USD or ¥1,250 in JPY.
+ * Null without an amount or a currency.
+ */
+export function formatMoney(amount: number | null | undefined, currency: string | undefined) {
+  if (typeof amount !== 'number' || Number.isNaN(amount) || !currency) return null;
+  const format = new Intl.NumberFormat(undefined, { style: 'currency', currency: currency.toUpperCase() });
+  return format.format(amount / 10 ** (format.resolvedOptions().maximumFractionDigits ?? 2));
 }
 
 function compact(parts: Array<string | null | undefined>) {
@@ -104,10 +106,15 @@ function getProductVariantValueContext(entry: CommerceEntry | null | undefined, 
   };
 }
 
+/**
+ * Title, subtitle and details for a commerce record. Prices show in `currency`, the store currency
+ * whose minor units they are stored in, and are left out without one.
+ */
 export function describeCommerceEntry(
   collectionSlug: string,
   entry: CommerceEntry | null | undefined,
-  entriesBySlug: CommerceSupportEntries
+  entriesBySlug: CommerceSupportEntries,
+  currency?: string
 ) {
   if (!entry) {
     return {
@@ -127,7 +134,7 @@ export function describeCommerceEntry(
         subtitle: compact([
           data.slug ? `/${data.slug}` : null,
           data.sku ? `SKU ${data.sku}` : null,
-          typeof data.basePrice === 'number' ? formatMoney(data.basePrice) : null,
+          formatMoney(data.basePrice, currency),
         ]).join(' • '),
         details: compact([
           data.type ? `Type: ${data.type}` : null,
@@ -145,6 +152,7 @@ export function describeCommerceEntry(
     }
     case '_ecommerce_product_variants': {
       const context = getProductVariantContext(entry, entriesBySlug);
+      const priceOverride = formatMoney(data.priceOverride, currency);
       return {
         title: data.name || compact([context.productName, context.variantDefinitionName]).join(' / ') || entry.id,
         subtitle: compact([
@@ -153,13 +161,14 @@ export function describeCommerceEntry(
         ]).join(' • '),
         details: compact([
           data.sku ? `SKU ${data.sku}` : null,
-          typeof data.priceOverride === 'number' ? `Group price override ${formatMoney(data.priceOverride)}` : null,
+          priceOverride ? `Group price override ${priceOverride}` : null,
           typeof data.inventoryQuantity === 'number' ? `Legacy inventory ${data.inventoryQuantity}` : null,
         ]),
       };
     }
     case '_ecommerce_product_variant_values': {
       const context = getProductVariantValueContext(entry, entriesBySlug);
+      const priceOverride = formatMoney(data.priceOverride, currency);
       return {
         title: data.value || data.sku || entry.id,
         subtitle: compact([
@@ -169,7 +178,7 @@ export function describeCommerceEntry(
         ]).join(' • '),
         details: compact([
           data.sku ? `SKU ${data.sku}` : null,
-          typeof data.priceOverride === 'number' ? `Price override ${formatMoney(data.priceOverride)}` : null,
+          priceOverride ? `Price override ${priceOverride}` : null,
         ]),
       };
     }
@@ -222,9 +231,10 @@ export function describeCommerceEntry(
 export function getRelationOptionLabel(
   relationTo: string,
   entry: CommerceEntry,
-  entriesBySlug: CommerceSupportEntries
+  entriesBySlug: CommerceSupportEntries,
+  currency?: string
 ) {
-  const description = describeCommerceEntry(relationTo, entry, entriesBySlug);
+  const description = describeCommerceEntry(relationTo, entry, entriesBySlug, currency);
   return compact([description.title, description.subtitle]).join(' - ');
 }
 
