@@ -1,10 +1,13 @@
 import { BlockDefinition, Plugin } from 'talisman-cms';
-export { CART_MAX_LINES, CART_MAX_LINE_QUANTITY, TaxCalculationError, bindCommerceApi, reconcileCommerce } from './api.js';
-export { P as PaymentProviderAdapter, T as TaxAddressError, a as TaxCalculation, b as TaxCalculationParams, V as ValidatedWebhookEvent } from './payments-Dtu__rfy.js';
+export { CART_MAX_LINES, CART_MAX_LINE_QUANTITY, TaxCalculationError, bindCommerceApi, deliverPendingCommerceEmails, reconcileCommerce } from './api.js';
+export { P as PaymentProviderAdapter, a as PaymentReferences, T as TaxAddressError, b as TaxCalculation, c as TaxCalculationParams, V as ValidatedWebhookEvent } from './payments-TQo6Ws_B.js';
+export { CommerceEmailTemplates } from './emails.js';
 export { StripePaymentAdapter } from './adapters/stripe.js';
 export { AdminTestPaymentAdapter } from './adapters/admin-test.js';
 export { SUPPORTED_CURRENCIES, currencyMinorUnits, formatMoney, fromMinorUnits, isSupportedCurrency, minimumChargeAmount, toMinorUnits } from './money.js';
 import 'talisman-cms/client';
+import './email-deliveries-CyzibTug.js';
+import 'talisman-cms/email';
 import 'stripe';
 
 /**
@@ -127,6 +130,14 @@ interface EcommercePluginConfig {
      * @default false
      */
     adminTestCheckout?: boolean;
+    /**
+     * A module that replaces the order confirmation, shipment and gift card claim emails: a package
+     * specifier or an absolute path that the site's build can resolve, for example
+     * `fileURLToPath(new URL('./src/lib/commerce-emails.ts', import.meta.url))`. It exports any of
+     * `orderConfirmation`, `shipment` and `giftCardClaim` (see `CommerceEmailTemplates` in
+     * `@talisman-cms/plugin-ecommerce/emails`); the others keep the default.
+     */
+    emailTemplates?: string;
 }
 declare function createEcommerceLayoutBlocks(productsCollectionSlug?: string): BlockDefinition[];
 declare const ecommercePlugin: (config?: EcommercePluginConfig) => Plugin;

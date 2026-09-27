@@ -1,11 +1,14 @@
 import {
   StripePaymentAdapter
-} from "./chunk-C2SYF4CS.js";
+} from "./chunk-6L7TQXAW.js";
+import {
+  runtimeStripeMode
+} from "./chunk-GNU6N22K.js";
 
 // src/runtime.ts
 import { readSetting } from "talisman-cms/env";
 function runtimeStripeSecrets(env) {
-  const mode = readSetting(env, "COMMERCE_STRIPE_MODE") === "live" ? "live" : "test";
+  const mode = runtimeStripeMode(env);
   const localSecretKey = mode === "test" ? readSetting(env, "COMMERCE_LOCAL_STRIPE_SECRET_KEY") ?? "" : "";
   const localWebhookSecret = mode === "test" ? readSetting(env, "COMMERCE_LOCAL_STRIPE_WEBHOOK_SECRET") ?? "" : "";
   const secretKey = typeof env.STRIPE_SECRET_KEY === "string" && env.STRIPE_SECRET_KEY ? env.STRIPE_SECRET_KEY : localSecretKey;

@@ -1,24 +1,32 @@
 import {
   runtimePaymentAdapters
-} from "../chunk-R7FZZLF2.js";
-import "../chunk-C2SYF4CS.js";
+} from "../chunk-DQ2SJLJ6.js";
+import "../chunk-6L7TQXAW.js";
 import "../chunk-BGDJXEM5.js";
 import {
   giftCardAccessCookie
 } from "../chunk-MDTTSWBR.js";
 import {
+  GIFT_CARD_CLAIMS_PER_NETWORK_PER_HOUR,
   StoreSettingsError,
+  claimGiftCardCode,
   getGiftCardBalance,
   reportStoreSettingsError,
   startGiftCardPurchase
-} from "../chunk-3I33VHHD.js";
+} from "../chunk-A7BNM2SK.js";
+import "../chunk-HBUWVAQK.js";
+import "../chunk-GNU6N22K.js";
+import {
+  clientOverLimit
+} from "../chunk-NKZQB4F4.js";
+import "../chunk-SFZBZWCM.js";
+import "../chunk-NMGICNSV.js";
 import "../chunk-2UYSCNNW.js";
-import "../chunk-6773WH54.js";
-import "../chunk-AASKNEFP.js";
-import "../chunk-U2UUCKVF.js";
 
 // src/routes/ecommerce-gift-cards.ts
 import { readSetting } from "talisman-cms/env";
+var INVALID_CLAIM_LINK = "This gift card link has already been used or has expired. Ask the store to send a new one.";
+var CLAIM_WINDOW_SECONDS = 60 * 60;
 var POST = async ({ request, cookies }) => {
   const headers = { "Cache-Control": "no-store" };
   if (request.headers.get("origin") !== new URL(request.url).origin) {
@@ -30,6 +38,30 @@ var POST = async ({ request, cookies }) => {
     const body = await request.json();
     if (body && typeof body === "object" && body.action === "balance" && typeof body.code === "string") {
       return Response.json(await getGiftCardBalance(runtimeEnv, body.code), { headers });
+    }
+    if (body && typeof body === "object" && body.action === "claim") {
+      if (await clientOverLimit(
+        runtimeEnv,
+        "gift-card-claim",
+        request.headers.get("cf-connecting-ip"),
+        { limit: GIFT_CARD_CLAIMS_PER_NETWORK_PER_HOUR, windowSeconds: CLAIM_WINDOW_SECONDS }
+      )) {
+        return Response.json(
+          { error: "Too many requests. Please try again later." },
+          { status: 429, headers: { ...headers, "Retry-After": String(CLAIM_WINDOW_SECONDS) } }
+        );
+      }
+      try {
+        const claimed = await claimGiftCardCode(runtimeEnv, body.token);
+        if (!claimed) return Response.json({ error: INVALID_CLAIM_LINK }, { status: 400, headers });
+        return Response.json(claimed, { headers });
+      } catch (error) {
+        console.error("[commerce] Gift card claim failed", { name: error instanceof Error ? error.name : typeof error });
+        return Response.json(
+          { error: "The gift card code cannot be shown right now. Please try again later." },
+          { status: 503, headers }
+        );
+      }
     }
     if (readSetting(runtimeEnv, "COMMERCE_CHECKOUT_ENABLED") !== "true" || readSetting(runtimeEnv, "COMMERCE_GIFT_CARDS_ENABLED") !== "true") {
       return Response.json({ error: "Gift card purchases are unavailable" }, { status: 503, headers });

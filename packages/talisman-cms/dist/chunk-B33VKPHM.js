@@ -400,16 +400,13 @@ async function triggerPublishingWorkflow(env, payload, bindingName = DEFAULT_PUB
   }
   return getVersionedEntry(db, collection.id, payload.entryId);
 }
-async function invalidateEntryCache(env, collectionSlug, entryId) {
-  if (!env.KV) return;
-  await env.KV.delete(`talisman:entries:${collectionSlug}:all`);
-  await env.KV.delete(`talisman:entries:${collectionSlug}:all:draft`);
-  await env.KV.delete(`talisman:entries:${collectionSlug}:all:published`);
-  if (entryId) {
-    await env.KV.delete(`talisman:entries:${collectionSlug}:${entryId}`);
-    await env.KV.delete(`talisman:entries:${collectionSlug}:${entryId}:draft`);
-    await env.KV.delete(`talisman:entries:${collectionSlug}:${entryId}:published`);
-  }
+async function invalidateEntryCache(env, collectionSlug, entryIds) {
+  const kv = env.KV;
+  if (!kv) return;
+  const prefix = `talisman:entries:${collectionSlug}`;
+  await Promise.all([`${prefix}:all`, `${prefix}:all:draft`, `${prefix}:all:published`].map((key) => kv.delete(key)));
+  const ids = (typeof entryIds === "string" ? [entryIds] : entryIds ?? []).filter(Boolean);
+  await Promise.all(ids.flatMap((id) => [`${prefix}:${id}`, `${prefix}:${id}:draft`, `${prefix}:${id}:published`]).map((key) => kv.delete(key)));
 }
 
 export {

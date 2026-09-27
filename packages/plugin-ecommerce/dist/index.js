@@ -3,7 +3,7 @@ import {
 } from "./chunk-FK3KKBW6.js";
 import {
   StripePaymentAdapter
-} from "./chunk-C2SYF4CS.js";
+} from "./chunk-6L7TQXAW.js";
 import {
   CART_MAX_LINES,
   CART_MAX_LINE_QUANTITY,
@@ -11,19 +11,28 @@ import {
   bindCommerceApi,
   reconcileCommerce,
   shippingOptionsFor
-} from "./chunk-GDYU3454.js";
-import "./chunk-HAO6IOX2.js";
+} from "./chunk-2LIQHRTV.js";
+import "./chunk-IK22DR6W.js";
+import "./chunk-GGFLTIUK.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
-import "./chunk-63W5IYCB.js";
+import {
+  deliverPendingCommerceEmails
+} from "./chunk-BGS2NWOG.js";
+import "./chunk-WP5KVMJI.js";
 import {
   COUNTRY_CODES,
   StoreSettingsError,
   isCountryCode,
   readStoreCurrency,
   readStoreSettings
-} from "./chunk-3I33VHHD.js";
+} from "./chunk-A7BNM2SK.js";
+import "./chunk-HBUWVAQK.js";
+import "./chunk-GNU6N22K.js";
+import "./chunk-NKZQB4F4.js";
+import "./chunk-SFZBZWCM.js";
+import "./chunk-NMGICNSV.js";
 import {
   SUPPORTED_CURRENCIES,
   currencyMinorUnits,
@@ -33,14 +42,19 @@ import {
   minimumChargeAmount,
   toMinorUnits
 } from "./chunk-2UYSCNNW.js";
-import "./chunk-6773WH54.js";
-import "./chunk-AASKNEFP.js";
-import "./chunk-U2UUCKVF.js";
 
 // src/index.ts
 import { fileURLToPath } from "url";
 import { existsSync } from "fs";
 var ADMIN_OPTIONS_MODULE = "virtual:talisman-cms/ecommerce-admin";
+var EMAIL_TEMPLATES_MODULE = "virtual:talisman-cms/ecommerce-emails";
+function emailTemplatesModule(path) {
+  if (path === void 0) return "export const emailTemplates = null;";
+  if (typeof path !== "string" || !path.trim() || path.startsWith("./") || path.startsWith("../")) {
+    throw new TypeError("[plugin-ecommerce] emailTemplates must be a package specifier or an absolute path.");
+  }
+  return `export * as emailTemplates from ${JSON.stringify(path)};`;
+}
 function resolveCartEndpointPath() {
   return resolveRouteEntrypoint("ecommerce-cart");
 }
@@ -55,6 +69,12 @@ function resolveAdminReconcileEndpointPath() {
 }
 function resolveAdminFulfillmentEndpointPath() {
   return resolveRouteEntrypoint("ecommerce-admin-fulfillment");
+}
+function resolveAdminOrdersEndpointPath() {
+  return resolveRouteEntrypoint("ecommerce-admin-orders");
+}
+function resolveAdminVariantsEndpointPath() {
+  return resolveRouteEntrypoint("ecommerce-admin-variants");
 }
 function resolveOrderEndpointPath() {
   return resolveRouteEntrypoint("ecommerce-order");
@@ -122,10 +142,13 @@ var ecommercePlugin = (config) => {
   const productsSlug = config?.productsCollectionSlug || "products";
   const inject = config?.injectCollections !== false;
   const adminTestCheckout = config?.adminTestCheckout === true;
+  const emailTemplatesSource = emailTemplatesModule(config?.emailTemplates);
   const cartEndpointPath = resolveCartEndpointPath();
   const checkoutEndpointPath = resolveCheckoutEndpointPath();
   const adminReconcileEndpointPath = resolveAdminReconcileEndpointPath();
   const adminFulfillmentEndpointPath = resolveAdminFulfillmentEndpointPath();
+  const adminOrdersEndpointPath = resolveAdminOrdersEndpointPath();
+  const adminVariantsEndpointPath = resolveAdminVariantsEndpointPath();
   const orderEndpointPath = resolveOrderEndpointPath();
   const accountEndpointPath = resolveAccountEndpointPath();
   const discountEndpointPath = resolveDiscountEndpointPath();
@@ -161,6 +184,14 @@ var ecommercePlugin = (config) => {
         },
         load(id) {
           if (id === `\0${ADMIN_OPTIONS_MODULE}`) return `export const adminTestCheckout = ${adminTestCheckout};`;
+        }
+      }, {
+        name: "talisman-cms-ecommerce-email-templates",
+        resolveId(id) {
+          if (id === EMAIL_TEMPLATES_MODULE) return `\0${EMAIL_TEMPLATES_MODULE}`;
+        },
+        load(id) {
+          if (id === `\0${EMAIL_TEMPLATES_MODULE}`) return emailTemplatesSource;
         }
       }]
     },
@@ -506,7 +537,8 @@ var ecommercePlugin = (config) => {
             { name: "source", label: "Source", type: "text" },
             { name: "initialCents", label: "Issued (smallest currency unit)", type: "number" },
             { name: "balanceCents", label: "Balance (smallest currency unit)", type: "number" },
-            { name: "status", label: "Status", type: "text" }
+            { name: "status", label: "Status", type: "text" },
+            { name: "replacesPurchaseId", label: "Replaces Purchase", type: "text" }
           ],
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "giftCards", idColumn: "id" }
         });
@@ -521,7 +553,8 @@ var ecommercePlugin = (config) => {
             { name: "buyerEmail", label: "Buyer Email", type: "text" },
             { name: "amountCents", label: "Amount (smallest currency unit)", type: "number" },
             { name: "status", label: "Status", type: "text" },
-            { name: "providerRefundedCents", label: "Refunded (smallest currency unit)", type: "number" }
+            { name: "providerRefundedCents", label: "Refunded (smallest currency unit)", type: "number" },
+            { name: "refundAdjustedCents", label: "Refund Taken Off Cards (smallest currency unit)", type: "number" }
           ],
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "giftCardPurchases", idColumn: "id" }
         });
@@ -572,6 +605,74 @@ var ecommercePlugin = (config) => {
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "giftCardRefunds", idColumn: "id" }
         });
         collections.push({
+          name: "Gift Card Reviews",
+          slug: "_ecommerce_gift_card_reviews",
+          description: "Administrator decisions on refunded gift card purchases, with reasons.",
+          adminSection: "commerce",
+          readOnly: true,
+          fields: [
+            { name: "id", label: "ID", type: "text", required: true },
+            { name: "purchaseId", label: "Purchase ID", type: "text" },
+            { name: "cardId", label: "Gift Card ID", type: "text" },
+            { name: "outcome", label: "Outcome", type: "text" },
+            { name: "refundedCents", label: "Refunded (smallest currency unit)", type: "number" },
+            { name: "adjustmentCents", label: "Taken Off Cards (smallest currency unit)", type: "number" },
+            { name: "adminActor", label: "Administrator", type: "text" },
+            { name: "reason", label: "Reason", type: "text" }
+          ],
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "giftCardReviews", idColumn: "id" }
+        });
+        collections.push({
+          name: "Provider Refunds",
+          slug: "_ecommerce_provider_refunds",
+          description: "Payment provider refunds with the date each was issued, as recorded from Stripe.",
+          adminSection: "commerce",
+          readOnly: true,
+          fields: [
+            { name: "id", label: "ID", type: "text", required: true },
+            { name: "orderId", label: "Order ID", type: "text" },
+            { name: "provider", label: "Provider", type: "text" },
+            { name: "providerRefundId", label: "Provider Refund ID", type: "text" },
+            { name: "amountCents", label: "Amount (smallest currency unit)", type: "number" }
+          ],
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "providerRefunds", idColumn: "id" }
+        });
+        collections.push({
+          name: "Disputes",
+          slug: "_ecommerce_disputes",
+          description: "Payment disputes on orders and gift card purchases. Respond to them in Stripe.",
+          adminSection: "commerce",
+          readOnly: true,
+          fields: [
+            { name: "id", label: "Dispute ID", type: "text", required: true },
+            { name: "orderId", label: "Order ID", type: "text" },
+            { name: "giftCardPurchaseId", label: "Gift Card Purchase ID", type: "text" },
+            { name: "amountCents", label: "Amount (smallest currency unit)", type: "number" },
+            { name: "currency", label: "Currency", type: "text" },
+            { name: "reason", label: "Reason", type: "text" },
+            { name: "status", label: "Status", type: "text" },
+            { name: "statusBefore", label: "Status Before the Dispute", type: "text" }
+          ],
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "disputes", idColumn: "id" }
+        });
+        collections.push({
+          name: "Restocks",
+          slug: "_ecommerce_restocks",
+          description: "Stock of refunded orders returned by an administrator, with reasons.",
+          adminSection: "commerce",
+          readOnly: true,
+          fields: [
+            { name: "id", label: "ID", type: "text", required: true },
+            { name: "orderId", label: "Order ID", type: "text" },
+            { name: "targetType", label: "Stock Type", type: "text" },
+            { name: "targetId", label: "Stock ID", type: "text" },
+            { name: "quantity", label: "Quantity", type: "number" },
+            { name: "adminActor", label: "Administrator", type: "text" },
+            { name: "reason", label: "Reason", type: "text" }
+          ],
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "restocks", idColumn: "id" }
+        });
+        collections.push({
           name: "Gift Card Order Refunds",
           slug: "_ecommerce_gift_card_order_refunds",
           description: "Audited full refunds for orders settled without Stripe.",
@@ -583,6 +684,41 @@ var ecommercePlugin = (config) => {
             { name: "reason", label: "Reason", type: "text" }
           ],
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "giftCardOrderRefunds", idColumn: "orderId" }
+        });
+        collections.push({
+          name: "Gift Card Claim Links",
+          slug: "_ecommerce_gift_card_claims",
+          description: "One-time links emailed to buyers to show their gift card code, with who resent a link and why.",
+          adminSection: "commerce",
+          readOnly: true,
+          fields: [
+            { name: "id", label: "ID", type: "text", required: true },
+            { name: "purchaseId", label: "Purchase ID", type: "text" },
+            { name: "cardId", label: "Gift Card ID", type: "text" },
+            { name: "expiresAt", label: "Expires", type: "date" },
+            { name: "usedAt", label: "Used", type: "date" },
+            { name: "revokedAt", label: "Revoked", type: "date" },
+            { name: "createdBy", label: "Resent By", type: "text" },
+            { name: "reason", label: "Reason", type: "text" }
+          ],
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "giftCardClaims", idColumn: "id" }
+        });
+        collections.push({
+          name: "Order Emails",
+          slug: "_ecommerce_email_deliveries",
+          description: "Order confirmations, shipment notices and gift card claim emails, with their delivery status and last error code.",
+          adminSection: "commerce",
+          readOnly: true,
+          fields: [
+            { name: "id", label: "ID", type: "text", required: true },
+            { name: "kind", label: "Kind", type: "text" },
+            { name: "subjectId", label: "Order, Shipment or Purchase ID", type: "text" },
+            { name: "status", label: "Status", type: "text" },
+            { name: "attempts", label: "Attempts", type: "number" },
+            { name: "lastError", label: "Last Error", type: "text" },
+            { name: "sentAt", label: "Sent", type: "date" }
+          ],
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "emailDeliveries", idColumn: "id" }
         });
         collections.push({
           name: "Product Tags",
@@ -614,7 +750,9 @@ var ecommercePlugin = (config) => {
           { name: "cartId", label: "Cart", type: "relation", relationTo: "_ecommerce_carts" },
           { name: "checkoutSessionId", label: "Checkout Session ID", type: "text" },
           { name: "paymentProvider", label: "Payment Provider", type: "text" },
-          { name: "status", label: "Status", type: "select", options: ["draft", "pending", "paid", "fulfilled", "cancelled", "partially_refunded", "refunded"], required: true, defaultValue: "draft" },
+          // 'fulfilled' stays an option for rows written before migration 0026 moved it to fulfillmentStatus.
+          { name: "status", label: "Payment Status", type: "select", options: ["draft", "pending", "paid", "fulfilled", "cancelled", "partially_refunded", "refunded", "disputed"], required: true, defaultValue: "draft" },
+          { name: "fulfillmentStatus", label: "Fulfillment Status", type: "select", options: ["unfulfilled", "partially_fulfilled", "fulfilled"], required: true, defaultValue: "unfulfilled" },
           { name: "subtotalAmount", label: "Item Subtotal (smallest currency unit)", type: "number" },
           { name: "shippingLabel", label: "Shipping Option", type: "text" },
           { name: "shippingRateId", label: "Shipping Rate ID", type: "text" },
@@ -662,6 +800,24 @@ var ecommercePlugin = (config) => {
             exportName: "orders",
             idColumn: "id"
           }
+        });
+        collections.push({
+          name: "Payment Check Decisions",
+          slug: "_ecommerce_reconcile_decisions",
+          description: "Administrator retries and releases of checkouts parked for review, with reasons.",
+          adminSection: "commerce",
+          readOnly: true,
+          fields: [
+            { name: "id", label: "ID", type: "text", required: true },
+            { name: "orderId", label: "Order ID", type: "text" },
+            { name: "purchaseId", label: "Gift Card Purchase ID", type: "text" },
+            { name: "action", label: "Action", type: "text" },
+            { name: "failure", label: "Parked For", type: "text" },
+            { name: "paymentReturned", label: "Payment Returned", type: "text" },
+            { name: "adminActor", label: "Administrator", type: "text" },
+            { name: "reason", label: "Reason", type: "text" }
+          ],
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "reconcileDecisions", idColumn: "id" }
         });
       }
       for (const collection of collections) {
@@ -723,6 +879,16 @@ var ecommercePlugin = (config) => {
         entrypoint: adminFulfillmentEndpointPath
       },
       {
+        // The orders screen's disputes and restocks.
+        path: "/ecommerce/orders-admin",
+        entrypoint: adminOrdersEndpointPath
+      },
+      {
+        // The product editor's variant configurator saves values with their stock here.
+        path: "/ecommerce/variants",
+        entrypoint: adminVariantsEndpointPath
+      },
+      {
         path: "/ecommerce/order",
         entrypoint: orderEndpointPath,
         public: true
@@ -748,6 +914,7 @@ export {
   bindCommerceApi,
   createEcommerceLayoutBlocks,
   currencyMinorUnits,
+  deliverPendingCommerceEmails,
   ecommercePlugin,
   formatMoney,
   fromMinorUnits,

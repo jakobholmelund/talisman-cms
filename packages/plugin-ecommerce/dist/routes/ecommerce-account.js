@@ -1,17 +1,19 @@
 import {
   bindCommerceApi
-} from "../chunk-GDYU3454.js";
-import "../chunk-HAO6IOX2.js";
+} from "../chunk-2LIQHRTV.js";
+import "../chunk-IK22DR6W.js";
+import "../chunk-GGFLTIUK.js";
 import "../chunk-BGDJXEM5.js";
 import {
   CART_SESSION_COOKIE,
   LEGACY_CART_SESSION_COOKIE,
   readCartSessionToken
 } from "../chunk-MDTTSWBR.js";
-import "../chunk-63W5IYCB.js";
-import "../chunk-3I33VHHD.js";
-import "../chunk-2UYSCNNW.js";
-import "../chunk-6773WH54.js";
+import "../chunk-BGS2NWOG.js";
+import "../chunk-WP5KVMJI.js";
+import "../chunk-A7BNM2SK.js";
+import "../chunk-HBUWVAQK.js";
+import "../chunk-GNU6N22K.js";
 import {
   CUSTOMER_SESSION_COOKIE,
   CUSTOMER_SESSION_MAX_AGE,
@@ -25,31 +27,17 @@ import {
   requestCustomerEmailSignIn,
   revokeCustomerSession,
   verifyTurnstileToken
-} from "../chunk-AASKNEFP.js";
-import "../chunk-U2UUCKVF.js";
+} from "../chunk-NKZQB4F4.js";
+import "../chunk-SFZBZWCM.js";
+import {
+  shopperSignInEmail
+} from "../chunk-NMGICNSV.js";
+import "../chunk-2UYSCNNW.js";
 
 // src/routes/ecommerce-account.ts
 import { readSetting } from "talisman-cms/env";
 import { isEmailDeliveryError, parseAddress, sendEmail } from "talisman-cms/email";
 import { getEmailProvider } from "talisman-cms/email/runtime";
-
-// src/emails.ts
-import { renderTransactionalEmail } from "talisman-cms/email";
-function shopperSignInEmail({ link, siteName }) {
-  return {
-    kind: "shopper-sign-in",
-    subject: `Sign in to ${siteName}`.replace(/[\r\n]+/g, " "),
-    ...renderTransactionalEmail({
-      siteName,
-      heading: "Your sign-in link",
-      paragraphs: ["Use this one-time link to sign in. It expires in 15 minutes and works once."],
-      action: { label: "Sign in", url: link },
-      footer: "If you didn't ask to sign in, you can ignore this email."
-    })
-  };
-}
-
-// src/routes/ecommerce-account.ts
 var INVALID_LINK = "This sign-in link is invalid or has expired.";
 var BOT_CHECK_FAILED = "The security check failed. Please try again.";
 function logSendFailure(error) {

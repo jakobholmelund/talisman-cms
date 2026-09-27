@@ -1,28 +1,34 @@
 import {
   runtimePaymentAdapters
-} from "../chunk-R7FZZLF2.js";
-import "../chunk-C2SYF4CS.js";
+} from "../chunk-DQ2SJLJ6.js";
+import "../chunk-6L7TQXAW.js";
 import {
   PROVIDER_CHECK_MIN_ORDER_AGE_SECONDS,
   ProviderCheckLimitedError,
   bindCommerceApi,
   mayAskPaymentProvider,
   providerCheckLimitResponse
-} from "../chunk-GDYU3454.js";
-import "../chunk-HAO6IOX2.js";
+} from "../chunk-2LIQHRTV.js";
+import "../chunk-IK22DR6W.js";
+import "../chunk-GGFLTIUK.js";
 import "../chunk-BGDJXEM5.js";
 import {
   readCartSessionToken
 } from "../chunk-MDTTSWBR.js";
-import "../chunk-63W5IYCB.js";
-import "../chunk-3I33VHHD.js";
-import "../chunk-2UYSCNNW.js";
-import "../chunk-6773WH54.js";
+import "../chunk-BGS2NWOG.js";
+import "../chunk-WP5KVMJI.js";
+import {
+  reconcileFailure
+} from "../chunk-A7BNM2SK.js";
+import "../chunk-HBUWVAQK.js";
+import "../chunk-GNU6N22K.js";
 import {
   CUSTOMER_SESSION_COOKIE,
   findCustomerSession
-} from "../chunk-AASKNEFP.js";
-import "../chunk-U2UUCKVF.js";
+} from "../chunk-NKZQB4F4.js";
+import "../chunk-SFZBZWCM.js";
+import "../chunk-NMGICNSV.js";
+import "../chunk-2UYSCNNW.js";
 
 // src/routes/ecommerce-order.ts
 var ALL = async ({ request, cookies }) => {
@@ -55,19 +61,25 @@ var ALL = async ({ request, cookies }) => {
         throw error;
       }
     }
-    if (order.status === "pending" && await mayAskPaymentProvider(
+    if (order.status === "pending" && !order.reconcileReviewAt && await mayAskPaymentProvider(
       runtimeEnv,
       order,
       paymentAdapters,
       { minOrderAgeSeconds: PROVIDER_CHECK_MIN_ORDER_AGE_SECONDS }
     )) {
-      await api.orders.reconcilePending(order.id);
+      try {
+        await api.orders.reconcilePending(order.id);
+      } catch (error) {
+        console.warn("[commerce] Order status check failed", { code: reconcileFailure(error).code });
+      }
       order = await api.orders.findForSession(orderId, sessionToken, customer?.id);
       if (!order) return Response.json({ error: "Order not found" }, { status: 404 });
     }
     return Response.json({
       orderId: order.id,
       status: order.status,
+      paymentUnderReview: order.status === "pending" && order.reconcileReviewAt !== null,
+      fulfillmentStatus: order.fulfillmentStatus,
       paymentProvider: order.paymentProvider,
       accountCreatedByOrder: order.userId === `acct_${order.id}`,
       accountLinked: Boolean(order.userId),

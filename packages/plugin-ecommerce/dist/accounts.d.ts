@@ -4,8 +4,11 @@ declare const CUSTOMER_SESSION_COOKIE = "talisman-customer";
 declare const CUSTOMER_SESSION_MAX_AGE: number;
 /** Store-wide sign-in emails per 24 hours unless `TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT` sets another positive whole number. */
 declare const CUSTOMER_EMAIL_DAILY_LIMIT = 200;
-/** Order statuses that count as a purchase for first-order promotions and referrals. */
-declare const PURCHASED_ORDER_STATUSES: readonly ["paid", "fulfilled", "partially_refunded", "refunded"];
+/**
+ * Order statuses that count as a purchase for first-order promotions and referrals. A disputed order
+ * still counts: its payment went through, and a lost dispute leaves it refunded.
+ */
+declare const PURCHASED_ORDER_STATUSES: readonly ["paid", "fulfilled", "partially_refunded", "refunded", "disputed"];
 /**
  * Kept for compatibility: `requestCustomerEmailSignIn` no longer throws it and answers a spent daily
  * budget with `{ limited: true }` instead.
@@ -110,9 +113,11 @@ declare function consumeCustomerEmailSignIn(env: TalismanEnv, token: string): Pr
     token: string;
 } | null>;
 declare function revokeCustomerSession(env: TalismanEnv, token?: string | null): Promise<void>;
+/** The account's orders. `status` is the payment status; `fulfillmentStatus` says whether they shipped. */
 declare function listCustomerOrders(env: TalismanEnv, accountId: string): Promise<{
     id: string;
     status: string;
+    fulfillmentStatus: "fulfilled" | "unfulfilled" | "partially_fulfilled";
     totalAmount: number;
     subtotalAmount: number;
     shippingAmount: number;

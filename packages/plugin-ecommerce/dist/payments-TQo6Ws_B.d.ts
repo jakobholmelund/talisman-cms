@@ -1,6 +1,10 @@
 interface ValidatedWebhookEvent {
     type: string;
     data: any;
+    /** The provider's event id, for logs. */
+    id?: string;
+    /** When the provider created the event, in unix seconds. */
+    created?: number;
     rawEvent?: any;
 }
 /** What calculateTax is asked to tax. Every amount is an integer in the currency's minor units. */
@@ -53,6 +57,11 @@ interface TaxCalculation {
 declare class TaxAddressError extends Error {
     constructor(message?: string, options?: ErrorOptions);
 }
+/** The store records a provider payment was made for, as its checkout stored them on the payment. */
+type PaymentReferences = {
+    orderId?: string | null;
+    giftCardPurchaseId?: string | null;
+};
 interface PaymentProviderAdapter {
     /**
      * Identifies the provider (e.g., 'stripe', 'paypal')
@@ -126,6 +135,12 @@ interface PaymentProviderAdapter {
         customerEmail?: string | null;
     }>;
     /**
+     * How much of a payment the provider has refunded: 'full' once all of it, 'partial' for part of it,
+     * otherwise 'none'. An administrator can release a completed checkout parked for review only once its
+     * payment was refunded in full or lost to a dispute.
+     */
+    getRefundStatus?(paymentIntentId: string): Promise<'none' | 'partial' | 'full'>;
+    /**
      * Whether the payment is disputed: 'open' while the dispute is undecided, 'lost' once the payment
      * was taken back, otherwise 'none'. Referral awards are released only after it answers 'none'.
      */
@@ -159,6 +174,12 @@ interface PaymentProviderAdapter {
     }): Promise<{
         reversalId: string;
     }>;
+    /**
+     * The store references a payment carries, or null when the provider has no such payment. A dispute
+     * event names only the payment, so for one that matches no recorded payment this tells a payment
+     * the store has not recorded yet (worth a retry) from one another integration took (ignored).
+     */
+    getPaymentReferences?(paymentIntentId: string): Promise<PaymentReferences | null>;
 }
 
-export { type PaymentProviderAdapter as P, TaxAddressError as T, type ValidatedWebhookEvent as V, type TaxCalculation as a, type TaxCalculationParams as b };
+export { type PaymentProviderAdapter as P, TaxAddressError as T, type ValidatedWebhookEvent as V, type PaymentReferences as a, type TaxCalculation as b, type TaxCalculationParams as c };

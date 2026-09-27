@@ -1,5 +1,5 @@
 import { TalismanEnv } from 'talisman-cms/client';
-import { P as PaymentProviderAdapter } from './payments-Dtu__rfy.js';
+import { P as PaymentProviderAdapter } from './payments-TQo6Ws_B.js';
 import { orders } from './schema.js';
 import 'drizzle-orm';
 import 'drizzle-orm/sqlite-core';
@@ -58,11 +58,11 @@ type QualifyingOrder = Pick<typeof orders.$inferSelect, 'status' | 'subtotalAmou
  */
 declare function referralNetAmount(order: Omit<QualifyingOrder, 'status'>): number;
 /**
- * An order keeps its referral while it is paid, not fully refunded, and its net amount reaches the
- * minimum and at least twice the award's reward. The reward is fixed at checkout, so terms lowered
- * later never let an award exceed half of what the order kept. The minimum counts up to what the
- * order qualified with at checkout (its subtotal less the discount), so a minimum raised later
- * never voids an award by itself; only a refund or a lost dispute does.
+ * An order keeps its referral while it is paid (or disputed), not fully refunded, and its net amount
+ * reaches the minimum and at least twice the award's reward. The reward is fixed at checkout, so
+ * terms lowered later never let an award exceed half of what the order kept. The minimum counts up
+ * to what the order qualified with at checkout (its subtotal less the discount), so a minimum raised
+ * later never voids an award by itself; only a refund or a lost dispute does.
  */
 declare function referralOrderQualifies(order: QualifyingOrder, minOrderCents: number, rewardCents?: number): boolean;
 /**

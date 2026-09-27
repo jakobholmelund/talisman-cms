@@ -16,7 +16,7 @@ var paidOrders = (stripeMode) => `
     SELECT o.*, MIN(p.created_at) AS paid_at
     FROM _ecommerce_orders o
     JOIN _ecommerce_payments p ON p.order_id = o.id
-    WHERE o.status IN ('paid', 'fulfilled', 'partially_refunded', 'refunded')
+    WHERE o.status IN ('paid', 'fulfilled', 'partially_refunded', 'refunded', 'disputed')
       AND COALESCE(o.payment_provider, 'stripe') <> 'admin_test'${stripeMode === "test" ? "" : excludeTestModeOrders}
       AND p.status IN ('success', 'partially_refunded', 'refunded')
     GROUP BY o.id
@@ -36,6 +36,7 @@ var refundsByPaymentDate = `
       o.paid_at AS refunded_at, 0 AS dated
     FROM paid_orders o WHERE ${refundOf("o")} > 0
   )`;
+var fullyRefundedAt = `CASE WHEN o.provider_refunded_cents >= o.total_amount THEN t.last_at END`;
 var refundsByRefundDate = `
   provider_refunds AS (
     SELECT r.id, r.order_id, r.created_at, MIN(r.amount_cents, o.provider_refunded_cents + r.amount_cents -
@@ -65,8 +66,8 @@ var refundsByRefundDate = `
     FROM dated_shares d JOIN paid_orders o ON o.id = d.order_id WHERE d.amount > 0
     UNION ALL
     SELECT o.id, LOWER(o.currency), ${refundOf("o")} - COALESCE(t.amount, 0),
-      CASE WHEN o.status = 'refunded' THEN COALESCE(full_refund.created_at, t.last_at, o.paid_at) ELSE o.paid_at END,
-      o.status = 'refunded' AND COALESCE(full_refund.created_at, t.last_at) IS NOT NULL
+      CASE WHEN o.status = 'refunded' THEN COALESCE(full_refund.created_at, ${fullyRefundedAt}, o.paid_at) ELSE o.paid_at END,
+      o.status = 'refunded' AND COALESCE(full_refund.created_at, ${fullyRefundedAt}) IS NOT NULL
     FROM paid_orders o
     LEFT JOIN dated_totals t ON t.order_id = o.id
     LEFT JOIN _ecommerce_gift_card_order_refunds full_refund ON full_refund.order_id = o.id

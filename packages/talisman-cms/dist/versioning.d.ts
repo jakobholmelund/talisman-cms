@@ -237,6 +237,11 @@ declare function waitForWorkflowCompletion(instance: WorkflowInstance, timeoutMs
 declare function triggerPublishingWorkflow(env: TalismanEnv, payload: PublishWorkflowPayload, bindingName?: string): Promise<EntryRecord & {
     workflow?: PendingPublishWorkflow;
 }>;
-declare function invalidateEntryCache(env: TalismanEnv, collectionSlug: string, entryId?: string): Promise<void>;
+/**
+ * Drops the KV copies of a collection's cached lists and of the given entries' cached reads. Code
+ * that writes rows without getClient (a D1 batch, for example) calls it once the write has
+ * committed, as the admin API and getClient do after theirs.
+ */
+declare function invalidateEntryCache(env: TalismanEnv, collectionSlug: string, entryIds?: string | readonly string[]): Promise<void>;
 
 export { DEFAULT_PUBLISHING_WORKFLOW_BINDING, EntryNotFoundError, type EntryStatus, type PendingPublishWorkflow, type PublishWorkflowAction, type PublishWorkflowPayload, PublishWorkflowPendingError, type PublishWorkflowResult, RevisionConflictError, type RevisionType, SlugConflictError, archiveEntry, assertPublishableSlug, createDraftEntry, getCollectionBySlug, getEntryRevision, getLatestRevision, getVersionedEntry, invalidateEntryCache, isEntryNotFound, isPermanentPublishError, isRevisionConflict, isSlugConflict, listEntryRevisions, normalizeEntryDataForRead, publishEntry, restoreEntryRevision, runPublishingTransition, saveDraftEntry, toEditableEntry, triggerPublishingWorkflow, waitForWorkflowCompletion };

@@ -55,8 +55,9 @@ type CommerceOverview = {
 };
 type CommerceRange = Omit<CommerceOverview, 'periodDays'>;
 /**
- * Provider refunds with the time they were issued, one row per refund, written by plugin-ecommerce
- * when available. Per order the rows should add up to provider_refunded_cents; any excess is ignored.
+ * Provider refunds with the time they were issued, one row for each rise in an order's refund total,
+ * written by plugin-ecommerce from its migration 0028 on. Per order the rows should add up to
+ * provider_refunded_cents; any excess is ignored.
  */
 declare const providerRefundsTable = "_ecommerce_provider_refunds";
 /**

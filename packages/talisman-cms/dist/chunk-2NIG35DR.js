@@ -280,10 +280,11 @@ function resolveFieldDefinitions(fields, plugins = []) {
     };
   });
 }
+var MAX_NATIVE_UPDATED_AT_LEAD_MS = 365 * 24 * 60 * 6e4;
 function nextNativeUpdatedAt(stored, now = /* @__PURE__ */ new Date()) {
   if (!(stored instanceof Date) || Number.isNaN(stored.getTime())) return now;
   const next = stored.getTime() + 1e3;
-  return next > now.getTime() && next - now.getTime() <= 5 * 6e4 ? new Date(next) : now;
+  return next > now.getTime() && next - now.getTime() <= MAX_NATIVE_UPDATED_AT_LEAD_MS ? new Date(next) : now;
 }
 function buildComponentSlotSchema(slot) {
   const inlineSchemas = slot.allowInline !== false && slot.components && slot.components.length > 0 ? slot.components.map(

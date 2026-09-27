@@ -2,7 +2,7 @@ import {
   customerAccounts,
   customerSessions,
   orders
-} from "./chunk-U2UUCKVF.js";
+} from "./chunk-SFZBZWCM.js";
 
 // src/accounts.ts
 import { and, eq, gt, isNull } from "drizzle-orm";
@@ -125,7 +125,7 @@ var REQUESTS_PER_SOURCE_PER_HOUR = 20;
 var REQUESTS_PER_ADDRESS = 3;
 var ADDRESS_WINDOW_SECONDS = 10 * 60;
 var RESERVED_SENDS_PER_ADDRESS = 2;
-var PURCHASED_ORDER_STATUSES = ["paid", "fulfilled", "partially_refunded", "refunded"];
+var PURCHASED_ORDER_STATUSES = ["paid", "fulfilled", "partially_refunded", "refunded", "disputed"];
 var CustomerEmailLimitError = class extends Error {
   name = "CustomerEmailLimitError";
   constructor() {
@@ -300,6 +300,7 @@ async function listCustomerOrders(env, accountId) {
   return db.select({
     id: orders.id,
     status: orders.status,
+    fulfillmentStatus: orders.fulfillmentStatus,
     totalAmount: orders.totalAmount,
     subtotalAmount: orders.subtotalAmount,
     shippingAmount: orders.shippingAmount,

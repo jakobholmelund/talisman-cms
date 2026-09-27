@@ -101,7 +101,10 @@ var StripePaymentAdapter = class {
       metadata: {
         orderId: params.orderId,
         ...params.metadata
-      }
+      },
+      // The charge, its refunds and disputes carry the store's reference, so a webhook event for a
+      // payment the store has not recorded yet can be told apart from one of another integration.
+      payment_intent_data: { metadata: params.metadata?.giftCardPurchaseId ? { giftCardPurchaseId: params.metadata.giftCardPurchaseId } : { orderId: params.orderId } }
     }, { idempotencyKey: params.orderId });
     if (!session.url) {
       throw new Error("Failed to create Stripe checkout session URL");
@@ -125,6 +128,8 @@ var StripePaymentAdapter = class {
       return {
         type: event.type,
         data: event.data.object,
+        id: event.id,
+        created: event.created,
         rawEvent: event
       };
     } catch (err) {
@@ -153,6 +158,21 @@ var StripePaymentAdapter = class {
       paymentIntentId: typeof session.payment_intent === "string" ? session.payment_intent : null,
       customerEmail: session.customer_details?.email ?? session.customer_email
     };
+  }
+  async getPaymentReferences(paymentIntentId) {
+    try {
+      const { metadata } = await this.stripe.paymentIntents.retrieve(paymentIntentId);
+      return { orderId: metadata?.orderId ?? null, giftCardPurchaseId: metadata?.giftCardPurchaseId ?? null };
+    } catch (error) {
+      if (error?.code === "resource_missing" || error?.statusCode === 404) return null;
+      throw error;
+    }
+  }
+  async getRefundStatus(paymentIntentId) {
+    const intent = await this.stripe.paymentIntents.retrieve(paymentIntentId, { expand: ["latest_charge"] });
+    const charge = intent.latest_charge && typeof intent.latest_charge === "object" ? intent.latest_charge : null;
+    if (!charge?.amount_refunded) return "none";
+    return charge.refunded ? "full" : "partial";
   }
   async getDisputeStatus(paymentIntentId) {
     const disputes = await this.stripe.disputes.list({ payment_intent: paymentIntentId, limit: 10 });

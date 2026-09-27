@@ -2,6 +2,17 @@
 import { relations } from "drizzle-orm";
 import { sqliteTable, text, integer, primaryKey, uniqueIndex, check } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
+var reconcileColumns = () => ({
+  reconcileAttempts: integer("reconcile_attempts").notNull().default(0),
+  reconcileLastAt: integer("reconcile_last_at", { mode: "timestamp" }),
+  reconcileLastError: text("reconcile_last_error"),
+  reconcileReviewAt: integer("reconcile_review_at", { mode: "timestamp" })
+});
+var taxSyncColumns = () => ({
+  taxSyncAttempts: integer("tax_sync_attempts").notNull().default(0),
+  taxSyncLastAt: integer("tax_sync_last_at", { mode: "timestamp" }),
+  taxSyncLastError: text("tax_sync_last_error")
+});
 var carts = sqliteTable("_ecommerce_carts", {
   id: text("id").primaryKey(),
   // Usually mapped to a session generic ID
@@ -45,14 +56,19 @@ var orders = sqliteTable("_ecommerce_orders", {
   taxBehavior: text("tax_behavior").$type(),
   taxCalculationId: text("tax_calculation_id"),
   taxTransactionId: text("tax_transaction_id"),
+  // Payment: draft, pending, paid, partially_refunded, refunded, disputed or cancelled. Migration 0026
+  // moved the legacy 'fulfilled' to fulfillmentStatus; readers still accept it.
   status: text("status").notNull().default("draft"),
-  // draft, pending, paid, fulfilled, cancelled
+  /** Shipping, kept apart from payment so that a refund never hides a shipment. */
+  fulfillmentStatus: text("fulfillment_status").$type().notNull().default("unfulfilled"),
   items: text("items", { mode: "json" }).$type().notNull().default([]),
   totalAmount: integer("total_amount").notNull(),
   currency: text("currency").notNull().default("usd"),
   customerEmail: text("customer_email"),
   shippingAddress: text("shipping_address", { mode: "json" }).$type(),
   billingAddress: text("billing_address", { mode: "json" }).$type(),
+  ...reconcileColumns(),
+  ...taxSyncColumns(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
 });
@@ -67,6 +83,16 @@ var payments = sqliteTable("_ecommerce_payments", {
   amount: integer("amount").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull()
 }, (table) => [uniqueIndex("_ecommerce_payments_provider_id_unique").on(table.provider, table.providerId)]);
+var providerRefunds = sqliteTable("_ecommerce_provider_refunds", {
+  id: text("id").primaryKey(),
+  orderId: text("order_id").notNull().references(() => orders.id),
+  provider: text("provider").notNull(),
+  /** The provider's id for the refund, when the event names it. */
+  providerRefundId: text("provider_refund_id"),
+  amountCents: integer("amount_cents").notNull(),
+  /** When the provider issued the refund; null when unknown. */
+  createdAt: integer("created_at", { mode: "timestamp" })
+});
 var products = sqliteTable("_ecommerce_products", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -240,12 +266,18 @@ var rateLimits = sqliteTable("_ecommerce_rate_limits", {
 });
 var fulfillments = sqliteTable("_ecommerce_fulfillments", {
   id: text("id").primaryKey(),
-  orderId: text("order_id").notNull().references(() => orders.id).unique(),
+  orderId: text("order_id").notNull().references(() => orders.id),
   adminActor: text("admin_actor").notNull(),
   carrier: text("carrier"),
   trackingNumber: text("tracking_number"),
+  /** The shipment note, or the reason for a correction. */
   note: text("note").notNull(),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  kind: text("kind").$type().notNull().default("shipment"),
+  /** The shipment a correction restates; null for a shipment. */
+  correctsId: text("corrects_id").references(() => fulfillments.id),
+  /** Whether a shipment completes its order; false for one parcel of a split shipment. */
+  completesOrder: integer("completes_order", { mode: "boolean" }).notNull().default(true)
 });
 var referralCodes = sqliteTable("_ecommerce_referral_codes", {
   code: text("code").primaryKey(),
@@ -320,7 +352,10 @@ var giftCardPurchases = sqliteTable("_ecommerce_gift_card_purchases", {
   providerSessionId: text("provider_session_id").unique(),
   paymentIntentId: text("payment_intent_id").unique(),
   providerRefundedCents: integer("provider_refunded_cents").notNull().default(0),
+  /** The part of providerRefundedCents already settled on the purchase's cards: taken off a reinstated card, or cancelled with void ones. */
+  refundAdjustedCents: integer("refund_adjusted_cents").notNull().default(0),
   accessTokenHash: text("access_token_hash").notNull(),
+  ...reconcileColumns(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
 });
@@ -331,6 +366,10 @@ var giftCards = sqliteTable("_ecommerce_gift_cards", {
   encryptedCode: text("encrypted_code").notNull(),
   source: text("source").$type().notNull(),
   purchaseId: text("purchase_id").references(() => giftCardPurchases.id).unique(),
+  /** Set on an administrator-issued card that took over a purchase's value; a refund of that purchase holds it too. */
+  replacesPurchaseId: text("replaces_purchase_id").references(() => giftCardPurchases.id),
+  /** Suspended by its purchase's review hold while it was active, so reinstating the purchase reactivates it. */
+  heldForReview: integer("held_for_review", { mode: "boolean" }).notNull().default(false),
   adminActor: text("admin_actor"),
   adminReason: text("admin_reason"),
   initialCents: integer("initial_cents").notNull(),
@@ -367,6 +406,20 @@ var giftCardRefunds = sqliteTable("_ecommerce_gift_card_refunds", {
   reason: text("reason").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull()
 });
+var giftCardReviews = sqliteTable("_ecommerce_gift_card_reviews", {
+  id: text("id").primaryKey(),
+  purchaseId: text("purchase_id").notNull().references(() => giftCardPurchases.id),
+  cardId: text("card_id").notNull().references(() => giftCards.id),
+  // The card that held the purchase's value.
+  outcome: text("outcome").$type().notNull(),
+  refundedCents: integer("refunded_cents").notNull(),
+  // The provider refund total the decision covered.
+  adjustmentCents: integer("adjustment_cents").notNull(),
+  // Taken off the purchase's cards.
+  adminActor: text("admin_actor").notNull(),
+  reason: text("reason").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+});
 var giftCardOrderRefunds = sqliteTable("_ecommerce_gift_card_order_refunds", {
   orderId: text("order_id").primaryKey().references(() => orders.id),
   adminActor: text("admin_actor").notNull(),
@@ -380,7 +433,77 @@ var taxReversals = sqliteTable("_ecommerce_tax_reversals", {
   amount: integer("amount").notNull(),
   // Positive, in the order currency's minor units.
   providerReversalId: text("provider_reversal_id").notNull(),
+  ...taxSyncColumns(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+});
+var disputes = sqliteTable("_ecommerce_disputes", {
+  id: text("id").primaryKey(),
+  provider: text("provider").notNull(),
+  orderId: text("order_id").references(() => orders.id),
+  giftCardPurchaseId: text("gift_card_purchase_id").references(() => giftCardPurchases.id),
+  amountCents: integer("amount_cents").notNull(),
+  currency: text("currency").notNull(),
+  reason: text("reason"),
+  /** The provider's status, such as needs_response, won or lost. */
+  status: text("status").notNull(),
+  /** The order's or purchase's status before the dispute, which a won dispute restores. */
+  statusBefore: text("status_before").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  /** Null while the dispute is open. */
+  closedAt: integer("closed_at", { mode: "timestamp" })
+});
+var restocks = sqliteTable("_ecommerce_restocks", {
+  id: text("id").primaryKey(),
+  orderId: text("order_id").notNull().references(() => orders.id),
+  reservationType: text("reservation_type").$type().notNull(),
+  reservationId: text("reservation_id").notNull(),
+  targetType: text("target_type").$type().notNull(),
+  targetId: text("target_id").notNull(),
+  quantity: integer("quantity").notNull(),
+  adminActor: text("admin_actor").notNull(),
+  reason: text("reason").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+}, (table) => [uniqueIndex("_ecommerce_restocks_reservation_unique").on(table.reservationType, table.reservationId)]);
+var reconcileDecisions = sqliteTable("_ecommerce_reconcile_decisions", {
+  id: text("id").primaryKey(),
+  orderId: text("order_id").references(() => orders.id),
+  purchaseId: text("purchase_id").references(() => giftCardPurchases.id),
+  action: text("action").$type().notNull(),
+  failure: text("failure"),
+  // The failure code the record was parked with.
+  // How a released completed checkout's payment was shown to be returned; null for any other decision.
+  paymentReturned: text("payment_returned").$type(),
+  adminActor: text("admin_actor").notNull(),
+  reason: text("reason").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+});
+var emailDeliveries = sqliteTable("_ecommerce_email_deliveries", {
+  id: text("id").primaryKey(),
+  kind: text("kind").$type().notNull(),
+  /** The order, the shipment or correction (fulfillment id), or the gift card purchase. */
+  subjectId: text("subject_id").notNull(),
+  status: text("status").$type().notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  lastError: text("last_error"),
+  nextAttemptAt: integer("next_attempt_at", { mode: "timestamp" }).notNull(),
+  claimedAt: integer("claimed_at", { mode: "timestamp" }),
+  sentAt: integer("sent_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+}, (table) => [uniqueIndex("_ecommerce_email_deliveries_kind_subject_unique").on(table.kind, table.subjectId)]);
+var giftCardClaims = sqliteTable("_ecommerce_gift_card_claims", {
+  id: text("id").primaryKey(),
+  tokenHash: text("token_hash").notNull().unique(),
+  purchaseId: text("purchase_id").notNull().references(() => giftCardPurchases.id),
+  /** The card whose code the link shows. */
+  cardId: text("card_id").notNull().references(() => giftCards.id),
+  expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  usedAt: integer("used_at", { mode: "timestamp" }),
+  revokedAt: integer("revoked_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  /** The administrator who resent the link, with the reason; null for the link sent after payment. */
+  createdBy: text("created_by"),
+  reason: text("reason")
 });
 var cartsRelations = relations(carts, ({ many }) => ({
   orders: many(orders)
@@ -472,6 +595,7 @@ export {
   carts,
   orders,
   payments,
+  providerRefunds,
   products,
   variants,
   productVariants,
@@ -502,8 +626,14 @@ export {
   giftCardLedger,
   giftCardRedemptions,
   giftCardRefunds,
+  giftCardReviews,
   giftCardOrderRefunds,
   taxReversals,
+  disputes,
+  restocks,
+  reconcileDecisions,
+  emailDeliveries,
+  giftCardClaims,
   cartsRelations,
   ordersRelations,
   paymentsRelations,

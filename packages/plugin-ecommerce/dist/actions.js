@@ -1,45 +1,50 @@
 import {
   BASKET_LIMIT_MESSAGE,
   basketCreationOverLimit
-} from "./chunk-GYJAI2DT.js";
+} from "./chunk-WHYEQB3F.js";
 import {
   CODE_CHECK_LIMIT_MESSAGE,
   codeChecksOverBasketLimit,
   codeChecksOverNetworkLimit
-} from "./chunk-6HILOGQM.js";
+} from "./chunk-HV6YPDJH.js";
 import {
   runtimePaymentAdapters
-} from "./chunk-R7FZZLF2.js";
-import "./chunk-C2SYF4CS.js";
+} from "./chunk-DQ2SJLJ6.js";
+import "./chunk-6L7TQXAW.js";
 import {
   CART_MAX_LINE_QUANTITY,
+  PARKED_CHECKOUT_MESSAGE,
   PROVIDER_CHECK_RETRY_MESSAGE,
   TaxCalculationError,
   bindCommerceApi
-} from "./chunk-GDYU3454.js";
+} from "./chunk-2LIQHRTV.js";
+import "./chunk-IK22DR6W.js";
 import {
   codeRefusalBody
-} from "./chunk-HAO6IOX2.js";
+} from "./chunk-GGFLTIUK.js";
 import "./chunk-BGDJXEM5.js";
 import {
   ensureCartSession,
   readCartSessionToken
 } from "./chunk-MDTTSWBR.js";
-import "./chunk-63W5IYCB.js";
+import "./chunk-BGS2NWOG.js";
+import "./chunk-WP5KVMJI.js";
 import {
   StoreSettingsError,
   readStoreSettings,
   reportStoreSettingsError
-} from "./chunk-3I33VHHD.js";
-import "./chunk-2UYSCNNW.js";
+} from "./chunk-A7BNM2SK.js";
 import {
   REFERRAL_COOKIE
-} from "./chunk-6773WH54.js";
+} from "./chunk-HBUWVAQK.js";
+import "./chunk-GNU6N22K.js";
 import {
   CUSTOMER_SESSION_COOKIE,
   findCustomerSession
-} from "./chunk-AASKNEFP.js";
-import "./chunk-U2UUCKVF.js";
+} from "./chunk-NKZQB4F4.js";
+import "./chunk-SFZBZWCM.js";
+import "./chunk-NMGICNSV.js";
+import "./chunk-2UYSCNNW.js";
 
 // src/actions.ts
 import { defineAction, ActionError } from "astro:actions";
@@ -188,6 +193,7 @@ var ecommerceActions = {
           if (resumed?.providerCheckLimited) {
             throw new ActionError({ code: "TOO_MANY_REQUESTS", message: PROVIDER_CHECK_RETRY_MESSAGE });
           }
+          if (resumed?.review) throw new ActionError({ code: "CONFLICT", message: PARKED_CHECKOUT_MESSAGE });
           if (resumed?.paymentUrl) {
             return { success: true, redirectUrl: resumed.paymentUrl, mode: "redirect", orderId: resumed.order.id };
           }

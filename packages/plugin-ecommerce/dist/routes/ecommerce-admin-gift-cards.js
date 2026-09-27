@@ -1,16 +1,23 @@
 import {
   StoreSettingsError,
+  getGiftCardKeyStatus,
+  getGiftCardReviewsAdmin,
   getGiftCardsAdmin,
   issueAdminGiftCard,
+  reencryptGiftCardCodes,
   refundGiftCardOnlyOrder,
   refundGiftCardTender,
   reportStoreSettingsError,
+  resendGiftCardClaimLink,
+  resolveGiftCardReview,
   setGiftCardActive
-} from "../chunk-3I33VHHD.js";
+} from "../chunk-A7BNM2SK.js";
+import "../chunk-HBUWVAQK.js";
+import "../chunk-GNU6N22K.js";
+import "../chunk-NKZQB4F4.js";
+import "../chunk-SFZBZWCM.js";
+import "../chunk-NMGICNSV.js";
 import "../chunk-2UYSCNNW.js";
-import "../chunk-6773WH54.js";
-import "../chunk-AASKNEFP.js";
-import "../chunk-U2UUCKVF.js";
 
 // src/routes/ecommerce-admin-gift-cards.ts
 import { authorizeCmsRequest } from "talisman-cms/auth/guard";
@@ -27,15 +34,24 @@ var ALL = async ({ request }) => {
   try {
     const { env } = await import("cloudflare:workers");
     const runtimeEnv = env;
-    if (request.method === "GET") return Response.json({ cards: await getGiftCardsAdmin(runtimeEnv) }, { headers });
+    if (request.method === "GET") {
+      return Response.json({
+        cards: await getGiftCardsAdmin(runtimeEnv),
+        ...await getGiftCardReviewsAdmin(runtimeEnv),
+        encryption: await getGiftCardKeyStatus(runtimeEnv)
+      }, { headers });
+    }
     const body = await request.json();
     const actor = String(authorization.user?.id ?? "");
     let result;
     if (body.action === "issue") result = await issueAdminGiftCard(runtimeEnv, actor, body.data);
     else if (body.action === "setActive" && typeof body.id === "string") {
       result = await setGiftCardActive(runtimeEnv, body.id, body.active);
-    } else if (body.action === "refundTender") result = await refundGiftCardTender(runtimeEnv, actor, body.data);
+    } else if (body.action === "resolveReview") result = await resolveGiftCardReview(runtimeEnv, actor, body.data);
+    else if (body.action === "reencryptCodes") result = await reencryptGiftCardCodes(runtimeEnv, body.data);
+    else if (body.action === "refundTender") result = await refundGiftCardTender(runtimeEnv, actor, body.data);
     else if (body.action === "refundGiftOnlyOrder") result = await refundGiftCardOnlyOrder(runtimeEnv, actor, body.data);
+    else if (body.action === "resendClaimLink") result = await resendGiftCardClaimLink(runtimeEnv, actor, body.data);
     else return Response.json({ error: "Invalid gift card action" }, { status: 400, headers });
     return Response.json({ result }, { headers });
   } catch (error) {

@@ -1,6 +1,6 @@
 import {
   PURCHASED_ORDER_STATUSES
-} from "./chunk-AASKNEFP.js";
+} from "./chunk-NKZQB4F4.js";
 import {
   creditLedger,
   customerAccounts,
@@ -8,7 +8,7 @@ import {
   referralCodes,
   referralSettings,
   referrals
-} from "./chunk-U2UUCKVF.js";
+} from "./chunk-SFZBZWCM.js";
 
 // src/referrals.ts
 import { and, desc, eq } from "drizzle-orm";
@@ -72,7 +72,7 @@ var REFERRAL_HOLD_DAYS = 30;
 var REFERRAL_MAX_PER_PERIOD = 10;
 var REFERRAL_PERIOD_DAYS = 30;
 var DAY_SECONDS = 24 * 60 * 60;
-var QUALIFYING_STATUSES = ["paid", "fulfilled", "partially_refunded"];
+var QUALIFYING_STATUSES = ["paid", "fulfilled", "partially_refunded", "disputed"];
 var readWhole = (value, fallback, max) => {
   const parsed = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : NaN;
   return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= max ? parsed : fallback;
@@ -187,7 +187,7 @@ async function releaseReferralAwards(options, run = {}) {
       }
       const provider = order.paymentProvider ?? "stripe";
       const adapter = paymentAdapters.find((candidate) => candidate.providerId === provider);
-      const dispute = adapter?.getDisputeStatus && order.paymentIntentId ? await adapter.getDisputeStatus(order.paymentIntentId) : provider === "stripe" ? "unknown" : "none";
+      const dispute = order.status === "disputed" ? "open" : adapter?.getDisputeStatus && order.paymentIntentId ? await adapter.getDisputeStatus(order.paymentIntentId) : provider === "stripe" ? "unknown" : "none";
       if (dispute === "lost") {
         await env.DB.batch(referralReversalStatements(
           env,
@@ -210,6 +210,7 @@ async function releaseReferralAwards(options, run = {}) {
         SELECT ?, r.${account}, r.order_id, ?, r.reward_cents, ?
         FROM _ecommerce_referrals r JOIN _ecommerce_orders o ON o.id = r.order_id
         WHERE r.id = ? AND r.status = 'approved' AND r.reward_cents > 0 AND ${qualifyingOrderSql("o", "r.reward_cents")}
+          AND o.status <> 'disputed'
         ON CONFLICT DO NOTHING`).bind(id, kind, now, row.id, policy.minOrderCents)));
       const released = await db.select({ id: creditLedger.id }).from(creditLedger).where(and(eq(creditLedger.orderId, row.orderId), eq(creditLedger.kind, "referral_award"))).get();
       const current = await db.select({ status: referrals.status }).from(referrals).where(eq(referrals.id, row.id)).get();

@@ -200,6 +200,163 @@ declare const orders: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     name: "_ecommerce_orders";
     schema: undefined;
     columns: {
+        createdAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "created_at";
+            tableName: "_ecommerce_orders";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        updatedAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "updated_at";
+            tableName: "_ecommerce_orders";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        taxSyncAttempts: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "tax_sync_attempts";
+            tableName: "_ecommerce_orders";
+            dataType: "number";
+            columnType: "SQLiteInteger";
+            data: number;
+            driverParam: number;
+            notNull: true;
+            hasDefault: true;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        taxSyncLastAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "tax_sync_last_at";
+            tableName: "_ecommerce_orders";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        taxSyncLastError: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "tax_sync_last_error";
+            tableName: "_ecommerce_orders";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        reconcileAttempts: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "reconcile_attempts";
+            tableName: "_ecommerce_orders";
+            dataType: "number";
+            columnType: "SQLiteInteger";
+            data: number;
+            driverParam: number;
+            notNull: true;
+            hasDefault: true;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        reconcileLastAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "reconcile_last_at";
+            tableName: "_ecommerce_orders";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        reconcileLastError: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "reconcile_last_error";
+            tableName: "_ecommerce_orders";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        reconcileReviewAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "reconcile_review_at";
+            tableName: "_ecommerce_orders";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
         id: drizzle_orm_sqlite_core.SQLiteColumn<{
             name: "id";
             tableName: "_ecommerce_orders";
@@ -639,6 +796,26 @@ declare const orders: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
         }, {}, {
             length: number | undefined;
         }>;
+        fulfillmentStatus: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "fulfillment_status";
+            tableName: "_ecommerce_orders";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: "fulfilled" | "unfulfilled" | "partially_fulfilled";
+            driverParam: string;
+            notNull: true;
+            hasDefault: true;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+            $type: "fulfilled" | "unfulfilled" | "partially_fulfilled";
+        }>;
         items: drizzle_orm_sqlite_core.SQLiteColumn<{
             name: "items";
             tableName: "_ecommerce_orders";
@@ -795,40 +972,6 @@ declare const orders: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
                 country?: string;
             };
         }>;
-        createdAt: drizzle_orm_sqlite_core.SQLiteColumn<{
-            name: "created_at";
-            tableName: "_ecommerce_orders";
-            dataType: "date";
-            columnType: "SQLiteTimestamp";
-            data: Date;
-            driverParam: number;
-            notNull: true;
-            hasDefault: false;
-            isPrimaryKey: false;
-            isAutoincrement: false;
-            hasRuntimeDefault: false;
-            enumValues: undefined;
-            baseColumn: never;
-            identity: undefined;
-            generated: undefined;
-        }, {}, {}>;
-        updatedAt: drizzle_orm_sqlite_core.SQLiteColumn<{
-            name: "updated_at";
-            tableName: "_ecommerce_orders";
-            dataType: "date";
-            columnType: "SQLiteTimestamp";
-            data: Date;
-            driverParam: number;
-            notNull: true;
-            hasDefault: false;
-            isPrimaryKey: false;
-            isAutoincrement: false;
-            hasRuntimeDefault: false;
-            enumValues: undefined;
-            baseColumn: never;
-            identity: undefined;
-            generated: undefined;
-        }, {}, {}>;
     };
     dialect: "sqlite";
 }>;
@@ -956,6 +1099,128 @@ declare const payments: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
             data: Date;
             driverParam: number;
             notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+    };
+    dialect: "sqlite";
+}>;
+/**
+ * Payment provider refunds with the time they were issued: one row for each rise in an order's
+ * providerRefundedCents, so an order's rows add up to it. Refunds recorded before migration 0028 have
+ * no row. Gift card tender refunds are in giftCardRefunds.
+ */
+declare const providerRefunds: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
+    name: "_ecommerce_provider_refunds";
+    schema: undefined;
+    columns: {
+        id: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "id";
+            tableName: "_ecommerce_provider_refunds";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: true;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        orderId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "order_id";
+            tableName: "_ecommerce_provider_refunds";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        provider: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "provider";
+            tableName: "_ecommerce_provider_refunds";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        providerRefundId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "provider_refund_id";
+            tableName: "_ecommerce_provider_refunds";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        amountCents: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "amount_cents";
+            tableName: "_ecommerce_provider_refunds";
+            dataType: "number";
+            columnType: "SQLiteInteger";
+            data: number;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        createdAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "created_at";
+            tableName: "_ecommerce_provider_refunds";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: false;
             hasDefault: false;
             isPrimaryKey: false;
             isAutoincrement: false;
@@ -3160,6 +3425,10 @@ declare const rateLimits: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     };
     dialect: "sqlite";
 }>;
+/**
+ * Shipments, several per order when it ships in parcels, and corrections that restate a shipment's
+ * carrier and tracking number. Rows are never changed; the latest correction of a shipment is in force.
+ */
 declare const fulfillments: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     name: "_ecommerce_fulfillments";
     schema: undefined;
@@ -3287,6 +3556,62 @@ declare const fulfillments: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
             driverParam: number;
             notNull: true;
             hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        kind: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "kind";
+            tableName: "_ecommerce_fulfillments";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: "shipment" | "correction";
+            driverParam: string;
+            notNull: true;
+            hasDefault: true;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+            $type: "shipment" | "correction";
+        }>;
+        correctsId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "corrects_id";
+            tableName: "_ecommerce_fulfillments";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        completesOrder: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "completes_order";
+            tableName: "_ecommerce_fulfillments";
+            dataType: "boolean";
+            columnType: "SQLiteBoolean";
+            data: boolean;
+            driverParam: number;
+            notNull: true;
+            hasDefault: true;
             isPrimaryKey: false;
             isAutoincrement: false;
             hasRuntimeDefault: false;
@@ -4270,6 +4595,110 @@ declare const giftCardPurchases: drizzle_orm_sqlite_core.SQLiteTableWithColumns<
     name: "_ecommerce_gift_card_purchases";
     schema: undefined;
     columns: {
+        createdAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "created_at";
+            tableName: "_ecommerce_gift_card_purchases";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        updatedAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "updated_at";
+            tableName: "_ecommerce_gift_card_purchases";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        reconcileAttempts: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "reconcile_attempts";
+            tableName: "_ecommerce_gift_card_purchases";
+            dataType: "number";
+            columnType: "SQLiteInteger";
+            data: number;
+            driverParam: number;
+            notNull: true;
+            hasDefault: true;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        reconcileLastAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "reconcile_last_at";
+            tableName: "_ecommerce_gift_card_purchases";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        reconcileLastError: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "reconcile_last_error";
+            tableName: "_ecommerce_gift_card_purchases";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        reconcileReviewAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "reconcile_review_at";
+            tableName: "_ecommerce_gift_card_purchases";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
         id: drizzle_orm_sqlite_core.SQLiteColumn<{
             name: "id";
             tableName: "_ecommerce_gift_card_purchases";
@@ -4419,6 +4848,23 @@ declare const giftCardPurchases: drizzle_orm_sqlite_core.SQLiteTableWithColumns<
             identity: undefined;
             generated: undefined;
         }, {}, {}>;
+        refundAdjustedCents: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "refund_adjusted_cents";
+            tableName: "_ecommerce_gift_card_purchases";
+            dataType: "number";
+            columnType: "SQLiteInteger";
+            data: number;
+            driverParam: number;
+            notNull: true;
+            hasDefault: true;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
         accessTokenHash: drizzle_orm_sqlite_core.SQLiteColumn<{
             name: "access_token_hash";
             tableName: "_ecommerce_gift_card_purchases";
@@ -4438,40 +4884,6 @@ declare const giftCardPurchases: drizzle_orm_sqlite_core.SQLiteTableWithColumns<
         }, {}, {
             length: number | undefined;
         }>;
-        createdAt: drizzle_orm_sqlite_core.SQLiteColumn<{
-            name: "created_at";
-            tableName: "_ecommerce_gift_card_purchases";
-            dataType: "date";
-            columnType: "SQLiteTimestamp";
-            data: Date;
-            driverParam: number;
-            notNull: true;
-            hasDefault: false;
-            isPrimaryKey: false;
-            isAutoincrement: false;
-            hasRuntimeDefault: false;
-            enumValues: undefined;
-            baseColumn: never;
-            identity: undefined;
-            generated: undefined;
-        }, {}, {}>;
-        updatedAt: drizzle_orm_sqlite_core.SQLiteColumn<{
-            name: "updated_at";
-            tableName: "_ecommerce_gift_card_purchases";
-            dataType: "date";
-            columnType: "SQLiteTimestamp";
-            data: Date;
-            driverParam: number;
-            notNull: true;
-            hasDefault: false;
-            isPrimaryKey: false;
-            isAutoincrement: false;
-            hasRuntimeDefault: false;
-            enumValues: undefined;
-            baseColumn: never;
-            identity: undefined;
-            generated: undefined;
-        }, {}, {}>;
     };
     dialect: "sqlite";
 }>;
@@ -4595,6 +5007,42 @@ declare const giftCards: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
         }, {}, {
             length: number | undefined;
         }>;
+        replacesPurchaseId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "replaces_purchase_id";
+            tableName: "_ecommerce_gift_cards";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        heldForReview: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "held_for_review";
+            tableName: "_ecommerce_gift_cards";
+            dataType: "boolean";
+            columnType: "SQLiteBoolean";
+            data: boolean;
+            driverParam: number;
+            notNull: true;
+            hasDefault: true;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
         adminActor: drizzle_orm_sqlite_core.SQLiteColumn<{
             name: "admin_actor";
             tableName: "_ecommerce_gift_cards";
@@ -5151,6 +5599,180 @@ declare const giftCardRefunds: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     };
     dialect: "sqlite";
 }>;
+/** Administrator decisions on purchases held for review after a provider refund. */
+declare const giftCardReviews: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
+    name: "_ecommerce_gift_card_reviews";
+    schema: undefined;
+    columns: {
+        id: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "id";
+            tableName: "_ecommerce_gift_card_reviews";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: true;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        purchaseId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "purchase_id";
+            tableName: "_ecommerce_gift_card_reviews";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        cardId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "card_id";
+            tableName: "_ecommerce_gift_card_reviews";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        outcome: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "outcome";
+            tableName: "_ecommerce_gift_card_reviews";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: "void" | "reinstate";
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+            $type: "void" | "reinstate";
+        }>;
+        refundedCents: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "refunded_cents";
+            tableName: "_ecommerce_gift_card_reviews";
+            dataType: "number";
+            columnType: "SQLiteInteger";
+            data: number;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        adjustmentCents: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "adjustment_cents";
+            tableName: "_ecommerce_gift_card_reviews";
+            dataType: "number";
+            columnType: "SQLiteInteger";
+            data: number;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        adminActor: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "admin_actor";
+            tableName: "_ecommerce_gift_card_reviews";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        reason: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "reason";
+            tableName: "_ecommerce_gift_card_reviews";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        createdAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "created_at";
+            tableName: "_ecommerce_gift_card_reviews";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+    };
+    dialect: "sqlite";
+}>;
 declare const giftCardOrderRefunds: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     name: "_ecommerce_gift_card_order_refunds";
     schema: undefined;
@@ -5237,6 +5859,76 @@ declare const taxReversals: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     name: "_ecommerce_tax_reversals";
     schema: undefined;
     columns: {
+        createdAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "created_at";
+            tableName: "_ecommerce_tax_reversals";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        taxSyncAttempts: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "tax_sync_attempts";
+            tableName: "_ecommerce_tax_reversals";
+            dataType: "number";
+            columnType: "SQLiteInteger";
+            data: number;
+            driverParam: number;
+            notNull: true;
+            hasDefault: true;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        taxSyncLastAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "tax_sync_last_at";
+            tableName: "_ecommerce_tax_reversals";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        taxSyncLastError: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "tax_sync_last_error";
+            tableName: "_ecommerce_tax_reversals";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
         id: drizzle_orm_sqlite_core.SQLiteColumn<{
             name: "id";
             tableName: "_ecommerce_tax_reversals";
@@ -5330,9 +6022,186 @@ declare const taxReversals: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
         }, {}, {
             length: number | undefined;
         }>;
+    };
+    dialect: "sqlite";
+}>;
+/** Payment disputes by the provider's dispute id, each on an order or a gift card purchase. */
+declare const disputes: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
+    name: "_ecommerce_disputes";
+    schema: undefined;
+    columns: {
+        id: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "id";
+            tableName: "_ecommerce_disputes";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: true;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        provider: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "provider";
+            tableName: "_ecommerce_disputes";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        orderId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "order_id";
+            tableName: "_ecommerce_disputes";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        giftCardPurchaseId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "gift_card_purchase_id";
+            tableName: "_ecommerce_disputes";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        amountCents: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "amount_cents";
+            tableName: "_ecommerce_disputes";
+            dataType: "number";
+            columnType: "SQLiteInteger";
+            data: number;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        currency: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "currency";
+            tableName: "_ecommerce_disputes";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        reason: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "reason";
+            tableName: "_ecommerce_disputes";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        status: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "status";
+            tableName: "_ecommerce_disputes";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        statusBefore: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "status_before";
+            tableName: "_ecommerce_disputes";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
         createdAt: drizzle_orm_sqlite_core.SQLiteColumn<{
             name: "created_at";
-            tableName: "_ecommerce_tax_reversals";
+            tableName: "_ecommerce_disputes";
             dataType: "date";
             columnType: "SQLiteTimestamp";
             data: Date;
@@ -5347,6 +6216,801 @@ declare const taxReversals: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
             identity: undefined;
             generated: undefined;
         }, {}, {}>;
+        updatedAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "updated_at";
+            tableName: "_ecommerce_disputes";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        closedAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "closed_at";
+            tableName: "_ecommerce_disputes";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+    };
+    dialect: "sqlite";
+}>;
+/** Reservation rows of refunded orders that an administrator returned to stock, each once, with the reason. */
+declare const restocks: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
+    name: "_ecommerce_restocks";
+    schema: undefined;
+    columns: {
+        id: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "id";
+            tableName: "_ecommerce_restocks";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: true;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        orderId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "order_id";
+            tableName: "_ecommerce_restocks";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        reservationType: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "reservation_type";
+            tableName: "_ecommerce_restocks";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: "inventory" | "component";
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+            $type: "inventory" | "component";
+        }>;
+        reservationId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "reservation_id";
+            tableName: "_ecommerce_restocks";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        targetType: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "target_type";
+            tableName: "_ecommerce_restocks";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: "product" | "variant" | "stock" | "component";
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+            $type: "product" | "variant" | "stock" | "component";
+        }>;
+        targetId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "target_id";
+            tableName: "_ecommerce_restocks";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        quantity: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "quantity";
+            tableName: "_ecommerce_restocks";
+            dataType: "number";
+            columnType: "SQLiteInteger";
+            data: number;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        adminActor: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "admin_actor";
+            tableName: "_ecommerce_restocks";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        reason: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "reason";
+            tableName: "_ecommerce_restocks";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        createdAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "created_at";
+            tableName: "_ecommerce_restocks";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+    };
+    dialect: "sqlite";
+}>;
+/**
+ * Administrator decisions on orders and gift card purchases parked for review (migration 0029), each
+ * recorded with the retry or release it carried out. Exactly one of orderId and purchaseId is set.
+ */
+declare const reconcileDecisions: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
+    name: "_ecommerce_reconcile_decisions";
+    schema: undefined;
+    columns: {
+        id: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "id";
+            tableName: "_ecommerce_reconcile_decisions";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: true;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        orderId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "order_id";
+            tableName: "_ecommerce_reconcile_decisions";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        purchaseId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "purchase_id";
+            tableName: "_ecommerce_reconcile_decisions";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        action: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "action";
+            tableName: "_ecommerce_reconcile_decisions";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: "release" | "retry";
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+            $type: "release" | "retry";
+        }>;
+        failure: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "failure";
+            tableName: "_ecommerce_reconcile_decisions";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        paymentReturned: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "payment_returned";
+            tableName: "_ecommerce_reconcile_decisions";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: "refunded" | "confirmed" | "dispute_lost";
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+            $type: "refunded" | "confirmed" | "dispute_lost";
+        }>;
+        adminActor: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "admin_actor";
+            tableName: "_ecommerce_reconcile_decisions";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        reason: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "reason";
+            tableName: "_ecommerce_reconcile_decisions";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        createdAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "created_at";
+            tableName: "_ecommerce_reconcile_decisions";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+    };
+    dialect: "sqlite";
+}>;
+/**
+ * Order confirmations, shipment notices and gift card claim emails: one row per email, written with the
+ * change that calls for it. No addresses; `lastError` is an error code.
+ */
+declare const emailDeliveries: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
+    name: "_ecommerce_email_deliveries";
+    schema: undefined;
+    columns: {
+        id: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "id";
+            tableName: "_ecommerce_email_deliveries";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: true;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        kind: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "kind";
+            tableName: "_ecommerce_email_deliveries";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: "shipment" | "order_confirmation" | "shipment_update" | "gift_card_claim";
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+            $type: "shipment" | "order_confirmation" | "shipment_update" | "gift_card_claim";
+        }>;
+        subjectId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "subject_id";
+            tableName: "_ecommerce_email_deliveries";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        status: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "status";
+            tableName: "_ecommerce_email_deliveries";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: "cancelled" | "pending" | "sent" | "failed";
+            driverParam: string;
+            notNull: true;
+            hasDefault: true;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+            $type: "cancelled" | "pending" | "sent" | "failed";
+        }>;
+        attempts: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "attempts";
+            tableName: "_ecommerce_email_deliveries";
+            dataType: "number";
+            columnType: "SQLiteInteger";
+            data: number;
+            driverParam: number;
+            notNull: true;
+            hasDefault: true;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        lastError: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "last_error";
+            tableName: "_ecommerce_email_deliveries";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        nextAttemptAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "next_attempt_at";
+            tableName: "_ecommerce_email_deliveries";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        claimedAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "claimed_at";
+            tableName: "_ecommerce_email_deliveries";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        sentAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "sent_at";
+            tableName: "_ecommerce_email_deliveries";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        createdAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "created_at";
+            tableName: "_ecommerce_email_deliveries";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+    };
+    dialect: "sqlite";
+}>;
+/** One-time links that show a purchased gift card's code; only the token's hash is stored. */
+declare const giftCardClaims: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
+    name: "_ecommerce_gift_card_claims";
+    schema: undefined;
+    columns: {
+        id: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "id";
+            tableName: "_ecommerce_gift_card_claims";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: true;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        tokenHash: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "token_hash";
+            tableName: "_ecommerce_gift_card_claims";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        purchaseId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "purchase_id";
+            tableName: "_ecommerce_gift_card_claims";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        cardId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "card_id";
+            tableName: "_ecommerce_gift_card_claims";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        expiresAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "expires_at";
+            tableName: "_ecommerce_gift_card_claims";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        usedAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "used_at";
+            tableName: "_ecommerce_gift_card_claims";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        revokedAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "revoked_at";
+            tableName: "_ecommerce_gift_card_claims";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        createdAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "created_at";
+            tableName: "_ecommerce_gift_card_claims";
+            dataType: "date";
+            columnType: "SQLiteTimestamp";
+            data: Date;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        createdBy: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "created_by";
+            tableName: "_ecommerce_gift_card_claims";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
+        reason: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: "reason";
+            tableName: "_ecommerce_gift_card_claims";
+            dataType: "string";
+            columnType: "SQLiteText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {
+            length: number | undefined;
+        }>;
     };
     dialect: "sqlite";
 }>;
@@ -5397,4 +7061,4 @@ declare const productCategoriesRelations: drizzle_orm.Relations<"_ecommerce_prod
     category: drizzle_orm.One<"_ecommerce_categories", true>;
 }>;
 
-export { carts, cartsRelations, categories, categoriesRelations, componentReservations, components, creditLedger, customerAccounts, customerSessions, customers, discountCodes, discountRedemptions, fulfillments, giftCardLedger, giftCardOrderRefunds, giftCardPurchases, giftCardRedemptions, giftCardRefunds, giftCards, inventoryReservations, orders, ordersRelations, payments, paymentsRelations, productCategories, productCategoriesRelations, productTags, productTagsRelations, productVariantValues, productVariantValuesRelations, productVariants, productVariantsRelations, products, productsRelations, rateLimits, referralCodes, referralSettings, referrals, signInTokens, stocks, stocksRelations, tags, tagsRelations, taxReversals, variantComponents, variants, variantsRelations };
+export { carts, cartsRelations, categories, categoriesRelations, componentReservations, components, creditLedger, customerAccounts, customerSessions, customers, discountCodes, discountRedemptions, disputes, emailDeliveries, fulfillments, giftCardClaims, giftCardLedger, giftCardOrderRefunds, giftCardPurchases, giftCardRedemptions, giftCardRefunds, giftCardReviews, giftCards, inventoryReservations, orders, ordersRelations, payments, paymentsRelations, productCategories, productCategoriesRelations, productTags, productTagsRelations, productVariantValues, productVariantValuesRelations, productVariants, productVariantsRelations, products, productsRelations, providerRefunds, rateLimits, reconcileDecisions, referralCodes, referralSettings, referrals, restocks, signInTokens, stocks, stocksRelations, tags, tagsRelations, taxReversals, variantComponents, variants, variantsRelations };

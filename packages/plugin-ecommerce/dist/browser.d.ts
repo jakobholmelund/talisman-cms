@@ -56,6 +56,25 @@ declare function previewCustomerSignIn(token: string): Promise<{
 declare function verifyCustomerEmailSignIn(token: string): Promise<{
     account: CustomerAccountSummary;
 }>;
+/**
+ * Reads the one-time token on the page a gift card claim link opens (`/gift-cards/claim#token=...`),
+ * then removes it from the address bar. The token is only ever in the fragment, which browsers never
+ * send to the server. Returns null without a token.
+ */
+declare function readGiftCardClaimToken(loc?: SignInLocation | undefined, hist?: SignInHistory | undefined): string | null;
+/**
+ * Uses a gift card claim link: returns the card's code and balance once. Call it when the shopper asks
+ * to see the code, not when the page loads, so a link scanner that opens the page does not use it up.
+ * Rejects with the server's message and `status` (0 when the request never reached the server).
+ * `retryable` is true when the link was not used (a failed connection, too many requests or a
+ * temporary problem), so the page can offer to try again; otherwise the link was already used, has
+ * expired or was replaced by a newer one.
+ */
+declare function claimGiftCardCode(token: string): Promise<{
+    code: string;
+    balanceCents: number;
+    currency: string;
+}>;
 declare function signOutCustomerAccount(): Promise<{
     account: null;
 }>;
@@ -98,6 +117,7 @@ declare function startAdminTestCheckout(input?: {
 declare function getOrderStatus(orderId: string): Promise<{
     orderId: string;
     status: string;
+    paymentUnderReview: boolean;
     paymentProvider: string | null;
     accountCreatedByOrder: boolean;
     accountLinked: boolean;
@@ -121,4 +141,4 @@ declare function cancelCheckout(orderId: string): Promise<{
 }>;
 declare function installTalismanEcommerceBrowserHelpers(target?: Window): TalismanEcommerceBrowserHelpers;
 
-export { CART_UPDATED_EVENT, type CartUpdatedDetail, type CustomerAccountSummary, type TalismanEcommerceBrowserHelpers, activateNewCustomerAccount, cancelCheckout, chooseCustomerBasket, dispatchCartUpdated, getCustomerAccount, getOrderStatus, installTalismanEcommerceBrowserHelpers, previewCustomerSignIn, readCustomerSignInToken, requestCustomerEmailSignIn, signOutCustomerAccount, startAdminTestCheckout, startCheckout, verifyCustomerEmailSignIn };
+export { CART_UPDATED_EVENT, type CartUpdatedDetail, type CustomerAccountSummary, type TalismanEcommerceBrowserHelpers, activateNewCustomerAccount, cancelCheckout, chooseCustomerBasket, claimGiftCardCode, dispatchCartUpdated, getCustomerAccount, getOrderStatus, installTalismanEcommerceBrowserHelpers, previewCustomerSignIn, readCustomerSignInToken, readGiftCardClaimToken, requestCustomerEmailSignIn, signOutCustomerAccount, startAdminTestCheckout, startCheckout, verifyCustomerEmailSignIn };

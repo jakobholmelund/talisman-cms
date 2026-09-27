@@ -1,6 +1,6 @@
 import {
   fetchCommerceRange
-} from "./chunk-BC73DO2D.js";
+} from "./chunk-C3YWJ6OH.js";
 import {
   fetchTrafficRange
 } from "./chunk-MS4TVUJ4.js";
@@ -215,7 +215,7 @@ async function createAskReport(question, ai, db, env, adminBase = "/admin", prod
   if (commerce) notes.push("Sales are the items after discounts, without the shipping and tax added to the price. A refund counts against sales only for the items' share of what it returned.");
   if (commerce?.refundBasis === "refund_date") {
     notes.push("Refunds count on the date they were issued, and net sales are gross sales less the refunds issued in the same period.");
-    if (commerce.undatedRefunds || previousCommerce?.undatedRefunds) notes.push("Some refunds were recorded before refund dates were stored; those count on the payment date of the refunded order.");
+    if (commerce.undatedRefunds || previousCommerce?.undatedRefunds) notes.push("Some refunds have no date of their own, such as those recorded before refund dates were stored and payments taken back by a lost dispute; those count on the payment date of the refunded order.");
   } else if (commerce) {
     notes.push("Refunds count on the payment date of the refunded order, not the date they were issued, so totals for a past period drop when one of its orders is refunded later.");
   }
