@@ -488,6 +488,8 @@ The admin UX overhaul and the SSO redesign can run in parallel. The admin produc
 
 #### Complete the admin API handler test matrix
 
+**Status:** done on `main` before the 0.1 publish. `test/api-handler-matrix.test.mjs` runs every route against an anonymous request, an editor and an administrator, including the trailing-slash, longer-segment, extra-segment and prefixed variants of the admin-only patterns, archive and restore as an editor refused before the body is read, a restore without its token, and a create that loses a unique-constraint race (forced by a hook that commits the same id first). The harness the handler tests share moved to `test/helpers/handler-harness.mjs`.
+
 **Why:** Handler tests now cover 409/428, globals and some editor refusals, but not archive or restore as an editor, variants of the admin-only route patterns, or a forced unique-constraint race on create. The merge needs this safety net first.
 
 **Approach:** Extend `test/api-handler.test.mjs` to a table of every route against anonymous, editor and admin, including trailing-slash and prefix variants of the admin-only patterns, and force a UNIQUE race on entry create.
@@ -498,6 +500,8 @@ The admin UX overhaul and the SSO redesign can run in parallel. The admin produc
 
 #### Merge the admin API handler and `getClient` into one service layer
 
+**Status:** done on `main` before the 0.1 publish. `src/service/` holds the entry, native, global, revision and collection operations once, behind `createService(env, { config, actor })`; the admin API handler is auth, routing, parsing, a pre-check of the collection's rules and one service call per route, and `getClient` is an adapter with the `system` actor. Actors carry the authorization rules (users) apart from the integrity rules (everyone); hooks run through one runner and receive `actor`, `collection` and an optional `req`; one write pipeline validates both paths; one error family maps to HTTP in one place; the cache is one module cleared from every write path, with native tables uncached by default and a per-isolate collection row memo; `where`, `sort` and `offset` are on the list route and `findMany`. `test/service-parity.test.mjs` proves the two paths equal. Follow-ups: the handler's `/api/collections` list and the globals sync still live in the handler and the globals service respectively rather than one collections service; the service is bundled twice in a Worker (once from source for the handler, once in `dist/client.js`), so its per-isolate memos exist twice.
+
 **Why:** Hooks, validation, access rules and cache invalidation are implemented twice and behave differently. Native tables are cached in KV for an hour, and writes made by plugins or SQL never clear it. Every client read also looks up its collection row in D1 first.
 
 **Approach:** Move entry, global and native operations into one service used by both the HTTP handler and `getClient`. Clear the cache on every write path, export an invalidation helper for plugins, and give native tables a short TTL or no cache by default. Memoize collection rows per isolate (cleared on collection writes) or skip the lookup for native tables. Add `where`, `sort` and `offset` to the shared query API.
@@ -507,6 +511,8 @@ The admin UX overhaul and the SSO redesign can run in parallel. The admin produc
 **Issue:** #TBD-arch-service-layer-merge
 
 #### Return concurrency tokens from every write, including globals
+
+**Status:** partly done with the service layer merge: create, PUT, publish, archive and restore answer with `latestRevisionId`, and the SDK's `status` option publishes from the save's own revision. Remaining: the admin SPA chaining its publish from the save's revision instead of re-reading, and a token on global writes.
 
 **Why:** Only GET returns `latestRevisionId`, so after a save the editor re-reads the entry and can publish on top of someone else's newer revision. Global writes have no token at all, so two editors saving the same global overwrite each other.
 
@@ -647,6 +653,8 @@ Depends on Plugin API v2.
 **Issue:** none (done before an issue was opened)
 
 #### Load only one product's rows in the product editor
+
+**Status:** the query is in place (`?where[productId]=`, `where[field][in]=` and `fetchEntriesWhere` in `ui/lib/admin-api.ts`); the product editor and the relation pickers still load whole collections.
 
 **Why:** Opening a product pages through every row of the variant, value, stock and component collections.
 
