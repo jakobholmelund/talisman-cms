@@ -3,8 +3,11 @@ import type { TalismanEnv, createDbClient } from '../db/client';
 import * as schema from '../db/schema';
 import { generateFieldsFromDrizzle, type CollectionConfig, type FieldDefinition } from '../types';
 import type { ServiceConfig } from './config';
+import type { ServiceContext } from './context';
 import { invalidateCollectionCache } from './cache';
 import { NotFoundError } from './errors';
+import type { CollectionHooks } from '../types';
+import { getNativeIdColumn } from '../types';
 
 type Db = ReturnType<typeof createDbClient>;
 export type CollectionRecord = typeof schema.collections.$inferSelect;
@@ -131,4 +134,54 @@ export function forgetCollectionRecords(binding: unknown, slug?: string) {
   if (!memo) return;
   if (slug === undefined) memo.clear();
   else memo.delete(slug);
+}
+
+/** A collection as an operation works with it: its configuration, its stored row and its native table. */
+export interface ResolvedCollection {
+  slug: string;
+  config: CollectionConfig;
+  /** The galaxy_collections row entries reference. */
+  record: CollectionRecord;
+  /** The fields in force: the configured ones, or those generated from a native table. */
+  activeFields: FieldDefinition[];
+  nativeTable: Record<string, any> | null;
+  nativeIdCol: string;
+  hooks?: CollectionHooks;
+  /** Whether the collection is configured; a stored collection without configuration is readable by server code. */
+  configured: boolean;
+}
+
+/**
+ * The collection an operation addresses. A configured collection is resolved from the configuration
+ * and its memoized row; a stored collection that is no longer configured resolves from its row alone
+ * (its stored fields, no hooks, no native table), so server code can still read it. Anything else
+ * is a NotFoundError.
+ */
+export async function resolveCollection(ctx: ServiceContext, slug: string): Promise<ResolvedCollection> {
+  const { config } = ctx;
+  const collectionConfig = config.collections.find((candidate) => candidate.slug === slug);
+  const record = await resolveCollectionRecord(ctx.db, ctx.env, config, slug);
+  if (!collectionConfig) {
+    const storedFields = Array.isArray(record.fields) ? record.fields as FieldDefinition[] : [];
+    return {
+      slug,
+      config: { name: record.name, slug, fields: storedFields },
+      record,
+      activeFields: storedFields,
+      nativeTable: null,
+      nativeIdCol: 'id',
+      configured: false,
+    };
+  }
+  const nativeTable = collectionConfig.nativeSchemaMapping && config.nativeSchemas[slug] ? config.nativeSchemas[slug] : null;
+  return {
+    slug,
+    config: collectionConfig,
+    record,
+    activeFields: configuredCollectionFields(collectionConfig, config.nativeSchemas),
+    nativeTable,
+    nativeIdCol: getNativeIdColumn(collectionConfig),
+    hooks: config.collectionHooks[slug],
+    configured: true,
+  };
 }

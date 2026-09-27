@@ -50,6 +50,16 @@ export function assertAllowed(actor: Actor, collection: CollectionConfig, operat
 }
 
 /**
+ * The collection's own rules alone (`access` and `readOnly`), for a route whose guard has already
+ * decided who may call it. `readOnlyMessage` is the admin API's wording for that route.
+ */
+export function assertCollectionAccess(actor: Actor, collection: CollectionConfig, access: CollectionOperation, readOnlyMessage = 'This collection is read-only'): void {
+  if (actor.kind !== 'user') return;
+  if (!canAccessCollection(collection, actor.user, access)) throw new AccessDeniedError('Collection access denied');
+  if (access !== 'read' && collection.readOnly) throw new AccessDeniedError(readOnlyMessage);
+}
+
+/**
  * Whether the actor's reads may embed entries of this collection as relation targets. Site reads
  * run as `system` and embed what an editor may read, so a collection only administrators may read
  * stays ids on the public site.

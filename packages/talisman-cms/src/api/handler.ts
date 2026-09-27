@@ -1,26 +1,21 @@
 import type { APIRoute } from 'astro';
+import { count, eq, sql } from 'drizzle-orm';
 import { createDbClient, type TalismanEnv } from '../db/client';
 import * as schema from '../db/schema';
 import { authorizeCmsRequest } from '../auth/guard';
-import { canAccessCollection, type CollectionOperation } from '../auth/collection-access';
+import { canAccessCollection } from '../auth/collection-access';
 import * as configModule from 'virtual:talisman-cms/config';
 import * as uiLibrariesModule from 'virtual:talisman-cms/ui-libraries';
 import * as nativeSchemasModule from 'virtual:talisman-cms/native-schemas';
 import * as collectionHooksModule from 'virtual:talisman-cms/collection-hooks';
+import { assertAllowed, assertCollectionAccess, userActor, type ActorOperation } from '../service/actor';
+import { invalidateGlobalCache } from '../service/cache';
+import { configuredCollectionFields as collectionFields, oncePerDatabase, syncCollectionDefinitions as syncCollections } from '../service/collections';
 import { configFromModules } from '../service/config';
-import { configuredCollectionFields as collectionFields, oncePerDatabase, resolveCollectionRecord, syncCollectionDefinitions as syncCollections } from '../service/collections';
-import { invalidateEntryCache, invalidateGlobalCache } from '../service/cache';
-import { userActor } from '../service/actor';
-import { runHooks } from '../service/hooks';
-import { prepareWrite, type WriteCollection } from '../service/validation';
-import {
-  buildZodSchemaForCollection,
-  buildZodSchemaForFields,
-  decodeGlobalData,
-  getNativeIdColumn,
-  isGlobalData,
-  type FieldValidationIssue
-} from '../types';
+import { MAX_PAGE_SIZE, NATIVE_PUBLISHING_MESSAGE, NATIVE_REVISIONS_MESSAGE } from '../service/entries';
+import { NotFoundError, ValidationError } from '../service/errors';
+import { createService } from '../service/index';
+import { buildZodSchemaForFields, decodeGlobalData, isGlobalData, type FieldValidationIssue } from '../types';
 import { HttpError, toErrorResponse } from './http-errors';
 
 // The virtual modules stay static imports, so the Worker bundle carries the site's hook modules and
@@ -31,43 +26,7 @@ const serviceConfig = configFromModules({
   nativeSchemas: nativeSchemasModule,
   collectionHooks: collectionHooksModule,
 });
-const {
-  collections: configCollections,
-  globals: configGlobals,
-  uiLibraries: configuredUiLibraries,
-  nativeSchemas,
-  collectionHooks,
-} = serviceConfig;
-import { NATIVE_RECORD_CONFLICT_MESSAGE, NotFoundError, ValidationError } from '../service/errors';
-import { deleteStoredMedia, isMediaCollection } from '../db/media-policy';
-import { eq, desc, and, or, lt, count, isNull, sql, getTableColumns } from 'drizzle-orm';
-import {
-  createDraftEntry,
-  getEntryRevision,
-  getLatestRevision,
-  isEntryNotFound,
-  isRevisionConflict,
-  isSlugConflict,
-  listEntryRevisions,
-  restoreEntryRevision,
-  saveDraftEntry,
-  toEditableEntry,
-  triggerPublishingWorkflow
-} from '../versioning';
-
-function mapNativeEntry(row: any, collectionId: string, nativeIdCol: string) {
-  const resolvedId = row?.[nativeIdCol] ?? row?.id ?? '';
-
-  return {
-    id: resolvedId,
-    collectionId,
-    slug: row?.slug || resolvedId || '',
-    status: typeof row?.status === 'string' ? row.status : 'published',
-    data: row,
-    createdAt: row?.createdAt || new Date(),
-    updatedAt: row?.updatedAt || new Date()
-  };
-}
+const { collections: configCollections, globals: configGlobals, nativeSchemas } = serviceConfig;
 
 function validationErrorResponse(issues: FieldValidationIssue[], extra?: Record<string, unknown>) {
   return toErrorResponse(new ValidationError(issues, extra), 'validation');
@@ -75,13 +34,6 @@ function validationErrorResponse(issues: FieldValidationIssue[], extra?: Record<
 
 function withDecodedGlobalData<T extends { data?: unknown }>(record: T) {
   return { ...record, data: decodeGlobalData(record.data) };
-}
-
-/** Compares an updatedAt read from D1 with the JSON value an editor loaded (an ISO string for dates). */
-function timestampKey(value: unknown) {
-  if (value instanceof Date) return value.getTime();
-  if (typeof value === 'string' && value.trim() && !Number.isNaN(Date.parse(value))) return Date.parse(value);
-  return value ?? null;
 }
 
 // D1 rows are capped near 2 MB and every save also stores a revision copy of the data.
@@ -122,8 +74,6 @@ function decodePathSegment(segment: string) {
   return value;
 }
 
-const MAX_PAGE_SIZE = 200;
-
 /** `limit` (1-200) asks for one page and `cursor` continues after the previous one. Null means the whole list. */
 function readPageRequest(url: URL) {
   const limitParam = url.searchParams.get('limit');
@@ -139,26 +89,6 @@ function readPageRequest(url: URL) {
   }
   return { limit, cursor: cursor || null };
 }
-
-function encodeCursor(position: unknown[]) {
-  const bytes = new TextEncoder().encode(JSON.stringify(position));
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function decodeCursor(cursor: string): unknown[] {
-  try {
-    const binary = atob(cursor.replace(/-/g, '+').replace(/_/g, '/'));
-    const position = JSON.parse(new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0))));
-    if (Array.isArray(position)) return position;
-  } catch {
-    // Reported below.
-  }
-  throw new HttpError(400, 'The cursor is not valid.');
-}
-
-const isSystemMediaCollection = isMediaCollection;
 
 function configuredCollectionFields(collectionConfig: (typeof configCollections)[number]) {
   return collectionFields(collectionConfig, nativeSchemas);
@@ -184,39 +114,11 @@ async function countNativeRows(db: ReturnType<typeof createDbClient>, collection
   return counts;
 }
 
-/**
- * An entry with revisions must name the latest one it was loaded with; without one the result is
- * undefined (answer 428). An entry loaded without revisions (seeded straight into D1) may send null
- * or nothing: its first versioned write records a baseline revision.
- */
-async function resolveExpectedRevisionId(db: ReturnType<typeof createDbClient>, entryId: string, value: unknown) {
-  if (typeof value === 'string' && value) return value;
-  if (value === null) return null;
-  return await getLatestRevision(db as any, entryId) ? undefined : null;
-}
-
-async function resolveCollectionContext(db: ReturnType<typeof createDbClient>, slug: string, env: TalismanEnv) {
-  const configuredCollection = configCollections.find(c => c.slug === slug);
-  const collectionConfig = configuredCollection
-    ? { ...configuredCollection, hooks: collectionHooks[slug] }
-    : undefined;
-  if (!collectionConfig) {
-    throw new NotFoundError(`Collection ${slug} not found`);
-  }
-
-  const collection = await resolveCollectionRecord(db, env, serviceConfig, slug);
-  const activeFields = configuredCollectionFields(collectionConfig);
-
-  const nativeTable = collectionConfig.nativeSchemaMapping && nativeSchemas[slug] ? nativeSchemas[slug] : null;
-  const nativeIdCol = collectionConfig.nativeSchemaMapping?.idColumn || 'id';
-
-  return {
-    collection,
-    collectionConfig,
-    activeFields,
-    nativeTable,
-    nativeIdCol,
-  };
+/** The admin API serves configured collections only; a stored collection without configuration is not found. */
+async function resolveConfigured(service: ReturnType<typeof createService>, slug: string) {
+  const collection = await service.entries.resolve(slug);
+  if (!collection.configured) throw new NotFoundError(`Collection ${slug} not found`);
+  return collection;
 }
 
 const globalSyncs = new WeakMap<object, Promise<void>>();
@@ -533,17 +435,13 @@ export const ALL: APIRoute = async ({ request, locals }) => {
       const entryId = decodePathSegment(revisionsMatch[2]);
       const revisionId = revisionsMatch[3] ? decodePathSegment(revisionsMatch[3]) : undefined;
       const { env } = await import('cloudflare:workers') as unknown as { env: TalismanEnv };
-      // @ts-ignore
-      const db = createDbClient(env as any);
-      const { collection, collectionConfig, nativeTable } = await resolveCollectionContext(db, slug, env);
+      const service = createService(env, { config: serviceConfig, actor });
+      const collection = await resolveConfigured(service, slug);
+      // Refused before the body is read; the service checks again when it acts.
+      assertCollectionAccess(actor, collection.config, request.method === 'GET' ? 'read' : 'update', 'Collection access denied');
 
-      if (!canAccessCollection(collectionConfig, user, request.method === 'GET' ? 'read' : 'update') ||
-        (request.method !== 'GET' && collectionConfig.readOnly)) {
-        return Response.json({ error: 'Collection access denied' }, { status: 403 });
-      }
-
-      if (nativeTable) {
-        return new Response(JSON.stringify({ error: 'Revision history is not available for native collections' }), { status: 400 });
+      if (collection.nativeTable) {
+        return new Response(JSON.stringify({ error: NATIVE_REVISIONS_MESSAGE }), { status: 400 });
       }
 
       if (request.method === 'GET' && !revisionId) {
@@ -551,23 +449,19 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         const includeData = ['1', 'true'].includes(url.searchParams.get('includeData') ?? '');
         const page = readPageRequest(url);
         if (page?.cursor) throw new HttpError(400, 'Revision lists take a limit but no cursor.');
-        const revisions = await listEntryRevisions(db as any, collection!.id, entryId, { includeData, limit: page?.limit });
+        const revisions = await service.revisions.list(slug, entryId, { includeData, limit: page?.limit });
         return new Response(JSON.stringify(revisions), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
 
       if (request.method === 'GET' && revisionId && !isRestore) {
-        const revision = await getEntryRevision(db as any, collection!.id, entryId, revisionId);
+        const revision = await service.revisions.get(slug, entryId, revisionId);
         return new Response(JSON.stringify(revision), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
 
       if (request.method === 'POST' && revisionId && isRestore) {
         const body = await request.json().catch(() => ({})) as { expectedRevisionId?: unknown };
-        if (typeof body.expectedRevisionId !== 'string' || !body.expectedRevisionId) {
-          return Response.json({ error: 'expectedRevisionId is required' }, { status: 428 });
-        }
-        const restored = await restoreEntryRevision(db as any, collection as any, entryId, revisionId, body.expectedRevisionId);
-        await invalidateEntryCache(env, slug, entryId);
-        return new Response(JSON.stringify(toEditableEntry(restored)), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        const restored = await service.revisions.restore(slug, entryId, revisionId, { expectedRevisionId: body.expectedRevisionId });
+        return new Response(JSON.stringify(restored), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
 
       return Response.json({ error: 'Method not allowed' }, { status: 405 });
@@ -584,16 +478,12 @@ export const ALL: APIRoute = async ({ request, locals }) => {
     try {
       const entryId = decodePathSegment(transitionMatch[2]);
       const { env } = await import('cloudflare:workers') as unknown as { env: TalismanEnv };
-      // @ts-ignore
-      const db = createDbClient(env as any);
-      const { collection, collectionConfig, activeFields, nativeTable } = await resolveCollectionContext(db, slug, env);
+      const service = createService(env, { config: serviceConfig, actor });
+      const collection = await resolveConfigured(service, slug);
+      assertCollectionAccess(actor, collection.config, 'update', 'Collection access denied');
 
-      if (!canAccessCollection(collectionConfig, user, 'update') || collectionConfig.readOnly) {
-        return Response.json({ error: 'Collection access denied' }, { status: 403 });
-      }
-
-      if (nativeTable) {
-        return new Response(JSON.stringify({ error: 'Publishing workflows are not available for native collections' }), { status: 400 });
+      if (collection.nativeTable) {
+        return new Response(JSON.stringify({ error: NATIVE_PUBLISHING_MESSAGE }), { status: 400 });
       }
 
       if (request.method !== 'POST') {
@@ -601,41 +491,16 @@ export const ALL: APIRoute = async ({ request, locals }) => {
       }
 
       const body = await request.json().catch(() => ({})) as { expectedRevisionId?: unknown };
-      const entry = await db.query.entries.findFirst({
-        // @ts-ignore
-        where: (e: any, { eq, and }: any) => and(eq(e.collectionId, collection!.id), eq(e.id, entryId))
-      });
-      if (!entry) return Response.json({ error: 'Entry not found' }, { status: 404 });
-
-      const expectedRevisionId = await resolveExpectedRevisionId(db, entryId, body.expectedRevisionId);
-      if (expectedRevisionId === undefined) {
-        return Response.json({ error: 'expectedRevisionId is required' }, { status: 428 });
-      }
-
-      if (action === 'publish') {
-        // Drafts may be incomplete, but required fields must be filled before they go live.
-        const draftData = typeof entry.data === 'string' ? JSON.parse(entry.data) : entry.data;
-        const parsed = buildZodSchemaForCollection({ ...collectionConfig, fields: activeFields }).safeParse(draftData ?? {});
-        if (!parsed.success) return validationErrorResponse(parsed.error.issues);
-      }
-
-      const updated = await triggerPublishingWorkflow(env, {
-        collectionSlug: slug,
-        entryId,
-        action,
-        expectedRevisionId,
-      }, serviceConfig.publishingWorkflowBinding);
-
-      await invalidateEntryCache(env, slug, entryId);
+      const updated = await service.entries[action](slug, entryId, { expect: { revisionId: body.expectedRevisionId } });
       if (updated.workflow?.status === 'pending') {
         // A Workflow instance that outlives the wait keeps running and clears the cache when it
         // finishes. The entry is returned as it is stored now, before the transition.
         return Response.json({
-          ...toEditableEntry(updated),
+          ...updated,
           message: `The ${action} is still running. Reload the entry in a moment to see the result.`,
         }, { status: 202 });
       }
-      return new Response(JSON.stringify(toEditableEntry(updated)), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify(updated), { status: 200, headers: { 'Content-Type': 'application/json' } });
     } catch (e: any) {
       return toErrorResponse(e, `Error in the ${action} API`);
     }
@@ -645,274 +510,53 @@ export const ALL: APIRoute = async ({ request, locals }) => {
   const entriesMatch = path.match(/\/api\/collections\/([^/]+)\/entries(?:\/([^/]+))?$/);
   if (entriesMatch) {
     const slug = entriesMatch[1];
-    
+
     try {
       const entryId = entriesMatch[2] === undefined ? undefined : decodePathSegment(entriesMatch[2]);
       const { env } = await import('cloudflare:workers') as unknown as { env: TalismanEnv };
-      // @ts-ignore
-      const db = createDbClient(env as any);
+      const service = createService(env, { config: serviceConfig, actor });
+      const collection = await resolveConfigured(service, slug);
 
-      const {
-        collection,
-        collectionConfig,
-        activeFields,
-        nativeTable,
-        nativeIdCol
-      } = await resolveCollectionContext(db, slug, env);
-
-      const hookContext = { actor, req: request, collection: { slug, native: Boolean(nativeTable) } };
-      const writeCollection: WriteCollection = { config: collectionConfig, slug, activeFields, nativeTable, nativeIdCol };
-      const writeInput = { collection: writeCollection, actor, req: request, uiLibraries: configuredUiLibraries, hooks: collectionConfig.hooks };
-      const operation: CollectionOperation = request.method === 'GET' ? 'read'
+      const operation: ActorOperation = request.method === 'GET' ? 'read'
         : request.method === 'POST' ? 'create'
         : request.method === 'PUT' ? 'update' : 'delete';
-      if (!canAccessCollection(collectionConfig, user, operation)) {
-        return Response.json({ error: 'Collection access denied' }, { status: 403 });
-      }
+      // Refused before the body is read; the service checks again when it acts.
+      assertAllowed(actor, collection.config, operation);
 
       if (request.method === 'GET') {
         if (!entryId) {
           // Without `limit` the whole list comes back as an array; with it, one page and the cursor after it.
           const page = readPageRequest(url);
-          if (nativeTable && !page) {
-             const rows = await db.select().from(nativeTable);
-             // Wrap in CMS envelope payload
-             const mapped = rows.map((r: any) => mapNativeEntry(r, collection!.id, nativeIdCol));
-             return new Response(JSON.stringify(mapped), { status: 200, headers: { 'Content-Type': 'application/json' } });
-          } else if (nativeTable && page) {
-            // Native tables differ in their id and timestamp columns, so pages run newest first by rowid.
-            const rowid = sql<number>`rowid`;
-            const after = page.cursor === null ? undefined : decodeCursor(page.cursor)[0];
-            if (after !== undefined && !Number.isSafeInteger(after)) throw new HttpError(400, 'The cursor is not valid.');
-            const rows: any[] = await db.select({ ...getTableColumns(nativeTable), __rowid: rowid }).from(nativeTable)
-              .where(after === undefined ? undefined : lt(rowid, after as number))
-              .orderBy(desc(rowid))
-              .limit(page.limit + 1);
-            const pageRows = rows.slice(0, page.limit);
-            const nextCursor = rows.length > page.limit ? encodeCursor([pageRows[pageRows.length - 1].__rowid]) : null;
-            const docs = pageRows.map(({ __rowid, ...row }) => mapNativeEntry(row, collection!.id, nativeIdCol));
-            return Response.json({ docs, nextCursor });
-          } else if (!page) {
-            const allEntries = await db.query.entries.findMany({
-              // @ts-ignore
-              where: (e: any, { eq }: any) => eq(e.collectionId, collection!.id),
-              // @ts-ignore
-              orderBy: (e: any, { desc }: any) => [desc(e.createdAt)]
-            });
-            return new Response(JSON.stringify(allEntries.map(toEditableEntry)), { status: 200, headers: { 'Content-Type': 'application/json' } });
-          } else {
-            const entries = schema.entries;
-            let after;
-            if (page.cursor !== null) {
-              const [createdAtMs, afterId] = decodeCursor(page.cursor);
-              if (typeof createdAtMs !== 'number' || !Number.isFinite(createdAtMs) || typeof afterId !== 'string') {
-                throw new HttpError(400, 'The cursor is not valid.');
-              }
-              const createdAt = new Date(createdAtMs);
-              after = or(lt(entries.createdAt, createdAt), and(eq(entries.createdAt, createdAt), lt(entries.id, afterId)));
-            }
-            const rows = await db.select().from(entries)
-              .where(and(eq(entries.collectionId, collection!.id), after))
-              .orderBy(desc(entries.createdAt), desc(entries.id))
-              .limit(page.limit + 1);
-            const pageRows = rows.slice(0, page.limit);
-            const last = pageRows[pageRows.length - 1];
-            const nextCursor = rows.length > page.limit ? encodeCursor([last.createdAt.getTime(), last.id]) : null;
-            return Response.json({ docs: pageRows.map(toEditableEntry), nextCursor });
+          if (!page) {
+            return new Response(JSON.stringify(await service.entries.list(slug)), { status: 200, headers: { 'Content-Type': 'application/json' } });
           }
-        } else {
-          // Get specific entry
-          if (nativeTable) {
-             const rows = await db.select().from(nativeTable).where(eq(nativeTable[nativeIdCol], entryId) as any);
-             if (rows.length === 0) return new Response(JSON.stringify({ error: 'Entry not found' }), { status: 404 });
-             const mapped = mapNativeEntry(rows[0], collection!.id, nativeIdCol);
-             return new Response(JSON.stringify(mapped), { status: 200, headers: { 'Content-Type': 'application/json' } });
-          } else {
-            const entry = await db.query.entries.findFirst({
-              // @ts-ignore
-              where: (e, { eq, and }) => and(eq(e.collectionId, collection!.id), eq(e.id, entryId))
-            });
-            
-            if (!entry) return new Response(JSON.stringify({ error: 'Entry not found' }), { status: 404 });
-            const latestRevision = await getLatestRevision(db as any, entryId);
-            return new Response(JSON.stringify({ ...toEditableEntry(entry), latestRevisionId: latestRevision?.id ?? null }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-          }
+          return Response.json(await service.entries.page(slug, page));
         }
-      }
-
-      if (collectionConfig.readOnly && ['POST', 'PUT', 'DELETE'].includes(request.method)) {
-        return Response.json({ error: 'This collection is read-only' }, { status: 403 });
+        const doc = await service.entries.get(slug, entryId);
+        if (!doc) return new Response(JSON.stringify({ error: 'Entry not found' }), { status: 404 });
+        return new Response(JSON.stringify(doc), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
 
       if (request.method === 'POST') {
-        if (isSystemMediaCollection(collectionConfig)) {
-          return Response.json({ error: 'Media records are created by uploading a file to the media library.' }, { status: 403 });
-        }
-
         const payload = await readJsonObject(request);
-        const prepared = await prepareWrite({ ...writeInput, operation: 'create', data: payload.data, id: payload.id, slug: payload.slug });
-        const validatedData = prepared.data!;
-
-        if (nativeTable) {
-           // Insert directly to native table
-           const insertPayload = prepared.nativePayload!;
-           const insertedRows = await db.insert(nativeTable).values(insertPayload).returning();
-           const insertedRow = (Array.isArray(insertedRows) ? insertedRows[0] : null) || (
-             insertPayload[nativeIdCol] !== undefined && insertPayload[nativeIdCol] !== null
-               ? (await db.select().from(nativeTable).where(eq(nativeTable[nativeIdCol], insertPayload[nativeIdCol]) as any))[0]
-               : null
-           );
-           
-           await invalidateEntryCache(env, slug);
-
-           if (!insertedRow) {
-             return new Response(JSON.stringify({ error: 'Failed to load created native entry' }), {
-               status: 500,
-               headers: { 'Content-Type': 'application/json' }
-             });
-           }
-           
-           const doc = mapNativeEntry(insertedRow, collection!.id, nativeIdCol);
-           await runHooks(collectionConfig.hooks, 'afterChange', { ...hookContext, data: validatedData, operation: 'create', doc });
-
-           return new Response(JSON.stringify(doc), {
-             status: 201,
-             headers: { 'Content-Type': 'application/json' }
-           });
-        } else {
-          const created = await createDraftEntry(db as any, collection as any, validatedData, { id: prepared.id, slug: prepared.slug });
-          await invalidateEntryCache(env, slug);
-
-          await runHooks(collectionConfig.hooks, 'afterChange', { ...hookContext, data: validatedData, operation: 'create', doc: created });
-
-          return new Response(JSON.stringify(toEditableEntry(created)), { status: 201, headers: { 'Content-Type': 'application/json' } });
-        }
+        const created = await service.entries.create(slug, { data: payload.data, id: payload.id, slug: payload.slug });
+        return new Response(JSON.stringify(created), { status: 201, headers: { 'Content-Type': 'application/json' } });
       }
 
       if (request.method === 'PUT') {
         if (!entryId) return new Response(JSON.stringify({ error: 'Entry ID required for PUT' }), { status: 400 });
-        
         const payload = await readJsonObject(request);
-
-        if (nativeTable) {
-           // Update native table
-           const rows = await db.select().from(nativeTable).where(eq(nativeTable[nativeIdCol], entryId) as any);
-           if (rows.length === 0) return new Response(JSON.stringify({ error: 'Entry not found' }), { status: 404 });
-           const originalDoc = mapNativeEntry(rows[0], collection!.id, nativeIdCol);
-
-           // Native records have no revisions: an editor sends the updatedAt it loaded instead.
-           const checksUpdatedAt = payload.expectedUpdatedAt !== undefined && Boolean(nativeTable.updatedAt);
-           if (checksUpdatedAt && timestampKey(rows[0].updatedAt) !== timestampKey(payload.expectedUpdatedAt)) {
-             return Response.json({ error: NATIVE_RECORD_CONFLICT_MESSAGE }, { status: 409 });
-           }
-
-           const prepared = await prepareWrite({ ...writeInput, operation: 'update', data: payload.data, stored: rows[0], originalDoc });
-           const updatePayload = prepared.nativePayload ?? {};
-           
-           let storedRow = rows[0];
-           if (Object.keys(updatePayload).length > 0) {
-              // Re-check updatedAt in the write itself, so a save that lands after the check still loses.
-              const unchanged = !checksUpdatedAt ? undefined
-                : rows[0].updatedAt == null ? isNull(nativeTable.updatedAt) : eq(nativeTable.updatedAt, rows[0].updatedAt);
-              const updatedRows: any[] = await db.update(nativeTable).set(updatePayload)
-                .where(and(eq(nativeTable[nativeIdCol], entryId), unchanged) as any).returning() as any[];
-              const updatedRow = updatedRows[0];
-              if (!updatedRow && checksUpdatedAt) {
-                return Response.json({ error: NATIVE_RECORD_CONFLICT_MESSAGE }, { status: 409 });
-              }
-              // The stored row carries updatedAt at the column's precision, ready for the next stale check.
-              storedRow = updatedRow ?? { ...rows[0], ...updatePayload };
-           }
-           
-           await invalidateEntryCache(env, slug, entryId);
-           
-           const doc = {
-              ...mapNativeEntry(storedRow, collection!.id, nativeIdCol),
-              slug: payload.slug || rows[0].slug || entryId,
-           };
-
-           await runHooks(collectionConfig.hooks, 'afterChange', { ...hookContext, data: prepared.data || {}, operation: 'update', originalDoc, doc });
-
-           return new Response(JSON.stringify(doc), { status: 200, headers: { 'Content-Type': 'application/json' } });
-        } else {
-           const origRow = await db.query.entries.findFirst({
-             // @ts-ignore
-             where: (e: any, { eq, and }: any) => and(eq(e.collectionId, collection!.id), eq(e.id, entryId))
-           });
-           if (!origRow) return new Response(JSON.stringify({ error: 'Entry not found' }), { status: 404 });
-           const originalDoc = origRow;
-
-           const expectedRevisionId = await resolveExpectedRevisionId(db, entryId, payload.expectedRevisionId);
-           if (expectedRevisionId === undefined) {
-             return Response.json({ error: 'expectedRevisionId is required' }, { status: 428 });
-           }
-
-           const prepared = await prepareWrite({ ...writeInput, operation: 'update', data: payload.data, slug: payload.slug, stored: origRow, originalDoc });
-
-           if (prepared.data !== undefined) {
-             const validatedData = prepared.data;
-             const updated = await saveDraftEntry(db as any, collection as any, entryId, {
-               data: validatedData,
-               slug: prepared.slug,
-               expectedRevisionId
-             });
-
-             await invalidateEntryCache(env, slug, entryId);
-             
-             await runHooks(collectionConfig.hooks, 'afterChange', { ...hookContext, data: validatedData, operation: 'update', originalDoc, doc: updated });
-             
-             return new Response(JSON.stringify(toEditableEntry(updated)), { status: 200, headers: { 'Content-Type': 'application/json' } });
-           }
-
-           const updated = await saveDraftEntry(db as any, collection as any, entryId, {
-             slug: prepared.slug,
-             expectedRevisionId
-           });
-           await invalidateEntryCache(env, slug, entryId);
-
-           await runHooks(collectionConfig.hooks, 'afterChange', { ...hookContext, data: {}, operation: 'update', originalDoc, doc: updated });
-
-           return new Response(JSON.stringify(toEditableEntry(updated)), { status: 200, headers: { 'Content-Type': 'application/json' } });
-        }
+        const updated = await service.entries.update(slug, entryId, {
+          data: payload.data,
+          slug: payload.slug,
+          expect: { revisionId: payload.expectedRevisionId, updatedAt: payload.expectedUpdatedAt },
+        });
+        return new Response(JSON.stringify(updated), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
 
       if (request.method === 'DELETE') {
         if (!entryId) return new Response(JSON.stringify({ error: 'Entry ID required for DELETE' }), { status: 400 });
-
-        let originalDoc: any = undefined;
-        if (nativeTable) {
-           const rows = await db.select().from(nativeTable).where(eq(nativeTable[nativeIdCol], entryId) as any);
-           if (rows.length === 0) return new Response(JSON.stringify({ error: 'Entry not found' }), { status: 404 });
-           originalDoc = mapNativeEntry(rows[0], collection!.id, nativeIdCol);
-        } else {
-           const origRow = await db.query.entries.findFirst({
-             // @ts-ignore
-             where: (e: any, { eq, and }: any) => and(eq(e.collectionId, collection!.id), eq(e.id, entryId))
-           });
-           if (!origRow) return new Response(JSON.stringify({ error: 'Entry not found' }), { status: 404 });
-           originalDoc = origRow;
-        }
-
-        await runHooks(collectionConfig.hooks, 'beforeDelete', { ...hookContext, operation: 'delete', originalDoc });
-
-        if (nativeTable && isSystemMediaCollection(collectionConfig)) {
-          // The file goes first: media-serve reads R2 without checking the record, and if the record
-          // delete then fails, the record is still there to delete again.
-          await deleteStoredMedia(env, entryId, url.origin);
-        }
-
-        if (nativeTable) {
-           await db.delete(nativeTable).where(eq(nativeTable[nativeIdCol], entryId) as any);
-        } else {
-           await db.delete(schema.entries).where(
-             and(eq(schema.entries.collectionId, collection!.id), eq(schema.entries.id, entryId))
-           );
-        }
-
-        await invalidateEntryCache(env, slug, entryId);
-
-        await runHooks(collectionConfig.hooks, 'afterDelete', { ...hookContext, operation: 'delete', originalDoc, doc: originalDoc });
-
+        await service.entries.remove(slug, entryId, { origin: url.origin });
         return new Response(JSON.stringify({ success: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
 
