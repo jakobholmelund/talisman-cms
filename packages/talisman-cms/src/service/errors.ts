@@ -41,6 +41,14 @@ export class ValidationError extends ServiceError {
   }
 }
 
+/** Input the operation cannot use at all (not an object, invalid JSON), with no field to point at. */
+export class InvalidInputError extends ServiceError {
+  constructor(message: string) {
+    super('invalid_input', 400, message);
+    this.name = 'InvalidInputError';
+  }
+}
+
 export class AccessDeniedError extends ServiceError {
   constructor(message = 'Collection access denied') {
     super('forbidden', 403, message);

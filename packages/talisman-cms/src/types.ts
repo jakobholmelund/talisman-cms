@@ -766,54 +766,6 @@ export function nextNativeUpdatedAt(stored: unknown, now = new Date()) {
   return next > now.getTime() && next - now.getTime() <= MAX_NATIVE_UPDATED_AT_LEAD_MS ? new Date(next) : now;
 }
 
-export function prepareNativeWritePayload(
-  collectionConfig: CollectionConfig,
-  data: Record<string, any>,
-  mode: 'create' | 'update',
-  now = new Date()
-) {
-  if (!collectionConfig.nativeSchemaMapping) {
-    return { ...data };
-  }
-
-  const payload: Record<string, any> = { ...data };
-  const idColumn = getNativeIdColumn(collectionConfig);
-  const idField = collectionConfig.fields?.find((field) => field.name === idColumn);
-
-  for (const field of collectionConfig.fields || []) {
-    if (field.type === 'array' && field.fields?.length === 1 && field.fields[0].name === 'url' &&
-        Array.isArray(payload[field.name])) {
-      payload[field.name] = payload[field.name].map((item: unknown) =>
-        item && typeof item === 'object' && 'url' in item ? (item as { url: unknown }).url : item
-      );
-    }
-  }
-
-  for (const fieldName of [idColumn, 'createdAt', 'updatedAt']) {
-    if (payload[fieldName] === '') {
-      delete payload[fieldName];
-    }
-  }
-
-  if (mode === 'update') {
-    delete payload[idColumn];
-    delete payload.createdAt;
-    payload.updatedAt = now;
-    return payload;
-  }
-
-  if (payload[idColumn] === undefined || payload[idColumn] === null) {
-    if (idField?.type !== 'number') {
-      payload[idColumn] = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    }
-  }
-
-  payload.createdAt = now;
-  payload.updatedAt = now;
-
-  return payload;
-}
-
 function buildComponentSlotSchema(slot: ComponentSlotDefinition): z.ZodTypeAny {
   const inlineSchemas =
     slot.allowInline !== false && slot.components && slot.components.length > 0

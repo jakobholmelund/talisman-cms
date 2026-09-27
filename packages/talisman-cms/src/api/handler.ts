@@ -12,23 +12,15 @@ import { configuredCollectionFields as collectionFields, oncePerDatabase, resolv
 import { invalidateEntryCache, invalidateGlobalCache } from '../service/cache';
 import { userActor } from '../service/actor';
 import { runHooks } from '../service/hooks';
+import { prepareWrite, type WriteCollection } from '../service/validation';
 import {
   buildZodSchemaForCollection,
   buildZodSchemaForFields,
   decodeGlobalData,
-  describeInvalidEntryId,
-  describeInvalidEntrySlug,
-  findUnwritableNativeColumns,
-  generateFieldsFromDrizzle,
   getNativeIdColumn,
   isGlobalData,
-  nextNativeUpdatedAt,
-  normalizeBlankNativeValues,
-  pickConfiguredNativeFields,
-  prepareNativeWritePayload,
   type FieldValidationIssue
 } from '../types';
-import { validatePresetPayload } from '../presets';
 import { HttpError, toErrorResponse } from './http-errors';
 
 // The virtual modules stay static imports, so the Worker bundle carries the site's hook modules and
@@ -118,20 +110,6 @@ async function readJsonObject(request: Request) {
   return body;
 }
 
-/** Entry data may also arrive as JSON text; either way it must be an object. */
-function readEntryData(data: unknown): Record<string, any> {
-  let value = data;
-  if (typeof value === 'string') {
-    try {
-      value = JSON.parse(value);
-    } catch {
-      throw new HttpError(400, 'Entry data is not valid JSON.');
-    }
-  }
-  if (!isGlobalData(value)) throw new HttpError(400, 'Entry data must be a JSON object.');
-  return value;
-}
-
 /** Path segments arrive percent-encoded; lookups use the decoded id. */
 function decodePathSegment(segment: string) {
   let value: string;
@@ -142,31 +120,6 @@ function decodePathSegment(segment: string) {
   }
   if (value.length > 512) throw new HttpError(400, 'The entry id in the path is too long.');
   return value;
-}
-
-function invalidInput(message: string, path: PropertyKey[] = []) {
-  return validationErrorResponse([{ path, message }]);
-}
-
-const isBlank = (value: unknown) => value === undefined || value === null || value === '';
-
-/** Columns the server sets itself; a client may send them back, and they are dropped. */
-function nativeSystemColumns(collectionConfig: (typeof configCollections)[number]) {
-  return [getNativeIdColumn(collectionConfig), 'createdAt', 'updatedAt'];
-}
-
-function unwritableColumnsResponse(columns: string[]) {
-  return validationErrorResponse(columns.map((column) => ({
-    path: [column],
-    message: 'Not a field of this collection, so it cannot be saved here'
-  })));
-}
-
-/** A native id may be a whole number (integer keys) or text in the entry id format. */
-function describeInvalidNativeId(value: unknown) {
-  if (isBlank(value)) return null;
-  if (typeof value === 'number') return Number.isSafeInteger(value) ? null : 'Record id must be a whole number or text';
-  return describeInvalidEntryId(value);
 }
 
 const MAX_PAGE_SIZE = 200;
@@ -205,8 +158,6 @@ function decodeCursor(cursor: string): unknown[] {
   throw new HttpError(400, 'The cursor is not valid.');
 }
 
-// Set by the upload from the stored file; changing them would repoint or relabel the asset.
-const UPLOAD_MANAGED_MEDIA_FIELDS = ['url', 'mimeType'];
 const isSystemMediaCollection = isMediaCollection;
 
 function configuredCollectionFields(collectionConfig: (typeof configCollections)[number]) {
@@ -242,25 +193,6 @@ async function resolveExpectedRevisionId(db: ReturnType<typeof createDbClient>, 
   if (typeof value === 'string' && value) return value;
   if (value === null) return null;
   return await getLatestRevision(db as any, entryId) ? undefined : null;
-}
-
-function validateCollectionPayload(slug: string, data: Record<string, any>) {
-  if (slug !== '_ui_component_presets') {
-    return {
-      success: true as const,
-      data,
-    };
-  }
-
-  const result = validatePresetPayload(configuredUiLibraries as any, data);
-  if (!result.success) {
-    return result;
-  }
-
-  return {
-    success: true as const,
-    data: result.normalizedData,
-  };
 }
 
 async function resolveCollectionContext(db: ReturnType<typeof createDbClient>, slug: string, env: TalismanEnv) {
@@ -729,6 +661,8 @@ export const ALL: APIRoute = async ({ request, locals }) => {
       } = await resolveCollectionContext(db, slug, env);
 
       const hookContext = { actor, req: request, collection: { slug, native: Boolean(nativeTable) } };
+      const writeCollection: WriteCollection = { config: collectionConfig, slug, activeFields, nativeTable, nativeIdCol };
+      const writeInput = { collection: writeCollection, actor, req: request, uiLibraries: configuredUiLibraries, hooks: collectionConfig.hooks };
       const operation: CollectionOperation = request.method === 'GET' ? 'read'
         : request.method === 'POST' ? 'create'
         : request.method === 'PUT' ? 'update' : 'delete';
@@ -816,55 +750,12 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         }
 
         const payload = await readJsonObject(request);
-        const { id: userProvidedId, slug: entrySlug } = payload;
-        let data: Record<string, any> = payload.data === undefined ? {} : readEntryData(payload.data);
-
-        if (nativeTable) {
-          // The configured fields are the columns a client may write; hooks can still set others.
-          const unwritable = findUnwritableNativeColumns(activeFields, nativeTable, data, {
-            ignore: nativeSystemColumns(collectionConfig)
-          });
-          if (unwritable.length > 0) return unwritableColumnsResponse(unwritable);
-          data = normalizeBlankNativeValues(collectionConfig, activeFields, nativeTable,
-            pickConfiguredNativeFields(activeFields, nativeTable, data));
-          for (const [value, path] of [[userProvidedId, []], [data[nativeIdCol], [nativeIdCol]]] as const) {
-            const problem = describeInvalidNativeId(value);
-            if (problem) return invalidInput(problem, [...path]);
-          }
-        } else {
-          const idProblem = isBlank(userProvidedId) ? null : describeInvalidEntryId(userProvidedId);
-          if (idProblem) return invalidInput(idProblem);
-          const slugProblem = isBlank(entrySlug) ? null : describeInvalidEntrySlug(entrySlug);
-          if (slugProblem) return invalidInput(slugProblem);
-        }
-
-        data = await runHooks(collectionConfig.hooks, 'beforeValidate', { ...hookContext, data, operation: 'create' });
-
-        // Perform schema validation using activeFields
-        const dynamicSchema = buildZodSchemaForCollection({ ...collectionConfig, fields: activeFields });
-        const parsedDataResult = dynamicSchema.safeParse(data);
-        if (!parsedDataResult.success) {
-           return validationErrorResponse(parsedDataResult.error.issues);
-        }
-        const validatedPayload = validateCollectionPayload(slug, parsedDataResult.data);
-        if (!validatedPayload.success) {
-          return validationErrorResponse(validatedPayload.issues);
-        }
-        let validatedData = validatedPayload.data;
-
-        validatedData = await runHooks(collectionConfig.hooks, 'beforeChange', { ...hookContext, data: validatedData, operation: 'create' });
+        const prepared = await prepareWrite({ ...writeInput, operation: 'create', data: payload.data, id: payload.id, slug: payload.slug });
+        const validatedData = prepared.data!;
 
         if (nativeTable) {
            // Insert directly to native table
-           const insertPayload = prepareNativeWritePayload(
-             collectionConfig,
-             {
-               ...validatedData,
-               ...(nativeTable[nativeIdCol] && userProvidedId ? { [nativeIdCol]: userProvidedId } : {})
-             },
-             'create'
-           );
-           
+           const insertPayload = prepared.nativePayload!;
            const insertedRows = await db.insert(nativeTable).values(insertPayload).returning();
            const insertedRow = (Array.isArray(insertedRows) ? insertedRows[0] : null) || (
              insertPayload[nativeIdCol] !== undefined && insertPayload[nativeIdCol] !== null
@@ -889,10 +780,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
              headers: { 'Content-Type': 'application/json' }
            });
         } else {
-          const created = await createDraftEntry(db as any, collection as any, validatedData, {
-            id: isBlank(userProvidedId) ? undefined : userProvidedId,
-            slug: isBlank(entrySlug) ? undefined : entrySlug
-          });
+          const created = await createDraftEntry(db as any, collection as any, validatedData, { id: prepared.id, slug: prepared.slug });
           await invalidateEntryCache(env, slug);
 
           await runHooks(collectionConfig.hooks, 'afterChange', { ...hookContext, data: validatedData, operation: 'create', doc: created });
@@ -905,9 +793,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         if (!entryId) return new Response(JSON.stringify({ error: 'Entry ID required for PUT' }), { status: 400 });
         
         const payload = await readJsonObject(request);
-        const { slug: entrySlug } = payload;
-        let data: Record<string, any> | undefined = payload.data === undefined ? undefined : readEntryData(payload.data);
-        
+
         if (nativeTable) {
            // Update native table
            const rows = await db.select().from(nativeTable).where(eq(nativeTable[nativeIdCol], entryId) as any);
@@ -920,46 +806,8 @@ export const ALL: APIRoute = async ({ request, locals }) => {
              return Response.json({ error: NATIVE_RECORD_CONFLICT_MESSAGE }, { status: 409 });
            }
 
-           if (data !== undefined) {
-             // The configured fields are the columns a client may write; hooks can still set others.
-             const unwritable = findUnwritableNativeColumns(activeFields, nativeTable, data, {
-               ignore: nativeSystemColumns(collectionConfig),
-               stored: rows[0]
-             });
-             if (unwritable.length > 0) return unwritableColumnsResponse(unwritable);
-             const submitted = pickConfiguredNativeFields(activeFields, nativeTable, data);
-             if (isSystemMediaCollection(collectionConfig)) {
-               const changed = UPLOAD_MANAGED_MEDIA_FIELDS.filter((field) => field in submitted && submitted[field] !== rows[0][field]);
-               if (changed.length > 0) {
-                 return validationErrorResponse(changed.map((field) => ({ path: [field], message: 'Set by the upload and cannot be changed' })));
-               }
-               for (const field of UPLOAD_MANAGED_MEDIA_FIELDS) delete submitted[field];
-             }
-             data = normalizeBlankNativeValues(collectionConfig, activeFields, nativeTable, submitted);
-           }
-           
-           if (data !== undefined) data = await runHooks(collectionConfig.hooks, 'beforeValidate', { ...hookContext, data, operation: 'update', originalDoc });
-
-           let updatePayload = {};
-           if (data !== undefined) {
-             const rawDataToValidate = data;
-             // A native update writes only the columns it sends (an editor leaves out stock it did not
-             // change), so an omitted required column keeps its stored value.
-             const dynamicSchema = buildZodSchemaForCollection({ ...collectionConfig, fields: activeFields }).partial();
-             const parsedDataResult = dynamicSchema.safeParse(rawDataToValidate);
-             
-             if (!parsedDataResult.success) {
-               return validationErrorResponse(parsedDataResult.error.issues);
-             }
-             const validatedPayload = validateCollectionPayload(slug, parsedDataResult.data);
-             if (!validatedPayload.success) {
-               return validationErrorResponse(validatedPayload.issues);
-             }
-             let validatedData = validatedPayload.data;
-             validatedData = await runHooks(collectionConfig.hooks, 'beforeChange', { ...hookContext, data: validatedData, operation: 'update', originalDoc });
-
-             updatePayload = prepareNativeWritePayload(collectionConfig, validatedData, 'update', nextNativeUpdatedAt(rows[0].updatedAt));
-           }
+           const prepared = await prepareWrite({ ...writeInput, operation: 'update', data: payload.data, stored: rows[0], originalDoc });
+           const updatePayload = prepared.nativePayload ?? {};
            
            let storedRow = rows[0];
            if (Object.keys(updatePayload).length > 0) {
@@ -980,10 +828,10 @@ export const ALL: APIRoute = async ({ request, locals }) => {
            
            const doc = {
               ...mapNativeEntry(storedRow, collection!.id, nativeIdCol),
-              slug: entrySlug || rows[0].slug || entryId,
+              slug: payload.slug || rows[0].slug || entryId,
            };
 
-           await runHooks(collectionConfig.hooks, 'afterChange', { ...hookContext, data: data || {}, operation: 'update', originalDoc, doc });
+           await runHooks(collectionConfig.hooks, 'afterChange', { ...hookContext, data: prepared.data || {}, operation: 'update', originalDoc, doc });
 
            return new Response(JSON.stringify(doc), { status: 200, headers: { 'Content-Type': 'application/json' } });
         } else {
@@ -999,36 +847,13 @@ export const ALL: APIRoute = async ({ request, locals }) => {
              return Response.json({ error: 'expectedRevisionId is required' }, { status: 428 });
            }
 
-           // A blank slug keeps the current one; a published entry's rename waits for its next publish.
-           // Only a new slug is checked, so an entry whose slug predates the format rules can still be
-           // saved (the editor always sends the slug back).
-           const renamed = !isBlank(entrySlug) && entrySlug !== (origRow.draftSlug || origRow.slug);
-           const slugProblem = renamed ? describeInvalidEntrySlug(entrySlug) : null;
-           if (slugProblem) return invalidInput(slugProblem);
-           const draftSlug = isBlank(entrySlug) ? undefined : entrySlug as string;
+           const prepared = await prepareWrite({ ...writeInput, operation: 'update', data: payload.data, slug: payload.slug, stored: origRow, originalDoc });
 
-           if (data !== undefined) data = await runHooks(collectionConfig.hooks, 'beforeValidate', { ...hookContext, data, operation: 'update', originalDoc });
-
-           if (data !== undefined) {
-             const rawDataToValidate = data;
-             const dynamicSchema = buildZodSchemaForCollection({ ...collectionConfig, fields: activeFields });
-             const parsedDataResult = dynamicSchema.safeParse(rawDataToValidate);
-             
-             if (!parsedDataResult.success) {
-               return validationErrorResponse(parsedDataResult.error.issues);
-             }
-
-             const validatedPayload = validateCollectionPayload(slug, parsedDataResult.data);
-             if (!validatedPayload.success) {
-               return validationErrorResponse(validatedPayload.issues);
-             }
-             
-             let validatedData = validatedPayload.data;
-             validatedData = await runHooks(collectionConfig.hooks, 'beforeChange', { ...hookContext, data: validatedData, operation: 'update', originalDoc });
-
+           if (prepared.data !== undefined) {
+             const validatedData = prepared.data;
              const updated = await saveDraftEntry(db as any, collection as any, entryId, {
                data: validatedData,
-               slug: draftSlug,
+               slug: prepared.slug,
                expectedRevisionId
              });
 
@@ -1040,7 +865,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
            }
 
            const updated = await saveDraftEntry(db as any, collection as any, entryId, {
-             slug: draftSlug,
+             slug: prepared.slug,
              expectedRevisionId
            });
            await invalidateEntryCache(env, slug, entryId);

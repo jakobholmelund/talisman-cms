@@ -16,6 +16,7 @@ export {
   AccessDeniedError,
   ConstraintError,
   HookError,
+  InvalidInputError,
   NativeRecordConflictError,
   NotFoundError,
   PayloadTooLargeError,
