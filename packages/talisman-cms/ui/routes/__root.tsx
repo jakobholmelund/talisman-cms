@@ -1,17 +1,47 @@
-import React, { useState } from 'react';
-import { Outlet, createRootRouteWithContext, Link, useRouter } from '@tanstack/react-router';
-import { Database, FileText, Globe, Home, ImageIcon, Layers, LogOut, ShoppingCart, UserRound, Users } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Outlet, createRootRouteWithContext, Link, useRouter, useRouterState } from '@tanstack/react-router';
+import { Database, FileText, Globe, Home, ImageIcon, Layers, LogOut, Menu, ShoppingCart, UserRound, Users, X } from 'lucide-react';
 import type { RouterContext } from '../routerContext';
 import { canOpenAdminExtension, getReadableSectionCollections, hasMediaCollection, hasPagesCollection, hasSection } from '../lib/admin-sections';
 import { AuthPanel } from '../components/AuthPanel';
+import { useModalDialog } from '../lib/use-modal-dialog';
 // @ts-ignore
 import { adminExtensions } from 'virtual:talisman-cms/admin-extensions';
 import '../globals.css';
+
+const SIDEBAR_ID = 'talisman-sidebar';
+// Tailwind's `md` breakpoint: from here up the sidebar is a static column, below it a drawer.
+const DESKTOP_MEDIA_QUERY = '(min-width: 48rem)';
 
 export const Route = createRootRouteWithContext<RouterContext>()({
   component: () => {
     const { context } = useRouter().options;
     const [signOutError, setSignOutError] = useState('');
+    // The drawer below `md`. Focus moves into it when it opens, Tab stays inside, Escape closes it and
+    // focus returns to the toggle. At `md` and above the state stays false, so the hook does nothing.
+    const [menuOpen, setMenuOpen] = useState(false);
+    const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+    const sidebarRef = useModalDialog<HTMLElement>({
+      open: menuOpen,
+      onClose: () => setMenuOpen(false),
+      getReturnFocus: () => menuButtonRef.current,
+    });
+    // The drawer closes when the route changes.
+    const pathname = useRouterState({ select: (state) => state.location.pathname });
+    useEffect(() => {
+      setMenuOpen(false);
+    }, [pathname]);
+    // It also closes when the viewport grows to `md`, where the sidebar is static and must not trap focus.
+    useEffect(() => {
+      if (!menuOpen) return;
+      const media = window.matchMedia(DESKTOP_MEDIA_QUERY);
+      const closeOnDesktop = () => {
+        if (media.matches) setMenuOpen(false);
+      };
+      closeOnDesktop();
+      media.addEventListener('change', closeOnDesktop);
+      return () => media.removeEventListener('change', closeOnDesktop);
+    }, [menuOpen]);
     const isAdmin = context.user?.role === 'admin';
     const hasCommerce = isAdmin && hasSection('commerce');
     // Editors skip the Commerce workspace (its tools are admin-only) and get the commerce content they may edit,
@@ -51,8 +81,14 @@ export const Route = createRootRouteWithContext<RouterContext>()({
     return (
     <div className="min-h-screen bg-transparent text-zinc-50 font-sans selection:bg-indigo-500/30">
       <div className="flex h-screen overflow-hidden">
-        {/* Sidebar */}
-        <aside className="w-64 shrink-0 border-r border-white/10 bg-zinc-950/80 backdrop-blur-2xl hidden md:flex flex-col z-20">
+        {/* Sidebar: a static column from `md` up; below that a drawer that slides in from the left. While
+            closed it is also invisible, so its links leave the tab order and the accessibility tree. */}
+        <aside
+          id={SIDEBAR_ID}
+          ref={sidebarRef}
+          aria-label="Sidebar"
+          className={`fixed inset-y-0 left-0 z-40 w-64 shrink-0 border-r border-white/10 bg-zinc-950/80 backdrop-blur-2xl flex flex-col transition-[transform,translate,visibility] duration-200 ease-out motion-reduce:transition-none md:static md:visible md:translate-none md:transition-none ${menuOpen ? 'visible translate-x-0' : 'invisible -translate-x-full'}`}
+        >
           <div className="flex items-center h-16 px-6 border-b border-white/10 bg-white/[0.02]">
             <div className="flex items-center gap-3">
                <div className="p-1.5 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg shadow-lg shadow-indigo-500/20">
@@ -60,8 +96,18 @@ export const Route = createRootRouteWithContext<RouterContext>()({
                </div>
                <span className="font-semibold text-sm tracking-wide bg-gradient-to-br from-white to-zinc-400 bg-clip-text text-transparent">Talisman CMS</span>
             </div>
+            {/* The open drawer covers the header toggle, so the drawer carries its own close button. */}
+            <button
+              type="button"
+              data-dialog-close=""
+              onClick={() => setMenuOpen(false)}
+              aria-label="Close navigation menu"
+              className="md:hidden ml-auto -mr-2 flex h-9 w-9 items-center justify-center rounded-lg text-zinc-400 hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50"
+            >
+              <X size={18} aria-hidden="true" />
+            </button>
           </div>
-          <nav className="flex-1 p-4 space-y-1">
+          <nav aria-label="Main navigation" className="flex-1 overflow-y-auto p-4 space-y-1">
              <div className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest mb-3 px-3 mt-2">Overview</div>
              <Link to="/" className="flex items-center gap-3 px-3 py-2 text-sm text-zinc-400 hover:text-zinc-100 hover:bg-white/5 rounded-lg transition-all duration-200 [&.active]:bg-indigo-500/15 [&.active]:text-indigo-300 [&.active]:font-medium [&.active]:shadow-[inset_2px_0_0_0_theme(colors.indigo.500)]">
                <Home size={16} className="opacity-70" /> Dashboard
@@ -114,13 +160,28 @@ export const Route = createRootRouteWithContext<RouterContext>()({
           </nav>
         </aside>
 
+        {/* Backdrop behind the open drawer; a click on it closes the drawer. Never rendered from `md` up. */}
+        <div
+          aria-hidden="true"
+          onClick={() => setMenuOpen(false)}
+          className={`fixed inset-0 z-30 bg-black/60 transition-opacity duration-200 motion-reduce:transition-none md:hidden ${menuOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+        />
+
         {/* Main Application Area */}
         <main className="flex-1 overflow-y-auto relative bg-transparent flex flex-col">
-          <header className="h-16 shrink-0 border-b border-white/10 bg-zinc-950/80 backdrop-blur-2xl sticky top-0 z-10 flex items-center px-8 shadow-sm">
-            <h2 className="text-sm font-medium text-zinc-300 flex items-center gap-2">
-               Menu
-             </h2>
-             <div className="ml-auto flex items-center gap-4 text-xs text-zinc-400">{signOutError && <span role="alert" className="text-red-400">{signOutError}</span>}<span>{context.user.email}</span>{!context.isDevAuth && <button onClick={signOut} title={endsAccessSession ? 'Ends your CMS session and your Cloudflare Access session' : undefined} className="flex items-center gap-1 hover:text-white"><LogOut size={14} /> {endsAccessSession ? 'Sign out of CMS and Cloudflare' : 'Sign out'}</button>}</div>
+          <header className="h-16 shrink-0 border-b border-white/10 bg-zinc-950/80 backdrop-blur-2xl sticky top-0 z-10 flex items-center px-4 md:px-8 shadow-sm">
+            <button
+              ref={menuButtonRef}
+              type="button"
+              onClick={() => setMenuOpen((current) => !current)}
+              aria-label="Navigation menu"
+              aria-expanded={menuOpen}
+              aria-controls={SIDEBAR_ID}
+              className="md:hidden -ml-2 flex h-10 w-10 items-center justify-center rounded-lg text-zinc-300 hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50"
+            >
+              {menuOpen ? <X size={20} aria-hidden="true" /> : <Menu size={20} aria-hidden="true" />}
+            </button>
+             <div className="ml-auto flex min-w-0 items-center gap-4 text-xs text-zinc-400">{signOutError && <span role="alert" className="text-red-400">{signOutError}</span>}<span className="min-w-0 truncate">{context.user.email}</span>{!context.isDevAuth && <button onClick={signOut} title={endsAccessSession ? 'Ends your CMS session and your Cloudflare Access session' : undefined} className="flex shrink-0 items-center gap-1 hover:text-white"><LogOut size={14} /> {endsAccessSession ? 'Sign out of CMS and Cloudflare' : 'Sign out'}</button>}</div>
           </header>
           <div className="p-8 md:p-12 w-full flex-1">
             <Outlet />
