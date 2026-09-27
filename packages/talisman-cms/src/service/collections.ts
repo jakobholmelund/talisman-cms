@@ -4,7 +4,7 @@ import * as schema from '../db/schema';
 import { generateFieldsFromDrizzle, type CollectionConfig, type FieldDefinition } from '../types';
 import type { ServiceConfig } from './config';
 import type { ServiceContext } from './context';
-import { invalidateCollectionCache } from './cache';
+import { cacheKeys, invalidateCollectionCache, readCache, writeCache } from './cache';
 import { NotFoundError } from './errors';
 import type { CollectionHooks } from '../types';
 import { getNativeIdColumn } from '../types';
@@ -183,5 +183,23 @@ export async function resolveCollection(ctx: ServiceContext, slug: string): Prom
     nativeIdCol: getNativeIdColumn(collectionConfig),
     hooks: config.collectionHooks[slug],
     configured: true,
+  };
+}
+
+export function collectionsService(ctx: ServiceContext) {
+  return {
+    /** The stored collection rows after the configured ones are synced; cached for server code unless it opts out. */
+    async list(options: { cache?: boolean } = {}) {
+      const { env, db } = ctx;
+      const useCache = (options.cache ?? ctx.actor.kind !== 'user') && Boolean(env.KV);
+      if (useCache) {
+        const hit = await readCache<CollectionRecord[]>(env.KV!, cacheKeys.collections());
+        if (hit) return hit;
+      }
+      await syncCollectionDefinitions(db, env, ctx.config);
+      const rows = await db.query.collections.findMany();
+      if (useCache) await writeCache(env.KV!, cacheKeys.collections(), rows, ctx.ctx);
+      return rows;
+    },
   };
 }

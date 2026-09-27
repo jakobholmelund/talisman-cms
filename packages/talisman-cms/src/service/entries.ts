@@ -2,9 +2,11 @@ import { and, desc, eq, getTableColumns, isNull, lt, or, sql } from 'drizzle-orm
 import { deleteStoredMedia, isMediaCollection } from '../db/media-policy';
 import * as schema from '../db/schema';
 import { buildZodSchemaForCollection } from '../types';
+import { NATIVE_CACHE_TTL_SECONDS, cacheKeys, readCache, rowsUpdatedSince, writeCache } from './cache';
 import {
   createDraftEntry,
   getLatestRevision,
+  normalizeEntryDataForRead,
   saveDraftEntry,
   toEditableEntry,
   triggerPublishingWorkflow,
@@ -23,6 +25,7 @@ import {
   ValidationError
 } from './errors';
 import { runHooks } from './hooks';
+import { resolveRelationships, type VersionMode } from './relations';
 import { prepareWrite, type WritableColumns } from './validation';
 
 export const MAX_PAGE_SIZE = 200;
@@ -56,6 +59,24 @@ export interface UpdateEntryInput {
 export interface EntriesPage {
   docs: any[];
   nextCursor: string | null;
+}
+
+/** Options of the site-facing reads, as getClient has always taken them. */
+export interface SiteReadOptions {
+  /** Published snapshots (the default) or the drafts being edited. */
+  version?: VersionMode;
+  /** How many levels of relations to embed; 0 reads from KV when it can. */
+  depth?: number;
+  /** Entries and globals are cached unless false; native tables only when true. */
+  cache?: boolean;
+}
+
+/**
+ * Entries and globals are cached unless the caller opts out. Native tables are cached only when the
+ * caller opts in: plugin SQL writes them without clearing anything, so the copy is short-lived.
+ */
+function siteCacheWanted(options: { cache?: boolean }, native: boolean) {
+  return native ? options.cache === true : options.cache !== false;
 }
 
 export const NATIVE_PUBLISHING_MESSAGE = 'Publishing workflows are not available for native collections';
@@ -121,6 +142,14 @@ async function latestRevisionId(ctx: ServiceContext, entryId: string) {
 
 async function withRevision<T extends object>(ctx: ServiceContext, entry: T & { id: string }) {
   return { ...toEditableEntry(entry as any), latestRevisionId: await latestRevisionId(ctx, entry.id) };
+}
+
+/** The configured side of a collection, which needs no database: its configuration and native table. */
+function configuredFor(ctx: ServiceContext, slug: string) {
+  const config = ctx.config.collections.find((candidate) => candidate.slug === slug);
+  if (!config) return null;
+  const nativeTable = config.nativeSchemaMapping && ctx.config.nativeSchemas[slug] ? ctx.config.nativeSchemas[slug] : null;
+  return { config, nativeTable };
 }
 
 function hookContext(ctx: ServiceContext, collection: ResolvedCollection) {
@@ -383,6 +412,132 @@ export function entriesService(ctx: ServiceContext) {
 
       await invalidateEntryCache(env, slug, id);
       await runHooks(collection.hooks, 'afterDelete', { ...hooks, operation: 'delete', originalDoc, doc: originalDoc }, { log: ctx.log });
+    },
+
+    /** The site's view of a collection: published snapshots or drafts, relations embedded, cached for depth 0. */
+    async findMany(slug: string, options: SiteReadOptions & { limit?: number } = {}) {
+      const configured = configuredFor(ctx, slug);
+      if (configured) assertAllowed(ctx.actor, configured.config, 'read');
+      const versionMode = options.version || 'published';
+      if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1)) {
+        throw new InvalidInputError('limit must be a positive integer');
+      }
+      const limit = options.limit;
+      const depth = options.depth ?? 1;
+      const native = Boolean(configured?.nativeTable);
+      const cacheKey = cacheKeys.entries(slug, versionMode);
+      const useCache = siteCacheWanted(options, native) && limit === undefined && depth === 0 && Boolean(env.KV);
+      // A hit costs no D1 statement: the collection row is resolved only for a miss.
+      if (useCache) {
+        const hit = await readCache<any[]>(env.KV!, cacheKey);
+        if (hit) return hit;
+      }
+
+      const collection = await resolveCollection(ctx, slug);
+      if (!configured) assertAllowed(ctx.actor, collection.config, 'read');
+      const readStartedAt = new Date();
+      let data: any[];
+      if (collection.nativeTable) {
+        const query = db.select().from(collection.nativeTable as any);
+        const rows = limit === undefined ? await query : await query.limit(limit);
+        data = rows.map((row: any) => mapNativeEntry(row, collection.record.id, collection.nativeIdCol));
+      } else {
+        const rows = await db.query.entries.findMany({
+          // @ts-ignore
+          where: (e: any, operators: any) => versionMode === 'published'
+            ? operators.and(operators.eq(e.collectionId, collection.record.id), operators.eq(e.status, 'published'))
+            : operators.eq(e.collectionId, collection.record.id),
+          orderBy: (e: any, { desc }: any) => [desc(e.createdAt)],
+          ...(limit === undefined ? {} : { limit })
+        });
+        data = rows.map((entry: any) => normalizeEntryDataForRead(entry, versionMode));
+      }
+      data = await resolveRelationships(ctx, data, collection, depth, versionMode);
+
+      if (useCache) {
+        const inCollection = eq(schema.entries.collectionId, collection.record.id);
+        await writeCache(env.KV!, cacheKey, data, ctx.ctx, native ? { ttl: NATIVE_CACHE_TTL_SECONDS } : {
+          changedSinceRead: rowsUpdatedSince(db, schema.entries, readStartedAt, inCollection, {
+            where: versionMode === 'published' ? and(inCollection, eq(schema.entries.status, 'published')) : inCollection,
+            count: data.length,
+          }),
+        });
+      }
+      return data;
+    },
+
+    /** One entry as the site reads it, or null. */
+    async find(slug: string, id: string, options: SiteReadOptions = {}) {
+      const configured = configuredFor(ctx, slug);
+      if (configured) assertAllowed(ctx.actor, configured.config, 'read');
+      const versionMode = options.version || 'published';
+      const depth = options.depth ?? 1;
+      const native = Boolean(configured?.nativeTable);
+      const cacheKey = cacheKeys.entry(slug, id, versionMode);
+      const useCache = siteCacheWanted(options, native) && depth === 0 && Boolean(env.KV);
+      if (useCache) {
+        const hit = await readCache<any>(env.KV!, cacheKey);
+        if (hit) return hit;
+      }
+
+      const collection = await resolveCollection(ctx, slug);
+      if (!configured) assertAllowed(ctx.actor, collection.config, 'read');
+      const readStartedAt = new Date();
+      let data: any = null;
+      if (collection.nativeTable) {
+        const row = await nativeRow(ctx, collection, id);
+        if (row) data = mapNativeEntry(row, collection.record.id, collection.nativeIdCol);
+      } else {
+        const entry = await db.query.entries.findFirst({
+          // @ts-ignore
+          where: (e: any, operators: any) => versionMode === 'published'
+            ? operators.and(operators.eq(e.collectionId, collection.record.id), operators.eq(e.id, id), operators.eq(e.status, 'published'))
+            : operators.and(operators.eq(e.collectionId, collection.record.id), operators.eq(e.id, id))
+        });
+        if (entry) data = normalizeEntryDataForRead(entry, versionMode);
+      }
+      if (!data) return null;
+      [data] = await resolveRelationships(ctx, [data], collection, depth, versionMode);
+
+      if (useCache) {
+        await writeCache(env.KV!, cacheKey, data, ctx.ctx, native ? { ttl: NATIVE_CACHE_TTL_SECONDS } : {
+          changedSinceRead: rowsUpdatedSince(db, schema.entries, readStartedAt, eq(schema.entries.id, id), { where: eq(schema.entries.id, id), count: 1 }),
+        });
+      }
+      return data;
+    },
+
+    /**
+     * One entry by its slug, or null. `slug` is the live slug of a published entry; a draft read
+     * looks for the slug the entry will have after its next publish. Native rows match their
+     * `slug` column, or their id column without one.
+     */
+    async findBySlug(slug: string, entrySlug: string, options: Omit<SiteReadOptions, 'cache'> = {}) {
+      const collection = await resolveCollection(ctx, slug);
+      assertAllowed(ctx.actor, collection.config, 'read');
+      const versionMode = options.version || 'published';
+      let data: any = null;
+      if (collection.nativeTable) {
+        const nativeTable = collection.nativeTable as any;
+        const slugColumn = nativeTable.slug || nativeTable[collection.nativeIdCol];
+        const rows = await db.select().from(nativeTable).where(eq(slugColumn, entrySlug) as any).limit(1);
+        if (rows[0]) data = mapNativeEntry(rows[0], collection.record.id, collection.nativeIdCol);
+      } else {
+        const entry = await db.query.entries.findFirst({
+          // @ts-ignore
+          where: (e: any, operators: any) => versionMode === 'published'
+            ? operators.and(operators.eq(e.collectionId, collection.record.id), operators.eq(e.status, 'published'), operators.eq(e.slug, entrySlug))
+            : operators.and(operators.eq(e.collectionId, collection.record.id), operators.or(
+              operators.eq(e.draftSlug, entrySlug),
+              operators.and(operators.isNull(e.draftSlug), operators.eq(e.slug, entrySlug))
+            )),
+          orderBy: (e: any, { desc }: any) => [desc(e.createdAt)]
+        });
+        if (entry) data = normalizeEntryDataForRead(entry, versionMode);
+      }
+      if (!data) return null;
+      const [resolved] = await resolveRelationships(ctx, [data], collection, options.depth ?? 1, versionMode);
+      return resolved;
     },
 
     async publish(slug: string, id: string, options: { expect?: WriteExpectation } = {}) {

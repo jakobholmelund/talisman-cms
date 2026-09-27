@@ -905,7 +905,7 @@ test('getClient writes native rows as given, so table defaults and text timestam
       id: text('id').primaryKey().$defaultFn(() => `ord_${++orderNumber}`),
       total: integer('total').notNull(),
     }),
-    notes: sqliteTable('test_notes', {
+    memos: sqliteTable('test_notes', {
       id: text('id').primaryKey(),
       body: text('body').notNull(),
       createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -922,7 +922,7 @@ test('getClient writes native rows as given, so table defaults and text timestam
   const added = [
     native('Counters', 'counters', [['label', 'text']]),
     native('Orders', 'orders', [['id', 'text'], ['total', 'number']]),
-    native('Notes', 'notes', [['id', 'text'], ['body', 'text']]),
+    native('Memos', 'memos', [['id', 'text'], ['body', 'text']]),
   ];
   runtime.collections.push(...added);
   try {
@@ -961,18 +961,18 @@ test('getClient writes native rows as given, so table defaults and text timestam
     // Text timestamps keep their DEFAULT CURRENT_TIMESTAMP on create and are not stamped with a Date on update.
     const sqlTimestamp = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
     const note = () => ({ ...sqlite.prepare(`SELECT body, created_at, updated_at FROM test_notes WHERE id = 'n1'`).get() });
-    const created = await client.entries.create('notes', { id: 'n1', body: 'Hello' });
+    const created = await client.entries.create('memos', { id: 'n1', body: 'Hello' });
     assert.match(created.data.createdAt, sqlTimestamp);
     assert.match(note().updated_at, sqlTimestamp);
     const stored = note();
-    const edited = await client.entries.update('notes', 'n1', { body: 'Edited' });
+    const edited = await client.entries.update('memos', 'n1', { body: 'Edited' });
     assert.equal(edited.data.body, 'Edited');
     assert.deepEqual(note(), { ...stored, body: 'Edited' });
-    await client.entries.update('notes', 'n1', { updatedAt: '2026-09-26 12:00:00' });
+    await client.entries.update('memos', 'n1', { updatedAt: '2026-09-26 12:00:00' });
     assert.equal(note().updated_at, '2026-09-26 12:00:00');
   } finally {
     for (const collection of added) runtime.collections.splice(runtime.collections.indexOf(collection), 1);
-    for (const slug of ['counters', 'orders', 'notes']) delete runtime.nativeSchemas[slug];
+    for (const slug of ['counters', 'orders', 'memos']) delete runtime.nativeSchemas[slug];
     sqlite.close();
   }
 });

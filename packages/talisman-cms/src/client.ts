@@ -29,3 +29,25 @@ export {
   type HookPhase,
   type ServiceErrorCode
 } from './service/errors';
+// The service both the admin API and getClient are built on, for code that wants to name its actor
+// or hold one service for several calls.
+export {
+  createService,
+  systemActor,
+  userActor,
+  type Actor,
+  type CreateEntryInput,
+  type CreateGlobalInput,
+  type EntriesPage,
+  type EntryStatusTarget,
+  type HookLogEntry,
+  type ResolvedCollection,
+  type ServiceConfig,
+  type ServiceOptions,
+  type SiteReadOptions,
+  type TalismanService,
+  type UpdateEntryInput,
+  type VersionMode,
+  type WriteExpectation
+} from './service/index';
+export { loadServiceConfig } from './service/config';

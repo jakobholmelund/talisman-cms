@@ -1,6 +1,7 @@
 import { createDbClient, type TalismanEnv } from '../db/client';
 import { systemActor, type Actor } from './actor';
 import type { CacheContext } from './cache';
+import { collectionsService } from './collections';
 import type { ServiceConfig } from './config';
 import type { ServiceContext } from './context';
 import { entriesService } from './entries';
@@ -36,6 +37,7 @@ export function createService(env: TalismanEnv, options: ServiceOptions) {
   };
   return {
     actor: context.actor,
+    collections: collectionsService(context),
     entries: entriesService(context),
     globals: globalsService(context),
     revisions: revisionsService(context),
@@ -46,6 +48,8 @@ export type { Actor } from './actor';
 export { systemActor, userActor } from './actor';
 export type { ServiceConfig } from './config';
 export type { ServiceContext } from './context';
-export type { CreateEntryInput, EntriesPage, UpdateEntryInput, WriteExpectation } from './entries';
+export type { CreateEntryInput, EntriesPage, EntryStatusTarget, SiteReadOptions, UpdateEntryInput, WriteExpectation } from './entries';
+export type { ResolvedCollection } from './collections';
+export type { VersionMode } from './relations';
 export type { CreateGlobalInput } from './globals';
 export type { HookLogEntry } from './hooks';
