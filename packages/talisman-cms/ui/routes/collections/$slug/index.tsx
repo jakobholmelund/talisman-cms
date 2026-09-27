@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createFileRoute, Link, useLoaderData, useNavigate, useRouter } from '@tanstack/react-router';
 import { Card } from '../../../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
@@ -92,12 +92,19 @@ export function CollectionEntriesPage({
   const [cursor, setCursor] = useState<string | null>(initialCursor);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState('');
+  // After "Load more", focus moves to the first row that arrived, so the keyboard continues from there.
+  const [firstNewIndex, setFirstNewIndex] = useState<number | null>(null);
+  const firstNewRowRef = useRef<HTMLAnchorElement | null>(null);
+  useEffect(() => {
+    if (firstNewIndex !== null) firstNewRowRef.current?.focus();
+  }, [firstNewIndex]);
 
   // A new loader result (another collection, or a reload) starts the list again.
   useEffect(() => {
     setEntries(firstPage);
     setCursor(initialCursor);
     setLoadMoreError('');
+    setFirstNewIndex(null);
   }, [firstPage, initialCursor]);
 
   const loadMore = async () => {
@@ -108,6 +115,7 @@ export function CollectionEntriesPage({
       const page = await fetchEntriesPage(basePath, slug, cursor);
       setEntries((current) => [...current, ...page.docs]);
       setCursor(page.nextCursor);
+      if (page.docs.length > 0) setFirstNewIndex(entries.length);
     } catch (error: any) {
       setLoadMoreError(error.message || 'Failed to load more entries');
     } finally {
@@ -180,7 +188,7 @@ export function CollectionEntriesPage({
                 </TableCell>
               </TableRow>
             ) : (
-              entries.map((entry: any) => {
+              entries.map((entry: any, index: number) => {
                 const data = parseEntryData(entry);
                 const pageTitle = typeof data.title === 'string' && data.title.length > 0 ? data.title : 'Untitled page';
                 const entryName = [data.name, data.customerEmail, data.email, data.code, data.value]
@@ -204,6 +212,7 @@ export function CollectionEntriesPage({
                     <TableCell>
                       {/* The name is a real link, so the row can be reached and opened from the keyboard. */}
                       <Link
+                        ref={index === firstNewIndex ? firstNewRowRef : undefined}
                         to={sectionEntryRoute}
                         params={{ slug, entryId: entry.id }}
                         onClick={(event) => event.stopPropagation()}
@@ -263,11 +272,12 @@ export function CollectionEntriesPage({
         </Table>
       </Card>
 
+      <p role="status" className="sr-only">{isLoadingMore ? `Loading more ${entryLabel}s...` : ''}</p>
       {(cursor || loadMoreError) && (
         <div className="flex flex-col items-center gap-2">
-          {loadMoreError && <p className="text-sm text-rose-400">{loadMoreError}</p>}
+          {loadMoreError && <p role="alert" className="text-sm text-rose-400">{loadMoreError}</p>}
           {cursor && (
-            <Button type="button" variant="outline" size="sm" disabled={isLoadingMore} onClick={() => void loadMore()}>
+            <Button type="button" variant="outline" size="sm" aria-disabled={isLoadingMore || undefined} aria-busy={isLoadingMore || undefined} onClick={() => void loadMore()}>
               {isLoadingMore ? 'Loading...' : `Load more ${entryLabel}s`}
             </Button>
           )}

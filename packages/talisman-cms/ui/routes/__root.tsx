@@ -31,6 +31,15 @@ export const Route = createRootRouteWithContext<RouterContext>()({
     useEffect(() => {
       setMenuOpen(false);
     }, [pathname]);
+    // The router leaves focus where it was, so a new page starts at its main landmark, unless the drawer
+    // was open for the navigation: closing it returns focus to the toggle (useModalDialog).
+    const mainRef = useRef<HTMLElement | null>(null);
+    const focusedPathnameRef = useRef(pathname);
+    useEffect(() => {
+      if (focusedPathnameRef.current === pathname) return;
+      focusedPathnameRef.current = pathname;
+      if (!menuOpen) mainRef.current?.focus();
+    }, [pathname]);
     // It also closes when the viewport grows to `md`, where the sidebar is static and must not trap focus.
     useEffect(() => {
       if (!menuOpen) return;
@@ -81,6 +90,14 @@ export const Route = createRootRouteWithContext<RouterContext>()({
     return (
     <div className="min-h-screen bg-transparent text-zinc-50 font-sans selection:bg-indigo-500/30">
       <div className="flex h-screen overflow-hidden">
+        {/* Keyboard users skip the sidebar; the link is visible only while it has focus. */}
+        <a
+          href="#content"
+          onClick={() => mainRef.current?.focus()}
+          className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-indigo-600 focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
+        >
+          Skip to content
+        </a>
         {/* Sidebar: a static column from `md` up; below that a drawer that slides in from the left. While
             closed it is also invisible, so its links leave the tab order and the accessibility tree. */}
         <aside
@@ -168,7 +185,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
         />
 
         {/* Main Application Area */}
-        <main className="flex-1 overflow-y-auto relative bg-transparent flex flex-col">
+        <main ref={mainRef} id="content" tabIndex={-1} className="flex-1 overflow-y-auto relative bg-transparent flex flex-col focus:outline-none">
           <header className="h-16 shrink-0 border-b border-white/10 bg-zinc-950/80 backdrop-blur-2xl sticky top-0 z-10 flex items-center px-4 md:px-8 shadow-sm">
             <button
               ref={menuButtonRef}

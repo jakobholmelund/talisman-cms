@@ -19,22 +19,36 @@ function getFocusableElements(container: HTMLElement) {
  * Keyboard behaviour for a modal dialog: focus moves into it when it opens, Tab stays inside it,
  * Escape closes it, and focus goes back to where it was when it closes. Attach the returned ref to
  * the element with role="dialog". `getReturnFocus` names an element to focus on close when the one
- * that opened the dialog is gone (for example a picker button that closed itself).
+ * that opened the dialog is gone (for example a picker button that closed itself). `inertOutside`
+ * also makes the page behind the dialog inert while it is open, where the browser supports `inert`.
  */
 export function useModalDialog<T extends HTMLElement>({
   open,
   onClose,
   getReturnFocus,
+  inertOutside = false,
 }: {
   open: boolean;
   onClose: () => void;
   getReturnFocus?: () => HTMLElement | null | undefined;
+  inertOutside?: boolean;
 }) {
   const dialogRef = useRef<T | null>(null);
   const onCloseRef = useRef(onClose);
   const getReturnFocusRef = useRef(getReturnFocus);
   onCloseRef.current = onClose;
   getReturnFocusRef.current = getReturnFocus;
+
+  // Declared before the focus effect below, so its cleanup lifts `inert` before focus returns to the page.
+  useEffect(() => {
+    if (!open || !inertOutside || !('inert' in HTMLElement.prototype)) return;
+    const dialog = dialogRef.current;
+    const root = document.getElementById('talisman-root');
+    if (!dialog || !root) return;
+    const outside = Array.from(root.children).filter((child): child is HTMLElement => child instanceof HTMLElement && !child.contains(dialog) && !child.inert);
+    outside.forEach((element) => { element.inert = true; });
+    return () => outside.forEach((element) => { element.inert = false; });
+  }, [open, inertOutside]);
 
   useEffect(() => {
     if (!open) return;

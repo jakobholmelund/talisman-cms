@@ -70,6 +70,7 @@ export function MediaFieldInput({
   describedBy,
   invalid,
   required,
+  label,
 }: {
   adminBasePath: string;
   value: string;
@@ -81,6 +82,8 @@ export function MediaFieldInput({
   describedBy?: string;
   invalid?: boolean;
   required?: boolean;
+  /** The field's label, which tells the Upload, Browse and Refresh buttons of one field from another's. */
+  label?: string;
 }) {
   const fileInputId = useId();
   const libraryPanelId = useId();
@@ -88,6 +91,8 @@ export function MediaFieldInput({
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
   const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  // Read out by screen readers: an upload otherwise only changes the button text and the URL value.
+  const [uploadStatus, setUploadStatus] = useState('');
   const [libraryError, setLibraryError] = useState('');
   const [libraryItems, setLibraryItems] = useState<MediaLibraryEntry[]>([]);
   const [libraryCursor, setLibraryCursor] = useState<string | null>(null);
@@ -155,6 +160,7 @@ export function MediaFieldInput({
 
     setIsUploading(true);
     setLibraryError('');
+    setUploadStatus(`Uploading ${file.name}…`);
 
     try {
       const formData = new FormData();
@@ -178,7 +184,9 @@ export function MediaFieldInput({
       libraryRequestedRef.current = true;
       setIsLibraryOpen(true);
       await refreshLibrary();
+      setUploadStatus(`Uploaded ${file.name}; URL set.`);
     } catch (error: any) {
+      setUploadStatus('');
       setLibraryError(error.message || 'Failed to upload media');
     } finally {
       setIsUploading(false);
@@ -215,9 +223,11 @@ export function MediaFieldInput({
             accept="image/jpeg,image/png,image/gif,image/webp,image/avif"
             onChange={(event) => void handleUpload(event.target.files?.[0] ?? null)}
           />
-          <Button type="button" variant="outline" className="gap-2" disabled={isUploading} onClick={() => fileInputRef.current?.click()}>
+          {/* Stays focusable while the upload runs; the status line below says what is happening. */}
+          <Button type="button" variant="outline" className="gap-2" aria-disabled={isUploading || undefined} aria-busy={isUploading || undefined} onClick={() => { if (!isUploading) fileInputRef.current?.click(); }}>
             {isUploading ? <LoaderCircle size={14} className="animate-spin" /> : <Upload size={14} />}
             {isUploading ? 'Uploading...' : 'Upload'}
+            {label && <span className="sr-only"> for {label}</span>}
           </Button>
           <Button
             type="button"
@@ -229,10 +239,12 @@ export function MediaFieldInput({
           >
             <Images size={14} />
             {isLibraryOpen ? 'Hide Library' : 'Browse'}
+            {label && <span className="sr-only"> for {label}</span>}
           </Button>
         </div>
       </div>
 
+      <p role="status" className="sr-only">{uploadStatus}</p>
       {libraryError && (
         <div role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
           {libraryError}
@@ -271,9 +283,11 @@ export function MediaFieldInput({
             <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => void refreshLibrary()} disabled={isLoadingLibrary}>
               <RefreshCw size={14} className={isLoadingLibrary ? 'animate-spin' : ''} />
               Refresh
+              {label && <span className="sr-only"> the media library for {label}</span>}
             </Button>
           </div>
 
+          <p role="status" className="sr-only">{isLoadingLibrary ? 'Loading media assets...' : ''}</p>
           {isLoadingLibrary ? (
             <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-6 text-sm text-zinc-400">
               Loading media assets...
@@ -299,7 +313,8 @@ export function MediaFieldInput({
                     }`}
                   >
                     {isPreviewableImage(item) ? (
-                      <img src={item.url} alt={item.altText || item.filename} className="h-36 w-full object-cover" />
+                      // The filename is printed below the image, so it is not repeated as the alt text.
+                      <img src={item.url} alt={item.altText || ''} className="h-36 w-full object-cover" />
                     ) : (
                       <div className="flex h-36 items-center justify-center bg-zinc-900 text-center text-xs uppercase tracking-[0.2em] text-zinc-500">
                         {item.mimeType.split('/')[0] || 'File'}

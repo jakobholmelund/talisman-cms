@@ -44,6 +44,21 @@ function UsersPage() {
   const resetHeadingRef = useRef<HTMLHeadingElement | null>(null);
   useEffect(() => { if (pending) confirmHeadingRef.current?.focus(); }, [pending]);
   useEffect(() => { if (resetUser) resetHeadingRef.current?.focus(); }, [resetUser]);
+  // Confirm and Cancel unmount the form under the focused button, so focus goes back to the row button
+  // that opened it once the list has reloaded, or to the notice when that row is gone (a removed account).
+  const triggerRef = useRef<HTMLElement | null>(null);
+  const noticeRef = useRef<HTMLParagraphElement | null>(null);
+  const returnFocusRef = useRef(false);
+  useEffect(() => {
+    if (pending || resetUser) { returnFocusRef.current = true; return; }
+    if (!returnFocusRef.current || loading) return;
+    returnFocusRef.current = false;
+    const trigger = triggerRef.current;
+    (trigger?.isConnected && !trigger.matches(':disabled') ? trigger : noticeRef.current)?.focus();
+  }, [pending, resetUser, loading]);
+  // A role picked in a row waits for its "Change role" button, so browsing the options with the arrow
+  // keys (which fires change in Chrome and Firefox) does not open the confirmation.
+  const [draftRoles, setDraftRoles] = useState<Record<string, 'editor' | 'admin'>>({});
 
   function clearMessages() {
     setError(''); setNotice(''); setWarning('');
@@ -64,6 +79,7 @@ function UsersPage() {
 
   async function createUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     clearMessages();
     try {
@@ -81,7 +97,7 @@ function UsersPage() {
 
   async function resetPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!resetUser) return;
+    if (!resetUser || busy) return;
     setBusy(true); clearMessages();
     try {
       const warning = await postAction('set-user-password', { userId: resetUser.id, newPassword }, 'Could not reset password');
@@ -94,7 +110,7 @@ function UsersPage() {
 
   async function confirmAction(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!pending) return;
+    if (!pending || busy) return;
     setBusy(true); clearMessages();
     try {
       const action = pending.kind === 'role' ? 'set-role' : pending.kind === 'ban' ? 'ban-user'
@@ -107,6 +123,7 @@ function UsersPage() {
         : 'account removed';
       setNotice(`${pending.user.email}: ${outcome}.`);
       setPending(null);
+      setDraftRoles({});
       if (pending.kind === 'remove' && users.length === 1 && offset > 0) setOffset(offset - PAGE_SIZE);
       else await loadUsers();
     } catch (cause) {
@@ -121,9 +138,11 @@ function UsersPage() {
   if (context.user?.role !== 'admin') return <p>Admin access required.</p>;
   return <div className="max-w-4xl space-y-8">
     <div><h1 className="text-3xl font-semibold">Users</h1><p className="mt-2 text-zinc-400">{context.isHybridAuth ? 'Shopper and editor accounts share an email identity. Editors use a CMS password; admins use Cloudflare.' : 'Create local accounts for editors and admins.'}</p></div>
-    {error && <p role="alert" className="text-red-400">{error}</p>}
-    {notice && <p role="status" className="text-green-400">{notice}</p>}
+    {/* The error and notice stay mounted so screen readers hear their text change; empty, they take no space. */}
+    <p role="alert" className={error ? 'text-red-400' : 'sr-only'}>{error}</p>
+    <p role="status" ref={noticeRef} tabIndex={-1} className={notice ? 'text-green-400 focus:outline-none' : 'sr-only'}>{notice}</p>
     {warning && <p role="status" className="text-amber-300">{warning}</p>}
+    <p role="status" className="sr-only">{busy ? 'Working…' : ''}</p>
     <form onSubmit={createUser} className="grid gap-4 rounded-xl border border-white/10 bg-zinc-900/70 p-6 md:grid-cols-2">
       <h2 className="text-lg font-medium md:col-span-2">{context.isHybridAuth ? 'Add editor' : 'Add user'}</h2>
       <p className="text-sm text-zinc-400 md:col-span-2">If this email already belongs to a verified shopper, their existing identity gains editor access.</p>
@@ -131,10 +150,10 @@ function UsersPage() {
       <label className="text-sm">Email<input required type="email" value={email} onChange={event => setEmail(event.target.value)} className="mt-1 w-full rounded-md border border-white/15 bg-zinc-950 px-3 py-2" /></label>
       <label className="text-sm">Temporary password<input required type="password" minLength={12} value={password} onChange={event => setPassword(event.target.value)} className="mt-1 w-full rounded-md border border-white/15 bg-zinc-950 px-3 py-2" /></label>
       <label className="text-sm">Role<select value={role} onChange={event => setRole(event.target.value as 'editor' | 'admin')} className="mt-1 w-full rounded-md border border-white/15 bg-zinc-950 px-3 py-2"><option value="editor">Editor</option>{!context.isHybridAuth && <option value="admin">Admin</option>}</select></label>
-      <button disabled={busy} className="rounded-md bg-indigo-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 md:col-span-2">{busy ? 'Creating…' : 'Create user'}</button>
+      <button aria-disabled={busy || undefined} aria-busy={busy || undefined} className="rounded-md bg-indigo-500 px-4 py-2 text-sm font-medium text-white aria-disabled:opacity-50 md:col-span-2">{busy ? 'Creating…' : 'Create user'}</button>
     </form>
     <div className="overflow-x-auto rounded-xl border border-white/10">
-      <table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-white/5 text-zinc-400"><tr><th className="px-4 py-3">Name</th><th className="px-4 py-3">Email</th><th className="px-4 py-3">Role</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Actions</th></tr></thead>
+      <table className="w-full min-w-[760px] text-left text-sm"><caption className="sr-only">CMS users</caption><thead className="bg-white/5 text-zinc-400"><tr><th className="px-4 py-3">Name</th><th className="px-4 py-3">Email</th><th className="px-4 py-3">Role</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Actions</th></tr></thead>
         <tbody>{users.map(user => {
           const isSelf = user.id === context.user?.id;
           const isSso = context.isHybridAuth && user.role === 'admin';
@@ -142,29 +161,29 @@ function UsersPage() {
           return <tr key={user.id} className="border-t border-white/10">
             <td className="px-4 py-3">{user.name}{isSelf && <span className="ml-2 text-xs text-zinc-500">You</span>}{isSso && <span className="ml-2 text-xs text-indigo-300">Cloudflare SSO</span>}</td>
             <td className="px-4 py-3">{user.email}</td>
-            <td className="px-4 py-3">{context.isHybridAuth || isCustomer ? <span className="capitalize">{user.role}</span> : <select aria-label={`Role for ${user.email}`} disabled={busy || isSelf} value={user.role} onChange={event => { setResetUser(null); setPending({ kind: 'role', user, role: event.target.value as 'editor' | 'admin' }); }} className="rounded-md border border-white/15 bg-zinc-950 px-2 py-1 capitalize disabled:opacity-50"><option value="editor">Editor</option><option value="admin">Admin</option></select>}</td>
+            <td className="px-4 py-3">{context.isHybridAuth || isCustomer ? <span className="capitalize">{user.role}</span> : <div className="flex items-center gap-2"><select aria-label={`Role for ${user.email}`} aria-describedby={isSelf ? 'users-self-role-note' : undefined} disabled={busy || isSelf} value={draftRoles[user.id] ?? user.role} onChange={event => setDraftRoles(current => ({ ...current, [user.id]: event.target.value as 'editor' | 'admin' }))} className="rounded-md border border-white/15 bg-zinc-950 px-2 py-1 capitalize disabled:opacity-50"><option value="editor">Editor</option><option value="admin">Admin</option></select>{isSelf ? <span id="users-self-role-note" className="sr-only">You cannot change your own role.</span> : <button type="button" disabled={busy || (draftRoles[user.id] ?? user.role) === user.role} onClick={event => { triggerRef.current = event.currentTarget.closest('td')?.querySelector<HTMLElement>('select') ?? event.currentTarget; setResetUser(null); setPending({ kind: 'role', user, role: draftRoles[user.id] }); }} className="text-indigo-300 hover:text-indigo-200 disabled:opacity-50">Change role<span className="sr-only"> for {user.email}</span></button>}</div>}</td>
             <td className="px-4 py-3">{user.banned ? <span className="text-amber-300">Disabled</span> : <span className="text-green-300">Active</span>}</td>
             <td className="px-4 py-3"><div className="flex flex-wrap gap-x-3 gap-y-1">
               {isCustomer && !user.banned && <span className="text-zinc-500">Use {context.isHybridAuth ? 'Add editor' : 'Add user'} to grant CMS access</span>}
-              {isCustomer && user.banned && !isSelf && <button type="button" disabled={busy} onClick={() => { setResetUser(null); setPending({ kind: 'unban', user }); }} className="text-amber-300 hover:text-amber-200 disabled:opacity-50">Enable</button>}
-              {!isSso && !isCustomer && <button type="button" disabled={busy} onClick={() => { setPending(null); setResetUser(user); }} className="text-indigo-300 hover:text-indigo-200 disabled:opacity-50">Reset password</button>}
-              {!isSelf && !isSso && !isCustomer && <button type="button" disabled={busy} onClick={() => { setResetUser(null); setPending({ kind: user.banned ? 'unban' : 'ban', user }); }} className="text-amber-300 hover:text-amber-200 disabled:opacity-50">{user.banned ? 'Enable' : 'Disable'}</button>}
-              {!isSelf && !isSso && !isCustomer && context.isHybridAuth && <button type="button" disabled={busy} onClick={() => { setResetUser(null); setPending({ kind: 'role', user, role: 'customer' }); }} className="text-red-300 hover:text-red-200 disabled:opacity-50">Revoke CMS access</button>}
-              {!isSelf && !isSso && !isCustomer && !context.isHybridAuth && <button type="button" disabled={busy} onClick={() => { setResetUser(null); setPending({ kind: 'remove', user }); }} className="text-red-300 hover:text-red-200 disabled:opacity-50">Remove</button>}
+              {isCustomer && user.banned && !isSelf && <button type="button" disabled={busy} onClick={event => { triggerRef.current = event.currentTarget; setResetUser(null); setPending({ kind: 'unban', user }); }} className="text-amber-300 hover:text-amber-200 disabled:opacity-50">Enable<span className="sr-only"> {user.email}</span></button>}
+              {!isSso && !isCustomer && <button type="button" disabled={busy} onClick={event => { triggerRef.current = event.currentTarget; setPending(null); setResetUser(user); }} className="text-indigo-300 hover:text-indigo-200 disabled:opacity-50">Reset password<span className="sr-only"> {user.email}</span></button>}
+              {!isSelf && !isSso && !isCustomer && <button type="button" disabled={busy} onClick={event => { triggerRef.current = event.currentTarget; setResetUser(null); setPending({ kind: user.banned ? 'unban' : 'ban', user }); }} className="text-amber-300 hover:text-amber-200 disabled:opacity-50">{user.banned ? 'Enable' : 'Disable'}<span className="sr-only"> {user.email}</span></button>}
+              {!isSelf && !isSso && !isCustomer && context.isHybridAuth && <button type="button" disabled={busy} onClick={event => { triggerRef.current = event.currentTarget; setResetUser(null); setPending({ kind: 'role', user, role: 'customer' }); }} className="text-red-300 hover:text-red-200 disabled:opacity-50">Revoke CMS access<span className="sr-only"> {user.email}</span></button>}
+              {!isSelf && !isSso && !isCustomer && !context.isHybridAuth && <button type="button" disabled={busy} onClick={event => { triggerRef.current = event.currentTarget; setResetUser(null); setPending({ kind: 'remove', user }); }} className="text-red-300 hover:text-red-200 disabled:opacity-50">Remove<span className="sr-only"> {user.email}</span></button>}
             </div></td>
           </tr>;
         })}</tbody></table>
       {!loading && users.length === 0 && <p className="p-4 text-sm text-zinc-400">No users found.</p>}
     </div>
     <div className="flex items-center justify-between gap-4 text-sm text-zinc-400">
-      <span>{loading ? 'Loading…' : total ? `Showing ${offset + 1}–${offset + users.length} of ${total}` : '0 users'}</span>
+      <span role="status">{loading ? 'Loading…' : total ? `Showing ${offset + 1}–${offset + users.length} of ${total}` : '0 users'}</span>
       <div className="flex gap-3"><button type="button" disabled={loading || offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))} className="disabled:opacity-40">Previous</button><button type="button" disabled={loading || offset + PAGE_SIZE >= total} onClick={() => setOffset(offset + PAGE_SIZE)} className="disabled:opacity-40">Next</button></div>
     </div>
     {pending && <form onSubmit={confirmAction} aria-labelledby="users-confirm-heading" className="space-y-3 rounded-xl border border-amber-500/30 bg-zinc-900/70 p-6">
       <h2 id="users-confirm-heading" ref={confirmHeadingRef} tabIndex={-1} className="text-lg font-medium focus:outline-none">Confirm {pending.kind === 'role' ? 'role change' : pending.kind === 'ban' ? 'disable account' : pending.kind === 'unban' ? 'enable account' : 'account removal'}</h2>
       <p className="text-sm text-zinc-300">{pending.kind === 'role' ? pending.role === 'customer' ? `Revoke CMS access for ${pending.user.email}? Their CMS sessions will end. Their shopper account and orders remain.` : `Change ${pending.user.email} to ${pending.role}? Their current CMS sessions will end.` : pending.kind === 'ban' ? `Disable CMS access for ${pending.user.email}? Their current CMS sessions will end.` : pending.kind === 'unban' ? pending.user.role === 'customer' ? `Enable ${pending.user.email}? They keep the shopper role; use ${context.isHybridAuth ? 'Add editor' : 'Add user'} afterwards to grant CMS access.` : `Restore CMS access for ${pending.user.email}?` : `Permanently remove ${pending.user.email} and all of their CMS sessions? This cannot be undone.`}</p>
-      <div className="flex gap-3"><button disabled={busy} className="rounded-md bg-indigo-500 px-4 py-2 text-sm text-white disabled:opacity-50">{busy ? 'Working…' : 'Confirm'}</button><button type="button" onClick={() => setPending(null)} className="text-sm text-zinc-400">Cancel</button></div>
+      <div className="flex gap-3"><button aria-disabled={busy || undefined} aria-busy={busy || undefined} className="rounded-md bg-indigo-500 px-4 py-2 text-sm text-white aria-disabled:opacity-50">{busy ? 'Working…' : 'Confirm'}</button><button type="button" onClick={() => { setPending(null); setDraftRoles({}); }} className="text-sm text-zinc-400">Cancel</button></div>
     </form>}
-    {resetUser && <form onSubmit={resetPassword} aria-labelledby="users-reset-heading" className="space-y-3 rounded-xl border border-white/10 bg-zinc-900/70 p-6"><h2 id="users-reset-heading" ref={resetHeadingRef} tabIndex={-1} className="text-lg font-medium focus:outline-none">Reset password for {resetUser.email}</h2><label className="block text-sm">New password<input required type="password" minLength={12} autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} className="mt-1 w-full rounded-md border border-white/15 bg-zinc-950 px-3 py-2" /></label><div className="flex gap-3"><button disabled={busy} className="rounded-md bg-indigo-500 px-4 py-2 text-sm text-white disabled:opacity-50">Reset password</button><button type="button" onClick={() => setResetUser(null)} className="text-sm text-zinc-400">Cancel</button></div></form>}
+    {resetUser && <form onSubmit={resetPassword} aria-labelledby="users-reset-heading" className="space-y-3 rounded-xl border border-white/10 bg-zinc-900/70 p-6"><h2 id="users-reset-heading" ref={resetHeadingRef} tabIndex={-1} className="text-lg font-medium focus:outline-none">Reset password for {resetUser.email}</h2><label className="block text-sm">New password<input required type="password" minLength={12} autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} className="mt-1 w-full rounded-md border border-white/15 bg-zinc-950 px-3 py-2" /></label><div className="flex gap-3"><button aria-disabled={busy || undefined} aria-busy={busy || undefined} className="rounded-md bg-indigo-500 px-4 py-2 text-sm text-white aria-disabled:opacity-50">Reset password</button><button type="button" onClick={() => setResetUser(null)} className="text-sm text-zinc-400">Cancel</button></div></form>}
   </div>;
 }

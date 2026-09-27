@@ -69,10 +69,10 @@ export function FieldRenderer({ field, form, fieldPath, relationOptions, relatio
           const value = fieldApi.state.value || [];
           const errorMessages = getErrorMessages(fieldApi);
           return (
-            <div role="group" aria-labelledby={labelId} className="border border-white/10 rounded-lg p-5 space-y-4 bg-zinc-950/40 shadow-inner">
+            <div role="group" aria-labelledby={labelId} data-field-path={fieldName} className="border border-white/10 rounded-lg p-5 space-y-4 bg-zinc-950/40 shadow-inner">
               <div className="flex items-center justify-between pb-3 border-b border-white/5">
                 <div id={labelId} className="text-sm font-medium text-zinc-300">{field.label}</div>
-                <Button size="sm" variant="outline" type="button" onClick={() => { clearServerFieldError(fieldName); fieldApi.pushValue(buildDefaultValues(field.fields)); }}>Add Row</Button>
+                <Button size="sm" variant="outline" type="button" onClick={() => { clearServerFieldError(fieldName); fieldApi.pushValue(buildDefaultValues(field.fields)); }}>Add Row<span className="sr-only"> to {field.label}</span></Button>
               </div>
               {errorMessages.length > 0 && (
                 <p role="alert" className="text-xs text-red-500">{errorMessages.join(', ')}</p>
@@ -84,7 +84,7 @@ export function FieldRenderer({ field, form, fieldPath, relationOptions, relatio
                     variant="destructive"
                     type="button"
                     aria-label={`Remove ${field.label} row ${i + 1}`}
-                    className="absolute -right-2 -top-2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity h-6 w-6 p-0 rounded-full"
+                    className="absolute -right-2 -top-2 h-6 w-6 p-0 rounded-full"
                     onClick={() => { clearServerFieldError(fieldName); fieldApi.removeValue(i); }}
                   >
                     &times;
@@ -122,7 +122,7 @@ export function FieldRenderer({ field, form, fieldPath, relationOptions, relatio
 
   if (field.type === 'group') {
     return (
-      <div role="group" aria-labelledby={labelId} className="border border-white/10 rounded-lg p-5 space-y-4 bg-zinc-950/40 shadow-inner">
+      <div role="group" aria-labelledby={labelId} data-field-path={fieldName} className="border border-white/10 rounded-lg p-5 space-y-4 bg-zinc-950/40 shadow-inner">
         <div className="pb-3 border-b border-white/5">
           <div id={labelId} className="text-sm font-medium text-zinc-300">{field.label}</div>
         </div>
@@ -157,7 +157,8 @@ export function FieldRenderer({ field, form, fieldPath, relationOptions, relatio
           fieldApi.handleChange(nextValue);
         };
         return (
-          <div className="space-y-2">
+          // `data-field-path` lets the editors' error summaries focus this field (see focusFieldControl).
+          <div className="space-y-2" data-field-path={fieldName}>
             {field.type !== 'boolean' && (labelNamesGroup ? (
               <div id={labelId} className="text-sm font-medium block text-zinc-300">
                 {field.label} {field.required && <span aria-hidden="true" className="text-red-400">*</span>}
@@ -174,6 +175,7 @@ export function FieldRenderer({ field, form, fieldPath, relationOptions, relatio
                 describedBy={describedBy}
                 invalid={hasError}
                 required={Boolean(field.required)}
+                label={field.label}
                 adminBasePath={adminBasePath}
                 value={(fieldApi.state.value as string) || ''}
                 onChange={handleValueChange}
@@ -221,6 +223,7 @@ export function FieldRenderer({ field, form, fieldPath, relationOptions, relatio
                   hasError={hasError}
                   ariaLabelledBy={labelId}
                   ariaDescribedBy={describedBy}
+                  required={Boolean(field.required)}
                 />
               </Suspense>
             ) : field.type === 'boolean' ? (

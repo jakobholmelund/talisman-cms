@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Button } from '../ui/button';
 import { readCommerceCurrency } from '../../commerce-currency';
 import { describeCommerceEntry, getRelationOptionLabel } from '../../lib/commerce-models';
@@ -34,6 +34,9 @@ export function RelationshipPicker({
   describedBy?: string;
 }) {
   const [query, setQuery] = useState('');
+  // Read out by screen readers: "Added X", "Removed X", "Moved X to position N of M".
+  const [announcement, setAnnouncement] = useState('');
+  const searchRef = useRef<HTMLInputElement | null>(null);
   const currency = readCommerceCurrency();
   const options = getRelationOptionsForField(field, relationOptions);
   const selections = normalizeRelationSelections(field, value);
@@ -52,22 +55,22 @@ export function RelationshipPicker({
     onBlur();
   }
 
-  function addSelection(collectionSlug: string, entryId: string) {
+  function addSelection(collectionSlug: string, entryId: string, title: string) {
     const nextSelection = { relationTo: collectionSlug, value: entryId };
-    if (field.hasMany) {
-      if (selectedKeys.has(getRelationSelectionKey(nextSelection))) return;
-      commitSelections([...selections, nextSelection]);
-      return;
-    }
-
-    commitSelections([nextSelection]);
+    // A selected option stays focusable and reports its state; activating it again does nothing.
+    if (selectedKeys.has(getRelationSelectionKey(nextSelection))) return;
+    commitSelections(field.hasMany ? [...selections, nextSelection] : [nextSelection]);
+    setAnnouncement(`${field.hasMany ? 'Added' : 'Selected'} ${title}.`);
   }
 
-  function removeSelection(selectionToRemove: RelationReference) {
+  function removeSelection(selectionToRemove: RelationReference, title: string) {
     commitSelections(selections.filter((selection) => getRelationSelectionKey(selection) !== getRelationSelectionKey(selectionToRemove)));
+    setAnnouncement(`Removed ${title}.`);
+    // The Remove button goes with its row, so focus moves to the search field.
+    searchRef.current?.focus();
   }
 
-  function moveSelection(selectionToMove: RelationReference, direction: -1 | 1) {
+  function moveSelection(selectionToMove: RelationReference, direction: -1 | 1, title: string) {
     const index = selections.findIndex((selection) => getRelationSelectionKey(selection) === getRelationSelectionKey(selectionToMove));
     const targetIndex = index + direction;
     if (index < 0 || targetIndex < 0 || targetIndex >= selections.length) return;
@@ -76,11 +79,14 @@ export function RelationshipPicker({
     const [selection] = nextSelections.splice(index, 1);
     nextSelections.splice(targetIndex, 0, selection);
     commitSelections(nextSelections);
+    setAnnouncement(`Moved ${title} to position ${targetIndex + 1} of ${selections.length}.`);
   }
 
   return (
     <div role="group" aria-labelledby={labelId} aria-describedby={describedBy} className="space-y-3">
+      <p role="status" className="sr-only">{announcement}</p>
       <input
+        ref={searchRef}
         type="text"
         value={query}
         onChange={(event) => setQuery(event.target.value)}
@@ -110,15 +116,15 @@ export function RelationshipPicker({
                   <div className="flex flex-wrap gap-2">
                     {field.hasMany && (
                       <>
-                        <Button type="button" size="sm" variant="outline" aria-label={`Move ${description.title} up`} onClick={() => moveSelection(selection, -1)} disabled={index === 0}>
+                        <Button type="button" size="sm" variant="outline" aria-label={`Move ${description.title} up`} onClick={() => moveSelection(selection, -1, description.title)} aria-disabled={index === 0 || undefined}>
                           Up
                         </Button>
-                        <Button type="button" size="sm" variant="outline" aria-label={`Move ${description.title} down`} onClick={() => moveSelection(selection, 1)} disabled={index === selections.length - 1}>
+                        <Button type="button" size="sm" variant="outline" aria-label={`Move ${description.title} down`} onClick={() => moveSelection(selection, 1, description.title)} aria-disabled={index === selections.length - 1 || undefined}>
                           Down
                         </Button>
                       </>
                     )}
-                    <Button type="button" size="sm" variant="destructive" aria-label={`Remove ${description.title}`} onClick={() => removeSelection(selection)}>
+                    <Button type="button" size="sm" variant="destructive" aria-label={`Remove ${description.title}`} onClick={() => removeSelection(selection, description.title)}>
                       Remove
                     </Button>
                   </div>
@@ -142,8 +148,8 @@ export function RelationshipPicker({
               <button
                 key={`${option.collectionSlug}:${option.entry.id}`}
                 type="button"
-                onClick={() => addSelection(option.collectionSlug, option.entry.id)}
-                disabled={field.hasMany ? isSelected : false}
+                onClick={() => addSelection(option.collectionSlug, option.entry.id, description.title)}
+                aria-pressed={isSelected}
                 className={`flex w-full items-start justify-between gap-4 border-b border-white/5 px-3 py-3 text-left transition-colors last:border-b-0 ${isSelected ? 'bg-indigo-500/10' : 'hover:bg-white/[0.04]'}`}
               >
                 <div>

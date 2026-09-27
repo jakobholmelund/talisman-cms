@@ -5,7 +5,7 @@ import { uiLibraries as configuredUiLibraries } from 'virtual:talisman-cms/ui-li
 import { Card, CardContent } from '../ui/card';
 import { Button } from '../ui/button';
 import { ArrowLeft, Archive, Clock3, Database, History, Save, Send } from 'lucide-react';
-import { AdminBasePathContext, FieldRenderer, ServerFieldErrorsContext, type RelationOptionRecord, type ServerFieldErrors } from '../fields';
+import { AdminBasePathContext, FieldRenderer, focusFieldControl, ServerFieldErrorsContext, type RelationOptionRecord, type ServerFieldErrors } from '../fields';
 import { MediaFieldInput } from '../MediaFieldInput';
 import { getSectionCollectionRoute, getSectionEntryRoute, type AdminSection } from '../../lib/admin-sections';
 import { fetchCollectionConfigs, fetchEntriesBySlug } from '../../lib/admin-api';
@@ -92,27 +92,34 @@ function getLoadedUpdatedAt(entry: any) {
   return typeof updatedAt === 'string' || typeof updatedAt === 'number' ? updatedAt : null;
 }
 
-// A message that must survive the remount when a newly created entry opens at its own URL.
+// A message that must survive the remount when a newly created entry opens at its own URL: an error,
+// or with kind 'status' the notice of a successful save.
+type EditorNotice = { kind: 'error' | 'status'; message: string };
+
 function getEditorNoticeKey(slug: string, entryId: string) {
   return `talisman-cms:editor-notice:${slug}:${entryId}`;
 }
 
-function stashEditorNotice(slug: string, entryId: string, message: string) {
+function stashEditorNotice(slug: string, entryId: string, message: string, kind: EditorNotice['kind'] = 'error') {
   try {
-    window.sessionStorage.setItem(getEditorNoticeKey(slug, entryId), message);
+    window.sessionStorage.setItem(getEditorNoticeKey(slug, entryId), JSON.stringify({ kind, message }));
   } catch {
     // Storage can be unavailable; the entry still opens.
   }
 }
 
-function takeEditorNotice(slug: string, entryId: string) {
+function takeEditorNotice(slug: string, entryId: string): EditorNotice | null {
   try {
     const key = getEditorNoticeKey(slug, entryId);
-    const message = window.sessionStorage.getItem(key);
-    if (message) window.sessionStorage.removeItem(key);
-    return message || '';
+    const stored = window.sessionStorage.getItem(key);
+    if (!stored) return null;
+    window.sessionStorage.removeItem(key);
+    const parsed = JSON.parse(stored);
+    return typeof parsed?.message === 'string' && parsed.message
+      ? { kind: parsed.kind === 'status' ? 'status' : 'error', message: parsed.message }
+      : null;
   } catch {
-    return '';
+    return null;
   }
 }
 
@@ -251,7 +258,7 @@ function CommerceModelGuide({
       {guide && (
         <>
           <div>
-            <div className="text-sm font-semibold text-sky-100">{guide.title}</div>
+            <h2 className="text-sm font-semibold text-sky-100">{guide.title}</h2>
             <p className="mt-2 text-sm leading-relaxed text-sky-50/80">{guide.body}</p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -543,6 +550,7 @@ function ProductStorefrontPreview({
                               }`}
                             >
                               {value.label}
+                              {isDefault && <span className="sr-only"> (default)</span>}
                             </span>
                           );
                         })}
@@ -620,8 +628,20 @@ function ProductVariantConfigurator({
   const [localStatus, setLocalStatus] = useState('');
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [hasStaleRows, setHasStaleRows] = useState(false);
+  // The input a required-field message is about, so it reports the error itself.
+  const [errorField, setErrorField] = useState<string | null>(null);
+  // Focus moves here after a card or the "Load latest" button has gone with the change it made.
+  const [focusTarget, setFocusTarget] = useState<{ id: string } | null>(null);
   const idPrefix = useId();
   const controlId = (...parts: string[]) => [idPrefix, ...parts].join('-');
+  const fieldErrorProps = (fieldId: string) => ({
+    'aria-invalid': errorField === fieldId || undefined,
+    'aria-describedby': errorField === fieldId ? controlId('error') : undefined,
+  });
+
+  useEffect(() => {
+    if (focusTarget) document.getElementById(focusTarget.id)?.focus();
+  }, [focusTarget]);
 
   useEffect(() => {
     if (!productId) {
@@ -669,12 +689,24 @@ function ProductVariantConfigurator({
     }
   };
 
+  // A required-field message: the field reports it and takes focus.
+  const showFieldError = (fieldId: string, message: string) => {
+    setLocalError(message);
+    setErrorField(fieldId);
+    document.getElementById(fieldId)?.focus();
+  };
+
   const loadLatestRows = async () => {
+    if (busyKey === 'refresh') return;
     setBusyKey('refresh');
     setLocalError('');
+    setErrorField(null);
     const loadError = await reloadRows();
     if (loadError) setLocalError(`${describeRequestError(loadError).replace(/\.?$/, '.')} Your edits are still here.`);
+    else setLocalStatus('Loaded the latest options and stock.');
     setBusyKey(null);
+    // The button sat in the error box, which has changed or gone; the outcome takes focus.
+    setFocusTarget({ id: controlId(loadError ? 'error' : 'status') });
   };
 
   /**
@@ -686,6 +718,7 @@ function ProductVariantConfigurator({
   const sendVariantChange = async (key: string, change: Record<string, any>, messages: { failed: string; done: string }) => {
     setBusyKey(key);
     setLocalError('');
+    setErrorField(null);
     setLocalStatus('');
     try {
       await requestEditorApi(`${basePath}/api/ecommerce/variants`, {
@@ -703,13 +736,14 @@ function ProductVariantConfigurator({
         setLocalError(describeVariantChangeFailure(failure, messages.failed, !loadError));
       }
       setBusyKey(null);
-      return;
+      return false;
     }
     setLocalStatus(messages.done);
     if (await reloadRows()) {
       setLocalError('The change is saved, but the saved options and stock could not be loaded again. Load them before creating another value.');
     }
     setBusyKey(null);
+    return true;
   };
 
   const updateGroupDraft = (localId: string, updates: Partial<ProductVariantGroupDraft>) => {
@@ -778,14 +812,16 @@ function ProductVariantConfigurator({
   };
 
   const saveDefinition = async () => {
+    if (busyKey === 'definition') return;
     const trimmedName = newDefinitionName.trim();
     if (!trimmedName) {
-      setLocalError('Option definition name is required.');
+      showFieldError(controlId('new-definition'), 'Option definition name is required.');
       return;
     }
 
     setBusyKey('definition');
     setLocalError('');
+    setErrorField(null);
     setLocalStatus('');
 
     try {
@@ -801,18 +837,20 @@ function ProductVariantConfigurator({
   };
 
   const saveGroup = async (group: ProductVariantGroupDraft) => {
+    if (busyKey === `group:${group.localId}`) return;
     if (!productId) {
       setLocalError('Save the product first so variant groups can attach to it.');
       return;
     }
 
     if (!group.name.trim()) {
-      setLocalError('Variant group name is required.');
+      showFieldError(controlId(group.localId, 'name'), 'Variant group name is required.');
       return;
     }
 
     setBusyKey(`group:${group.localId}`);
     setLocalError('');
+    setErrorField(null);
     setLocalStatus('');
 
     try {
@@ -847,13 +885,14 @@ function ProductVariantConfigurator({
   };
 
   const saveValue = async (group: ProductVariantGroupDraft, value: ProductVariantValueDraft) => {
+    if (busyKey === `value:${value.localId}`) return;
     if (!group.id) {
       setLocalError('Save the variant group before adding values.');
       return;
     }
 
     if (!value.value.trim()) {
-      setLocalError('Variant value label is required.');
+      showFieldError(controlId(value.localId, 'label'), 'Variant value label is required.');
       return;
     }
 
@@ -886,6 +925,7 @@ function ProductVariantConfigurator({
   };
 
   const deleteValue = async (groupLocalId: string, value: ProductVariantValueDraft) => {
+    if (busyKey === `delete-value:${value.localId}`) return;
     if (!value.id) {
       setDraftGroups((current) =>
         current.map((group) =>
@@ -894,6 +934,7 @@ function ProductVariantConfigurator({
             : group
         )
       );
+      setFocusTarget({ id: controlId(groupLocalId, 'add-value') });
       return;
     }
 
@@ -901,13 +942,17 @@ function ProductVariantConfigurator({
       return;
     }
 
-    await sendVariantChange(`delete-value:${value.localId}`, { action: 'deleteValue', valueId: value.id },
+    const deleted = await sendVariantChange(`delete-value:${value.localId}`, { action: 'deleteValue', valueId: value.id },
       { failed: 'Failed to delete the variant value', done: `Deleted variant value "${value.value || value.id}".` });
+    // The card went with the value; focus moves to the group's Add Value button.
+    if (deleted) setFocusTarget({ id: controlId(groupLocalId, 'add-value') });
   };
 
   const deleteGroup = async (group: ProductVariantGroupDraft) => {
+    if (busyKey === `delete-group:${group.localId}`) return;
     if (!group.id) {
       setDraftGroups((current) => current.filter((candidate) => candidate.localId !== group.localId));
+      setFocusTarget({ id: controlId('add-group') });
       return;
     }
 
@@ -915,8 +960,10 @@ function ProductVariantConfigurator({
       return;
     }
 
-    await sendVariantChange(`delete-group:${group.localId}`, { action: 'deleteGroup', groupId: group.id },
+    const deleted = await sendVariantChange(`delete-group:${group.localId}`, { action: 'deleteGroup', groupId: group.id },
       { failed: 'Failed to delete the variant group', done: `Deleted variant group "${group.name || group.id}".` });
+    // The card went with the group; focus moves to the Add Variant Group button.
+    if (deleted) setFocusTarget({ id: controlId('add-group') });
   };
 
   if (!productId) {
@@ -939,13 +986,13 @@ function ProductVariantConfigurator({
             Set up the choices shoppers can make and the stock available for each one.
           </p>
         </div>
-        <Button type="button" variant="outline" onClick={addGroupDraft}>
+        <Button id={controlId('add-group')} type="button" variant="outline" onClick={addGroupDraft}>
           Add Variant Group
         </Button>
       </div>
 
       <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-        <div className="text-sm font-medium text-zinc-100">Option Definitions</div>
+        <h3 className="text-sm font-medium text-zinc-100">Option Definitions</h3>
         <p className="mt-1 text-xs text-zinc-400">Create reusable option families like Size, Color, or Material.</p>
         <div className="mt-4 flex flex-col gap-3 md:flex-row">
           <label htmlFor={controlId('new-definition')} className="sr-only">New option definition name</label>
@@ -955,9 +1002,10 @@ function ProductVariantConfigurator({
             value={newDefinitionName}
             onChange={(event) => setNewDefinitionName(event.target.value)}
             placeholder="e.g. Size"
+            {...fieldErrorProps(controlId('new-definition'))}
             className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
           />
-          <Button type="button" onClick={() => void saveDefinition()} disabled={busyKey === 'definition'}>
+          <Button type="button" onClick={() => void saveDefinition()} aria-disabled={busyKey === 'definition' || undefined} aria-busy={busyKey === 'definition' || undefined}>
             {busyKey === 'definition' ? 'Creating...' : 'Create Definition'}
           </Button>
         </div>
@@ -975,16 +1023,17 @@ function ProductVariantConfigurator({
       </div>
 
       {localError && (
-        <div role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+        <div id={controlId('error')} role="alert" tabIndex={-1} className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200 focus:outline-none">
           <p>{localError}</p>
           {hasStaleRows && (
-            <Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => void loadLatestRows()} disabled={busyKey === 'refresh'}>
+            <Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => void loadLatestRows()} aria-disabled={busyKey === 'refresh' || undefined} aria-busy={busyKey === 'refresh' || undefined}>
               {busyKey === 'refresh' ? 'Loading...' : 'Load latest options and stock'}
             </Button>
           )}
         </div>
       )}
-      {localStatus && <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100">{localStatus}</div>}
+      {/* Kept mounted so screen readers hear each outcome; empty, it takes no space. */}
+      <div id={controlId('status')} role="status" tabIndex={-1} className={localStatus ? 'rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100 focus:outline-none' : 'sr-only'}>{localStatus}</div>
 
       <ProductStorefrontPreview
         productValues={productValues}
@@ -1001,15 +1050,15 @@ function ProductVariantConfigurator({
           {draftGroups.map((group, index) => (
             <div key={group.localId} className="rounded-xl border border-white/10 bg-black/20 p-5 space-y-5">
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <div className="text-xs uppercase tracking-[0.2em] text-emerald-100/60">Variant Group {index + 1}</div>
-                  <div className="mt-1 text-base font-medium text-white">{group.name || 'Untitled variant group'}</div>
-                </div>
+                <h3>
+                  <span className="block text-xs uppercase tracking-[0.2em] text-emerald-100/60">Variant Group {index + 1}</span>
+                  <span className="mt-1 block text-base font-medium text-white">{group.name || 'Untitled variant group'}</span>
+                </h3>
                 <div className="flex gap-2">
-                  <Button type="button" variant="outline" onClick={() => void saveGroup(group)} disabled={busyKey === `group:${group.localId}`}>
+                  <Button type="button" variant="outline" onClick={() => void saveGroup(group)} aria-disabled={busyKey === `group:${group.localId}` || undefined} aria-busy={busyKey === `group:${group.localId}` || undefined}>
                     {busyKey === `group:${group.localId}` ? 'Saving...' : group.id ? 'Save Group' : 'Create Group'}
                   </Button>
-                  <Button type="button" variant="destructive" aria-label={`Delete variant group ${group.name || index + 1}`} onClick={() => void deleteGroup(group)} disabled={busyKey === `delete-group:${group.localId}`}>
+                  <Button type="button" variant="destructive" aria-label={`Delete variant group ${group.name || index + 1}`} onClick={() => void deleteGroup(group)} aria-disabled={busyKey === `delete-group:${group.localId}` || undefined} aria-busy={busyKey === `delete-group:${group.localId}` || undefined}>
                     Delete
                   </Button>
                 </div>
@@ -1040,6 +1089,7 @@ function ProductVariantConfigurator({
                     value={group.name}
                     onChange={(event) => updateGroupDraft(group.localId, { name: event.target.value })}
                     placeholder="e.g. Shirt Sizes"
+                    {...fieldErrorProps(controlId(group.localId, 'name'))}
                     className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
                   />
                 </div>
@@ -1080,10 +1130,10 @@ function ProductVariantConfigurator({
               <div className="space-y-4 rounded-xl border border-white/10 bg-white/[0.02] p-4">
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div>
-                    <div className="text-sm font-medium text-zinc-100">Variant Values</div>
+                    <h4 className="text-sm font-medium text-zinc-100">Variant Values</h4>
                     <p className="mt-1 text-xs text-zinc-400">These are the shopper-selectable options tied to this group.</p>
                   </div>
-                  <Button type="button" variant="outline" onClick={() => addValueDraft(group.localId)} disabled={!group.id}>
+                  <Button id={controlId(group.localId, 'add-value')} type="button" variant="outline" onClick={() => addValueDraft(group.localId)} disabled={!group.id}>
                     Add Value
                   </Button>
                 </div>
@@ -1108,10 +1158,10 @@ function ProductVariantConfigurator({
                             <p className="mt-1 text-xs text-zinc-400">Stock rows are saved alongside the value.</p>
                           </div>
                           <div className="flex gap-2">
-                            <Button type="button" variant="outline" onClick={() => void saveValue(group, value)} disabled={!group.id || busyKey === `value:${value.localId}`}>
+                            <Button type="button" variant="outline" onClick={() => void saveValue(group, value)} disabled={!group.id} aria-disabled={busyKey === `value:${value.localId}` || undefined} aria-busy={busyKey === `value:${value.localId}` || undefined}>
                               {busyKey === `value:${value.localId}` ? 'Saving...' : value.id ? 'Save Value' : 'Create Value'}
                             </Button>
-                            <Button type="button" variant="destructive" aria-label={`Delete variant value ${value.value || 'Untitled value'}`} onClick={() => void deleteValue(group.localId, value)} disabled={busyKey === `delete-value:${value.localId}`}>
+                            <Button type="button" variant="destructive" aria-label={`Delete variant value ${value.value || 'Untitled value'}`} onClick={() => void deleteValue(group.localId, value)} aria-disabled={busyKey === `delete-value:${value.localId}` || undefined} aria-busy={busyKey === `delete-value:${value.localId}` || undefined}>
                               Delete
                             </Button>
                           </div>
@@ -1126,6 +1176,7 @@ function ProductVariantConfigurator({
                               value={value.value}
                               onChange={(event) => updateValueDraft(group.localId, value.localId, { value: event.target.value })}
                               placeholder="e.g. Small"
+                              {...fieldErrorProps(controlId(value.localId, 'label'))}
                               className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
                             />
                           </div>
@@ -1144,6 +1195,7 @@ function ProductVariantConfigurator({
                             <label htmlFor={controlId(value.localId, 'image')} className="text-sm font-medium text-zinc-300">Variant Image</label>
                             <MediaFieldInput
                               inputId={controlId(value.localId, 'image')}
+                              label={`Variant Image of ${value.value || 'Untitled value'}`}
                               adminBasePath={basePath}
                               value={value.image}
                               onChange={(nextValue) => updateValueDraft(group.localId, value.localId, { image: nextValue })}
@@ -1278,8 +1330,10 @@ function PresetEditorPanel({
                   form.setFieldValue('propsJson', '{}');
                 }}
                 onBlur={fieldApi.handleBlur}
-                disabled={!selectedLibrary}
-                className="w-full rounded-md border border-white/10 bg-zinc-950/50 px-3 py-2.5 text-sm shadow-inner transition-all focus:border-indigo-500/50 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50"
+                // Stays in the tab order; the hint says why nothing can be chosen yet.
+                aria-disabled={!selectedLibrary || undefined}
+                aria-describedby={!selectedLibrary ? `${idPrefix}-component-hint` : undefined}
+                className="w-full rounded-md border border-white/10 bg-zinc-950/50 px-3 py-2.5 text-sm shadow-inner transition-all focus:border-indigo-500/50 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 aria-disabled:opacity-50"
               >
                 <option value="">Select a component...</option>
                 {(selectedLibrary?.components || []).map((componentAdapter: any) => (
@@ -1288,6 +1342,7 @@ function PresetEditorPanel({
                   </option>
                 ))}
               </select>
+              {!selectedLibrary && <p id={`${idPrefix}-component-hint`} className="sr-only">Choose a library first.</p>}
             </div>
           )}
         />
@@ -1414,7 +1469,9 @@ export function CollectionEntryEditor({
   const [relationSupportEntries, setRelationSupportEntries] = useState<CommerceSupportEntries>(loadedSupportEntries);
   useEffect(() => setRelationSupportEntries(loadedSupportEntries), [loadedSupportEntries]);
   const [viewMode, setViewMode] = useState<'form' | 'raw'>('form');
-  const [isWorking, setIsWorking] = useState(false);
+  // The entry action that is running, for its button's busy state and the status line; null when idle.
+  const [working, setWorking] = useState<{ action: EditorAction | 'reload' | 'load-latest'; message: string } | null>(null);
+  const isWorking = working !== null;
 
   // Computed once: useForm re-applies changed defaultValues to an untouched form on every render,
   // which would undo the form.reset calls below. Resets keep these defaults for the same reason.
@@ -1491,7 +1548,8 @@ export function CollectionEntryEditor({
 
   useEffect(() => {
     const carriedNotice = takeEditorNotice(slug, entryId);
-    if (carriedNotice) setGlobalError(carriedNotice);
+    if (carriedNotice?.kind === 'status') setNotice(carriedNotice.message);
+    else if (carriedNotice) setGlobalError(carriedNotice.message);
     const carriedTransition = takePendingTransition(slug, entryId);
     if (carriedTransition) setPendingTransition({ ...carriedTransition, phase: 'checking' });
   }, [slug, entryId]);
@@ -1527,6 +1585,14 @@ export function CollectionEntryEditor({
     () => ({ errors: serverFieldErrors, clearError: clearServerFieldError }),
     [serverFieldErrors, clearServerFieldError]
   );
+
+  // Where focus goes when the control that had it is gone: the conflict panel when it appears or
+  // changes what it offers, and the Save button when the panel or the pending box closes.
+  const saveButtonRef = useRef<HTMLButtonElement | null>(null);
+  const conflictPanelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (conflict) conflictPanelRef.current?.focus();
+  }, [conflict]);
 
   if (!collection) return <div>Collection not found.</div>;
 
@@ -1639,22 +1705,24 @@ export function CollectionEntryEditor({
   // After the automatic checks, the user reloads the entry. That ends the wait either way, so a
   // transition that failed in its Workflow can be tried again.
   const checkPendingTransition = async () => {
-    if (!pendingTransition) return;
+    if (!pendingTransition || isWorking) return;
     const pending = pendingTransition;
     setGlobalError('');
-    setIsWorking(true);
+    setWorking({ action: 'reload', message: `Reloading the ${recordLabel}...` });
     try {
       const latest = await fetchEntry(pending.entryId);
       if (hasEntryMovedOn(latest, pending)) {
         await settlePendingTransition(pending, latest);
+        saveButtonRef.current?.focus();
         return;
       }
       setPendingTransition(null);
       setNotice(`The ${pending.action} has not finished yet. It can still finish in the background: reload the page in a minute and check the status before you try again.`);
+      saveButtonRef.current?.focus();
     } catch (error) {
       setGlobalError(describeRequestError(error));
     } finally {
-      setIsWorking(false);
+      setWorking(null);
     }
   };
 
@@ -1749,11 +1817,12 @@ export function CollectionEntryEditor({
   };
 
   const runEntryAction = async (action: Exclude<EditorAction, 'restore'>) => {
-    if (pendingTransition) return;
+    if (entryActionsLocked) return;
     if (!confirmDiscardConflictChanges(`The ${action} will not include them and they will be lost. Continue?`)) return;
     resetFeedback();
-    setIsWorking(true);
+    setWorking({ action, message: action === 'save' ? 'Saving...' : action === 'publish' ? 'Publishing...' : 'Archiving...' });
     let createdEntryId: string | null = null;
+    const savedNotice = versioningEnabled ? 'Draft saved.' : 'Changes saved.';
 
     try {
       let targetEntry = currentEntry;
@@ -1763,6 +1832,7 @@ export function CollectionEntryEditor({
         if (isNew) {
           createdEntryId = savedEntry.id;
           if (action === 'save') {
+            stashEditorNotice(slug, savedEntry.id, savedNotice, 'status');
             openCreatedEntry(savedEntry.id);
             return;
           }
@@ -1772,7 +1842,11 @@ export function CollectionEntryEditor({
         }
       }
 
-      if (action === 'save') return;
+      if (action === 'save') {
+        setNotice(savedNotice);
+        return;
+      }
+      const doneNotice = `The ${recordLabel} is ${action === 'publish' ? 'published' : 'archived'}.`;
 
       const nextEntry = await requestEditorApi(`${basePath}/api/collections/${slug}/entries/${targetEntry.id}/${action}`, {
         method: 'POST',
@@ -1790,12 +1864,14 @@ export function CollectionEntryEditor({
 
       if (createdEntryId) {
         if (pending) stashPendingTransition(slug, pending);
+        else stashEditorNotice(slug, createdEntryId, doneNotice, 'status');
         openCreatedEntry(createdEntryId);
         return;
       }
 
       if (!pending) {
         await refreshEntryState(nextEntry.id);
+        setNotice(doneNotice);
         return;
       }
 
@@ -1813,30 +1889,31 @@ export function CollectionEntryEditor({
       }
       handleRequestError(error, action);
     } finally {
-      // Stay disabled while the created entry opens, so a second click cannot create a duplicate.
-      if (!leavingEditorRef.current) setIsWorking(false);
+      // Stay busy while the created entry opens, so a second click cannot create a duplicate.
+      if (!leavingEditorRef.current) setWorking(null);
     }
   };
 
-  const handleRestoreRevision = async (revisionId: string) => {
-    if (!currentEntry?.id || pendingTransition) return;
+  const handleRestoreRevision = async (revision: any) => {
+    if (!currentEntry?.id || entryActionsLocked) return;
     if (hasUnsavedWorkRef.current && !window.confirm('Restoring this revision replaces your unsaved changes. Continue?')) return;
 
     resetFeedback();
-    setIsWorking(true);
+    setWorking({ action: 'restore', message: `Restoring revision ${revision.revisionNumber}...` });
 
     try {
-      const restored = await requestEditorApi(`${basePath}/api/collections/${slug}/entries/${currentEntry.id}/revisions/${revisionId}/restore`, {
+      const restored = await requestEditorApi(`${basePath}/api/collections/${slug}/entries/${currentEntry.id}/revisions/${revision.id}/restore`, {
         method: 'POST',
         body: JSON.stringify({ expectedRevisionId: currentEntry.latestRevisionId ?? null })
       }, 'Failed to restore this revision');
 
       broadcastChange(restored.id);
       await refreshEntryState(restored.id);
+      setNotice(`Revision ${revision.revisionNumber} restored.`);
     } catch (error) {
       handleRequestError(error, 'restore');
     } finally {
-      setIsWorking(false);
+      setWorking(null);
     }
   };
 
@@ -1857,6 +1934,7 @@ export function CollectionEntryEditor({
   const dismissConflict = () => {
     if (!confirmDiscardConflictChanges('Dismiss them? They will be lost.')) return;
     setConflict(null);
+    saveButtonRef.current?.focus();
   };
 
   const copyConflictDraft = async () => {
@@ -1869,7 +1947,7 @@ export function CollectionEntryEditor({
   };
 
   const loadLatestAfterConflict = async () => {
-    if (!conflict || !currentEntry?.id) return;
+    if (!conflict || !currentEntry?.id || isWorking) return;
     // The form still holds the user's edits, including any made after the 409: the panel keeps them
     // once the latest version replaces the form.
     let held: Pick<EditConflict, 'changes' | 'slug'>;
@@ -1880,7 +1958,7 @@ export function CollectionEntryEditor({
       return;
     }
     setGlobalError('');
-    setIsWorking(true);
+    setWorking({ action: 'load-latest', message: 'Loading the latest version...' });
 
     try {
       await refreshEntryState(currentEntry.id);
@@ -1888,14 +1966,14 @@ export function CollectionEntryEditor({
     } catch (error) {
       setGlobalError(describeRequestError(error));
     } finally {
-      setIsWorking(false);
+      setWorking(null);
     }
   };
 
   // Puts only the fields the user changed back on top of the latest version. Every other field keeps
   // its latest value, so saving neither reverts someone else's edits nor writes back stale stock.
   const reapplyConflictDraft = () => {
-    if (!conflict) return;
+    if (!conflict || isWorking) return;
     let latestValues: Record<string, any>;
     try {
       latestValues = supportsRawView && viewMode === 'raw' ? parseEditorValues() : form.state.values as Record<string, any>;
@@ -1918,6 +1996,8 @@ export function CollectionEntryEditor({
     }
     setConflict(null);
     setNotice(`Your changes are back in the form on top of the latest version; other fields keep their latest values. Save to apply them.`);
+    // The panel closes under the button; the next step is to save.
+    saveButtonRef.current?.focus();
   };
 
   const toggleViewMode = () => {
@@ -1977,7 +2057,7 @@ export function CollectionEntryEditor({
             ? 'Edit the details shoppers see, then manage options and stock below.'
             : collection.description || `Edit this ${nativeCollection ? 'record' : 'content entry'} in ${collection.name}.`}
         </p>
-        {collection.readOnly && <p className="mt-4 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">This record is managed by the payment workflow and is read-only in the CMS.</p>}
+        {collection.readOnly && <p id={`${slugInputId}-readonly`} className="mt-4 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">This record is managed by the payment workflow and is read-only in the CMS.</p>}
         {showProductConfigurator && <nav aria-label="Product editor sections" className="mt-5 flex flex-wrap gap-2 text-xs font-medium">
           <a href="#product-details" className="rounded-full border border-indigo-400/30 bg-indigo-400/10 px-3 py-2 text-indigo-200 hover:bg-indigo-400/20">Product details</a>
           <a href="#product-options" className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-zinc-300 hover:bg-white/10">Options &amp; stock</a>
@@ -1985,7 +2065,8 @@ export function CollectionEntryEditor({
       </div>
 
       <div className="space-y-8 w-full">
-        <div id={showProductConfigurator ? 'product-details' : undefined} className={`space-y-6 scroll-mt-24 ${collection.readOnly ? 'pointer-events-none opacity-80' : ''}`}>
+        {/* A fieldset, so a read-only record disables its controls for the keyboard too, not only for the mouse. */}
+        <fieldset disabled={collection.readOnly || undefined} aria-describedby={collection.readOnly ? `${slugInputId}-readonly` : undefined} id={showProductConfigurator ? 'product-details' : undefined} className={`min-w-0 space-y-6 scroll-mt-24 ${collection.readOnly ? 'pointer-events-none opacity-80' : ''}`}>
           <Card>
              <CardContent className="pt-6">
                 <div className="space-y-8">
@@ -2100,35 +2181,38 @@ export function CollectionEntryEditor({
                </div>
             </CardContent>
           </Card>
-        </div>
+        </fieldset>
 
         <div className="space-y-8">
            <Card>
               <CardContent className="pt-6 space-y-6">
                  <div>
-                   <label className="text-sm font-medium mb-2 block text-zinc-300">{nativeCollection ? 'State' : 'Status'}</label>
-                   <div className={`inline-flex items-center rounded-md border px-3 py-2 text-sm font-medium ${getStatusBadgeClass(currentStatus)}`}>
+                   {/* An output is labelable and a live region, so the label names it and status changes are read out. */}
+                   <label htmlFor={`${slugInputId}-status`} className="text-sm font-medium mb-2 block text-zinc-300">{nativeCollection ? 'State' : 'Status'}</label>
+                   <output id={`${slugInputId}-status`} className={`inline-flex items-center rounded-md border px-3 py-2 text-sm font-medium ${getStatusBadgeClass(currentStatus)}`}>
                      {currentStatus.charAt(0).toUpperCase() + currentStatus.slice(1)}
-                   </div>
+                   </output>
                    {!versioningEnabled && !showProductConfigurator && (
                      <p className="text-xs text-zinc-500 mt-2">Native collections bypass the draft/publish workflow and revision history.</p>
                    )}
                  </div>
 
                  <div className="pt-2">
-                    {!collection.readOnly && <Button onClick={handleManualSaveClick} disabled={entryActionsLocked} className="w-full gap-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-400 hover:to-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_25px_rgba(99,102,241,0.5)] transition-all duration-300 border-0 h-11 text-base">
+                    {/* The buttons stay focusable while an action runs (aria-disabled); the status line says what is happening. */}
+                    {!collection.readOnly && <Button ref={saveButtonRef} onClick={handleManualSaveClick} aria-disabled={entryActionsLocked || undefined} aria-busy={working?.action === 'save' || undefined} className="w-full gap-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-400 hover:to-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_25px_rgba(99,102,241,0.5)] transition-all duration-300 border-0 h-11 text-base">
                       <Save size={18} /> {isWorking ? 'Working...' : versioningEnabled ? 'Save Draft' : 'Save Changes'}
                     </Button>}
                     {versioningEnabled && !collection.readOnly && isAdmin && (
                       <div className="grid grid-cols-2 gap-3 mt-3">
-                        <Button type="button" variant="outline" disabled={entryActionsLocked} onClick={() => void runEntryAction('publish')} className="gap-2">
+                        <Button type="button" variant="outline" aria-disabled={entryActionsLocked || undefined} aria-busy={working?.action === 'publish' || pendingTransition?.action === 'publish' || undefined} onClick={() => void runEntryAction('publish')} className="gap-2">
                           <Send size={16} /> {pendingTransition?.action === 'publish' ? 'Publishing...' : 'Publish'}
                         </Button>
-                        <Button type="button" variant="outline" disabled={entryActionsLocked || isNew} onClick={() => void runEntryAction('archive')} className="gap-2">
+                        <Button type="button" variant="outline" disabled={isNew} aria-disabled={entryActionsLocked || undefined} aria-busy={working?.action === 'archive' || pendingTransition?.action === 'archive' || undefined} onClick={() => void runEntryAction('archive')} className="gap-2">
                           <Archive size={16} /> {pendingTransition?.action === 'archive' ? 'Archiving...' : 'Archive'}
                         </Button>
                       </div>
                     )}
+                    <p role="status" className="sr-only">{working?.message ?? ''}</p>
                     {hasUnsavedWork && !isWorking && (
                       <p className="text-xs text-amber-300 mt-3 text-center">Unsaved changes</p>
                     )}
@@ -2137,10 +2221,11 @@ export function CollectionEntryEditor({
                       <form.Subscribe
                         selector={(state: any) => state.values}
                         children={(values: Record<string, any>) => (
-                          <ul className="mt-3 space-y-1 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                          <ul role="alert" className="mt-3 space-y-1 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
                             {Object.entries(serverFieldErrors).map(([fieldPath, messages]) => (
                               <li key={fieldPath || 'entry'}>
-                                <span className="font-medium">{describeFieldPath(fieldPath, collection.fields || [], values)}</span>: {messages.join(', ')}
+                                {/* The field's name leads to the field itself, when it is on the page. */}
+                                <button type="button" onClick={() => focusFieldControl(fieldPath)} className="font-medium rounded-sm hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60">{describeFieldPath(fieldPath, collection.fields || [], values)}</button>: {messages.join(', ')}
                               </li>
                             ))}
                           </ul>
@@ -2153,16 +2238,19 @@ export function CollectionEntryEditor({
                         {pendingTransition.phase === 'checking' ? (
                           <p className="text-xs text-sky-100/70">Checking for the result...</p>
                         ) : (
-                          <Button type="button" size="sm" variant="outline" onClick={() => void checkPendingTransition()} disabled={isWorking}>
+                          <Button type="button" size="sm" variant="outline" onClick={() => void checkPendingTransition()} aria-disabled={isWorking || undefined} aria-busy={working?.action === 'reload' || undefined}>
                             Reload {recordLabel}
                           </Button>
                         )}
                       </div>
                     )}
-                    {notice && <p className="text-emerald-300 text-sm mt-3 text-center">{notice}</p>}
+                    {/* Kept mounted so screen readers hear each outcome; empty, it takes no space. */}
+                    <p role="status" className={notice ? 'text-emerald-300 text-sm mt-3 text-center' : 'sr-only'}>{notice}</p>
+                    {/* Announces a refused save; the panel itself is a region that takes focus, as it holds controls. */}
+                    <p role="alert" className="sr-only">{conflict && !conflict.latestLoaded ? `This ${recordLabel} changed after you opened it.` : ''}</p>
                     {conflict && (
-                      <div role="alert" className="mt-4 space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
-                        <div className="font-medium text-amber-50">
+                      <div ref={conflictPanelRef} role="region" aria-labelledby={`${slugInputId}-conflict-title`} tabIndex={-1} className="mt-4 space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60">
+                        <div id={`${slugInputId}-conflict-title`} className="font-medium text-amber-50">
                           {conflict.latestLoaded ? 'The latest saved version is now in the form' : `This ${recordLabel} changed after you opened it`}
                         </div>
                         <p className="text-amber-100/80">
@@ -2183,7 +2271,7 @@ export function CollectionEntryEditor({
                           {conflict.latestLoaded ? (
                             <>
                               {conflictHasChanges && (
-                                <Button type="button" size="sm" variant="outline" onClick={reapplyConflictDraft} disabled={isWorking}>
+                                <Button type="button" size="sm" variant="outline" onClick={reapplyConflictDraft} aria-disabled={isWorking || undefined}>
                                   Put my changes back
                                 </Button>
                               )}
@@ -2192,7 +2280,7 @@ export function CollectionEntryEditor({
                               </Button>
                             </>
                           ) : (
-                            <Button type="button" size="sm" variant="outline" onClick={() => void loadLatestAfterConflict()} disabled={isWorking}>
+                            <Button type="button" size="sm" variant="outline" onClick={() => void loadLatestAfterConflict()} aria-disabled={isWorking || undefined} aria-busy={working?.action === 'load-latest' || undefined}>
                               Load latest version
                             </Button>
                           )}
@@ -2203,6 +2291,7 @@ export function CollectionEntryEditor({
                             <details open={copyState === 'failed' || conflict.latestLoaded}>
                               <summary className="cursor-pointer text-xs text-amber-100/80">My changes as JSON</summary>
                               <textarea
+                                aria-label="My changes as JSON"
                                 readOnly
                                 value={conflictDraftJson}
                                 spellCheck={false}
@@ -2219,12 +2308,12 @@ export function CollectionEntryEditor({
                    <div className="pt-6 border-t border-white/5 space-y-4">
                      <div className="bg-white/[0.02] rounded-md p-3 border border-white/5">
                        <div className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold mb-1">{nativeCollection ? 'Record ID' : 'Entry ID'}</div>
-                       <div className="text-sm font-mono text-zinc-300 truncate" title={currentEntry.id}>{currentEntry.id}</div>
+                       <div className="text-sm font-mono text-zinc-300 break-all">{currentEntry.id}</div>
                      </div>
                      {nativeCollection && entryData[nativeIdColumn] && entryData[nativeIdColumn] !== currentEntry.id && (
                        <div className="bg-white/[0.02] rounded-md p-3 border border-white/5">
                          <div className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold mb-1">Primary Key</div>
-                         <div className="text-sm font-mono text-zinc-300 truncate" title={entryData[nativeIdColumn]}>{entryData[nativeIdColumn]}</div>
+                         <div className="text-sm font-mono text-zinc-300 break-all">{entryData[nativeIdColumn]}</div>
                        </div>
                      )}
                      <div className="grid grid-cols-2 gap-4">
@@ -2248,10 +2337,10 @@ export function CollectionEntryEditor({
 
                  {versioningEnabled && !isNew && (
                    <div className="pt-6 border-t border-white/5 space-y-4">
-                     <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+                     <h2 className="flex items-center gap-2 text-sm font-medium text-zinc-200">
                        <History size={14} />
                        Revision History
-                     </div>
+                     </h2>
                      {revisions.length >= REVISION_LIST_LIMIT && (
                        <p className="text-xs text-zinc-500">Showing the {REVISION_LIST_LIMIT} most recent revisions.</p>
                      )}
@@ -2263,11 +2352,11 @@ export function CollectionEntryEditor({
                            <div key={revision.id} className="rounded-md border border-white/5 bg-white/[0.02] p-3 space-y-2">
                              <div className="flex items-center justify-between gap-3">
                                <div>
-                                 <div className="text-sm text-zinc-200">Revision #{revision.revisionNumber}</div>
+                                 <h3 className="text-sm text-zinc-200">Revision #{revision.revisionNumber}</h3>
                                  <div className="text-[11px] uppercase tracking-widest text-zinc-500">{revision.type.replace('_', ' ')}</div>
                                </div>
-                               {isAdmin && !collection.readOnly && <Button type="button" variant="ghost" size="sm" disabled={entryActionsLocked} onClick={() => void handleRestoreRevision(revision.id)}>
-                                 Restore
+                               {isAdmin && !collection.readOnly && <Button type="button" variant="ghost" size="sm" aria-disabled={entryActionsLocked || undefined} onClick={() => void handleRestoreRevision(revision)}>
+                                 Restore<span className="sr-only"> revision {revision.revisionNumber}</span>
                                </Button>}
                              </div>
                              <div className="flex items-center gap-2 text-xs text-zinc-500">
@@ -2283,7 +2372,7 @@ export function CollectionEntryEditor({
               </CardContent>
            </Card>
         </div>
-        {showProductConfigurator && <div id="product-options" className={`scroll-mt-24 ${collection.readOnly ? 'pointer-events-none opacity-80' : ''}`}>
+        {showProductConfigurator && <fieldset disabled={collection.readOnly || undefined} aria-describedby={collection.readOnly ? `${slugInputId}-readonly` : undefined} id="product-options" className={`min-w-0 scroll-mt-24 ${collection.readOnly ? 'pointer-events-none opacity-80' : ''}`}>
           <form.Subscribe
             selector={(state: any) => state.values}
             children={(values: Record<string, any>) => (
@@ -2296,7 +2385,7 @@ export function CollectionEntryEditor({
               />
             )}
           />
-        </div>}
+        </fieldset>}
       </div>
     </div>
   );

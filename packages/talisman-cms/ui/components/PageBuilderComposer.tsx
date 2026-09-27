@@ -126,7 +126,8 @@ function FieldSection({
   return (
     <div className="space-y-4 rounded-xl border border-white/10 bg-black/20 p-4">
       <div>
-        <div className="text-sm font-medium text-zinc-100">{title}</div>
+        {/* Below the inspector's h2 and the block or component name's h3. */}
+        <h4 className="text-sm font-medium text-zinc-100">{title}</h4>
         {description ? <div className="mt-1 text-xs text-zinc-400">{description}</div> : null}
       </div>
       <div className="space-y-4">{children}</div>
@@ -187,6 +188,22 @@ function BuilderPanel({
     return [...paths].filter((path) => blockPathPattern.exec(path)?.[1] === String(blockIndex)).length;
   };
   const listErrors = [...new Set([...formatFieldErrors(fieldApi.state.meta.errors), ...(serverErrors[fieldName] || [])])];
+
+  // Keyboard reordering: the move buttons stay focusable at the ends, the result is read out, and focus
+  // follows the moved item to its new place (the cards are keyed by index, so React may re-create them).
+  const [lastMove, setLastMove] = useState<{ text: string; focusKey: string } | null>(null);
+  const moveItem = (api: any, listId: string, from: number, to: number, count: number, name: string) => {
+    if (to < 0 || to >= count) return;
+    reorderFieldArrayValue(api, from, to);
+    setLastMove({ text: `Moved ${name} to position ${to + 1} of ${count}.`, focusKey: `${listId}:${to}:${to > from ? 'down' : 'up'}` });
+  };
+  useEffect(() => {
+    if (!lastMove) return;
+    const frame = requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(`[data-move-button="${CSS.escape(lastMove.focusKey)}"]`)?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [lastMove]);
 
   const getCardKey = (listId: string, index: number) => `${listId}:${index}`;
   const isCardCollapsed = (listId: string, index: number) => collapsedCards[getCardKey(listId, index)] === true;
@@ -289,6 +306,7 @@ function BuilderPanel({
     onClose: () => setSelectedNode(null),
     getReturnFocus: () => Array.from(document.querySelectorAll<HTMLElement>('[data-builder-node]'))
       .find((element) => element.dataset.builderNode === lastSelectedNodeKeyRef.current),
+    inertOutside: true,
   });
 
   return (
@@ -312,14 +330,15 @@ function BuilderPanel({
 
           <div className="mt-4 space-y-4">
             <FieldErrorText messages={listErrors} />
+            <p role="status" className="sr-only">{lastMove?.text ?? ''}</p>
             <div className="flex flex-wrap items-center gap-2">
               {value.length > 0 ? (
                 <>
                   <Button size="sm" variant="outline" type="button" onClick={() => setListCollapsed(fieldName, value.length, true)}>
-                    Collapse All
+                    Collapse All<span className="sr-only"> blocks in {field.label}</span>
                   </Button>
                   <Button size="sm" variant="outline" type="button" onClick={() => setListCollapsed(fieldName, value.length, false)}>
-                    Expand All
+                    Expand All<span className="sr-only"> blocks in {field.label}</span>
                   </Button>
                 </>
               ) : null}
@@ -397,6 +416,7 @@ function BuilderPanel({
                         >
                           <div
                             draggable
+                            aria-hidden="true"
                             onDragStart={() => setDragState({ listId: fieldName, index: blockIndex })}
                             onDragEnd={() => setDragState(null)}
                             className="mt-0.5 flex h-8 w-8 shrink-0 cursor-grab items-center justify-center rounded-md border border-white/10 bg-white/[0.03] text-zinc-500 active:cursor-grabbing"
@@ -466,7 +486,7 @@ function BuilderPanel({
                               setBlockLibraryOpen(true);
                             }}
                           >
-                            Add Above
+                            Add Above<span className="sr-only"> {blockDef.name} (block {blockIndex + 1})</span>
                           </Button>
                           <Button
                             size="sm"
@@ -477,15 +497,17 @@ function BuilderPanel({
                               setBlockLibraryOpen(true);
                             }}
                           >
-                            Add Below
+                            Add Below<span className="sr-only"> {blockDef.name} (block {blockIndex + 1})</span>
                           </Button>
                           <Button
                             size="sm"
                             variant="outline"
                             type="button"
                             className="h-8 w-8 p-0"
-                            onClick={() => reorderFieldArrayValue(fieldApi, blockIndex, blockIndex - 1)}
-                            disabled={blockIndex === 0}
+                            aria-label={`Move ${blockDef.name} (block ${blockIndex + 1}) up`}
+                            aria-disabled={blockIndex === 0 || undefined}
+                            data-move-button={`${fieldName}:${blockIndex}:up`}
+                            onClick={() => moveItem(fieldApi, fieldName, blockIndex, blockIndex - 1, value.length, blockDef.name)}
                             title="Move block up"
                           >
                             <ArrowUp size={14} />
@@ -495,8 +517,10 @@ function BuilderPanel({
                             variant="outline"
                             type="button"
                             className="h-8 w-8 p-0"
-                            onClick={() => reorderFieldArrayValue(fieldApi, blockIndex, blockIndex + 1)}
-                            disabled={blockIndex === value.length - 1}
+                            aria-label={`Move ${blockDef.name} (block ${blockIndex + 1}) down`}
+                            aria-disabled={blockIndex === value.length - 1 || undefined}
+                            data-move-button={`${fieldName}:${blockIndex}:down`}
+                            onClick={() => moveItem(fieldApi, fieldName, blockIndex, blockIndex + 1, value.length, blockDef.name)}
                             title="Move block down"
                           >
                             <ArrowDown size={14} />
@@ -537,15 +561,16 @@ function BuilderPanel({
                                         {slot.hasMany && slotItems.length > 0 ? (
                                           <>
                                             <Button size="sm" variant="outline" type="button" onClick={() => setListCollapsed(slotFieldName, slotItems.length, true)}>
-                                              Collapse All
+                                              Collapse All<span className="sr-only"> in {slot.label} (block {blockIndex + 1})</span>
                                             </Button>
                                             <Button size="sm" variant="outline" type="button" onClick={() => setListCollapsed(slotFieldName, slotItems.length, false)}>
-                                              Expand All
+                                              Expand All<span className="sr-only"> in {slot.label} (block {blockIndex + 1})</span>
                                             </Button>
                                           </>
                                         ) : null}
                                         <Button size="sm" variant="outline" type="button" onClick={() => openSlotPicker(slotFieldName, slotItems.length)}>
                                           {slot.hasMany ? 'Add to Slot' : slotItems.length > 0 ? 'Replace' : 'Add to Slot'}
+                                          <span className="sr-only"> {slot.label} (block {blockIndex + 1})</span>
                                         </Button>
                                       </div>
                                     </div>
@@ -665,6 +690,7 @@ function BuilderPanel({
                                                   {slot.hasMany ? (
                                                     <div
                                                       draggable
+                                                      aria-hidden="true"
                                                       onDragStart={() => setDragState({ listId: slotFieldName, index: slotIndex })}
                                                       onDragEnd={() => setDragState(null)}
                                                       className="mt-0.5 flex h-8 w-8 shrink-0 cursor-grab items-center justify-center rounded-md border border-white/10 bg-white/[0.03] text-zinc-500 active:cursor-grabbing"
@@ -719,18 +745,20 @@ function BuilderPanel({
                                                   {slot.hasMany ? (
                                                     <>
                                                       <Button size="sm" variant="outline" type="button" onClick={() => openSlotPicker(slotFieldName, slotIndex)}>
-                                                        Add Above
+                                                        Add Above<span className="sr-only"> {itemLabel} ({slot.label} item {slotIndex + 1})</span>
                                                       </Button>
                                                       <Button size="sm" variant="outline" type="button" onClick={() => openSlotPicker(slotFieldName, slotIndex + 1)}>
-                                                        Add Below
+                                                        Add Below<span className="sr-only"> {itemLabel} ({slot.label} item {slotIndex + 1})</span>
                                                       </Button>
                                                       <Button
                                                         size="sm"
                                                         variant="outline"
                                                         type="button"
                                                         className="h-8 w-8 p-0"
-                                                        onClick={() => reorderFieldArrayValue(slotApi, slotIndex, slotIndex - 1)}
-                                                        disabled={slotIndex === 0}
+                                                        aria-label={`Move ${itemLabel} (${slot.label} item ${slotIndex + 1}) up`}
+                                                        aria-disabled={slotIndex === 0 || undefined}
+                                                        data-move-button={`${slotFieldName}:${slotIndex}:up`}
+                                                        onClick={() => moveItem(slotApi, slotFieldName, slotIndex, slotIndex - 1, slotItems.length, itemLabel)}
                                                         title="Move item up"
                                                       >
                                                         <ArrowUp size={14} />
@@ -740,8 +768,10 @@ function BuilderPanel({
                                                         variant="outline"
                                                         type="button"
                                                         className="h-8 w-8 p-0"
-                                                        onClick={() => reorderFieldArrayValue(slotApi, slotIndex, slotIndex + 1)}
-                                                        disabled={slotIndex === slotItems.length - 1}
+                                                        aria-label={`Move ${itemLabel} (${slot.label} item ${slotIndex + 1}) down`}
+                                                        aria-disabled={slotIndex === slotItems.length - 1 || undefined}
+                                                        data-move-button={`${slotFieldName}:${slotIndex}:down`}
+                                                        onClick={() => moveItem(slotApi, slotFieldName, slotIndex, slotIndex + 1, slotItems.length, itemLabel)}
                                                         title="Move item down"
                                                       >
                                                         <ArrowDown size={14} />

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useId, useRef, useState } from 'react';
 import { Layers3, Plus, Search, Sparkles, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -83,12 +83,24 @@ export function ComponentSlotPicker({
   const [internalOpen, setInternalOpen] = useState(false);
   const [query, setQuery] = useState('');
   const open = openProp ?? internalOpen;
+  const panelId = useId();
+  const toggleRef = useRef<HTMLButtonElement | null>(null);
 
   const setOpen = (nextOpen: boolean) => {
     if (openProp === undefined) {
       setInternalOpen(nextOpen);
     }
     onOpenChange?.(nextOpen);
+  };
+
+  // The search field takes focus when the panel opens, so Escape closes the panel and returns to the toggle.
+  const closeFromKeyboard = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    setOpen(false);
+    setQuery('');
+    toggleRef.current?.focus();
   };
 
   const filteredComponents = (components || []).filter((component) => matchesComponentQuery(component, query));
@@ -103,11 +115,13 @@ export function ComponentSlotPicker({
           {(components?.length || 0) + (presetEntries?.length || 0)} available
         </div>
         <Button
+          ref={toggleRef}
           size="sm"
           variant={open ? 'secondary' : 'outline'}
           type="button"
           className="gap-2"
           aria-expanded={open}
+          aria-controls={open ? panelId : undefined}
           onClick={() => {
             setOpen(!open);
             if (open) {
@@ -119,9 +133,11 @@ export function ComponentSlotPicker({
           {open ? 'Close Library' : buttonLabel}
         </Button>
       </div>
+      {/* Mounted before the panel opens, so the context message is read out when it appears. */}
+      <p role="status" className="sr-only">{open && contextMessage ? contextMessage : ''}</p>
 
       {open ? (
-        <div className="rounded-xl border border-white/10 bg-zinc-950/70 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.25)] backdrop-blur">
+        <div id={panelId} role="region" aria-label={heading} onKeyDown={closeFromKeyboard} className="rounded-xl border border-white/10 bg-zinc-950/70 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.25)] backdrop-blur">
           <div className="flex flex-col gap-3 border-b border-white/5 pb-4 md:flex-row md:items-center md:justify-between">
             <div>
               <div className="text-sm font-medium text-zinc-100">{heading}</div>

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Button } from './ui/button';
@@ -13,6 +13,8 @@ export interface RichTextEditorProps {
   ariaLabelledBy?: string;
   /** The id of an error or help text that describes the editor. */
   ariaDescribedBy?: string;
+  /** Marks the text box as required for assistive technology. */
+  required?: boolean;
 }
 
 type ToolbarAction = {
@@ -47,16 +49,31 @@ const TOOLBAR_GROUPS: ToolbarAction[][] = [
   ],
 ];
 
+const TOOLBAR_ACTIONS = TOOLBAR_GROUPS.flat();
+
 const MenuBar = ({ editor, ariaLabelledBy }: { editor: any; ariaLabelledBy?: string }) => {
+  // One tab stop: the arrow keys, Home and End move between the buttons, as in the ARIA toolbar pattern.
+  const [activeIndex, setActiveIndex] = useState(0);
+  const buttonRefs = useRef<(HTMLButtonElement | null)[]>([]);
   if (!editor) {
     return null;
   }
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const targets: Record<string, number> = { ArrowRight: activeIndex + 1, ArrowLeft: activeIndex - 1, Home: 0, End: TOOLBAR_ACTIONS.length - 1 };
+    if (!(event.key in targets)) return;
+    event.preventDefault();
+    const next = (targets[event.key] + TOOLBAR_ACTIONS.length) % TOOLBAR_ACTIONS.length;
+    setActiveIndex(next);
+    buttonRefs.current[next]?.focus();
+  };
 
   return (
     <div
       role="toolbar"
       aria-label="Formatting"
       aria-describedby={ariaLabelledBy}
+      onKeyDown={handleKeyDown}
       className="flex flex-wrap gap-1 p-2 border-b border-white/10 bg-white/[0.02] rounded-t-lg shadow-sm"
     >
       {TOOLBAR_GROUPS.map((group, groupIndex) => (
@@ -65,12 +82,16 @@ const MenuBar = ({ editor, ariaLabelledBy }: { editor: any; ariaLabelledBy?: str
           {group.map((action) => {
             const active = action.isActive(editor);
             const Icon = action.icon;
+            const index = TOOLBAR_ACTIONS.indexOf(action);
             return (
               <Button
                 key={action.label}
+                ref={(element) => { buttonRefs.current[index] = element; }}
                 variant="ghost"
                 size="sm"
                 type="button"
+                tabIndex={index === activeIndex ? 0 : -1}
+                onFocus={() => setActiveIndex(index)}
                 aria-label={action.label}
                 aria-pressed={active}
                 title={action.label}
@@ -87,7 +108,7 @@ const MenuBar = ({ editor, ariaLabelledBy }: { editor: any; ariaLabelledBy?: str
   );
 };
 
-export function RichTextEditor({ value, onChange, className = '', hasError, ariaLabelledBy, ariaDescribedBy }: RichTextEditorProps) {
+export function RichTextEditor({ value, onChange, className = '', hasError, ariaLabelledBy, ariaDescribedBy, required }: RichTextEditorProps) {
   const editor = useEditor({
     extensions: [StarterKit],
     content: value || { type: 'doc', content: [] },
@@ -98,6 +119,7 @@ export function RichTextEditor({ value, onChange, className = '', hasError, aria
         role: 'textbox',
         'aria-multiline': 'true',
         ...(ariaLabelledBy ? { 'aria-labelledby': ariaLabelledBy } : {}),
+        ...(required ? { 'aria-required': 'true' } : {}),
       },
     },
     onUpdate: ({ editor, transaction }) => {

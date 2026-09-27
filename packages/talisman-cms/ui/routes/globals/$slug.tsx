@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useForm } from '@tanstack/react-form';
 import { globals as configuredGlobals } from 'virtual:talisman-cms/config';
 import { ArrowLeft, Save } from 'lucide-react';
-import { AdminBasePathContext, FieldRenderer } from '../../components/fields';
+import { AdminBasePathContext, FieldRenderer, focusFieldControl } from '../../components/fields';
 // The loader's helpers come from their own module: importing them through the index would keep the
 // field renderer in the eager admin bundle, while the editor below loads with this route's chunk.
 import { buildRelationOptions, fieldsNeedPresetEntries, type RelationSupportEntries } from '../../components/fields/relations';
@@ -137,6 +137,11 @@ function GlobalEditorRoute() {
   const [saveMessage, setSaveMessage] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const collapseStorageKey = `talisman-cms:collapsed:global:${global.slug}`;
+  // A failed save moves focus to its message; a successful one leaves it on the Save button.
+  const saveErrorRef = useRef<HTMLParagraphElement | null>(null);
+  useEffect(() => {
+    if (saveError) saveErrorRef.current?.focus();
+  }, [saveError]);
 
   const form = useForm({
     defaultValues: computedDefaults,
@@ -179,6 +184,7 @@ function GlobalEditorRoute() {
   }
 
   async function handleSave() {
+    if (isSaving) return;
     setIsSaving(true);
     setSaveError('');
     setSaveMessage('');
@@ -256,7 +262,8 @@ function GlobalEditorRoute() {
 
         <div className="flex items-center gap-3">
           {saveMessage ? <p role="status" className="text-sm text-emerald-400">{saveMessage}</p> : null}
-          <Button className="gap-2" onClick={handleSave} disabled={isSaving}>
+          <p role="status" className="sr-only">{isSaving ? 'Saving...' : ''}</p>
+          <Button className="gap-2" onClick={handleSave} aria-disabled={isSaving || undefined} aria-busy={isSaving || undefined}>
             <Save size={16} />
             {isSaving ? 'Saving...' : 'Save'}
           </Button>
@@ -307,12 +314,13 @@ function GlobalEditorRoute() {
             </>
           )}
 
-          {saveError ? <p role="alert" className="text-sm text-red-400">{saveError}</p> : null}
+          {saveError ? <p role="alert" ref={saveErrorRef} tabIndex={-1} className="text-sm text-red-400 focus:outline-none">{saveError}</p> : null}
           {Object.keys(fieldErrors).length > 0 ? (
-            <ul className="space-y-1 text-sm text-red-400">
+            <ul role="alert" className="space-y-1 text-sm text-red-400">
               {Object.entries(fieldErrors).map(([name, messages]) => (
                 <li key={name}>
-                  <span className="font-medium">{getFieldErrorLabel(schemaFields, name)}</span>: {formatFieldErrors(messages)}
+                  {/* The field's name leads to the field itself. */}
+                  <button type="button" onClick={() => focusFieldControl(name)} className="font-medium rounded-sm hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60">{getFieldErrorLabel(schemaFields, name)}</button>: {formatFieldErrors(messages)}
                 </li>
               ))}
             </ul>

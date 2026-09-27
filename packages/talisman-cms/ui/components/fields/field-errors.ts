@@ -38,3 +38,14 @@ export const ServerFieldErrorsContext = createContext<{
   errors: ServerFieldErrors;
   clearError: (fieldPath: string) => void;
 }>({ errors: {}, clearError: () => {} });
+
+/**
+ * Moves focus to the control of the field at `fieldPath`, found through the `data-field-path` the
+ * renderer puts on each field. Nothing happens when the field is not on the page (a block's fields
+ * only render in the inspector).
+ */
+export function focusFieldControl(fieldPath: string) {
+  const field = document.querySelector<HTMLElement>(`[data-field-path="${CSS.escape(fieldPath)}"]`);
+  const control = field?.querySelector<HTMLElement>('input:not([type="hidden"]), select, textarea, [contenteditable="true"], button');
+  (control || field)?.focus();
+}

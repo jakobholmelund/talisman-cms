@@ -19,6 +19,7 @@ export function AuthPanel({ adminBasePath, isHybridAuth = false }: { adminBasePa
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (loading) return;
     setLoading(true);
     setError('');
     try {
@@ -63,7 +64,9 @@ export function AuthPanel({ adminBasePath, isHybridAuth = false }: { adminBasePa
         <label className="block text-sm">Password<input required type="password" minLength={setupRequired ? 12 : undefined} autoComplete={setupRequired ? 'new-password' : 'current-password'} value={password} onChange={event => setPassword(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-zinc-950 px-3 py-2" /></label>
         {setupRequired && <label className="block text-sm">Setup token<input required type="password" autoComplete="off" value={setupToken} onChange={event => setSetupToken(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-zinc-950 px-3 py-2" /></label>}
         {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
-        <button disabled={loading} type="submit" className="w-full rounded-lg bg-indigo-500 px-4 py-2.5 font-medium text-white hover:bg-indigo-400 disabled:opacity-50">{loading ? 'Working…' : setupRequired ? 'Create admin' : 'Sign in'}</button>
+        {/* The button stays focusable while the request runs; this line says what is happening. */}
+        <p role="status" className="sr-only">{loading ? (setupRequired ? 'Creating the first admin…' : 'Signing in…') : ''}</p>
+        <button aria-disabled={loading || undefined} aria-busy={loading || undefined} type="submit" className="w-full rounded-lg bg-indigo-500 px-4 py-2.5 font-medium text-white hover:bg-indigo-400 aria-disabled:opacity-50">{loading ? 'Working…' : setupRequired ? 'Create admin' : 'Sign in'}</button>
         {isHybridAuth && <a href={`${adminBasePath}/sso`} className="block text-center text-sm text-indigo-300 hover:text-indigo-200">Sign in as admin with Cloudflare</a>}
       </form>
     </div>
