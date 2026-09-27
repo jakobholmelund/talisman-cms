@@ -8,6 +8,7 @@
     "build": "pnpm -r --filter=!playground build",
     "build:all": "pnpm -r build",
     "dev": "pnpm --filter playground dev",
+    "e2e:admin": "node e2e/admin-flows.mjs",
     "test": "pnpm -r test && node --test scripts/test/*.test.mjs",
     "release:check:archives": "node scripts/check-package-archives.mjs",
     "release:smoke": "node scripts/smoke-packed.mjs",
@@ -26,6 +27,7 @@
     "eslint": "^10.11.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.7",
+    "playwright-core": "^1.63.0",
     "ts-node": "^10.9.2",
     "type-fest": "^5.10.0",
     "wrangler": "^4.136.0"

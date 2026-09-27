@@ -33,6 +33,47 @@ jobs:
       - name: Committed dist matches the build
         run: node scripts/check-dist-drift.mjs
 
+  admin-browser:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10.28.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r --filter='!playground' build
+
+      # Builds the playground, serves it with wrangler's local runtime (throwaway secrets, local D1 and
+      # R2) and drives the admin's editing flows in the runner's Chrome with e2e/admin-flows.mjs.
+      - name: Drive the admin in Chrome against the built playground
+        run: |
+          set -euo pipefail
+          TOKEN="$(openssl rand -hex 32)"
+          printf 'TALISMAN_AUTH_SECRET=%s\nTALISMAN_AUTH_SETUP_TOKEN=%s\n' "$(openssl rand -hex 32)" "$TOKEN" > playground/.dev.vars
+          pnpm --filter playground build
+          pnpm --filter talisman-cms db:migrate:local
+          pnpm --filter talisman-cms db:seed:ecommerce:local
+          pnpm --filter playground exec astro preview --host 127.0.0.1 --port 8787
+          for _ in $(seq 1 90); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8787/admin)" = 200 ] && break
+            sleep 1
+          done
+          status=0
+          TALISMAN_E2E_SETUP_TOKEN="$TOKEN" node e2e/admin-flows.mjs --base-url http://127.0.0.1:8787 --dist playground/dist --report e2e-report.json || status=$?
+          pnpm --filter playground exec astro preview stop || true
+          cat e2e-report.json
+          exit "$status"
+
   audit:
     runs-on: ubuntu-latest
 
