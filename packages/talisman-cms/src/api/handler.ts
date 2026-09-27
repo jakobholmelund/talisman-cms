@@ -16,6 +16,7 @@ import { NotFoundError } from '../service/errors';
 import { createService } from '../service/index';
 import { isGlobalData } from '../types';
 import { HttpError, toErrorResponse } from './http-errors';
+import { parseListQuery } from './list-query';
 
 // The virtual modules stay static imports, so the Worker bundle carries the site's hook modules and
 // a module that fails to load fails the build.
@@ -327,11 +328,13 @@ export const ALL: APIRoute = async ({ request, locals }) => {
       if (request.method === 'GET') {
         if (!entryId) {
           // Without `limit` the whole list comes back as an array; with it, one page and the cursor after it.
+          // `where`, `sort` and `offset` narrow, order and skip either.
+          const query = parseListQuery(url);
           const page = readPageRequest(url);
           if (!page) {
-            return new Response(JSON.stringify(await service.entries.list(slug)), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            return new Response(JSON.stringify(await service.entries.list(slug, query)), { status: 200, headers: { 'Content-Type': 'application/json' } });
           }
-          return Response.json(await service.entries.page(slug, page));
+          return Response.json(await service.entries.page(slug, { ...page, ...query }));
         }
         const doc = await service.entries.get(slug, entryId);
         if (!doc) return new Response(JSON.stringify({ error: 'Entry not found' }), { status: 404 });

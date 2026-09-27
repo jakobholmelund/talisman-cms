@@ -4,6 +4,7 @@ import type { Actor } from '../service/actor';
 import type { CacheContext } from '../service/cache';
 import { loadServiceConfig } from '../service/config';
 import type { EntryStatusTarget, SiteReadOptions } from '../service/entries';
+import type { EntryQuery } from '../service/query';
 import { createService } from '../service/index';
 import type { VersionMode } from '../service/relations';
 
@@ -63,7 +64,7 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext, options: ClientO
       update: async (slug: string, data: Record<string, any>) => (await service()).globals.save(slug, data),
     },
     entries: {
-      findMany: async (collectionSlug: string, opts?: SiteReadOptions & { limit?: number }) =>
+      findMany: async (collectionSlug: string, opts?: SiteReadOptions & EntryQuery & { limit?: number }) =>
         (await service()).entries.findMany(collectionSlug, opts),
       findBySlug: async (collectionSlug: string, slug: string, opts?: { depth?: number; version?: VersionMode }) =>
         (await service()).entries.findBySlug(collectionSlug, slug, opts),

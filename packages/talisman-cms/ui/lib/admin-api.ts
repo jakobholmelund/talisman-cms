@@ -32,7 +32,7 @@ export function isNativeCollectionConfig(collection: any) {
 }
 
 /** Options for reading a collection's entries (see fetchAllEntries). */
-export type FetchEntriesOptions = { oldestFirst?: boolean; pageSize?: number; strict?: boolean };
+export type FetchEntriesOptions = { oldestFirst?: boolean; pageSize?: number; strict?: boolean; params?: URLSearchParams };
 
 /**
  * Every entry of a collection, read one bounded page at a time so no single request makes the
@@ -46,13 +46,14 @@ export type FetchEntriesOptions = { oldestFirst?: boolean; pageSize?: number; st
 export async function fetchAllEntries(
   basePath: string,
   slug: string,
-  { oldestFirst = false, pageSize = ENTRIES_API_MAX_PAGE_SIZE, strict = false }: FetchEntriesOptions = {}
+  { oldestFirst = false, pageSize = ENTRIES_API_MAX_PAGE_SIZE, strict = false, params: extra }: FetchEntriesOptions = {}
 ): Promise<any[]> {
   const entries: any[] = [];
   let cursor: string | null = null;
 
   do {
-    const params = new URLSearchParams({ limit: String(pageSize) });
+    const params = new URLSearchParams(extra);
+    params.set('limit', String(pageSize));
     if (cursor) params.set('cursor', cursor);
     const res = await fetch(`${basePath}/api/collections/${slug}/entries?${params}`);
     if (!res.ok) {
@@ -71,6 +72,24 @@ export async function fetchAllEntries(
   } while (cursor);
 
   return oldestFirst ? entries.reverse() : entries;
+}
+
+/**
+ * Loads the entries a `where` filter matches (`{ productId: id }` for equality, an array for `in`), page
+ * by page, so a screen reads one record's rows instead of a whole collection.
+ */
+export function fetchEntriesWhere(
+  basePath: string,
+  slug: string,
+  where: Record<string, string | number | boolean | Array<string | number>>,
+  options: Omit<FetchEntriesOptions, 'params'> = {}
+): Promise<any[]> {
+  const params = new URLSearchParams();
+  for (const [field, value] of Object.entries(where)) {
+    if (Array.isArray(value)) params.set(`where[${field}][in]`, value.join(','));
+    else params.set(`where[${field}]`, String(value));
+  }
+  return fetchAllEntries(basePath, slug, { ...options, params });
 }
 
 /** Loads several collections' entries in parallel, keyed by collection slug. `strict` as for fetchAllEntries. */

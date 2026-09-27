@@ -39,8 +39,10 @@ export {
   type CreateEntryInput,
   type CreateGlobalInput,
   type EntriesPage,
+  type EntryQuery,
   type EntryStatusTarget,
   type HookLogEntry,
+  type Operators,
   type ResolvedCollection,
   type ServiceConfig,
   type ServiceOptions,
@@ -48,6 +50,7 @@ export {
   type TalismanService,
   type UpdateEntryInput,
   type VersionMode,
+  type WhereClause,
   type WriteExpectation
 } from './service/index';
 export { loadServiceConfig } from './service/config';

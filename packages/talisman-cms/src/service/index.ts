@@ -51,5 +51,6 @@ export type { ServiceContext } from './context';
 export type { CreateEntryInput, EntriesPage, EntryStatusTarget, SiteReadOptions, UpdateEntryInput, WriteExpectation } from './entries';
 export type { ResolvedCollection } from './collections';
 export type { VersionMode } from './relations';
+export type { EntryQuery, Operators, Scalar, WhereClause } from './query';
 export type { CreateGlobalInput } from './globals';
 export type { HookLogEntry } from './hooks';

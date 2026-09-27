@@ -25,6 +25,7 @@ import {
   ValidationError
 } from './errors';
 import { runHooks } from './hooks';
+import { compileQuery, entryDataExpression, type EntryQuery, type QueryTarget } from './query';
 import { resolveRelationships, type VersionMode } from './relations';
 import { prepareWrite, type WritableColumns } from './validation';
 
@@ -81,6 +82,13 @@ function siteCacheWanted(options: { cache?: boolean }, native: boolean) {
 
 export const NATIVE_PUBLISHING_MESSAGE = 'Publishing workflows are not available for native collections';
 export const NATIVE_REVISIONS_MESSAGE = 'Revision history is not available for native collections';
+
+/** What a query compiles against: the entries table with the data of one view, or the native table. */
+function queryTarget(collection: ResolvedCollection, view: 'draft' | 'published'): QueryTarget {
+  return collection.nativeTable
+    ? { kind: 'native', fields: collection.activeFields, table: collection.nativeTable }
+    : { kind: 'entries', fields: collection.activeFields, data: entryDataExpression(view) };
+}
 
 /** A native row in the entry envelope the admin and the SDK read. */
 export function mapNativeEntry(row: any, collectionId: string, nativeIdCol: string) {
@@ -216,25 +224,29 @@ export function entriesService(ctx: ServiceContext) {
     /** The collection an operation addresses, with its row, fields, native table and hooks. */
     resolve: (slug: string) => resolveCollection(ctx, slug),
 
-    /** Every record of the collection as the admin edits it: all statuses, draft data, newest first. */
-    async list(slug: string) {
+    /** Every record of the collection as the admin edits it: all statuses, draft data, newest first unless sorted. */
+    async list(slug: string, query: EntryQuery = {}) {
       const collection = await resolveCollection(ctx, slug);
       assertAllowed(ctx.actor, collection.config, 'read');
+      if (query.offset !== undefined) throw new InvalidInputError('offset needs a limit.');
+      const compiled = compileQuery(queryTarget(collection, 'draft'), query);
       if (collection.nativeTable) {
-        const rows = await db.select().from(collection.nativeTable as any);
+        const rows = await db.select().from(collection.nativeTable as any).where(compiled.where).orderBy(...compiled.orderBy);
         return rows.map((row: any) => mapNativeEntry(row, collection.record.id, collection.nativeIdCol));
       }
-      const entries = await db.query.entries.findMany({
-        // @ts-ignore
-        where: (e: any, { eq }: any) => eq(e.collectionId, collection.record.id),
-        // @ts-ignore
-        orderBy: (e: any, { desc }: any) => [desc(e.createdAt)]
-      });
-      return entries.map(toEditableEntry);
+      const entries = schema.entries;
+      const rows = await db.select().from(entries)
+        .where(and(eq(entries.collectionId, collection.record.id), compiled.where))
+        .orderBy(...(compiled.orderBy.length > 0 ? compiled.orderBy : [desc(entries.createdAt)]));
+      return rows.map(toEditableEntry);
     },
 
-    /** One page of the collection, newest first; `nextCursor` continues after it. */
-    async page(slug: string, options: { limit: number; cursor?: string | null }): Promise<EntriesPage> {
+    /**
+     * One page of the collection, newest first; `nextCursor` continues after it. A `where` narrows
+     * the pages. A `sort` or `offset` pages by offset instead, since the cursor encodes the default
+     * order, and comes back without a cursor.
+     */
+    async page(slug: string, options: { limit: number; cursor?: string | null } & EntryQuery): Promise<EntriesPage> {
       const collection = await resolveCollection(ctx, slug);
       assertAllowed(ctx.actor, collection.config, 'read');
       const limit = options.limit;
@@ -242,6 +254,10 @@ export function entriesService(ctx: ServiceContext) {
         throw new InvalidInputError(`limit must be a whole number from 1 to ${MAX_PAGE_SIZE}.`);
       }
       const cursor = options.cursor || null;
+      const compiled = compileQuery(queryTarget(collection, 'draft'), options);
+      const offsetPaging = compiled.orderBy.length > 0 || compiled.offset !== undefined;
+      if (cursor !== null && offsetPaging) throw new InvalidInputError('cursor works with the default sort and no offset; page with offset instead.');
+      const offset = compiled.offset ?? 0;
 
       if (collection.nativeTable) {
         // Native tables differ in their id and timestamp columns, so pages run newest first by rowid.
@@ -250,11 +266,12 @@ export function entriesService(ctx: ServiceContext) {
         const after = cursor === null ? undefined : decodeCursor(cursor)[0];
         if (after !== undefined && !Number.isSafeInteger(after)) throw new InvalidInputError('The cursor is not valid.');
         const rows: any[] = await db.select({ ...getTableColumns(nativeTable), __rowid: rowid }).from(nativeTable)
-          .where(after === undefined ? undefined : lt(rowid, after as number))
-          .orderBy(desc(rowid))
-          .limit(limit + 1);
+          .where(and(after === undefined ? undefined : lt(rowid, after as number), compiled.where))
+          .orderBy(...(compiled.orderBy.length > 0 ? compiled.orderBy : [desc(rowid)]))
+          .limit(limit + 1)
+          .offset(offset);
         const pageRows = rows.slice(0, limit);
-        const nextCursor = rows.length > limit ? encodeCursor([pageRows[pageRows.length - 1].__rowid]) : null;
+        const nextCursor = rows.length > limit && !offsetPaging ? encodeCursor([pageRows[pageRows.length - 1].__rowid]) : null;
         return { docs: pageRows.map(({ __rowid, ...row }) => mapNativeEntry(row, collection.record.id, collection.nativeIdCol)), nextCursor };
       }
 
@@ -269,12 +286,13 @@ export function entriesService(ctx: ServiceContext) {
         after = or(lt(entries.createdAt, createdAt), and(eq(entries.createdAt, createdAt), lt(entries.id, afterId)));
       }
       const rows = await db.select().from(entries)
-        .where(and(eq(entries.collectionId, collection.record.id), after))
-        .orderBy(desc(entries.createdAt), desc(entries.id))
-        .limit(limit + 1);
+        .where(and(eq(entries.collectionId, collection.record.id), after, compiled.where))
+        .orderBy(...(compiled.orderBy.length > 0 ? [...compiled.orderBy, desc(entries.id)] : [desc(entries.createdAt), desc(entries.id)]))
+        .limit(limit + 1)
+        .offset(offset);
       const pageRows = rows.slice(0, limit);
       const last = pageRows[pageRows.length - 1];
-      const nextCursor = rows.length > limit ? encodeCursor([last.createdAt.getTime(), last.id]) : null;
+      const nextCursor = rows.length > limit && !offsetPaging ? encodeCursor([last.createdAt.getTime(), last.id]) : null;
       return { docs: pageRows.map(toEditableEntry), nextCursor };
     },
 
@@ -414,19 +432,25 @@ export function entriesService(ctx: ServiceContext) {
       await runHooks(collection.hooks, 'afterDelete', { ...hooks, operation: 'delete', originalDoc, doc: originalDoc }, { log: ctx.log });
     },
 
-    /** The site's view of a collection: published snapshots or drafts, relations embedded, cached for depth 0. */
-    async findMany(slug: string, options: SiteReadOptions & { limit?: number } = {}) {
+    /**
+     * The site's view of a collection: published snapshots or drafts, relations embedded, cached
+     * for depth 0. A `where`, `sort` or `offset` narrows, orders or skips (on the published data
+     * in the published view), and such a read is never cached.
+     */
+    async findMany(slug: string, options: SiteReadOptions & EntryQuery & { limit?: number } = {}) {
       const configured = configuredFor(ctx, slug);
       if (configured) assertAllowed(ctx.actor, configured.config, 'read');
       const versionMode = options.version || 'published';
       if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1)) {
         throw new InvalidInputError('limit must be a positive integer');
       }
+      if (options.offset !== undefined && options.limit === undefined) throw new InvalidInputError('offset needs a limit.');
       const limit = options.limit;
       const depth = options.depth ?? 1;
       const native = Boolean(configured?.nativeTable);
+      const custom = Boolean(options.where && Object.keys(options.where).length > 0) || Boolean(options.sort && options.sort.length > 0) || options.offset !== undefined;
       const cacheKey = cacheKeys.entries(slug, versionMode);
-      const useCache = siteCacheWanted(options, native) && limit === undefined && depth === 0 && Boolean(env.KV);
+      const useCache = siteCacheWanted(options, native) && limit === undefined && depth === 0 && !custom && Boolean(env.KV);
       // A hit costs no D1 statement: the collection row is resolved only for a miss.
       if (useCache) {
         const hit = await readCache<any[]>(env.KV!, cacheKey);
@@ -435,22 +459,21 @@ export function entriesService(ctx: ServiceContext) {
 
       const collection = await resolveCollection(ctx, slug);
       if (!configured) assertAllowed(ctx.actor, collection.config, 'read');
+      const compiled = compileQuery(queryTarget(collection, versionMode), options);
       const readStartedAt = new Date();
       let data: any[];
       if (collection.nativeTable) {
-        const query = db.select().from(collection.nativeTable as any);
-        const rows = limit === undefined ? await query : await query.limit(limit);
-        data = rows.map((row: any) => mapNativeEntry(row, collection.record.id, collection.nativeIdCol));
+        let query = db.select().from(collection.nativeTable as any).where(compiled.where).orderBy(...compiled.orderBy).$dynamic();
+        if (limit !== undefined) query = query.limit(limit).offset(compiled.offset ?? 0);
+        data = (await query).map((row: any) => mapNativeEntry(row, collection.record.id, collection.nativeIdCol));
       } else {
-        const rows = await db.query.entries.findMany({
-          // @ts-ignore
-          where: (e: any, operators: any) => versionMode === 'published'
-            ? operators.and(operators.eq(e.collectionId, collection.record.id), operators.eq(e.status, 'published'))
-            : operators.eq(e.collectionId, collection.record.id),
-          orderBy: (e: any, { desc }: any) => [desc(e.createdAt)],
-          ...(limit === undefined ? {} : { limit })
-        });
-        data = rows.map((entry: any) => normalizeEntryDataForRead(entry, versionMode));
+        const entries = schema.entries;
+        let query = db.select().from(entries)
+          .where(and(eq(entries.collectionId, collection.record.id), versionMode === 'published' ? eq(entries.status, 'published') : undefined, compiled.where))
+          .orderBy(...(compiled.orderBy.length > 0 ? [...compiled.orderBy, desc(entries.id)] : [desc(entries.createdAt)]))
+          .$dynamic();
+        if (limit !== undefined) query = query.limit(limit).offset(compiled.offset ?? 0);
+        data = (await query).map((entry: any) => normalizeEntryDataForRead(entry, versionMode));
       }
       data = await resolveRelationships(ctx, data, collection, depth, versionMode);
 
