@@ -10,6 +10,8 @@ import * as collectionHooksModule from 'virtual:talisman-cms/collection-hooks';
 import { configFromModules } from '../service/config';
 import { configuredCollectionFields as collectionFields, oncePerDatabase, resolveCollectionRecord, syncCollectionDefinitions as syncCollections } from '../service/collections';
 import { invalidateEntryCache, invalidateGlobalCache } from '../service/cache';
+import { userActor } from '../service/actor';
+import { runHooks } from '../service/hooks';
 import {
   buildZodSchemaForCollection,
   buildZodSchemaForFields,
@@ -24,7 +26,6 @@ import {
   normalizeBlankNativeValues,
   pickConfiguredNativeFields,
   prepareNativeWritePayload,
-  type CollectionHooks,
   type FieldValidationIssue
 } from '../types';
 import { validatePresetPayload } from '../presets';
@@ -45,7 +46,7 @@ const {
   nativeSchemas,
   collectionHooks,
 } = serviceConfig;
-import { HookError, NATIVE_RECORD_CONFLICT_MESSAGE, NotFoundError, ServiceError, ValidationError, type HookPhase } from '../service/errors';
+import { NATIVE_RECORD_CONFLICT_MESSAGE, NotFoundError, ValidationError } from '../service/errors';
 import { deleteStoredMedia, isMediaCollection } from '../db/media-policy';
 import { eq, desc, and, or, lt, count, isNull, sql, getTableColumns } from 'drizzle-orm';
 import {
@@ -89,27 +90,6 @@ function timestampKey(value: unknown) {
   if (value instanceof Date) return value.getTime();
   if (typeof value === 'string' && value.trim() && !Number.isNaN(Date.parse(value))) return Date.parse(value);
   return value ?? null;
-}
-
-function wrapCollectionHooks(hooks: CollectionHooks | undefined): CollectionHooks | undefined {
-  if (!hooks) return hooks;
-  const wrap = (list: ((args: any) => any)[] | undefined, phase: HookPhase) => list?.map((hook) => async (args: any) => {
-    try {
-      return await hook(args);
-    } catch (error) {
-      // A hook may refuse with a service error of its own, which keeps its status.
-      if (error instanceof ServiceError) throw error;
-      throw new HookError(error, phase);
-    }
-  });
-
-  return {
-    beforeValidate: wrap(hooks.beforeValidate, 'beforeValidate'),
-    beforeChange: wrap(hooks.beforeChange, 'beforeChange'),
-    afterChange: wrap(hooks.afterChange, 'afterChange'),
-    beforeDelete: wrap(hooks.beforeDelete, 'beforeDelete'),
-    afterDelete: wrap(hooks.afterDelete, 'afterDelete'),
-  };
 }
 
 // D1 rows are capped near 2 MB and every save also stores a revision copy of the data.
@@ -286,7 +266,7 @@ function validateCollectionPayload(slug: string, data: Record<string, any>) {
 async function resolveCollectionContext(db: ReturnType<typeof createDbClient>, slug: string, env: TalismanEnv) {
   const configuredCollection = configCollections.find(c => c.slug === slug);
   const collectionConfig = configuredCollection
-    ? { ...configuredCollection, hooks: wrapCollectionHooks(collectionHooks[slug]) }
+    ? { ...configuredCollection, hooks: collectionHooks[slug] }
     : undefined;
   if (!collectionConfig) {
     throw new NotFoundError(`Collection ${slug} not found`);
@@ -429,6 +409,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
   const authorization = await authorizeCmsRequest(request, adminOnly ? 'admin' : undefined);
   if (authorization.response) return authorization.response;
   const user = authorization.user;
+  const actor = userActor(user, request);
 
   // Get all registered collections
   if (path.endsWith('/api/collections')) {
@@ -747,6 +728,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         nativeIdCol
       } = await resolveCollectionContext(db, slug, env);
 
+      const hookContext = { actor, req: request, collection: { slug, native: Boolean(nativeTable) } };
       const operation: CollectionOperation = request.method === 'GET' ? 'read'
         : request.method === 'POST' ? 'create'
         : request.method === 'PUT' ? 'update' : 'delete';
@@ -856,12 +838,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
           if (slugProblem) return invalidInput(slugProblem);
         }
 
-        if (collectionConfig.hooks?.beforeValidate) {
-          for (const hook of collectionConfig.hooks.beforeValidate) {
-            const hData = await hook({ data, req: request, operation: 'create' });
-            if (hData) data = { ...data, ...hData };
-          }
-        }
+        data = await runHooks(collectionConfig.hooks, 'beforeValidate', { ...hookContext, data, operation: 'create' });
 
         // Perform schema validation using activeFields
         const dynamicSchema = buildZodSchemaForCollection({ ...collectionConfig, fields: activeFields });
@@ -875,12 +852,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         }
         let validatedData = validatedPayload.data;
 
-        if (collectionConfig.hooks?.beforeChange) {
-           for (const hook of collectionConfig.hooks.beforeChange) {
-             const hData = await hook({ data: validatedData, req: request, operation: 'create' });
-             if (hData) validatedData = { ...validatedData, ...hData };
-           }
-        }
+        validatedData = await runHooks(collectionConfig.hooks, 'beforeChange', { ...hookContext, data: validatedData, operation: 'create' });
 
         if (nativeTable) {
            // Insert directly to native table
@@ -910,11 +882,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
            }
            
            const doc = mapNativeEntry(insertedRow, collection!.id, nativeIdCol);
-           if (collectionConfig.hooks?.afterChange) {
-             for (const hook of collectionConfig.hooks.afterChange) {
-               await hook({ data: validatedData, req: request, operation: 'create', doc });
-             }
-           }
+           await runHooks(collectionConfig.hooks, 'afterChange', { ...hookContext, data: validatedData, operation: 'create', doc });
 
            return new Response(JSON.stringify(doc), {
              status: 201,
@@ -927,11 +895,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
           });
           await invalidateEntryCache(env, slug);
 
-          if (collectionConfig.hooks?.afterChange) {
-             for (const hook of collectionConfig.hooks.afterChange) {
-               await hook({ data: validatedData, req: request, operation: 'create', doc: created });
-             }
-          }
+          await runHooks(collectionConfig.hooks, 'afterChange', { ...hookContext, data: validatedData, operation: 'create', doc: created });
 
           return new Response(JSON.stringify(toEditableEntry(created)), { status: 201, headers: { 'Content-Type': 'application/json' } });
         }
@@ -974,12 +938,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
              data = normalizeBlankNativeValues(collectionConfig, activeFields, nativeTable, submitted);
            }
            
-           if (data !== undefined && collectionConfig.hooks?.beforeValidate) {
-             for (const hook of collectionConfig.hooks.beforeValidate) {
-               const hData: Record<string, any> | void = await hook({ data, req: request, operation: 'update', originalDoc });
-               if (hData) data = { ...data, ...hData };
-             }
-           }
+           if (data !== undefined) data = await runHooks(collectionConfig.hooks, 'beforeValidate', { ...hookContext, data, operation: 'update', originalDoc });
 
            let updatePayload = {};
            if (data !== undefined) {
@@ -997,12 +956,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
                return validationErrorResponse(validatedPayload.issues);
              }
              let validatedData = validatedPayload.data;
-             if (collectionConfig.hooks?.beforeChange) {
-                for (const hook of collectionConfig.hooks.beforeChange) {
-                   const hData = await hook({ data: validatedData, req: request, operation: 'update', originalDoc });
-                   if (hData) validatedData = { ...validatedData, ...hData };
-                }
-             }
+             validatedData = await runHooks(collectionConfig.hooks, 'beforeChange', { ...hookContext, data: validatedData, operation: 'update', originalDoc });
 
              updatePayload = prepareNativeWritePayload(collectionConfig, validatedData, 'update', nextNativeUpdatedAt(rows[0].updatedAt));
            }
@@ -1029,11 +983,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
               slug: entrySlug || rows[0].slug || entryId,
            };
 
-           if (collectionConfig.hooks?.afterChange) {
-             for (const hook of collectionConfig.hooks.afterChange) {
-               await hook({ data: data || {}, req: request, operation: 'update', originalDoc, doc });
-             }
-           }
+           await runHooks(collectionConfig.hooks, 'afterChange', { ...hookContext, data: data || {}, operation: 'update', originalDoc, doc });
 
            return new Response(JSON.stringify(doc), { status: 200, headers: { 'Content-Type': 'application/json' } });
         } else {
@@ -1057,12 +1007,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
            if (slugProblem) return invalidInput(slugProblem);
            const draftSlug = isBlank(entrySlug) ? undefined : entrySlug as string;
 
-           if (data !== undefined && collectionConfig.hooks?.beforeValidate) {
-             for (const hook of collectionConfig.hooks.beforeValidate) {
-               const hData: Record<string, any> | void = await hook({ data, req: request, operation: 'update', originalDoc });
-               if (hData) data = { ...data, ...hData };
-             }
-           }
+           if (data !== undefined) data = await runHooks(collectionConfig.hooks, 'beforeValidate', { ...hookContext, data, operation: 'update', originalDoc });
 
            if (data !== undefined) {
              const rawDataToValidate = data;
@@ -1079,12 +1024,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
              }
              
              let validatedData = validatedPayload.data;
-             if (collectionConfig.hooks?.beforeChange) {
-                for (const hook of collectionConfig.hooks.beforeChange) {
-                   const hData = await hook({ data: validatedData, req: request, operation: 'update', originalDoc });
-                   if (hData) validatedData = { ...validatedData, ...hData };
-                }
-             }
+             validatedData = await runHooks(collectionConfig.hooks, 'beforeChange', { ...hookContext, data: validatedData, operation: 'update', originalDoc });
 
              const updated = await saveDraftEntry(db as any, collection as any, entryId, {
                data: validatedData,
@@ -1094,11 +1034,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
 
              await invalidateEntryCache(env, slug, entryId);
              
-             if (collectionConfig.hooks?.afterChange) {
-               for (const hook of collectionConfig.hooks.afterChange) {
-                 await hook({ data: validatedData, req: request, operation: 'update', originalDoc, doc: updated });
-               }
-             }
+             await runHooks(collectionConfig.hooks, 'afterChange', { ...hookContext, data: validatedData, operation: 'update', originalDoc, doc: updated });
              
              return new Response(JSON.stringify(toEditableEntry(updated)), { status: 200, headers: { 'Content-Type': 'application/json' } });
            }
@@ -1109,11 +1045,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
            });
            await invalidateEntryCache(env, slug, entryId);
 
-           if (collectionConfig.hooks?.afterChange) {
-             for (const hook of collectionConfig.hooks.afterChange) {
-               await hook({ data: {}, req: request, operation: 'update', originalDoc, doc: updated });
-             }
-           }
+           await runHooks(collectionConfig.hooks, 'afterChange', { ...hookContext, data: {}, operation: 'update', originalDoc, doc: updated });
 
            return new Response(JSON.stringify(toEditableEntry(updated)), { status: 200, headers: { 'Content-Type': 'application/json' } });
         }
@@ -1136,11 +1068,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
            originalDoc = origRow;
         }
 
-        if (collectionConfig.hooks?.beforeDelete) {
-          for (const hook of collectionConfig.hooks.beforeDelete) {
-             await hook({ req: request, operation: 'delete', originalDoc });
-          }
-        }
+        await runHooks(collectionConfig.hooks, 'beforeDelete', { ...hookContext, operation: 'delete', originalDoc });
 
         if (nativeTable && isSystemMediaCollection(collectionConfig)) {
           // The file goes first: media-serve reads R2 without checking the record, and if the record
@@ -1158,11 +1086,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
 
         await invalidateEntryCache(env, slug, entryId);
 
-        if (collectionConfig.hooks?.afterDelete) {
-          for (const hook of collectionConfig.hooks.afterDelete) {
-             await hook({ req: request, operation: 'delete', originalDoc, doc: originalDoc });
-          }
-        }
+        await runHooks(collectionConfig.hooks, 'afterDelete', { ...hookContext, operation: 'delete', originalDoc, doc: originalDoc });
 
         return new Response(JSON.stringify({ success: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }

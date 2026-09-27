@@ -37,6 +37,7 @@ export type {
   UiLibraryDefinition,
 } from './types';
 export type { TalismanAuthAdapter } from './auth/types';
+export type { Actor } from './service/actor';
 export type { EmailRuntimeDescriptor } from './email/types';
 
 export interface TalismanCmsOptions {

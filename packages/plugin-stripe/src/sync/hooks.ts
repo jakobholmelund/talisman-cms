@@ -1,4 +1,4 @@
-import type { CollectionHookArgs, CollectionHooks } from 'talisman-cms';
+import type { Actor, CollectionHookArgs, CollectionHooks } from 'talisman-cms';
 import type { StripeRuntimeConfig, StripeSyncConfig } from '../types';
 import { stripeProxy } from '../proxy';
 import { MISSING_SECRET_KEY, readStripeSecretKey, type StripeEnv } from '../secrets';
@@ -10,7 +10,7 @@ export interface SyncRuntime {
   getEnv: () => Promise<StripeEnv>;
   /** The Drizzle table behind a native collection, or null for CMS entries. */
   nativeTable: Record<string, unknown> | null;
-  /** Whether the request was made by a CMS admin. */
+  /** Whether a request was made by a CMS admin, for hooks called without an actor. */
   isAdmin: (request: Request) => Promise<boolean>;
 }
 
@@ -52,13 +52,16 @@ export function createSyncHooks(
     return secretKey;
   };
 
-  // beforeDelete and afterDelete receive the same request; authenticate it once.
+  // The CMS names the actor: an admin API user, or trusted server code (the SDK), which may delete
+  // linked records. A hook called with only a request authenticates it once for both delete hooks.
   const adminChecks = new WeakMap<Request, Promise<boolean>>();
-  const isAdmin = (request: Request) => {
-    let check = adminChecks.get(request);
+  const isAdmin = ({ actor, req }: { actor?: Actor; req?: Request }) => {
+    if (actor) return Promise.resolve(actor.kind !== 'user' || actor.user.role === 'admin');
+    if (!req) return Promise.resolve(false);
+    let check = adminChecks.get(req);
     if (!check) {
-      check = runtime.isAdmin(request);
-      adminChecks.set(request, check);
+      check = runtime.isAdmin(req);
+      adminChecks.set(req, check);
     }
     return check;
   };
@@ -123,19 +126,19 @@ export function createSyncHooks(
     ],
     beforeDelete: [
       // Refuse before the CMS record is removed, so it cannot outlive its Stripe resource unnoticed.
-      async ({ req, originalDoc }: Omit<CollectionHookArgs, 'data'>) => {
+      async ({ actor, req, originalDoc }: Omit<CollectionHookArgs, 'data'>) => {
         if (!storedStripeId(originalDoc)) return;
-        if (!(await isAdmin(req))) {
+        if (!(await isAdmin({ actor, req }))) {
           throw new Error(`[plugin-stripe] Only CMS admins can delete records linked to a Stripe ${resource}.`);
         }
         await requireSecretKey();
       }
     ],
     afterDelete: [
-      async ({ req, doc }: Omit<CollectionHookArgs, 'data'> & { doc: any }) => {
+      async ({ actor, req, doc }: Omit<CollectionHookArgs, 'data'> & { doc: any }) => {
         const stripeId = storedStripeId(doc);
         if (!stripeId) return;
-        if (!(await isAdmin(req))) {
+        if (!(await isAdmin({ actor, req }))) {
           console.error(`[plugin-stripe] Kept ${resource} ${stripeId} in Stripe: the delete was not made by a CMS admin.`);
           return;
         }

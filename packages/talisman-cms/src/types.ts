@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { Actor } from './service/actor';
 
 export type FieldType =
   | 'text'
@@ -113,9 +114,14 @@ export interface FieldDefinition {
 
 export interface CollectionHookArgs<T = any> {
   data: Partial<T>;
-  req: Request;
   operation: 'create' | 'update' | 'delete';
   originalDoc?: T;
+  /** Who is writing: the admin API's signed-in user, or trusted server code such as the SDK. */
+  actor: Actor;
+  /** The HTTP request, set only when the write came through the admin API. */
+  req?: Request;
+  /** The collection being written. */
+  collection: { slug: string; native: boolean };
 }
 
 export interface CollectionHooks<T = any> {

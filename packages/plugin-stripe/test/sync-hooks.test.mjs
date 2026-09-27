@@ -156,3 +156,22 @@ test('only admins can remove linked Stripe resources, and not without the key', 
     ['POST', '/v1/products/prod_1', { active: 'false' }],
   ]);
 });
+
+test('delete hooks trust the actor the CMS names: administrators and server code may delete linked records, editors may not', async (t) => {
+  const calls = mockStripe(t);
+  const customers = createStripeRuntimeHooks({ collection: 'customers', stripeResourceType: 'customers', stripeResourceTypeSingular: 'customer', fields: [] });
+  const linkedCustomer = { id: 'c1', data: { stripeID: 'cus_1' } };
+  const collection = { slug: 'customers', native: false };
+  const user = (role) => ({ kind: 'user', user: { id: role, email: `${role}@example.test`, role }, request: new Request('https://cms.test/admin/api/x', { method: 'DELETE' }) });
+
+  // No request is needed when the actor is known.
+  await assert.rejects(customers.beforeDelete[0]({ actor: user('editor'), collection, operation: 'delete', originalDoc: linkedCustomer }), /Only CMS admins/);
+  await customers.afterDelete[0]({ actor: user('editor'), collection, operation: 'delete', originalDoc: linkedCustomer, doc: linkedCustomer });
+  assert.equal(calls.length, 0, 'the Stripe customer is kept');
+
+  for (const actor of [user('admin'), { kind: 'system', label: 'cleanup' }]) {
+    await customers.beforeDelete[0]({ actor, collection, operation: 'delete', originalDoc: linkedCustomer });
+    await customers.afterDelete[0]({ actor, collection, operation: 'delete', originalDoc: linkedCustomer, doc: linkedCustomer });
+  }
+  assert.deepEqual(calls.map(({ method, path }) => [method, path]), [['DELETE', '/v1/customers/cus_1'], ['DELETE', '/v1/customers/cus_1']]);
+});
