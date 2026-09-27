@@ -14,6 +14,7 @@ export { invalidateCollectionCache, invalidateEntryCache, invalidateGlobalCache 
 // A collection hook may throw one to refuse a write with that status.
 export {
   AccessDeniedError,
+  ConflictError,
   ConstraintError,
   HookError,
   InvalidInputError,

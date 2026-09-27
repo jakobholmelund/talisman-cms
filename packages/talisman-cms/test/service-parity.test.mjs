@@ -34,7 +34,7 @@ function kvStore() {
 function snapshot(sqlite) {
   const ids = new Map();
   const placeholder = (value) => {
-    if (typeof value !== 'string' || !/^(entry|rev)_|^[0-9a-f]{8}-[0-9a-f-]{27}$/.test(value)) return value;
+    if (typeof value !== 'string' || !/^(entry|rev)_|^[0-9a-f]{8}-[0-9a-f-]{27}$|^\d{13}-[a-z0-9]+$/.test(value)) return value;
     if (!ids.has(value)) ids.set(value, `<id ${ids.size + 1}>`);
     return ids.get(value);
   };
@@ -49,11 +49,12 @@ function snapshot(sqlite) {
     revisions: rows('galaxy_entry_revisions', 'created_at, revision_number, entry_id'),
     parts: rows('test_parts', 'id'),
     media: rows('galaxy_media', 'id'),
+    globals: rows('galaxy_globals', 'slug'),
   };
 }
 
 const normalizeBody = (body) => JSON.parse(JSON.stringify(body, (key, value) => {
-  if (/^(id|entryId|latestRevisionId|publishedRevisionId|collectionId|slug)$/.test(key) && typeof value === 'string' && /^(entry|rev)_|^[0-9a-f-]{36}$/.test(value)) return '<id>';
+  if (/^(id|entryId|latestRevisionId|publishedRevisionId|collectionId|slug)$/.test(key) && typeof value === 'string' && /^(entry|rev)_|^[0-9a-f-]{36}$|^\d{13}-[a-z0-9]+$/.test(value)) return '<id>';
   if (/(At|_at)$/.test(key) && value !== null) return '<time>';
   return value;
 }));
@@ -96,7 +97,9 @@ async function run(scenario, mode, user) {
       const api = service.createService(runtime.env, { config: serviceConfig(), actor });
       try {
         const result = await scenario.service(api, ids);
-        outcome = { status: scenario.created ? 201 : 200, body: normalizeBody(result ?? { success: true }) };
+        outcome = result === null && scenario.missing
+          ? { status: 404, body: { error: scenario.missing } }
+          : { status: scenario.created ? 201 : 200, body: normalizeBody(result ?? { success: true }) };
       } catch (error) {
         const response = httpErrors.toErrorResponse(error, 'parity');
         outcome = { status: response.status, body: normalizeBody(await response.json()) };
@@ -157,10 +160,22 @@ const scenarios = [
   { name: 'write a read-only collection', asymmetry: 'trusted server code may write read-only collections',
     http: () => ({ method: 'POST', path: '/collections/ledger/entries', body: { data: { note: 'x' } } }),
     service: (api) => api.entries.create('ledger', { data: { note: 'x' } }), created: true },
-  { name: 'read an entry', http: () => ({ method: 'GET', path: '/collections/posts/entries/p2' }), service: (api) => api.entries.get('posts', 'p2') },
-  { name: 'list a native collection', http: () => ({ method: 'GET', path: '/collections/parts/entries' }), service: (api) => api.entries.list('parts') },
-  { name: 'page entries', http: () => ({ method: 'GET', path: '/collections/posts/entries?limit=2' }), service: (api) => api.entries.page('posts', { limit: 2 }) },
-  { name: 'list revisions', http: () => ({ method: 'GET', path: '/collections/posts/entries/p2/revisions' }), service: (api) => api.revisions.list('posts', 'p2') },
+  { name: 'read an entry', reads: true, http: () => ({ method: 'GET', path: '/collections/posts/entries/p2' }), service: (api) => api.entries.get('posts', 'p2') },
+  { name: 'list a native collection', reads: true, http: () => ({ method: 'GET', path: '/collections/parts/entries' }), service: (api) => api.entries.list('parts') },
+  { name: 'page entries', reads: true, http: () => ({ method: 'GET', path: '/collections/posts/entries?limit=2' }), service: (api) => api.entries.page('posts', { limit: 2 }) },
+  { name: 'list revisions', reads: true, http: () => ({ method: 'GET', path: '/collections/posts/entries/p2/revisions' }), service: (api) => api.revisions.list('posts', 'p2') },
+  { name: 'read a missing entry', reads: true, missing: 'Entry not found', http: () => ({ method: 'GET', path: '/collections/posts/entries/nope' }), service: (api) => api.entries.get('posts', 'nope') },
+  { name: 'list globals', reads: true, http: () => ({ method: 'GET', path: '/globals' }), service: (api) => api.globals.list() },
+  { name: 'read a configured global', reads: true, http: () => ({ method: 'GET', path: '/globals/site' }), service: (api) => api.globals.get('site') },
+  { name: 'read a missing global', reads: true, missing: 'Global not found', http: () => ({ method: 'GET', path: '/globals/missing' }), service: (api) => api.globals.get('missing') },
+  { name: 'create a global', created: true, adminOnly: true, http: () => ({ method: 'POST', path: '/globals', body: { slug: 'footer', name: 'Footer', data: { note: 'Hi' } } }),
+    service: (api) => api.globals.create({ slug: 'footer', name: 'Footer', data: { note: 'Hi' } }) },
+  { name: 'create a global without a slug', adminOnly: true, http: () => ({ method: 'POST', path: '/globals', body: { name: 'Footer' } }), service: (api) => api.globals.create({ name: 'Footer' }) },
+  { name: 'create a global with non-object data', adminOnly: true, http: () => ({ method: 'POST', path: '/globals', body: { slug: 'footer', data: 'text' } }), service: (api) => api.globals.create({ slug: 'footer', data: 'text' }) },
+  { name: 'save a configured global', http: () => ({ method: 'POST', path: '/globals/site', body: { siteName: 'Talisman' } }), service: (api) => api.globals.save('site', { siteName: 'Talisman' }) },
+  { name: 'save a configured global with a blank required field', http: () => ({ method: 'POST', path: '/globals/site', body: { siteName: ' ' } }), service: (api) => api.globals.save('site', { siteName: ' ' }) },
+  { name: 'save a global that is neither configured nor stored', http: () => ({ method: 'POST', path: '/globals/brand-new', body: { note: 'x' } }), service: (api) => api.globals.save('brand-new', { note: 'x' }) },
+  { name: 'save a non-object global', http: () => ({ method: 'POST', path: '/globals/site', body: ['no'] }), service: (api) => api.globals.save('site', ['no']) },
 ];
 
 runtime.collections.push({ name: 'Ledger', slug: 'ledger', readOnly: true, fields: [{ name: 'note', label: 'Note', type: 'text' }] });
@@ -176,6 +191,12 @@ for (const scenario of scenarios) {
     }
     const http = await run(scenario, 'http', admin);
     const sdk = await run(scenario, 'system', admin);
+    if (scenario.reads) {
+      // Server code reads through KV: a fill whose rows changed during the read drops its key, so
+      // only the rows, hooks and outcome are compared for reads.
+      delete http.deletes;
+      delete sdk.deletes;
+    }
     if (scenario.asymmetry) {
       assert.notDeepEqual(sdk, http, `${scenario.asymmetry}: the documented difference is real`);
       assert.ok(sdk.outcome.status < 400, `${scenario.asymmetry}: server code is not refused (${sdk.outcome.status} ${JSON.stringify(sdk.outcome.body)})`);

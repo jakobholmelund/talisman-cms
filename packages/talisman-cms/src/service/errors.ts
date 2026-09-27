@@ -33,8 +33,8 @@ export class ValidationError extends ServiceError {
   /** Extra members of the admin API's error body, such as zod's `flatten()` output for globals. */
   readonly details?: Record<string, unknown>;
 
-  constructor(issues: FieldValidationIssue[], details?: Record<string, unknown>) {
-    super('invalid_input', 400, formatValidationIssues(issues).error);
+  constructor(issues: FieldValidationIssue[], details?: Record<string, unknown>, message = formatValidationIssues(issues).error) {
+    super('invalid_input', 400, message);
     this.name = 'ValidationError';
     this.issues = issues;
     this.details = details;
@@ -67,6 +67,14 @@ export class PayloadTooLargeError extends ServiceError {
   constructor(message = 'The request body is too large.') {
     super('payload_too_large', 413, message);
     this.name = 'PayloadTooLargeError';
+  }
+}
+
+/** The record the write would create already exists. */
+export class ConflictError extends ServiceError {
+  constructor(message: string) {
+    super('conflict', 409, message);
+    this.name = 'ConflictError';
   }
 }
 

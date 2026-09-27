@@ -4,11 +4,8 @@ import * as schema from './schema';
 import { deleteStoredMedia } from './media-policy';
 import { canAccessCollection } from '../auth/collection-access';
 import {
-  buildZodSchemaForFields,
-  decodeGlobalData,
   generateFieldsFromDrizzle,
   getRelationTargets,
-  isGlobalData,
   isInlineComponentValue,
   isPolymorphicRelationField,
   isPresetReference,
@@ -16,13 +13,13 @@ import {
   nextNativeUpdatedAt
 } from '../types';
 import { loadServiceConfig } from '../service/config';
+import { createService } from '../service/index';
 import { resolveCollectionRecord, syncCollectionDefinitions } from '../service/collections';
 import { NotFoundError } from '../service/errors';
 import {
   NATIVE_CACHE_TTL_SECONDS,
   cacheKeys,
   invalidateEntryCache,
-  invalidateGlobalCache,
   readCache,
   rowsUpdatedSince,
   writeCache,
@@ -40,10 +37,6 @@ type TalismanDb = ReturnType<typeof createDbClient>;
 
 async function getConfiguredCollections() {
   return (await loadServiceConfig()).collections;
-}
-
-async function getConfiguredGlobals() {
-  return (await loadServiceConfig()).globals;
 }
 
 /** The Workflow binding named by the integration's `publishing.workflowBinding` option. */
@@ -135,86 +128,6 @@ function withGeneratedFields(collection: any, nativeTable: any) {
   return collection;
 }
 
-async function syncConfiguredGlobals(db: TalismanDb) {
-  const configuredGlobals = await getConfiguredGlobals();
-
-  for (const globalConfig of configuredGlobals) {
-    const existing = await db.query.globals.findFirst({
-      // @ts-ignore
-      where: (g, { eq }) => eq(g.slug, globalConfig.slug)
-    });
-
-    if (!existing) {
-      const now = new Date();
-      await db.insert(schema.globals).values({
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        name: globalConfig.name,
-        slug: globalConfig.slug,
-        description: globalConfig.description || null,
-        data: {},
-        createdAt: now,
-        updatedAt: now,
-      });
-      continue;
-    }
-
-    const nextDescription = globalConfig.description || null;
-    if (existing.name !== globalConfig.name || (existing.description || null) !== nextDescription) {
-      await db.update(schema.globals).set({
-        name: globalConfig.name,
-        description: nextDescription,
-      }).where(eq(schema.globals.id, existing.id));
-    }
-  }
-
-  return configuredGlobals;
-}
-
-async function resolveGlobalContext(db: TalismanDb, slug: string) {
-  const configuredGlobals = await getConfiguredGlobals();
-  const globalConfig = configuredGlobals.find((candidate) => candidate.slug === slug) || null;
-
-  let globalRecord = await db.query.globals.findFirst({
-    // @ts-ignore
-    where: (g, { eq }) => eq(g.slug, slug)
-  });
-
-  if (!globalRecord && globalConfig) {
-    const now = new Date();
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-
-    await db.insert(schema.globals).values({
-      id,
-      name: globalConfig.name,
-      slug: globalConfig.slug,
-      description: globalConfig.description || null,
-      data: {},
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    globalRecord = await db.query.globals.findFirst({
-      // @ts-ignore
-      where: (g, { eq }) => eq(g.slug, slug)
-    });
-  } else if (globalRecord && globalConfig) {
-    const nextDescription = globalConfig.description || null;
-    if (globalRecord.name !== globalConfig.name || (globalRecord.description || null) !== nextDescription) {
-      await db.update(schema.globals).set({
-        name: globalConfig.name,
-        description: nextDescription,
-      }).where(eq(schema.globals.id, globalRecord.id));
-
-      globalRecord = {
-        ...globalRecord,
-        name: globalConfig.name,
-        description: nextDescription,
-      };
-    }
-  }
-
-  return { globalConfig, globalRecord, configuredGlobals };
-}
 export type TalismanEnv = {
   DB: D1Database;
   STORAGE?: R2Bucket;
@@ -228,10 +141,6 @@ export function createDbClient(env: TalismanEnv) {
     throw new Error('Talisman CMS requires a D1 database bound to the "DB" environment variable.');
   }
   return drizzle(env.DB, { schema });
-}
-
-function withDecodedGlobalData<T extends { data?: unknown } | null | undefined>(record: T): T {
-  return record ? { ...record, data: decodeGlobalData(record.data) } : record;
 }
 
 function isRelationshipFieldType(type: string | undefined) {
@@ -529,6 +438,8 @@ async function resolveRelationships(
  */
 export function getClient(env: TalismanEnv, ctx?: CacheContext) {
   const db = createDbClient(env);
+  // Server code that holds the bindings: the service's trusted actor, with the site's configuration.
+  const service = async () => createService(env, { config: await loadServiceConfig(), ctx });
   
   return {
     collections: {
@@ -552,140 +463,10 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
       }
     },
     globals: {
-      async findMany(opts?: { cache?: boolean }) {
-        const cacheKey = cacheKeys.globals();
-        
-        if (opts?.cache !== false && env.KV) {
-          const cached = await readCache<Array<any>>(env.KV, cacheKey);
-          if (cached) return cached;
-        }
-
-        const readStartedAt = new Date();
-        const configuredGlobals = await syncConfiguredGlobals(db);
-        const allGlobals = await db.query.globals.findMany();
-        const configuredOrder = new Map(configuredGlobals.map((globalConfig, index) => [globalConfig.slug, index]));
-        const data = allGlobals
-          .map(g => ({ ...g, data: undefined }))
-          .sort((left, right) => {
-            const leftOrder = configuredOrder.get(left.slug);
-            const rightOrder = configuredOrder.get(right.slug);
-
-            if (leftOrder !== undefined && rightOrder !== undefined) {
-              return leftOrder - rightOrder;
-            }
-
-            if (leftOrder !== undefined) return -1;
-            if (rightOrder !== undefined) return 1;
-
-            return left.name.localeCompare(right.name);
-          });
-        
-        if (opts?.cache !== false && env.KV) {
-          await writeCache(env.KV, cacheKey, data, ctx, { changedSinceRead: rowsUpdatedSince(db, schema.globals, readStartedAt) });
-        }
-        
-        return data;
-      },
-      async find(slug: string, opts?: { cache?: boolean }) {
-        const cacheKey = cacheKeys.global(slug);
-        
-        if (opts?.cache !== false && env.KV) {
-          // A value cached before globals were stored as objects can still hold encoded data.
-          const cached = await readCache<any>(env.KV, cacheKey);
-          if (cached) return withDecodedGlobalData(cached);
-        }
-
-        const readStartedAt = new Date();
-        const { globalRecord } = await resolveGlobalContext(db, slug);
-        const data = withDecodedGlobalData(globalRecord);
-        
-        if (opts?.cache !== false && env.KV && data) {
-          await writeCache(env.KV, cacheKey, data, ctx,
-            { changedSinceRead: rowsUpdatedSince(db, schema.globals, readStartedAt, eq(schema.globals.slug, slug)) });
-        }
-        
-        return data;
-      },
-      async create(input: { slug: string; name?: string; description?: string | null; data?: any }) {
-        const slug = input.slug.trim();
-        if (!slug) {
-          throw new Error('Slug is required');
-        }
-
-        const existing = await db.query.globals.findFirst({
-          // @ts-ignore
-          where: (g, { eq }) => eq(g.slug, slug)
-        });
-
-        if (existing) {
-          throw new Error('A global with this slug already exists');
-        }
-
-        // Like the admin API: global data is a JSON object, and leaving it out starts with {}.
-        if (input.data != null && !isGlobalData(input.data)) {
-          throw new TypeError('Global data must be a JSON object');
-        }
-
-        const now = new Date();
-        const created = {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-          name: input.name?.trim() || slug,
-          slug,
-          description: input.description?.trim() || null,
-          data: isGlobalData(input.data) ? input.data : {},
-          createdAt: now,
-          updatedAt: now,
-        };
-
-        await db.insert(schema.globals).values(created);
-        await invalidateGlobalCache(env, slug);
-
-        return created;
-      },
-      async update(slug: string, data: Record<string, any>) {
-        // Every read decodes global data as an object, so any other value would read back as {}.
-        if (!isGlobalData(data)) {
-          throw new TypeError('Global data must be a JSON object');
-        }
-        const { globalConfig, globalRecord: existing } = await resolveGlobalContext(db, slug);
-
-        if (globalConfig?.fields?.length) {
-          const parsed = buildZodSchemaForFields(globalConfig.fields).safeParse(data);
-          if (!parsed.success) {
-            throw new Error(parsed.error.issues.map((issue) => issue.message).join(', '));
-          }
-
-          data = parsed.data;
-        }
-
-        const id = existing?.id || (Date.now().toString() + '-' + Math.random().toString(36).substring(7));
-        const now = new Date();
-
-        await db.insert(schema.globals).values({
-          id,
-          name: globalConfig?.name || existing?.name || slug,
-          slug,
-          description: globalConfig?.description || existing?.description || null,
-          data,
-          createdAt: existing?.createdAt || now,
-          updatedAt: now,
-        }).onConflictDoUpdate({
-          target: schema.globals.slug,
-          set: {
-            name: globalConfig?.name || existing?.name || slug,
-            description: globalConfig?.description || existing?.description || null,
-            data,
-            updatedAt: now
-          }
-        });
-
-        await invalidateGlobalCache(env, slug);
-
-        return withDecodedGlobalData(await db.query.globals.findFirst({
-          // @ts-ignore
-          where: (g, { eq }) => eq(g.slug, slug)
-        }));
-      }
+      findMany: async (opts?: { cache?: boolean }) => (await service()).globals.list({ cache: opts?.cache }),
+      find: async (slug: string, opts?: { cache?: boolean }) => (await service()).globals.get(slug, { cache: opts?.cache }),
+      create: async (input: { slug: string; name?: string; description?: string | null; data?: any }) => (await service()).globals.create(input),
+      update: async (slug: string, data: Record<string, any>) => (await service()).globals.save(slug, data),
     },
     entries: {
       async findMany(collectionSlug: string, opts?: { cache?: boolean; depth?: number; version?: 'draft' | 'published'; limit?: number }) {

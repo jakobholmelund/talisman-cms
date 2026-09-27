@@ -988,9 +988,9 @@ test('global data is a JSON object on every write path', { skip }, async () => {
 
     const client = getClient(runtime.env);
     for (const value of [[{ label: 'Home' }], 'Hello', 42, null]) {
-      await assert.rejects(client.globals.update('menu', value), { name: 'TypeError', message: 'Global data must be a JSON object' });
+      await assert.rejects(client.globals.update('menu', value), { name: 'ValidationError', message: 'Global data must be a JSON object' });
     }
-    await assert.rejects(client.globals.create({ slug: 'banner', data: 'Hello' }), TypeError);
+    await assert.rejects(client.globals.create({ slug: 'banner', data: 'Hello' }), publicClient.ValidationError);
     assert.deepEqual((await client.globals.update('menu', { items: [{ label: 'Home' }] })).data, { items: [{ label: 'Home' }] });
     assert.deepEqual((await client.globals.create({ slug: 'banner' })).data, {});
   } finally {

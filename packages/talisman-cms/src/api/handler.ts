@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { count, eq, sql } from 'drizzle-orm';
+import { count, sql } from 'drizzle-orm';
 import { createDbClient, type TalismanEnv } from '../db/client';
 import * as schema from '../db/schema';
 import { authorizeCmsRequest } from '../auth/guard';
@@ -9,13 +9,12 @@ import * as uiLibrariesModule from 'virtual:talisman-cms/ui-libraries';
 import * as nativeSchemasModule from 'virtual:talisman-cms/native-schemas';
 import * as collectionHooksModule from 'virtual:talisman-cms/collection-hooks';
 import { assertAllowed, assertCollectionAccess, userActor, type ActorOperation } from '../service/actor';
-import { invalidateGlobalCache } from '../service/cache';
-import { configuredCollectionFields as collectionFields, oncePerDatabase, syncCollectionDefinitions as syncCollections } from '../service/collections';
+import { configuredCollectionFields as collectionFields, syncCollectionDefinitions as syncCollections } from '../service/collections';
 import { configFromModules } from '../service/config';
 import { MAX_PAGE_SIZE, NATIVE_PUBLISHING_MESSAGE, NATIVE_REVISIONS_MESSAGE } from '../service/entries';
-import { NotFoundError, ValidationError } from '../service/errors';
+import { NotFoundError } from '../service/errors';
 import { createService } from '../service/index';
-import { buildZodSchemaForFields, decodeGlobalData, isGlobalData, type FieldValidationIssue } from '../types';
+import { isGlobalData } from '../types';
 import { HttpError, toErrorResponse } from './http-errors';
 
 // The virtual modules stay static imports, so the Worker bundle carries the site's hook modules and
@@ -26,15 +25,7 @@ const serviceConfig = configFromModules({
   nativeSchemas: nativeSchemasModule,
   collectionHooks: collectionHooksModule,
 });
-const { collections: configCollections, globals: configGlobals, nativeSchemas } = serviceConfig;
-
-function validationErrorResponse(issues: FieldValidationIssue[], extra?: Record<string, unknown>) {
-  return toErrorResponse(new ValidationError(issues, extra), 'validation');
-}
-
-function withDecodedGlobalData<T extends { data?: unknown }>(record: T) {
-  return { ...record, data: decodeGlobalData(record.data) };
-}
+const { collections: configCollections, nativeSchemas } = serviceConfig;
 
 // D1 rows are capped near 2 MB and every save also stores a revision copy of the data.
 const MAX_REQUEST_BODY_BYTES = 2 * 1024 * 1024;
@@ -119,92 +110,6 @@ async function resolveConfigured(service: ReturnType<typeof createService>, slug
   const collection = await service.entries.resolve(slug);
   if (!collection.configured) throw new NotFoundError(`Collection ${slug} not found`);
   return collection;
-}
-
-const globalSyncs = new WeakMap<object, Promise<void>>();
-
-/** Creates the configured globals' rows and mirrors their names, once per isolate. */
-function syncConfiguredGlobals(db: ReturnType<typeof createDbClient>, binding: unknown) {
-  return oncePerDatabase(globalSyncs, binding, () => writeConfiguredGlobals(db));
-}
-
-async function writeConfiguredGlobals(db: ReturnType<typeof createDbClient>) {
-  for (const globalConfig of configGlobals) {
-    const existing = await db.query.globals.findFirst({
-      // @ts-ignore
-      where: (g, { eq }) => eq(g.slug, globalConfig.slug)
-    });
-
-    if (!existing) {
-      const now = new Date();
-      await db.insert(schema.globals).values({
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        name: globalConfig.name,
-        slug: globalConfig.slug,
-        description: globalConfig.description || null,
-        data: {},
-        createdAt: now,
-        updatedAt: now,
-      });
-      continue;
-    }
-
-    const nextDescription = globalConfig.description || null;
-    if (existing.name !== globalConfig.name || (existing.description || null) !== nextDescription) {
-      await db.update(schema.globals).set({
-        name: globalConfig.name,
-        description: nextDescription,
-      }).where(eq(schema.globals.id, existing.id));
-    }
-  }
-}
-
-async function resolveGlobalContext(db: ReturnType<typeof createDbClient>, slug: string) {
-  const globalConfig = configGlobals.find((candidate) => candidate.slug === slug) || null;
-
-  let globalRecord = await db.query.globals.findFirst({
-    // @ts-ignore
-    where: (g, { eq }) => eq(g.slug, slug)
-  });
-
-  if (!globalRecord && globalConfig) {
-    const now = new Date();
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-
-    await db.insert(schema.globals).values({
-      id,
-      name: globalConfig.name,
-      slug: globalConfig.slug,
-      description: globalConfig.description || null,
-      data: {},
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    globalRecord = await db.query.globals.findFirst({
-      // @ts-ignore
-      where: (g, { eq }) => eq(g.slug, slug)
-    });
-  } else if (globalRecord && globalConfig) {
-    const nextDescription = globalConfig.description || null;
-    if (globalRecord.name !== globalConfig.name || (globalRecord.description || null) !== nextDescription) {
-      await db.update(schema.globals).set({
-        name: globalConfig.name,
-        description: nextDescription,
-      }).where(eq(schema.globals.id, globalRecord.id));
-
-      globalRecord = {
-        ...globalRecord,
-        name: globalConfig.name,
-        description: nextDescription,
-      };
-    }
-  }
-
-  return {
-    globalConfig,
-    globalRecord,
-  };
 }
 
 export const ALL: APIRoute = async ({ request, locals }) => {
@@ -294,132 +199,28 @@ export const ALL: APIRoute = async ({ request, locals }) => {
   const globalsMatch = path.match(/\/api\/globals(?:\/([^/]+))?$/);
   if (globalsMatch) {
     const slug = globalsMatch[1];
-    
+
     try {
       const { env } = await import('cloudflare:workers') as unknown as { env: TalismanEnv };
-      // @ts-ignore - Drizzle ORM types can be strict with the D1 env wrapper
-      const db = createDbClient(env as any);
+      const service = createService(env, { config: serviceConfig, actor });
 
       if (request.method === 'GET') {
         if (!slug) {
-          await syncConfiguredGlobals(db, env.DB);
-          const allGlobals = await db.query.globals.findMany();
-          const configuredOrder = new Map(configGlobals.map((globalConfig, index) => [globalConfig.slug, index]));
-          const list = allGlobals
-            .map(g => ({ ...g, data: undefined }))
-            .sort((left, right) => {
-              const leftOrder = configuredOrder.get(left.slug);
-              const rightOrder = configuredOrder.get(right.slug);
-
-              if (leftOrder !== undefined && rightOrder !== undefined) {
-                return leftOrder - rightOrder;
-              }
-
-              if (leftOrder !== undefined) return -1;
-              if (rightOrder !== undefined) return 1;
-
-              return left.name.localeCompare(right.name);
-            });
-
-          return new Response(JSON.stringify(list), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' }
-          });
-        } else {
-          const { globalRecord: globalObj } = await resolveGlobalContext(db, slug);
-          if (!globalObj) return new Response(JSON.stringify({ error: 'Global not found' }), { status: 404 });
-          return new Response(JSON.stringify(withDecodedGlobalData(globalObj)), { status: 200, headers: { 'Content-Type': 'application/json' } });
+          return new Response(JSON.stringify(await service.globals.list()), { status: 200, headers: { 'Content-Type': 'application/json' } });
         }
-      } 
-      
+        const global = await service.globals.get(slug);
+        if (!global) return new Response(JSON.stringify({ error: 'Global not found' }), { status: 404 });
+        return new Response(JSON.stringify(global), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+
       if (request.method === 'POST') {
         if (!slug) {
           const body = await readJsonObject(request);
-          const requestedSlug = typeof body.slug === 'string' ? body.slug.trim() : '';
-          const requestedName = typeof body.name === 'string' ? body.name.trim() : '';
-
-          if (!requestedSlug) {
-            return new Response(JSON.stringify({ error: 'Slug is required' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
-          }
-          if (body.data != null && !isGlobalData(body.data)) {
-            return Response.json({ error: 'Global data must be a JSON object', fieldErrors: {} }, { status: 400 });
-          }
-
-          const existing = await db.query.globals.findFirst({
-            // @ts-ignore
-            where: (g, { eq }) => eq(g.slug, requestedSlug)
-          });
-
-          if (existing) {
-            return new Response(JSON.stringify({ error: 'A global with this slug already exists' }), { status: 409, headers: { 'Content-Type': 'application/json' } });
-          }
-
-          const now = new Date();
-          const created = {
-            id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-            name: requestedName || requestedSlug,
-            slug: requestedSlug,
-            description: typeof body.description === 'string' && body.description.trim().length > 0 ? body.description.trim() : null,
-            data: isGlobalData(body.data) ? body.data : {},
-            createdAt: now,
-            updatedAt: now,
-          };
-
-          await db.insert(schema.globals).values(created);
-          await invalidateGlobalCache(env, requestedSlug);
-
+          const created = await service.globals.create({ slug: body.slug, name: body.name, description: body.description, data: body.data });
           return new Response(JSON.stringify(created), { status: 201, headers: { 'Content-Type': 'application/json' } });
         }
-        
-        let data = await readJsonBody(request);
-        if (!isGlobalData(data)) {
-          return Response.json({ error: 'Global data must be a JSON object', fieldErrors: {} }, { status: 400 });
-        }
-        const { globalConfig, globalRecord: existing } = await resolveGlobalContext(db, slug);
-        // Saving to a slug that is neither configured nor stored would create a global, which
-        // POST /api/globals keeps to administrators.
-        if (!globalConfig && !existing && user.role !== 'admin') {
-          return Response.json({ error: 'Only administrators can create globals' }, { status: 403 });
-        }
-
-        if (globalConfig?.fields?.length) {
-          const parsed = buildZodSchemaForFields(globalConfig.fields).safeParse(data);
-          if (!parsed.success) {
-            return validationErrorResponse(parsed.error.issues, { details: parsed.error.flatten() });
-          }
-
-          data = parsed.data;
-        }
-        
-        const id = existing?.id || (Date.now().toString() + '-' + Math.random().toString(36).substring(7));
-        const now = new Date();
-
-        await db.insert(schema.globals).values({
-          id,
-          name: globalConfig?.name || existing?.name || slug,
-          slug,
-          description: globalConfig?.description || existing?.description || null,
-          data,
-          createdAt: existing?.createdAt || now,
-          updatedAt: now,
-        }).onConflictDoUpdate({
-          target: schema.globals.slug,
-          set: {
-            name: globalConfig?.name || existing?.name || slug,
-            description: globalConfig?.description || existing?.description || null,
-            data,
-            updatedAt: now
-          }
-        });
-
-        const updated = await db.query.globals.findFirst({
-          // @ts-ignore
-          where: (g: any, { eq }: any) => eq(g.slug, slug)
-        });
-
-        await invalidateGlobalCache(env, slug);
-
-        return new Response(JSON.stringify(updated && withDecodedGlobalData(updated)), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        const updated = await service.globals.save(slug, await readJsonBody(request));
+        return new Response(JSON.stringify(updated), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
     } catch (e: any) {
       return toErrorResponse(e, 'Error in /api/globals');

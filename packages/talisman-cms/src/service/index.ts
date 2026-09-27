@@ -4,6 +4,7 @@ import type { CacheContext } from './cache';
 import type { ServiceConfig } from './config';
 import type { ServiceContext } from './context';
 import { entriesService } from './entries';
+import { globalsService } from './globals';
 import type { HookLogEntry } from './hooks';
 import { revisionsService } from './transitions';
 
@@ -36,6 +37,7 @@ export function createService(env: TalismanEnv, options: ServiceOptions) {
   return {
     actor: context.actor,
     entries: entriesService(context),
+    globals: globalsService(context),
     revisions: revisionsService(context),
   };
 }
@@ -45,4 +47,5 @@ export { systemActor, userActor } from './actor';
 export type { ServiceConfig } from './config';
 export type { ServiceContext } from './context';
 export type { CreateEntryInput, EntriesPage, UpdateEntryInput, WriteExpectation } from './entries';
+export type { CreateGlobalInput } from './globals';
 export type { HookLogEntry } from './hooks';
