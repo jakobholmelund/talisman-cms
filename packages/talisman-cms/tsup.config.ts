@@ -19,6 +19,7 @@ export default defineConfig({
     '@tanstack/router-vite-plugin',
     '@tanstack/react-router',
     'virtual:talisman-cms/auth',
+    'virtual:talisman-cms/collection-hooks',
     'virtual:talisman-cms/config',
     'virtual:talisman-cms/email',
     'virtual:talisman-cms/native-schemas',

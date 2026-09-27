@@ -3,10 +3,11 @@ import { createDbClient, type TalismanEnv } from '../db/client';
 import * as schema from '../db/schema';
 import { authorizeCmsRequest } from '../auth/guard';
 import { canAccessCollection, type CollectionOperation } from '../auth/collection-access';
-import { collections as configCollections, globals as configGlobals, publishing } from 'virtual:talisman-cms/config';
-import { uiLibraries as configuredUiLibraries } from 'virtual:talisman-cms/ui-libraries';
-import { nativeSchemas } from 'virtual:talisman-cms/native-schemas';
-import { collectionHooks } from 'virtual:talisman-cms/collection-hooks';
+import * as configModule from 'virtual:talisman-cms/config';
+import * as uiLibrariesModule from 'virtual:talisman-cms/ui-libraries';
+import * as nativeSchemasModule from 'virtual:talisman-cms/native-schemas';
+import * as collectionHooksModule from 'virtual:talisman-cms/collection-hooks';
+import { configFromModules } from '../service/config';
 import {
   buildZodSchemaForCollection,
   buildZodSchemaForFields,
@@ -26,6 +27,22 @@ import {
 } from '../types';
 import { validatePresetPayload } from '../presets';
 import { HttpError, toErrorResponse } from './http-errors';
+
+// The virtual modules stay static imports, so the Worker bundle carries the site's hook modules and
+// a module that fails to load fails the build.
+const serviceConfig = configFromModules({
+  config: configModule,
+  uiLibraries: uiLibrariesModule,
+  nativeSchemas: nativeSchemasModule,
+  collectionHooks: collectionHooksModule,
+});
+const {
+  collections: configCollections,
+  globals: configGlobals,
+  uiLibraries: configuredUiLibraries,
+  nativeSchemas,
+  collectionHooks,
+} = serviceConfig;
 import { HookError, NATIVE_RECORD_CONFLICT_MESSAGE, ServiceError, ValidationError, type HookPhase } from '../service/errors';
 import { deleteStoredMedia } from '../db/media-policy';
 import { eq, desc, and, or, lt, count, isNull, sql, getTableColumns } from 'drizzle-orm';
@@ -783,7 +800,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         entryId,
         action,
         expectedRevisionId,
-      }, publishing.workflowBinding);
+      }, serviceConfig.publishingWorkflowBinding);
 
       await invalidateEntryCache(env, slug, entryId);
       if (updated.workflow?.status === 'pending') {

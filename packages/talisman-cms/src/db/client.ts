@@ -15,8 +15,8 @@ import {
   isRelationReference,
   nextNativeUpdatedAt
 } from '../types';
+import { loadServiceConfig } from '../service/config';
 import {
-  DEFAULT_PUBLISHING_WORKFLOW_BINDING,
   createDraftEntry,
   invalidateEntryCache,
   normalizeEntryDataForRead,
@@ -25,72 +25,29 @@ import {
   triggerPublishingWorkflow
 } from '../versioning';
 
-let _nativeSchemas: Record<string, any> | null = null;
-let _nativeSchemaConfig: Record<string, { idColumn: string }> | null = null;
-let _configGlobals: any[] | null = null;
-let _configCollections: any[] | null = null;
-let _publishingWorkflowBinding: string | null = null;
 type TalismanDb = ReturnType<typeof createDbClient>;
 
-async function getNativeSchemaModule() {
-  if (_nativeSchemas && _nativeSchemaConfig) {
-    return {
-      nativeSchemas: _nativeSchemas,
-      nativeSchemaConfig: _nativeSchemaConfig
-    };
-  }
-
-  try {
-    const mod = await import('virtual:talisman-cms/native-schemas');
-    _nativeSchemas = mod.nativeSchemas || {};
-    _nativeSchemaConfig = mod.nativeSchemaConfig || {};
-  } catch (err) {
-    _nativeSchemas = {};
-    _nativeSchemaConfig = {};
-  }
-
-  return {
-    nativeSchemas: _nativeSchemas,
-    nativeSchemaConfig: _nativeSchemaConfig
-  };
+async function getConfiguredCollections() {
+  return (await loadServiceConfig()).collections;
 }
 
 async function getConfiguredGlobals() {
-  if (_configGlobals) {
-    return _configGlobals;
-  }
-
-  try {
-    const mod = await import('virtual:talisman-cms/config');
-    _configGlobals = mod.globals || [];
-  } catch (err) {
-    _configGlobals = [];
-  }
-
-  return _configGlobals;
+  return (await loadServiceConfig()).globals;
 }
 
 /** The Workflow binding named by the integration's `publishing.workflowBinding` option. */
 async function getPublishingWorkflowBinding() {
-  if (_publishingWorkflowBinding !== null) return _publishingWorkflowBinding;
-  try {
-    const mod = await import('virtual:talisman-cms/config');
-    _publishingWorkflowBinding = mod.publishing?.workflowBinding || DEFAULT_PUBLISHING_WORKFLOW_BINDING;
-  } catch {
-    _publishingWorkflowBinding = DEFAULT_PUBLISHING_WORKFLOW_BINDING;
-  }
-  return _publishingWorkflowBinding;
+  return (await loadServiceConfig()).publishingWorkflowBinding;
 }
 
-async function getConfiguredCollections() {
-  if (_configCollections !== null) return _configCollections;
-  try {
-    const mod = await import('virtual:talisman-cms/config');
-    _configCollections = mod.collections || [];
-  } catch {
-    _configCollections = [];
-  }
-  return _configCollections;
+async function getNativeSchemaModule() {
+  const config = await loadServiceConfig();
+  return {
+    nativeSchemas: config.nativeSchemas,
+    nativeSchemaConfig: Object.fromEntries(config.collections
+      .filter((collection) => collection.nativeSchemaMapping)
+      .map((collection) => [collection.slug, { idColumn: collection.nativeSchemaMapping?.idColumn || 'id' }])),
+  };
 }
 
 async function ensureCollection(db: TalismanDb, slug: string) {
