@@ -588,6 +588,8 @@ Depends on Plugin API v2.
 
 #### Browser tests for the admin
 
+**Status:** done on `main` before the 0.1 publish. `e2e/admin-flows.mjs` (`pnpm e2e:admin`) drives the admin in the installed Chrome with playwright-core against a built playground served by `astro preview`: first-admin setup or sign-in, a new entry saved twice, publish, an editor who sees no publish action, a 409 conflict resolved with "Load latest version", a media upload, a variant group with stock, the storefront preview following typing, a global save and the mobile drawer; it also records the client chunk sizes of the build. The GitHub workflow's `admin-browser` job runs it after the playground build. Follow-ups: the hybrid-mode editor flow and the orders screen are not covered, and the harness is a plain node script rather than a Playwright Test suite.
+
 **Why:** The admin SPA has no component or browser tests; coverage is the manual `docs/admin-coverage.md`. The overhaul needs a safety net.
 
 **Approach:** Add a Playwright suite against the playground with a seeded editor and admin: sign in, edit a draft, check that publish is hidden for the editor, publish as admin, add an editor in hybrid mode and open the orders screen. Run it in CI after the playground build.
@@ -597,6 +599,8 @@ Depends on Plugin API v2.
 **Issue:** #TBD-admin-browser-tests
 
 #### One field renderer for the entry and globals editors
+
+**Status:** done on `main` before the 0.1 publish. `FieldRenderer`, `RelationshipPicker`, `RelationFieldSummary` and the relation and array helpers live in `ui/components/fields` and serve both editors and the page builder. The globals editor lost its unreachable copy of the pre-composer blocks UI (about 485 lines) and gained the media field, and both editors trim ISO dates for the date input. The storefront preview, the commerce model guide and the server error summary subscribe to the form store, so they follow typing. Collapsed page builder cards are kept under one localStorage key per entry, written only when they change, with an LRU index capped at 50 entries. Follow-up: a new entry's collapsed cards do not carry over to its saved id.
 
 **Why:** `FieldRenderer` and `RelationshipPicker` exist twice, the globals copy carries about 485 unreachable lines, and the editors differ (globals has no media field; the entry editor does not trim ISO dates). Previews read form values during render and stop updating while typing, and every field mount writes its own localStorage key.
 
@@ -608,6 +612,8 @@ Depends on Plugin API v2.
 
 #### Code-split the admin bundle
 
+**Status:** done on `main` before the 0.1 publish. The router plugin's `autoCodeSplitting` gives each route's component its own chunk; the entry editor moved out of its route file into `ui/components/editor` (its loader into `ui/lib/entry-editor-data.ts`), because a route file's exports stay in the eager bundle; the rich text editor (Tiptap) and the page builder load on first use from the shared field renderer; and plugin admin pages are lazy imports in the admin-extensions virtual module, rendered inside Suspense. In the playground build the admin's entry chunk went from 1,433 KB to 294 KB, and what `/admin` loads at start from 1,433 KB to 688 KB, of which 233 KB is the `virtual:talisman-cms/config` module. Follow-ups: the collections list page stays eager because the commerce list route imports it; the config module is eager because the sidebar needs `collections`, while most of its weight is the UI library catalogs that only the editors read; zod loads at start because `lib/page-builder.ts` keeps the schema builders next to the helpers the loaders need; and Tiptap's default `injectCSS` trips a strict CSP (`injectCSS: false` with the ProseMirror base rules in `globals.css` would fix it).
+
 **Why:** The admin ships as one chunk of about 1.16 MB, with extensions, the rich-text editor and the page builder loaded up front.
 
 **Approach:** Enable `autoCodeSplitting` in the TanStack router plugin and lazy-load extension components, `RichTextEditor` and `PageBuilderComposer`.
@@ -618,6 +624,8 @@ Depends on Plugin API v2.
 
 #### Mobile navigation
 
+**Status:** done on `main` before the 0.1 publish. Below `md` the sidebar is a drawer opened by a header button with `aria-expanded` and `aria-controls`, with a backdrop and its own close button; Escape closes it, focus moves to the first link and returns to the toggle, and it closes on navigation or when the viewport grows to `md`. From `md` up the sidebar is unchanged.
+
 **Why:** The sidebar is hidden below the `md` breakpoint and nothing replaces it.
 
 **Approach:** Turn the header's "Menu" into a toggle that opens the sidebar as a drawer.
@@ -625,6 +633,18 @@ Depends on Plugin API v2.
 **Audit refs:** `admin-ui/no-mobile-nav`
 
 **Issue:** #TBD-admin-mobile-nav
+
+#### Accessibility of the editing flows
+
+**Status:** done on `main` before the 0.1 publish. A static audit of the editors, the page builder, the pickers, the media and users screens and the sign-in panel found 29 gaps; 27 were fixed (one had gone with the shared renderer, one was not a gap). Busy controls keep focus (`aria-disabled`, `aria-busy`, a mounted `sr-only` status line and a handler guard instead of `disabled`); success, progress and error messages are live regions that stay mounted; the conflict panel is a focused region announced by a separate alert; the error summary's field names focus their fields; repeated buttons name their record, field or revision; the variant editor's validation marks its inputs; styled text became headings; the rich text toolbar is one tab stop with arrow keys; read-only records are a disabled fieldset; the Users screen confirms a role change from a "Change role" button; the shell has a skip link and moves focus to the main landmark on navigation; and `useModalDialog` can make the rest of the page inert. Follow-ups: the page builder still has two buttons named "Add Block" and two "Add to Slot" per slot; the media library's Refresh and "Load more" keep `disabled` while loading; the error summary cannot reach fields inside the block inspector or a preset's props; colour contrast was not measured; nothing has been checked with a screen reader yet.
+
+**Why:** Keyboard and screen reader users lost focus on every busy button, heard no outcome of a save or publish, and could edit read-only records that the mouse could not.
+
+**Approach:** Audit statically, apply the fixes in one pass over the shared renderer, the editors and the screens, and re-run the browser harness.
+
+**Audit refs:** none (found during the overhaul)
+
+**Issue:** none (done before an issue was opened)
 
 #### Load only one product's rows in the product editor
 
