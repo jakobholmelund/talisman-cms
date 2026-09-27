@@ -659,22 +659,5 @@ export async function triggerPublishingWorkflow(
   return getVersionedEntry(db, collection.id, payload.entryId);
 }
 
-/**
- * Drops the KV copies of a collection's cached lists and of the given entries' cached reads. Code
- * that writes rows without getClient (a D1 batch, for example) calls it once the write has
- * committed, as the admin API and getClient do after theirs.
- */
-export async function invalidateEntryCache(
-  env: TalismanEnv,
-  collectionSlug: string,
-  entryIds?: string | readonly string[]
-) {
-  const kv = env.KV;
-  if (!kv) return;
-
-  const prefix = `talisman:entries:${collectionSlug}`;
-  await Promise.all([`${prefix}:all`, `${prefix}:all:draft`, `${prefix}:all:published`].map((key) => kv.delete(key)));
-  const ids = (typeof entryIds === 'string' ? [entryIds] : entryIds ?? []).filter(Boolean);
-  await Promise.all(ids.flatMap((id) => [`${prefix}:${id}`, `${prefix}:${id}:draft`, `${prefix}:${id}:published`])
-    .map((key) => kv.delete(key)));
-}
+// The helper lives with the cache; the Workflow and older imports still find it here.
+export { invalidateEntryCache } from './service/cache';

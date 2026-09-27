@@ -685,10 +685,10 @@ test('a change through the variants endpoint clears the cached reads of the rows
   const stamp = second() - 60;
   seedVariants(sqlite, stamp);
   const env = { DB, KV: kvStore() };
-  // A storefront reading the options through getClient, which caches depth-0 reads in KV.
+  // A storefront reading the options through getClient and opting into the short KV cache of native rows.
   const client = getClient(env);
-  const ids = async (slug) => (await client.entries.findMany(slug, { depth: 0 })).map((entry) => entry.id).sort();
-  const cachedRow = async (slug, id) => (await client.entries.find(slug, id, { depth: 0 }))?.data;
+  const ids = async (slug) => (await client.entries.findMany(slug, { depth: 0, cache: true })).map((entry) => entry.id).sort();
+  const cachedRow = async (slug, id) => (await client.entries.find(slug, id, { depth: 0, cache: true }))?.data;
   const storefront = async () => ({
     groups: await ids('_ecommerce_product_variants'),
     values: await ids('_ecommerce_product_variant_values'),

@@ -13,6 +13,13 @@ export const MEDIA_CACHE_CONTROL = 'public, max-age=3600';
 // year; new keys leave them unused, so a deletion also applies to files cached before this change.
 const MEDIA_CACHE_KEY_VERSION = '2';
 
+export const MEDIA_SCHEMA_PATH = 'talisman-cms/db/media';
+
+/** Whether a configured collection is backed by the media table (the built-in `media` collection). */
+export function isMediaCollection(collection: { nativeSchemaMapping?: { schemaPath?: string } }) {
+  return collection.nativeSchemaMapping?.schemaPath === MEDIA_SCHEMA_PATH;
+}
+
 /** The public path of an uploaded file: media-serve answers at `/api/media/<id>`. */
 export function mediaPath(id: string) {
   return `/api/media/${id}`;

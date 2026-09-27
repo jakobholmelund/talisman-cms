@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
-import { getClient } from '../dist/client.js';
+import { getClient, invalidateCollectionCache, invalidateEntryCache, invalidateGlobalCache } from '../dist/client.js';
 
 const hourAgo = Math.floor(Date.now() / 1000) - 3600;
 
@@ -40,9 +40,11 @@ function database() {
 function kvStore({ get, put } = {}) {
   const store = new Map();
   const calls = { put: 0, delete: 0 };
+  const deleted = [];
   return {
     store,
     calls,
+    deleted,
     async get(key) {
       if (get) return get(key);
       return store.has(key) ? JSON.parse(store.get(key)) : null;
@@ -54,6 +56,7 @@ function kvStore({ get, put } = {}) {
     },
     async delete(key) {
       calls.delete += 1;
+      deleted.push(key);
       store.delete(key);
     },
   };
@@ -208,6 +211,36 @@ test('globals are stored once as JSON objects and double-encoded rows read as ob
     const KV = kvStore();
     KV.store.set('talisman:globals:legacy', JSON.stringify({ slug: 'legacy', data: '{"siteName":"Cached"}' }));
     assert.deepEqual((await getClient({ DB, KV }).globals.find('legacy')).data, { siteName: 'Cached' });
+  } finally {
+    sqlite.close();
+  }
+});
+
+test('writes clear their cached reads through the exported helpers', async () => {
+  const { sqlite, DB } = database();
+  try {
+    const KV = kvStore();
+    const client = getClient({ DB, KV });
+    await client.globals.create({ slug: 'site', data: { siteName: 'Talisman' } });
+    assert.deepEqual(KV.deleted, ['talisman:globals:all', 'talisman:globals:site']);
+    KV.deleted.length = 0;
+    await client.globals.update('site', { siteName: 'Renamed' });
+    assert.deepEqual(KV.deleted, ['talisman:globals:all', 'talisman:globals:site']);
+
+    KV.deleted.length = 0;
+    await client.entries.delete('pages', 'about');
+    assert.deepEqual(KV.deleted.sort(), [
+      'talisman:entries:pages:about', 'talisman:entries:pages:about:draft', 'talisman:entries:pages:about:published',
+      'talisman:entries:pages:all', 'talisman:entries:pages:all:draft', 'talisman:entries:pages:all:published',
+    ]);
+
+    // Server code that writes rows itself calls the same helpers.
+    KV.deleted.length = 0;
+    await invalidateEntryCache({ KV }, 'pages', ['about']);
+    await invalidateGlobalCache({ KV }, 'site');
+    await invalidateCollectionCache({ KV });
+    assert.equal(KV.deleted.length, 6 + 2 + 1);
+    await invalidateCollectionCache({});
   } finally {
     sqlite.close();
   }

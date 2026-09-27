@@ -1,9 +1,10 @@
 import type { APIRoute } from 'astro';
 import { eq } from 'drizzle-orm';
-import { createDbClient, type TalismanEnv } from '../../client';
+import { createDbClient, invalidateEntryCache, type TalismanEnv } from '../../client';
 import { media } from '../../db/schema';
 import { authorizeCmsRequest } from '../../auth/guard';
-import { MAX_MEDIA_BYTES, mediaPath, rasterImageType } from '../../db/media-policy';
+import { MAX_MEDIA_BYTES, isMediaCollection, mediaPath, rasterImageType } from '../../db/media-policy';
+import { loadServiceConfig } from '../../service/config';
 
 export const POST: APIRoute = async ({ request }) => {
   const authorization = await authorizeCmsRequest(request);
@@ -64,6 +65,10 @@ export const POST: APIRoute = async ({ request }) => {
       });
       throw error;
     }
+
+    // The library's cached reads no longer match the table.
+    const { collections } = await loadServiceConfig();
+    await Promise.all(collections.filter(isMediaCollection).map((collection) => invalidateEntryCache(env, collection.slug, fileId)));
 
     const insertedRecord = await db.select().from(media).where(eq(media.id, fileId)).get();
 

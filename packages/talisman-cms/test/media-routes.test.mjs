@@ -13,6 +13,7 @@ const runtime = globalThis.__talismanMediaTest = { env: {} };
 const stubs = {
   'cloudflare:workers': 'export const env = new Proxy({}, { get: (_, key) => globalThis.__talismanMediaTest.env[key] });',
   'virtual:talisman-cms/auth': 'export const authConfigured = true; export const authAdapter = { async getUser() { return { id: "editor-1", email: "e@example.test", role: "editor" }; } };',
+  'virtual:talisman-cms/config': 'export const collections = [{ name: "Media", slug: "media", fields: [], nativeSchemaMapping: { schemaPath: "talisman-cms/db/media", exportName: "media", idColumn: "id" } }]; export const globals = []; export const publishing = {};',
 };
 const srcUrl = new URL('../src/', import.meta.url).href;
 let serve;
@@ -149,6 +150,8 @@ test('an upload whose record cannot be saved removes its file again', { skip }, 
       };
     },
   };
+  const deleted = [];
+  runtime.env.KV = { async delete(key) { deleted.push(key); } };
   try {
     const saved = await upload({ request: uploadRequest() });
     assert.equal(saved.status, 200);
@@ -156,6 +159,9 @@ test('an upload whose record cannot be saved removes its file again', { skip }, 
     assert.match(record.id, /^media_[0-9a-f-]+$/);
     assert.equal(record.url, `/api/media/${record.id}`);
     assert.deepEqual([...objects.keys()], [record.id]);
+    // The library's cached reads are cleared for the collection the media table backs.
+    assert.ok(deleted.includes('talisman:entries:media:all:published'), deleted.join(', '));
+    assert.ok(deleted.includes(`talisman:entries:media:${record.id}:published`));
   } finally {
     sqlite.close();
   }

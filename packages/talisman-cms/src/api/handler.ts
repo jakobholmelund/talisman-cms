@@ -9,6 +9,7 @@ import * as nativeSchemasModule from 'virtual:talisman-cms/native-schemas';
 import * as collectionHooksModule from 'virtual:talisman-cms/collection-hooks';
 import { configFromModules } from '../service/config';
 import { configuredCollectionFields as collectionFields, oncePerDatabase, resolveCollectionRecord, syncCollectionDefinitions as syncCollections } from '../service/collections';
+import { invalidateEntryCache, invalidateGlobalCache } from '../service/cache';
 import {
   buildZodSchemaForCollection,
   buildZodSchemaForFields,
@@ -45,13 +46,12 @@ const {
   collectionHooks,
 } = serviceConfig;
 import { HookError, NATIVE_RECORD_CONFLICT_MESSAGE, NotFoundError, ServiceError, ValidationError, type HookPhase } from '../service/errors';
-import { deleteStoredMedia } from '../db/media-policy';
+import { deleteStoredMedia, isMediaCollection } from '../db/media-policy';
 import { eq, desc, and, or, lt, count, isNull, sql, getTableColumns } from 'drizzle-orm';
 import {
   createDraftEntry,
   getEntryRevision,
   getLatestRevision,
-  invalidateEntryCache,
   isEntryNotFound,
   isRevisionConflict,
   isSlugConflict,
@@ -225,20 +225,16 @@ function decodeCursor(cursor: string): unknown[] {
   throw new HttpError(400, 'The cursor is not valid.');
 }
 
-const MEDIA_SCHEMA_PATH = 'talisman-cms/db/media';
 // Set by the upload from the stored file; changing them would repoint or relabel the asset.
 const UPLOAD_MANAGED_MEDIA_FIELDS = ['url', 'mimeType'];
-
-function isSystemMediaCollection(collectionConfig: { nativeSchemaMapping?: { schemaPath?: string } }) {
-  return collectionConfig.nativeSchemaMapping?.schemaPath === MEDIA_SCHEMA_PATH;
-}
+const isSystemMediaCollection = isMediaCollection;
 
 function configuredCollectionFields(collectionConfig: (typeof configCollections)[number]) {
   return collectionFields(collectionConfig, nativeSchemas);
 }
 
-function syncCollectionDefinitions(db: ReturnType<typeof createDbClient>, binding: unknown) {
-  return syncCollections(db, binding, serviceConfig);
+function syncCollectionDefinitions(db: ReturnType<typeof createDbClient>, env: TalismanEnv) {
+  return syncCollections(db, env, serviceConfig);
 }
 
 /** Row counts for native tables in one statement, since D1 limits the queries per request. */
@@ -287,7 +283,7 @@ function validateCollectionPayload(slug: string, data: Record<string, any>) {
   };
 }
 
-async function resolveCollectionContext(db: ReturnType<typeof createDbClient>, slug: string, binding: unknown) {
+async function resolveCollectionContext(db: ReturnType<typeof createDbClient>, slug: string, env: TalismanEnv) {
   const configuredCollection = configCollections.find(c => c.slug === slug);
   const collectionConfig = configuredCollection
     ? { ...configuredCollection, hooks: wrapCollectionHooks(collectionHooks[slug]) }
@@ -296,7 +292,7 @@ async function resolveCollectionContext(db: ReturnType<typeof createDbClient>, s
     throw new NotFoundError(`Collection ${slug} not found`);
   }
 
-  const collection = await resolveCollectionRecord(db, binding, serviceConfig, slug);
+  const collection = await resolveCollectionRecord(db, env, serviceConfig, slug);
   const activeFields = configuredCollectionFields(collectionConfig);
 
   const nativeTable = collectionConfig.nativeSchemaMapping && nativeSchemas[slug] ? nativeSchemas[slug] : null;
@@ -442,7 +438,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
 
       // A few statements whatever the number of collections: the rows are synced once per isolate,
       // then read in one query, with one count for entries and one for every native table.
-      await syncCollectionDefinitions(db, (env as any).DB);
+      await syncCollectionDefinitions(db, env as any);
       const visibleCollections = configCollections.filter(col => canAccessCollection(col, user, 'read'));
       const persistedCollections = await db.select({
         id: schema.collections.id,
@@ -555,11 +551,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
           };
 
           await db.insert(schema.globals).values(created);
-
-          if (env.KV) {
-            await env.KV.delete('talisman:globals:all');
-            await env.KV.delete(`talisman:globals:${requestedSlug}`);
-          }
+          await invalidateGlobalCache(env, requestedSlug);
 
           return new Response(JSON.stringify(created), { status: 201, headers: { 'Content-Type': 'application/json' } });
         }
@@ -610,10 +602,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
           where: (g: any, { eq }: any) => eq(g.slug, slug)
         });
 
-        if (env.KV) {
-          await env.KV.delete('talisman:globals:all');
-          await env.KV.delete(`talisman:globals:${slug}`);
-        }
+        await invalidateGlobalCache(env, slug);
 
         return new Response(JSON.stringify(updated && withDecodedGlobalData(updated)), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
@@ -633,7 +622,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
       const { env } = await import('cloudflare:workers') as unknown as { env: TalismanEnv };
       // @ts-ignore
       const db = createDbClient(env as any);
-      const { collection, collectionConfig, nativeTable } = await resolveCollectionContext(db, slug, env.DB);
+      const { collection, collectionConfig, nativeTable } = await resolveCollectionContext(db, slug, env);
 
       if (!canAccessCollection(collectionConfig, user, request.method === 'GET' ? 'read' : 'update') ||
         (request.method !== 'GET' && collectionConfig.readOnly)) {
@@ -684,7 +673,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
       const { env } = await import('cloudflare:workers') as unknown as { env: TalismanEnv };
       // @ts-ignore
       const db = createDbClient(env as any);
-      const { collection, collectionConfig, activeFields, nativeTable } = await resolveCollectionContext(db, slug, env.DB);
+      const { collection, collectionConfig, activeFields, nativeTable } = await resolveCollectionContext(db, slug, env);
 
       if (!canAccessCollection(collectionConfig, user, 'update') || collectionConfig.readOnly) {
         return Response.json({ error: 'Collection access denied' }, { status: 403 });
@@ -756,7 +745,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         activeFields,
         nativeTable,
         nativeIdCol
-      } = await resolveCollectionContext(db, slug, env.DB);
+      } = await resolveCollectionContext(db, slug, env);
 
       const operation: CollectionOperation = request.method === 'GET' ? 'read'
         : request.method === 'POST' ? 'create'

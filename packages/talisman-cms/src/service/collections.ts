@@ -1,13 +1,15 @@
 import { eq } from 'drizzle-orm';
-import type { createDbClient } from '../db/client';
+import type { TalismanEnv, createDbClient } from '../db/client';
 import * as schema from '../db/schema';
 import { generateFieldsFromDrizzle, type CollectionConfig, type FieldDefinition } from '../types';
 import type { ServiceConfig } from './config';
+import { invalidateCollectionCache } from './cache';
 import { NotFoundError } from './errors';
 
 type Db = ReturnType<typeof createDbClient>;
 export type CollectionRecord = typeof schema.collections.$inferSelect;
 type CollectionsConfig = Pick<ServiceConfig, 'collections' | 'nativeSchemas'>;
+type CollectionsEnv = Pick<TalismanEnv, 'DB' | 'KV'>;
 
 /** Work that should run once per isolate and D1 database, keyed by the binding. */
 export function oncePerDatabase(runs: WeakMap<object, Promise<void>>, binding: unknown, run: () => Promise<void>) {
@@ -51,9 +53,10 @@ export function configuredCollectionFields(collectionConfig: CollectionConfig, n
  * Entries reference a galaxy_collections row per configured collection, which also mirrors its
  * name and fields. The sync reads every row once per isolate, writes only rows that are missing or
  * changed, in one batch, and fills the memo that reads take their rows from, so no request looks a
- * collection row up again.
+ * collection row up again. A write also drops the cached collection list.
  */
-export function syncCollectionDefinitions(db: Db, binding: unknown, config: CollectionsConfig): Promise<void> {
+export function syncCollectionDefinitions(db: Db, env: CollectionsEnv, config: CollectionsConfig): Promise<void> {
+  const binding = env.DB;
   return oncePerDatabase(syncs, binding, async () => {
     const memo = memoFor(binding);
     const stored = await db.select().from(schema.collections);
@@ -80,7 +83,10 @@ export function syncCollectionDefinitions(db: Db, binding: unknown, config: Coll
         .onConflictDoNothing({ target: schema.collections.slug }));
     }
 
-    if (writes.length > 0) await db.batch(writes as [any, ...any[]]);
+    if (writes.length > 0) {
+      await db.batch(writes as [any, ...any[]]);
+      await invalidateCollectionCache(env);
+    }
     if (missing.length > 0) {
       // Another isolate may have created a missing row first, so the stored rows are read back.
       for (const row of await db.select().from(schema.collections)) memo?.set(row.slug, row);
@@ -93,9 +99,9 @@ export function syncCollectionDefinitions(db: Db, binding: unknown, config: Coll
  * after the isolate started, or a stored collection that is no longer configured) is looked up
  * once; a configured collection without a row is created.
  */
-export async function resolveCollectionRecord(db: Db, binding: unknown, config: CollectionsConfig, slug: string): Promise<CollectionRecord> {
-  await syncCollectionDefinitions(db, binding, config);
-  const memo = memoFor(binding);
+export async function resolveCollectionRecord(db: Db, env: CollectionsEnv, config: CollectionsConfig, slug: string): Promise<CollectionRecord> {
+  await syncCollectionDefinitions(db, env, config);
+  const memo = memoFor(env.DB);
   const known = memo?.get(slug);
   if (known) return known;
 
@@ -111,6 +117,7 @@ export async function resolveCollectionRecord(db: Db, binding: unknown, config: 
       fields: configuredCollectionFields(collectionConfig, config.nativeSchemas),
       createdAt: new Date(),
     }).onConflictDoNothing({ target: schema.collections.slug });
+    await invalidateCollectionCache(env);
     row = await lookup();
     if (!row) throw new Error(`Collection ${slug} could not be initialized`);
   }

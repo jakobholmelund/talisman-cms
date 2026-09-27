@@ -107,8 +107,9 @@ const returnedIds = (result: D1Result<Record<string, any>> | undefined) =>
 
 /**
  * Drop the cached reads of the rows a committed change wrote, keyed by collection slug, as the core
- * API does after its saves: getClient() serves depth-0 reads of these collections from KV for up to
- * an hour. The change is saved either way, so a failure here is only logged.
+ * API does after its saves: a storefront that opts into caching (`cache: true`) is served depth-0
+ * reads of these collections from KV for up to a minute. The change is saved either way, so a
+ * failure here is only logged.
  */
 async function clearCachedRows(env: TalismanEnv, written: Record<string, string[]>) {
   try {

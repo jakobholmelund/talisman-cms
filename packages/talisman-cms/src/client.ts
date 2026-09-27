@@ -6,9 +6,10 @@ export {
   EntryNotFoundError,
   RevisionConflictError,
   SlugConflictError,
-  invalidateEntryCache,
   type PendingPublishWorkflow
 } from './versioning';
+// invalidateGlobalCache and invalidateCollectionCache do the same for globals and the collection list.
+export { invalidateCollectionCache, invalidateEntryCache, invalidateGlobalCache } from './service/cache';
 // The errors the service throws for a caller's mistake, with the status the admin API answers.
 // A collection hook may throw one to refuse a write with that status.
 export {
