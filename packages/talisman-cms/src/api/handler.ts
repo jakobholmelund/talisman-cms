@@ -14,7 +14,6 @@ import {
   describeInvalidEntryId,
   describeInvalidEntrySlug,
   findUnwritableNativeColumns,
-  formatValidationIssues,
   generateFieldsFromDrizzle,
   getNativeIdColumn,
   isGlobalData,
@@ -26,6 +25,8 @@ import {
   type FieldValidationIssue
 } from '../types';
 import { validatePresetPayload } from '../presets';
+import { HttpError, toErrorResponse } from './http-errors';
+import { HookError, NATIVE_RECORD_CONFLICT_MESSAGE, ServiceError, ValidationError, type HookPhase } from '../service/errors';
 import { deleteStoredMedia } from '../db/media-policy';
 import { eq, desc, and, or, lt, count, isNull, sql, getTableColumns } from 'drizzle-orm';
 import {
@@ -57,10 +58,8 @@ function mapNativeEntry(row: any, collectionId: string, nativeIdCol: string) {
   };
 }
 
-const NATIVE_RECORD_CONFLICT_MESSAGE = 'This record changed since it was opened. Reload it before saving.';
-
 function validationErrorResponse(issues: FieldValidationIssue[], extra?: Record<string, unknown>) {
-  return Response.json({ ...formatValidationIssues(issues), ...extra }, { status: 400 });
+  return toErrorResponse(new ValidationError(issues, extra), 'validation');
 }
 
 function withDecodedGlobalData<T extends { data?: unknown }>(record: T) {
@@ -74,106 +73,24 @@ function timestampKey(value: unknown) {
   return value ?? null;
 }
 
-/** A client error with its status; anything else becomes a generic 500 (see errorResponse). */
-class HttpError extends Error {
-  status: number;
-
-  constructor(status: number, message: string) {
-    super(message);
-    this.name = 'HttpError';
-    this.status = status;
-  }
-}
-
-/** Wraps an error thrown by a collection hook, whose message is written for editors. */
-class HookError extends Error {
-  constructor(cause: unknown) {
-    super(cause instanceof Error ? cause.message : 'A collection hook failed', { cause });
-    this.name = 'HookError';
-  }
-}
-
-const INTERNAL_ERROR_MESSAGE = 'The request could not be completed. Check the server logs for details.';
-
-/** Drizzle reports a failed statement as "Failed query: <sql> params: <values>"; D1 adds its own prefix. */
-function isDatabaseError(error: unknown): boolean {
-  for (let current: any = error, depth = 0; current && depth < 5; current = current.cause, depth += 1) {
-    const message = typeof current.message === 'string' ? current.message : '';
-    if (current.name === 'DrizzleQueryError' || message.startsWith('Failed query:') || /D1_ERROR|SQLITE_/.test(message)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/** Turns a SQLite constraint failure into a message without the statement or its values. */
-function describeConstraintError(error: unknown): { status: number; error: string } | null {
-  for (let current: any = error, depth = 0; current && depth < 5; current = current.cause, depth += 1) {
-    const message = typeof current.message === 'string' ? current.message : '';
-    // The statement text of a DrizzleQueryError holds the submitted values, so only its cause is read.
-    if (message.startsWith('Failed query:')) continue;
-    const columns = message.match(/constraint failed: ([\w.]+(?:, [\w.]+)*)/)?.[1]
-      ?.split(', ').map((column: string) => column.split('.').pop()).join(', ');
-    if (/UNIQUE constraint failed/i.test(message)) {
-      return { status: 409, error: columns ? `Another record already uses this ${columns}.` : 'Another record already uses this value.' };
-    }
-    if (/NOT NULL constraint failed/i.test(message)) {
-      return { status: 400, error: columns ? `A value is required for ${columns}.` : 'A required value is missing.' };
-    }
-    if (/FOREIGN KEY constraint failed/i.test(message)) {
-      return { status: 409, error: 'This change conflicts with a related record.' };
-    }
-    if (/CHECK constraint failed/i.test(message)) {
-      return { status: 400, error: 'A value is not allowed.' };
-    }
-    if (/SQLITE_TOOBIG|string or blob too big/i.test(message)) {
-      return { status: 413, error: 'This content is too large to store.' };
-    }
-  }
-  return null;
-}
-
-/**
- * Client mistakes get a 4xx with a message for editors. Other failures are logged and answered
- * with a generic 500, since database errors carry the SQL statement and the submitted values.
- */
-function errorResponse(error: unknown, context: string) {
-  if (error instanceof HttpError) {
-    return Response.json({ error: error.message }, { status: error.status });
-  }
-  if (isRevisionConflict(error) || isSlugConflict(error)) {
-    return Response.json({ error: (error as Error).message }, { status: 409 });
-  }
-  if (isEntryNotFound(error)) {
-    return Response.json({ error: (error as Error).message }, { status: 404 });
-  }
-
-  const constraint = describeConstraintError(error);
-  if (constraint) {
-    return Response.json({ error: constraint.error }, { status: constraint.status });
-  }
-
-  console.error(`[talisman-cms] ${context}:`, error);
-  const message = error instanceof HookError && !isDatabaseError(error) ? error.message : INTERNAL_ERROR_MESSAGE;
-  return Response.json({ status: 'error', error: message, message }, { status: 500 });
-}
-
 function wrapCollectionHooks(hooks: CollectionHooks | undefined): CollectionHooks | undefined {
   if (!hooks) return hooks;
-  const wrap = (list: ((args: any) => any)[] | undefined) => list?.map((hook) => async (args: any) => {
+  const wrap = (list: ((args: any) => any)[] | undefined, phase: HookPhase) => list?.map((hook) => async (args: any) => {
     try {
       return await hook(args);
     } catch (error) {
-      throw new HookError(error);
+      // A hook may refuse with a service error of its own, which keeps its status.
+      if (error instanceof ServiceError) throw error;
+      throw new HookError(error, phase);
     }
   });
 
   return {
-    beforeValidate: wrap(hooks.beforeValidate),
-    beforeChange: wrap(hooks.beforeChange),
-    afterChange: wrap(hooks.afterChange),
-    beforeDelete: wrap(hooks.beforeDelete),
-    afterDelete: wrap(hooks.afterDelete),
+    beforeValidate: wrap(hooks.beforeValidate, 'beforeValidate'),
+    beforeChange: wrap(hooks.beforeChange, 'beforeChange'),
+    afterChange: wrap(hooks.afterChange, 'afterChange'),
+    beforeDelete: wrap(hooks.beforeDelete, 'beforeDelete'),
+    afterDelete: wrap(hooks.afterDelete, 'afterDelete'),
   };
 }
 
@@ -619,7 +536,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         headers: { 'Content-Type': 'application/json' }
       });
     } catch (e: any) {
-      return errorResponse(e, 'Error in /api/collections');
+      return toErrorResponse(e, 'Error in /api/collections');
     }
   }
 
@@ -762,7 +679,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         return new Response(JSON.stringify(updated && withDecodedGlobalData(updated)), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
     } catch (e: any) {
-      return errorResponse(e, 'Error in /api/globals');
+      return toErrorResponse(e, 'Error in /api/globals');
     }
   }
 
@@ -814,7 +731,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
 
       return Response.json({ error: 'Method not allowed' }, { status: 405 });
     } catch (e: any) {
-      return errorResponse(e, 'Error in the revisions API');
+      return toErrorResponse(e, 'Error in the revisions API');
     }
   }
 
@@ -879,7 +796,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
       }
       return new Response(JSON.stringify(toEditableEntry(updated)), { status: 200, headers: { 'Content-Type': 'application/json' } });
     } catch (e: any) {
-      return errorResponse(e, `Error in the ${action} API`);
+      return toErrorResponse(e, `Error in the ${action} API`);
     }
   }
 
@@ -1323,7 +1240,7 @@ export const ALL: APIRoute = async ({ request, locals }) => {
       }
 
     } catch (e: any) {
-      return errorResponse(e, 'Error in the entries API');
+      return toErrorResponse(e, 'Error in the entries API');
     }
   }
 

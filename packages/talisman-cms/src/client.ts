@@ -9,3 +9,20 @@ export {
   invalidateEntryCache,
   type PendingPublishWorkflow
 } from './versioning';
+// The errors the service throws for a caller's mistake, with the status the admin API answers.
+// A collection hook may throw one to refuse a write with that status.
+export {
+  AccessDeniedError,
+  ConstraintError,
+  HookError,
+  NativeRecordConflictError,
+  NotFoundError,
+  PayloadTooLargeError,
+  PreconditionRequiredError,
+  ServiceError,
+  UnsupportedOperationError,
+  ValidationError,
+  isServiceError,
+  type HookPhase,
+  type ServiceErrorCode
+} from './service/errors';
