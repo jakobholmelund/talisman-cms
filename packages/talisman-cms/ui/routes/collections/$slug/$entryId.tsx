@@ -1,19 +1,16 @@
-import React, { useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createFileRoute, Link, useBlocker, useNavigate, useRouter } from '@tanstack/react-router';
 import { uiLibraries as configuredUiLibraries } from 'virtual:talisman-cms/ui-libraries';
 import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
-import { ArrowDown, ArrowLeft, ArrowUp, Archive, ChevronDown, ChevronRight, Clock3, Database, GripVertical, History, Plus, Save, Send } from 'lucide-react';
-import { BlockLibraryPicker } from '../../../components/BlockLibraryPicker';
-import { ComponentSlotPicker } from '../../../components/ComponentSlotPicker';
+import { ArrowLeft, Archive, Clock3, Database, History, Save, Send } from 'lucide-react';
+import { AdminBasePathContext, buildRelationOptions, FieldRenderer, fieldsNeedPresetEntries, type RelationOptionRecord } from '../../../components/fields';
 import { MediaFieldInput } from '../../../components/MediaFieldInput';
 import {
   formatFieldErrors,
-  PageBuilderComposer,
   ServerFieldErrorsContext,
   type ServerFieldErrors,
 } from '../../../components/PageBuilderComposer';
-import { RichTextEditor } from '../../../components/RichTextEditor';
 import { getSectionCollectionRoute, getSectionEntryRoute, type AdminSection } from '../../../lib/admin-sections';
 import { fetchCollectionConfigs, fetchEntriesBySlug } from '../../../lib/admin-api';
 import {
@@ -38,106 +35,18 @@ import {
   getCommerceSupportSlugs,
   getEntryData,
   getInventoryFieldNames,
-  getRelationOptionLabel,
   type CommerceSupportEntries,
 } from '../../../lib/commerce-models';
 import { readCommerceCurrency } from '../../../commerce-currency';
 import {
-  getRelationOptionKey,
-  getRelationTargets,
-  isPolymorphicRelationField,
-  isRelationReference,
-  type RelationReference,
-} from '../../../lib/page-builder';
-import {
-  buildBlockValue,
   buildDefaultValues,
-  buildInlineComponentValue,
-  buildPresetReferenceValue,
   collectRelationshipFields,
-  getBlockPreviewSummary,
-  getCollapsedCardsStorageKey,
-  getComponentSlotItems,
-  getComponentPreviewSummary,
   getPresetClientSchema,
-  getPresetComponentSlug,
-  getPresetRecordLabel,
+  getRelationTargets,
   getZodClientSchemaForFields,
-  insertArrayItem,
-  isPresetReferenceValue,
-  isRelationshipFieldType,
-  moveArrayItem,
   normalizeStoredFieldData,
-  readCollapsedCardsState,
-  writeCollapsedCardsState,
 } from '../../../lib/page-builder';
 import { validatePresetPayload } from '../../../../src/presets';
-
-type RelationOptionRecord = {
-  collectionSlug: string;
-  entry: any;
-};
-
-function normalizeRelationSelections(field: any, value: any): RelationReference[] {
-  const relationTargets = getRelationTargets(field);
-  if (relationTargets.length === 0 || value === undefined || value === null || value === '') {
-    return [];
-  }
-
-  const values = Array.isArray(value) ? value : [value];
-
-  if (isPolymorphicRelationField(field)) {
-    return values.filter(isRelationReference);
-  }
-
-  const relationTo = relationTargets[0];
-  return values.flatMap((item: any) => {
-    if (typeof item === 'string') {
-      return [{ relationTo, value: item }];
-    }
-
-    if (isRelationReference(item)) {
-      return [{ relationTo, value: item.value }];
-    }
-
-    if (item && typeof item === 'object' && typeof item.id === 'string') {
-      return [{ relationTo, value: item.id }];
-    }
-
-    return [];
-  });
-}
-
-function serializeRelationSelections(field: any, selections: RelationReference[]) {
-  if (field.hasMany) {
-    return isPolymorphicRelationField(field)
-      ? selections
-      : selections.map((selection) => selection.value);
-  }
-
-  if (isPolymorphicRelationField(field)) {
-    return selections[0] || null;
-  }
-
-  return selections[0]?.value || '';
-}
-
-function getRelationSelectionKey(selection: RelationReference) {
-  return `${selection.relationTo}:${selection.value}`;
-}
-
-function getRelationOptionsForField(field: any, relationOptions: Record<string, RelationOptionRecord[]>) {
-  return relationOptions[getRelationOptionKey(field)] || [];
-}
-
-function collectionNeedsPresetEntries(collection: any) {
-  return (collection?.fields || []).some((field: any) =>
-    field.type === 'blocks' &&
-    (field.blocks || []).some((block: any) =>
-      (block.componentSlots || []).some((slot: any) => slot.allowReferences)
-    )
-  );
-}
 
 export const Route = createFileRoute('/collections/$slug/$entryId')({
   component: CollectionsEntryEditorRoute,
@@ -164,23 +73,10 @@ function getRelationSupportSlugs(collection: any) {
   const relationFields = collectRelationshipFields(collection.fields);
   const relationTargets = [...new Set(relationFields.flatMap((field: any) => getRelationTargets(field)))];
   const supportSlugs = getCommerceSupportSlugs(collection.slug, relationTargets);
-  if (collectionNeedsPresetEntries(collection)) {
+  if (fieldsNeedPresetEntries(collection.fields)) {
     supportSlugs.push('_ui_component_presets');
   }
   return supportSlugs;
-}
-
-function buildRelationOptions(collection: any, relationEntriesBySlug: Record<string, any[]>) {
-  const relationOptions: Record<string, RelationOptionRecord[]> = {};
-  for (const field of collectRelationshipFields(collection?.fields)) {
-    relationOptions[getRelationOptionKey(field)] = getRelationTargets(field).flatMap((relationTo) =>
-      (relationEntriesBySlug[relationTo] || []).map((entry) => ({
-        collectionSlug: relationTo,
-        entry,
-      }))
-    );
-  }
-  return relationOptions;
 }
 
 export async function loadEntryEditorData(basePath: string, slug: string, entryId: string) {
@@ -207,7 +103,7 @@ export async function loadEntryEditorData(basePath: string, slug: string, entryI
   ]);
 
   const entry = loadedEntry as any;
-  const relationOptions = collection ? buildRelationOptions(collection, relationSupportEntries) : {};
+  const relationOptions = buildRelationOptions(collection?.fields, relationSupportEntries);
 
   return { collection, entry, revisions, isNew, relationOptions, relationSupportEntries: relationSupportEntries as CommerceSupportEntries };
 }
@@ -402,8 +298,6 @@ function takePendingTransition(slug: string, entryId: string): PendingTransition
   }
 }
 
-const AdminBasePathContext = React.createContext('/admin');
-
 function getNativeIdColumn(collection: any) {
   return collection?.nativeSchemaMapping?.idColumn || 'id';
 }
@@ -461,58 +355,6 @@ function getStatusBadgeClass(status: string) {
   return 'bg-zinc-900 text-zinc-200 border-white/10';
 }
 
-function addSlotValue(slot: any, fieldApi: any, nextValue: any) {
-  if (slot.hasMany) {
-    fieldApi.pushValue(nextValue);
-    return;
-  }
-
-  fieldApi.handleChange(nextValue);
-  fieldApi.handleBlur();
-}
-
-function removeSlotValue(slot: any, fieldApi: any, index: number) {
-  if (slot.hasMany) {
-    fieldApi.removeValue(index);
-    return;
-  }
-
-  fieldApi.handleChange(null);
-  fieldApi.handleBlur();
-}
-
-function reorderFieldArrayValue(fieldApi: any, fromIndex: number, toIndex: number) {
-  const currentValue = Array.isArray(fieldApi.state.value) ? fieldApi.state.value : [];
-  const nextValue = moveArrayItem(currentValue, fromIndex, toIndex);
-
-  if (nextValue === currentValue) {
-    return;
-  }
-
-  fieldApi.handleChange(nextValue);
-  fieldApi.handleBlur();
-}
-
-function insertFieldArrayValue(fieldApi: any, index: number, nextValue: any) {
-  const currentValue = Array.isArray(fieldApi.state.value) ? fieldApi.state.value : [];
-  fieldApi.handleChange(insertArrayItem(currentValue, index, nextValue));
-  fieldApi.handleBlur();
-}
-
-function insertSlotValue(slot: any, fieldApi: any, index: number | null, nextValue: any) {
-  if (!slot.hasMany || index === null) {
-    addSlotValue(slot, fieldApi, nextValue);
-    return;
-  }
-
-  insertFieldArrayValue(fieldApi, index, nextValue);
-}
-
-function getAllowedPresetEntries(slot: any, presetEntries: any[]) {
-  const allowedComponentSlugs = new Set((slot.components || []).map((component: any) => component.slug));
-  return presetEntries.filter((preset) => allowedComponentSlugs.has(getPresetComponentSlug(preset)));
-}
-
 function isComponentPresetCollection(collection: any) {
   return collection?.slug === '_ui_component_presets';
 }
@@ -545,227 +387,6 @@ function getLibraryComponentDefinition(libraryId: string | undefined, componentS
     .find((library: any) => library.id === libraryId)
     ?.components?.find((componentAdapter: any) => componentAdapter.component.slug === componentSlug)
     ?.component || null;
-}
-
-function RelationFieldSummary({
-  field,
-  value,
-  relationSupportEntries,
-}: {
-  field: any;
-  value: any;
-  relationSupportEntries: CommerceSupportEntries;
-}) {
-  const selections = normalizeRelationSelections(field, value);
-  const currency = readCommerceCurrency();
-  if (!field.relationTo || selections.length === 0) {
-    return null;
-  }
-
-  const selectedEntries = selections
-    .map((selection) => ({
-      collectionSlug: selection.relationTo,
-      entry: (relationSupportEntries[selection.relationTo] || []).find((option: any) => option.id === selection.value) || null,
-      value: selection.value,
-    }));
-
-  if (selectedEntries.every((selection) => !selection.entry)) {
-    return (
-      <div className="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
-        Selected relation could not be resolved from the current dataset.
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-2">
-      {selectedEntries.map((selection) => {
-        if (!selection.entry) {
-          return (
-            <div key={`${selection.collectionSlug}:${selection.value}`} className="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
-              Missing record in <span className="font-semibold">{selection.collectionSlug}</span>: {selection.value}
-            </div>
-          );
-        }
-
-        const description = describeCommerceEntry(selection.collectionSlug, selection.entry, relationSupportEntries, currency);
-        return (
-          <div key={`${selection.collectionSlug}:${selection.entry.id}`} className="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2">
-            <div className="flex items-center gap-2">
-              <div className="text-sm font-medium text-zinc-100">{description.title}</div>
-              {isPolymorphicRelationField(field) && (
-                <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[10px] uppercase tracking-wider text-zinc-400">
-                  {selection.collectionSlug}
-                </span>
-              )}
-            </div>
-            {description.subtitle && <div className="mt-1 text-xs text-zinc-400">{description.subtitle}</div>}
-            {description.details.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {description.details.map((detail) => (
-                  <span key={detail} className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] text-zinc-300">
-                    {detail}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function RelationshipPicker({
-  field,
-  value,
-  onChange,
-  onBlur,
-  relationOptions,
-  relationSupportEntries,
-  labelId,
-  describedBy,
-}: {
-  field: any;
-  value: any;
-  onChange: (value: any) => void;
-  onBlur: () => void;
-  relationOptions: Record<string, RelationOptionRecord[]>;
-  relationSupportEntries: CommerceSupportEntries;
-  /** The id of the field's visible label, which names the picker. */
-  labelId?: string;
-  describedBy?: string;
-}) {
-  const [query, setQuery] = useState('');
-  const currency = readCommerceCurrency();
-  const options = getRelationOptionsForField(field, relationOptions);
-  const selections = normalizeRelationSelections(field, value);
-  const selectedKeys = new Set(selections.map(getRelationSelectionKey));
-  const filteredOptions = options.filter((option) => {
-    const label = getRelationOptionLabel(option.collectionSlug, option.entry, relationSupportEntries, currency).toLowerCase();
-    const subtitle = describeCommerceEntry(option.collectionSlug, option.entry, relationSupportEntries, currency).subtitle.toLowerCase();
-    const search = query.trim().toLowerCase();
-
-    if (!search) return true;
-    return label.includes(search) || subtitle.includes(search) || option.collectionSlug.toLowerCase().includes(search);
-  });
-
-  function commitSelections(nextSelections: RelationReference[]) {
-    onChange(serializeRelationSelections(field, nextSelections));
-    onBlur();
-  }
-
-  function addSelection(collectionSlug: string, entryId: string) {
-    const nextSelection = { relationTo: collectionSlug, value: entryId };
-    if (field.hasMany) {
-      if (selectedKeys.has(getRelationSelectionKey(nextSelection))) return;
-      commitSelections([...selections, nextSelection]);
-      return;
-    }
-
-    commitSelections([nextSelection]);
-  }
-
-  function removeSelection(selectionToRemove: RelationReference) {
-    commitSelections(selections.filter((selection) => getRelationSelectionKey(selection) !== getRelationSelectionKey(selectionToRemove)));
-  }
-
-  function moveSelection(selectionToMove: RelationReference, direction: -1 | 1) {
-    const index = selections.findIndex((selection) => getRelationSelectionKey(selection) === getRelationSelectionKey(selectionToMove));
-    const targetIndex = index + direction;
-    if (index < 0 || targetIndex < 0 || targetIndex >= selections.length) return;
-
-    const nextSelections = [...selections];
-    const [selection] = nextSelections.splice(index, 1);
-    nextSelections.splice(targetIndex, 0, selection);
-    commitSelections(nextSelections);
-  }
-
-  return (
-    <div role="group" aria-labelledby={labelId} aria-describedby={describedBy} className="space-y-3">
-      <input
-        type="text"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder={`Search ${field.label.toLowerCase()}...`}
-        aria-label={`Search ${field.label}`}
-        className="w-full rounded-md border border-white/10 bg-zinc-950/50 px-3 py-2.5 text-sm text-zinc-100 shadow-inner transition-all focus:border-indigo-500/50 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-      />
-
-      {selections.length > 0 && (
-        <div className="space-y-2">
-          {selections.map((selection, index) => {
-            const entry = (relationSupportEntries[selection.relationTo] || []).find((candidate: any) => candidate.id === selection.value) || null;
-            const description = describeCommerceEntry(selection.relationTo, entry, relationSupportEntries, currency);
-
-            return (
-              <div key={getRelationSelectionKey(selection)} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-3">
-                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-medium text-zinc-100">{description.title}</span>
-                      <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[10px] uppercase tracking-wider text-zinc-400">
-                        {selection.relationTo}
-                      </span>
-                    </div>
-                    {description.subtitle && <div className="mt-1 text-xs text-zinc-400">{description.subtitle}</div>}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {field.hasMany && (
-                      <>
-                        <Button type="button" size="sm" variant="outline" aria-label={`Move ${description.title} up`} onClick={() => moveSelection(selection, -1)} disabled={index === 0}>
-                          Up
-                        </Button>
-                        <Button type="button" size="sm" variant="outline" aria-label={`Move ${description.title} down`} onClick={() => moveSelection(selection, 1)} disabled={index === selections.length - 1}>
-                          Down
-                        </Button>
-                      </>
-                    )}
-                    <Button type="button" size="sm" variant="destructive" aria-label={`Remove ${description.title}`} onClick={() => removeSelection(selection)}>
-                      Remove
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <div role="group" aria-label={`${field.label} options`} className="max-h-72 overflow-y-auto rounded-lg border border-white/10 bg-zinc-950/30">
-        {filteredOptions.length === 0 ? (
-          <div className="px-3 py-4 text-sm text-zinc-500">No entries matched this search.</div>
-        ) : (
-          filteredOptions.map((option) => {
-            const description = describeCommerceEntry(option.collectionSlug, option.entry, relationSupportEntries, currency);
-            const selection = { relationTo: option.collectionSlug, value: option.entry.id };
-            const isSelected = selectedKeys.has(getRelationSelectionKey(selection));
-
-            return (
-              <button
-                key={`${option.collectionSlug}:${option.entry.id}`}
-                type="button"
-                onClick={() => addSelection(option.collectionSlug, option.entry.id)}
-                disabled={field.hasMany ? isSelected : false}
-                className={`flex w-full items-start justify-between gap-4 border-b border-white/5 px-3 py-3 text-left transition-colors last:border-b-0 ${isSelected ? 'bg-indigo-500/10' : 'hover:bg-white/[0.04]'}`}
-              >
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-medium text-zinc-100">{description.title}</span>
-                    <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[10px] uppercase tracking-wider text-zinc-400">
-                      {option.collectionSlug}
-                    </span>
-                  </div>
-                  {description.subtitle && <div className="mt-1 text-xs text-zinc-400">{description.subtitle}</div>}
-                </div>
-                <span className="text-xs text-zinc-400">{isSelected ? 'Selected' : field.hasMany ? 'Add' : 'Choose'}</span>
-              </button>
-            );
-          })
-        )}
-      </div>
-    </div>
-  );
 }
 
 function CommerceModelGuide({
@@ -1721,275 +1342,6 @@ function ProductVariantConfigurator({
   );
 }
 
-// fieldPath is the form path of the parent value ('' at the top level); the admin API base path comes from context.
-function FieldRenderer({ field, form, fieldPath, relationOptions, relationSupportEntries, collapseStorageKey }: { field: any, form: any, fieldPath: string, relationOptions: any, relationSupportEntries: CommerceSupportEntries, collapseStorageKey?: string }) {
-    const fieldName = fieldPath ? `${fieldPath}.${field.name}` : field.name;
-    // Links each label to its control, and each control to its error message.
-    const controlId = useId();
-    const labelId = `${controlId}-label`;
-    const errorId = `${controlId}-error`;
-    const adminBasePath = useContext(AdminBasePathContext);
-    const { errors: serverFieldErrors, clearError: clearServerFieldError } = useContext(ServerFieldErrorsContext);
-    const getErrorMessages = (fieldApi: any) =>
-        [...new Set([...formatFieldErrors(fieldApi.state.meta.errors), ...(serverFieldErrors[fieldName] || [])])];
-    const [dragState, setDragState] = useState<{ listId: string; index: number } | null>(null);
-    const [blockLibraryOpen, setBlockLibraryOpen] = useState(false);
-    const [pendingBlockInsertIndex, setPendingBlockInsertIndex] = useState<number | null>(null);
-    const [slotPickerState, setSlotPickerState] = useState<Record<string, { open: boolean; insertIndex: number | null }>>({});
-    const fieldCollapseStorageKey = getCollapsedCardsStorageKey(collapseStorageKey, fieldName);
-    const [collapsedCards, setCollapsedCards] = useState<Record<string, boolean>>(() => readCollapsedCardsState(fieldCollapseStorageKey));
-
-    const getCardKey = (listId: string, index: number) => `${listId}:${index}`;
-    const isCardCollapsed = (listId: string, index: number) => collapsedCards[getCardKey(listId, index)] === true;
-    const toggleCardCollapsed = (listId: string, index: number) => {
-        const cardKey = getCardKey(listId, index);
-        setCollapsedCards((current) => ({
-            ...current,
-            [cardKey]: !current[cardKey],
-        }));
-    };
-    const setListCollapsed = (listId: string, count: number, collapsed: boolean) => {
-        setCollapsedCards((current) => {
-            const nextState = { ...current };
-            for (let index = 0; index < count; index += 1) {
-                nextState[getCardKey(listId, index)] = collapsed;
-            }
-            return nextState;
-        });
-    };
-    const getSlotPickerConfig = (slotFieldName: string) => slotPickerState[slotFieldName] || { open: false, insertIndex: null };
-    const openSlotPicker = (slotFieldName: string, insertIndex: number | null) => {
-        setSlotPickerState((current) => ({
-            ...current,
-            [slotFieldName]: { open: true, insertIndex },
-        }));
-    };
-    const closeSlotPicker = (slotFieldName: string) => {
-        setSlotPickerState((current) => ({
-            ...current,
-            [slotFieldName]: { open: false, insertIndex: null },
-        }));
-    };
-
-    useEffect(() => {
-        setCollapsedCards(readCollapsedCardsState(fieldCollapseStorageKey));
-    }, [fieldCollapseStorageKey]);
-
-    useEffect(() => {
-        writeCollapsedCardsState(fieldCollapseStorageKey, collapsedCards);
-    }, [fieldCollapseStorageKey, collapsedCards]);
-
-    if (field.type === 'array') {
-        return (
-            <form.Field
-                name={fieldName}
-                mode="array"
-                children={(fieldApi: any) => {
-                    const value = fieldApi.state.value || [];
-                    const errorMessages = getErrorMessages(fieldApi);
-                    return (
-                        <div role="group" aria-labelledby={labelId} className="border border-white/10 rounded-lg p-5 space-y-4 bg-zinc-950/40 shadow-inner">
-                            <div className="flex items-center justify-between pb-3 border-b border-white/5">
-                                <div id={labelId} className="text-sm font-medium text-zinc-300">{field.label}</div>
-                                <Button size="sm" variant="outline" type="button" onClick={() => { clearServerFieldError(fieldName); fieldApi.pushValue(buildDefaultValues(field.fields)); }}>Add Row</Button>
-                            </div>
-                            {errorMessages.length > 0 && (
-                                <p role="alert" className="text-xs text-red-500">{errorMessages.join(', ')}</p>
-                            )}
-                            {value.map((_: any, i: number) => (
-                                <div key={i} role="group" aria-label={`${field.label} row ${i + 1}`} className="p-5 border border-white/5 bg-white/[0.02] rounded-lg relative group transition-colors hover:bg-white/[0.04]">
-                                    <Button 
-                                        size="sm" 
-                                        variant="destructive" 
-                                        type="button"
-                                        aria-label={`Remove ${field.label} row ${i + 1}`}
-                                        className="absolute -right-2 -top-2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity h-6 w-6 p-0 rounded-full"
-                                        onClick={() => { clearServerFieldError(fieldName); fieldApi.removeValue(i); }}
-                                    >
-                                        &times;
-                                    </Button>
-                                    <div className="space-y-4">
-                                        {field.fields?.map((subField: any) => (
-                                            <FieldRenderer key={subField.name} field={subField} form={form} fieldPath={`${fieldName}[${i}]`} relationOptions={relationOptions} relationSupportEntries={relationSupportEntries} collapseStorageKey={collapseStorageKey} />
-                                        ))}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )
-                }}
-            />
-        );
-    }
-    
-    if (field.type === 'blocks') {
-        return (
-            <PageBuilderComposer
-                field={field}
-                fieldName={fieldName}
-                form={form}
-                relationSupportEntries={relationSupportEntries}
-                collapseStorageKey={collapseStorageKey}
-                renderField={(nestedField, nestedFieldPath) => (
-                    <FieldRenderer
-                        key={`${nestedFieldPath}:${nestedField.name}`}
-                        field={nestedField}
-                        form={form}
-                        fieldPath={nestedFieldPath}
-                        relationOptions={relationOptions}
-                        relationSupportEntries={relationSupportEntries}
-                        collapseStorageKey={collapseStorageKey}
-                    />
-                )}
-            />
-        );
-    }
-
-    if (field.type === 'group') {
-        return (
-            <div role="group" aria-labelledby={labelId} className="border border-white/10 rounded-lg p-5 space-y-4 bg-zinc-950/40 shadow-inner">
-                <div className="pb-3 border-b border-white/5">
-                    <div id={labelId} className="text-sm font-medium text-zinc-300">{field.label}</div>
-                </div>
-                <div className="space-y-4">
-                    {field.fields?.map((subField: any) => (
-                        <FieldRenderer key={subField.name} field={subField} form={form} fieldPath={fieldName} relationOptions={relationOptions} relationSupportEntries={relationSupportEntries} collapseStorageKey={collapseStorageKey} />
-                    ))}
-                </div>
-            </div>
-        );
-    }
-
-    return (
-        <form.Field
-            name={fieldName}
-            children={(fieldApi: any) => {
-                const errorMessages = getErrorMessages(fieldApi);
-                const hasError = errorMessages.length > 0;
-                const describedBy = hasError ? errorId : undefined;
-                // Shared by the native controls: the label names them, the error describes them.
-                const controlProps = {
-                    id: controlId,
-                    'aria-invalid': hasError || undefined,
-                    'aria-describedby': describedBy,
-                    'aria-required': field.required || undefined,
-                };
-                // Relation pickers and rich text are not single form controls, so they take the label by id.
-                const labelNamesGroup = isRelationshipFieldType(field.type) || field.type === 'richtext';
-                // A server error describes the value that was sent; drop it once the user edits the field.
-                const handleValueChange = (nextValue: any) => {
-                    if (serverFieldErrors[fieldName]) clearServerFieldError(fieldName);
-                    fieldApi.handleChange(nextValue);
-                };
-                return (
-                  <div className="space-y-2">
-                      {field.type !== 'boolean' && (labelNamesGroup ? (
-                        <div id={labelId} className="text-sm font-medium block text-zinc-300">
-                            {field.label} {field.required && <span aria-hidden="true" className="text-red-400">*</span>}
-                        </div>
-                      ) : (
-                        <label id={labelId} htmlFor={controlId} className="text-sm font-medium block text-zinc-300">
-                            {field.label} {field.required && <span aria-hidden="true" className="text-red-400">*</span>}
-                        </label>
-                      ))}
-                      
-                      {field.type === 'media' ? (
-                          <MediaFieldInput
-                              inputId={controlId}
-                              describedBy={describedBy}
-                              invalid={hasError}
-                              required={Boolean(field.required)}
-                              adminBasePath={adminBasePath}
-                              value={(fieldApi.state.value as string) || ''}
-                              onChange={handleValueChange}
-                              onBlur={fieldApi.handleBlur}
-                          />
-                      ) : field.type === 'textarea' ? (
-                          <textarea
-                              {...controlProps}
-                              value={(fieldApi.state.value as string) || ''}
-                              onChange={(e) => handleValueChange(e.target.value)}
-                              onBlur={fieldApi.handleBlur}
-                              className={`w-full bg-zinc-950/50 border rounded-md p-3 text-sm focus:outline-none focus:ring-2 transition-all shadow-inner ${hasError ? 'border-red-500/50 focus:ring-red-500/50' : 'border-white/10 focus:ring-indigo-500/50 focus:border-indigo-500/50'}`}
-                          />
-                      ) : field.type === 'select' ? (
-                          <select
-                              {...controlProps}
-                              value={(fieldApi.state.value as string) || ''}
-                              onChange={(e) => handleValueChange(e.target.value)}
-                              onBlur={fieldApi.handleBlur}
-                              className={`w-full bg-zinc-950/50 border rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 transition-all shadow-inner ${hasError ? 'border-red-500/50 focus:ring-red-500/50' : 'border-white/10 focus:ring-indigo-500/50 focus:border-indigo-500/50'}`}
-                          >
-                              <option value="">Select an option...</option>
-                              {(field.options || []).map((option: string) => (
-                                  <option key={option} value={option}>
-                                      {option}
-                                  </option>
-                              ))}
-                          </select>
-                      ) : isRelationshipFieldType(field.type) ? (
-                          <RelationshipPicker
-                              field={field}
-                              value={fieldApi.state.value}
-                              onChange={handleValueChange}
-                              onBlur={fieldApi.handleBlur}
-                              relationOptions={relationOptions}
-                              relationSupportEntries={relationSupportEntries}
-                              labelId={labelId}
-                              describedBy={describedBy}
-                          />
-                      ) : field.type === 'richtext' ? (
-                          <RichTextEditor
-                              value={fieldApi.state.value} // ensure value format works with block editor
-                              onChange={(val: any) => handleValueChange(val)}
-                              hasError={hasError}
-                              ariaLabelledBy={labelId}
-                              ariaDescribedBy={describedBy}
-                          />
-                      ) : field.type === 'boolean' ? (
-                          <div className="flex items-center gap-2">
-                              <input 
-                                  {...controlProps}
-                                  type="checkbox" 
-                                  checked={!!fieldApi.state.value}
-                                  onChange={(e) => handleValueChange(e.target.checked)}
-                                  onBlur={fieldApi.handleBlur}
-                                  className="w-4 h-4 rounded border-zinc-700 text-indigo-500 focus:ring-indigo-500 bg-zinc-950"
-                              />
-                              <label id={labelId} htmlFor={controlId} className="text-sm font-medium">
-                                  {field.label} {field.required && <span aria-hidden="true" className="text-red-500">*</span>}
-                              </label>
-                          </div>
-                      ) : (
-                          <input 
-                              {...controlProps}
-                              type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'} 
-                              value={(fieldApi.state.value as any) ?? ''}
-                              // A cleared optional number is null, so saving clears it; a required one stays empty and shows "Required".
-                              onChange={(e) => handleValueChange(field.type === 'number' ? (e.target.value ? Number(e.target.value) : field.required ? undefined : null) : e.target.value)}
-                              onBlur={fieldApi.handleBlur}
-                              className={`w-full bg-zinc-950/50 border rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 transition-all shadow-inner ${hasError ? 'border-red-500/50 focus:ring-red-500/50' : 'border-white/10 focus:ring-indigo-500/50 focus:border-indigo-500/50'}`}
-                          />
-                      )}
-
-                      {isRelationshipFieldType(field.type) && (
-                          <RelationFieldSummary
-                              field={field}
-                              value={fieldApi.state.value as any}
-                              relationSupportEntries={relationSupportEntries}
-                          />
-                      )}
-
-                      {hasError && (
-                          <p id={errorId} role="alert" className="text-xs text-red-500">{errorMessages.join(', ')}</p>
-                      )}
-                  </div>
-                );
-            }}
-        />
-    )
-}
-
 function PresetEditorPanel({
   form,
   selectedLibraryId,
@@ -2794,10 +2146,15 @@ export function CollectionEntryEditor({
           <Card>
              <CardContent className="pt-6">
                 <div className="space-y-8">
-                  {!showProductConfigurator && <CommerceModelGuide
-                    collectionSlug={collection.slug}
-                    values={form.state.values as Record<string, any>}
-                    relationSupportEntries={relationSupportEntries}
+                  {!showProductConfigurator && <form.Subscribe
+                    selector={(state: any) => state.values}
+                    children={(values: Record<string, any>) => (
+                      <CommerceModelGuide
+                        collectionSlug={collection.slug}
+                        values={values}
+                        relationSupportEntries={relationSupportEntries}
+                      />
+                    )}
                   />}
 
                   {!nativeCollection && (
@@ -2934,13 +2291,18 @@ export function CollectionEntryEditor({
                     )}
                     {globalError && <p role="alert" className="text-red-400 text-sm mt-3 text-center">{globalError}</p>}
                     {Object.keys(serverFieldErrors).length > 0 && (
-                      <ul className="mt-3 space-y-1 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-                        {Object.entries(serverFieldErrors).map(([fieldPath, messages]) => (
-                          <li key={fieldPath || 'entry'}>
-                            <span className="font-medium">{describeFieldPath(fieldPath, collection.fields || [], form.state.values)}</span>: {messages.join(', ')}
-                          </li>
-                        ))}
-                      </ul>
+                      <form.Subscribe
+                        selector={(state: any) => state.values}
+                        children={(values: Record<string, any>) => (
+                          <ul className="mt-3 space-y-1 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                            {Object.entries(serverFieldErrors).map(([fieldPath, messages]) => (
+                              <li key={fieldPath || 'entry'}>
+                                <span className="font-medium">{describeFieldPath(fieldPath, collection.fields || [], values)}</span>: {messages.join(', ')}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      />
                     )}
                     {pendingTransition && (
                       <div role="status" className="mt-3 space-y-2 rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 text-center text-sm text-sky-100">
@@ -3079,12 +2441,17 @@ export function CollectionEntryEditor({
            </Card>
         </div>
         {showProductConfigurator && <div id="product-options" className={`scroll-mt-24 ${collection.readOnly ? 'pointer-events-none opacity-80' : ''}`}>
-          <ProductVariantConfigurator
-            productId={currentEntry?.id || null}
-            relationSupportEntries={relationSupportEntries}
-            basePath={basePath}
-            onRefresh={refreshCommerceData}
-            productValues={form.state.values as Record<string, any>}
+          <form.Subscribe
+            selector={(state: any) => state.values}
+            children={(values: Record<string, any>) => (
+              <ProductVariantConfigurator
+                productId={currentEntry?.id || null}
+                relationSupportEntries={relationSupportEntries}
+                basePath={basePath}
+                onRefresh={refreshCommerceData}
+                productValues={values}
+              />
+            )}
           />
         </div>}
       </div>

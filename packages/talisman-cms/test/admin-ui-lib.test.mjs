@@ -32,6 +32,8 @@ const {
 const { fetchAllEntries, fetchCollectionConfigs, fetchEntriesBySlug } = await loadAdminModule('lib/admin-api.ts');
 const { describeCommerceEntry, formatMoney, getRelationOptionLabel } = await loadAdminModule('lib/commerce-models.ts');
 const { readCommerceCurrency } = await loadAdminModule('commerce-currency.ts');
+const { COLLAPSED_STATE_INDEX_KEY, COLLAPSED_STATE_MAX_ENTRIES, pruneCollapsedState, readCollapsedCards, writeCollapsedCards } =
+  await loadAdminModule('lib/collapsed-state.ts');
 
 const fields = [
   { name: 'title', type: 'text', required: true },
@@ -414,4 +416,105 @@ test('fetchCollectionConfigs reuses a recent answer unless asked for a fresh one
   globalThis.fetch = async () => jsonResponse([{ slug: 'ok' }]);
   // A failed answer is not kept.
   assert.deepEqual(await fetchCollectionConfigs('/cache-fail'), [{ slug: 'ok' }]);
+});
+
+// A localStorage stand-in: the collapsed-state module takes its storage as a parameter.
+function memoryStorage(entries = {}) {
+  const map = new Map(Object.entries(entries));
+  return {
+    get length() { return map.size; },
+    key: (index) => [...map.keys()][index] ?? null,
+    getItem: (key) => (map.has(key) ? map.get(key) : null),
+    setItem: (key, value) => { map.set(key, String(value)); },
+    removeItem: (key) => { map.delete(key); },
+    keys: () => [...map.keys()],
+  };
+}
+
+test('collapsed cards are kept under one key per entry and written only when they change', () => {
+  const storage = memoryStorage();
+  const entry = 'talisman-cms:collapsed:collection:pages:p1';
+  assert.deepEqual(readCollapsedCards(entry, 'layout', storage), {});
+  // Mounting a field writes nothing: no collapsed card is also the stored state.
+  assert.equal(writeCollapsedCards(entry, 'layout', {}, storage), false);
+  assert.equal(writeCollapsedCards(entry, 'layout', { 'layout:0': false }, storage), false);
+  assert.deepEqual(storage.keys(), []);
+
+  assert.equal(writeCollapsedCards(entry, 'layout', { 'layout:0': true, 'layout:1': false }, storage), true);
+  assert.equal(writeCollapsedCards(entry, 'sidebar', { 'sidebar:2': true }, storage), true);
+  // The same cards again, in another order or with expanded cards listed, change nothing.
+  assert.equal(writeCollapsedCards(entry, 'layout', { 'layout:1': false, 'layout:0': true }, storage), false);
+  assert.deepEqual(storage.keys().sort(), [COLLAPSED_STATE_INDEX_KEY, entry].sort());
+  assert.deepEqual(JSON.parse(storage.getItem(entry)), { layout: { 'layout:0': true }, sidebar: { 'sidebar:2': true } });
+  assert.deepEqual(readCollapsedCards(entry, 'layout', storage), { 'layout:0': true });
+  assert.deepEqual(readCollapsedCards(entry, 'other', storage), {});
+
+  // Expanding the last card of a field drops the field; of the entry, the entry and its index row.
+  assert.equal(writeCollapsedCards(entry, 'layout', {}, storage), true);
+  assert.deepEqual(JSON.parse(storage.getItem(entry)), { sidebar: { 'sidebar:2': true } });
+  assert.equal(writeCollapsedCards(entry, 'sidebar', { 'sidebar:2': false }, storage), true);
+  assert.deepEqual(storage.keys(), []);
+
+  // Without a scope key or storage nothing is read or written.
+  assert.deepEqual(readCollapsedCards(undefined, 'layout', storage), {});
+  assert.equal(writeCollapsedCards(undefined, 'layout', { a: true }, storage), false);
+  assert.equal(writeCollapsedCards(entry, 'layout', { a: true }, null), false);
+});
+
+test('the collapsed-state index keeps the 50 most recently written entries and evicts the oldest', () => {
+  const storage = memoryStorage();
+  const key = (n) => `talisman-cms:collapsed:collection:posts:${n}`;
+  for (let n = 0; n < COLLAPSED_STATE_MAX_ENTRIES; n += 1) writeCollapsedCards(key(n), 'layout', { 'layout:0': true }, storage);
+  assert.equal(storage.length, COLLAPSED_STATE_MAX_ENTRIES + 1);
+  // Writing entry 0 again makes it the newest, so entry 1 is the oldest and goes first.
+  writeCollapsedCards(key(0), 'layout', { 'layout:0': true, 'layout:1': true }, storage);
+  writeCollapsedCards(key(50), 'layout', { 'layout:0': true }, storage);
+  assert.equal(storage.getItem(key(1)), null);
+  assert.deepEqual(readCollapsedCards(key(0), 'layout', storage), { 'layout:0': true, 'layout:1': true });
+  assert.deepEqual(readCollapsedCards(key(50), 'layout', storage), { 'layout:0': true });
+  const index = JSON.parse(storage.getItem(COLLAPSED_STATE_INDEX_KEY));
+  assert.equal(index.length, COLLAPSED_STATE_MAX_ENTRIES);
+  assert.equal(index[0], key(2));
+  assert.deepEqual(index.slice(-2), [key(0), key(50)]);
+  assert.equal(storage.length, COLLAPSED_STATE_MAX_ENTRIES + 1);
+});
+
+test('pruning removes collapsed-state keys the index does not list, such as the old per-field keys', () => {
+  const entry = 'talisman-cms:collapsed:collection:pages:p1';
+  const storage = memoryStorage({
+    [`${entry}:layout`]: JSON.stringify({ 'layout:0': true }),
+    'talisman-cms:collapsed:global:site:hero': JSON.stringify({}),
+    'talisman-cms:collapsed:collection:posts:orphan': JSON.stringify({ layout: { 'layout:0': true } }),
+    'talisman-cms:other': 'kept',
+  });
+  writeCollapsedCards(entry, 'layout', { 'layout:0': true }, storage);
+  assert.deepEqual(pruneCollapsedState(storage).sort(), [
+    `${entry}:layout`,
+    'talisman-cms:collapsed:collection:posts:orphan',
+    'talisman-cms:collapsed:global:site:hero',
+  ]);
+  assert.deepEqual(storage.keys().sort(), [COLLAPSED_STATE_INDEX_KEY, entry, 'talisman-cms:other'].sort());
+  assert.deepEqual(pruneCollapsedState(storage), []);
+  assert.deepEqual(pruneCollapsedState(null), []);
+});
+
+test('collapsed-state reads and writes survive corrupt values and broken storage', () => {
+  const entry = 'talisman-cms:collapsed:collection:pages:p1';
+  const corrupt = memoryStorage({ [entry]: 'not json', [COLLAPSED_STATE_INDEX_KEY]: '{"no":"array"}' });
+  assert.deepEqual(readCollapsedCards(entry, 'layout', corrupt), {});
+  assert.equal(writeCollapsedCards(entry, 'layout', { 'layout:0': true }, corrupt), true);
+  assert.deepEqual(JSON.parse(corrupt.getItem(COLLAPSED_STATE_INDEX_KEY)), [entry]);
+  // Values that are not card maps are ignored rather than thrown on.
+  const odd = memoryStorage({ [entry]: JSON.stringify({ layout: ['x'], sidebar: { a: 'yes', b: true } }) });
+  assert.deepEqual(readCollapsedCards(entry, 'layout', odd), {});
+  assert.deepEqual(readCollapsedCards(entry, 'sidebar', odd), { b: true });
+
+  const full = memoryStorage();
+  full.setItem = () => { throw new Error('QuotaExceededError'); };
+  assert.equal(writeCollapsedCards(entry, 'layout', { 'layout:0': true }, full), false);
+  const fail = () => { throw new Error('blocked'); };
+  const blocked = { get length() { return fail(); }, key: fail, getItem: fail, setItem: fail, removeItem: fail };
+  assert.deepEqual(readCollapsedCards(entry, 'layout', blocked), {});
+  assert.equal(writeCollapsedCards(entry, 'layout', { 'layout:0': true }, blocked), false);
+  assert.deepEqual(pruneCollapsedState(blocked), []);
 });

@@ -16,22 +16,19 @@ import { ComponentSlotPicker } from './ComponentSlotPicker';
 import { Button } from './ui/button';
 import { cn } from '../lib/utils';
 import { useModalDialog } from '../lib/use-modal-dialog';
+import { pruneCollapsedState, readCollapsedCards, writeCollapsedCards, type CollapsedCardsMap } from '../lib/collapsed-state';
 import {
   buildBlockValue,
   buildInlineComponentValue,
   buildPresetReferenceValue,
   getBlockPreviewSummary,
-  getCollapsedCardsStorageKey,
   getComponentPreviewSummary,
   getComponentSlotItems,
   getPresetComponentSlug,
   getPresetRecordLabel,
-  insertArrayItem,
   isPresetReferenceValue,
-  moveArrayItem,
-  readCollapsedCardsState,
-  writeCollapsedCardsState,
 } from '../lib/page-builder';
+import { getAllowedPresetEntries, insertFieldArrayValue, insertSlotValue, removeSlotValue, reorderFieldArrayValue } from './fields/array-values';
 
 type SelectedNode =
   | { kind: 'block'; blockIndex: number }
@@ -92,59 +89,38 @@ type PageBuilderComposerProps = {
   form: any;
   relationSupportEntries: Record<string, any[]>;
   collapseStorageKey?: string;
-  renderField: (field: any, basePath: string) => React.ReactNode;
+  /** Renders a block or component field; `fieldPath` is the form path of the value that holds it. */
+  renderField: (field: any, fieldPath: string) => React.ReactNode;
 };
 
-function reorderFieldArrayValue(fieldApi: any, fromIndex: number, toIndex: number) {
-  const currentValue = Array.isArray(fieldApi.state.value) ? fieldApi.state.value : [];
-  const nextValue = moveArrayItem(currentValue, fromIndex, toIndex);
+let collapsedStatePruned = false;
 
-  if (nextValue === currentValue) {
-    return;
-  }
+/**
+ * The collapsed cards of one field, remembered per entry (see lib/collapsed-state). When the key
+ * changes to another entry's, that entry's cards are shown instead of writing these under its key.
+ */
+function useCollapsedCards(scopeKey: string | undefined, fieldName: string) {
+  const [collapsedCards, setCollapsedCards] = useState<CollapsedCardsMap>(() => readCollapsedCards(scopeKey, fieldName));
+  const storageKey = `${scopeKey ?? ''}\n${fieldName}`;
+  const loadedKeyRef = useRef(storageKey);
 
-  fieldApi.handleChange(nextValue);
-  fieldApi.handleBlur();
-}
+  useEffect(() => {
+    if (loadedKeyRef.current !== storageKey) {
+      loadedKeyRef.current = storageKey;
+      setCollapsedCards(readCollapsedCards(scopeKey, fieldName));
+      return;
+    }
+    writeCollapsedCards(scopeKey, fieldName, collapsedCards);
+  }, [storageKey, scopeKey, fieldName, collapsedCards]);
 
-function insertFieldArrayValue(fieldApi: any, index: number, nextValue: any) {
-  const currentValue = Array.isArray(fieldApi.state.value) ? fieldApi.state.value : [];
-  fieldApi.handleChange(insertArrayItem(currentValue, index, nextValue));
-  fieldApi.handleBlur();
-}
+  // Once per page load: drop the one-key-per-field state of earlier versions and orphaned entries.
+  useEffect(() => {
+    if (collapsedStatePruned) return;
+    collapsedStatePruned = true;
+    pruneCollapsedState();
+  }, []);
 
-function addSlotValue(slot: any, fieldApi: any, nextValue: any) {
-  if (slot.hasMany) {
-    fieldApi.pushValue(nextValue);
-    return;
-  }
-
-  fieldApi.handleChange(nextValue);
-  fieldApi.handleBlur();
-}
-
-function removeSlotValue(slot: any, fieldApi: any, index: number) {
-  if (slot.hasMany) {
-    fieldApi.removeValue(index);
-    return;
-  }
-
-  fieldApi.handleChange(null);
-  fieldApi.handleBlur();
-}
-
-function insertSlotValue(slot: any, fieldApi: any, index: number | null, nextValue: any) {
-  if (!slot.hasMany || index === null) {
-    addSlotValue(slot, fieldApi, nextValue);
-    return;
-  }
-
-  insertFieldArrayValue(fieldApi, index, nextValue);
-}
-
-function getAllowedPresetEntries(slot: any, presetEntries: any[]) {
-  const allowedComponentSlugs = new Set((slot.components || []).map((component: any) => component.slug));
-  return presetEntries.filter((preset) => allowedComponentSlugs.has(getPresetComponentSlug(preset)));
+  return [collapsedCards, setCollapsedCards] as const;
 }
 
 function isSelectionValid(selection: SelectedNode | null, value: any[], blocks: any[] | undefined) {
@@ -235,8 +211,7 @@ function BuilderPanel({
   const [blockLibraryOpen, setBlockLibraryOpen] = useState(false);
   const [pendingBlockInsertIndex, setPendingBlockInsertIndex] = useState<number | null>(null);
   const [slotPickerState, setSlotPickerState] = useState<Record<string, { open: boolean; insertIndex: number | null }>>({});
-  const fieldCollapseStorageKey = getCollapsedCardsStorageKey(collapseStorageKey, fieldName);
-  const [collapsedCards, setCollapsedCards] = useState<Record<string, boolean>>(() => readCollapsedCardsState(fieldCollapseStorageKey));
+  const [collapsedCards, setCollapsedCards] = useCollapsedCards(collapseStorageKey, fieldName);
   const { errors: serverErrors } = useContext(ServerFieldErrorsContext);
   const blockPathPattern = new RegExp(`^${fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\[(\\d+)\\]`);
   // Field inputs live in the inspector modal, so the outline flags blocks whose fields have errors.
@@ -287,14 +262,6 @@ function BuilderPanel({
       [slotFieldName]: { open: false, insertIndex: null },
     }));
   };
-
-  useEffect(() => {
-    setCollapsedCards(readCollapsedCardsState(fieldCollapseStorageKey));
-  }, [fieldCollapseStorageKey]);
-
-  useEffect(() => {
-    writeCollapsedCardsState(fieldCollapseStorageKey, collapsedCards);
-  }, [collapsedCards, fieldCollapseStorageKey]);
 
   useEffect(() => {
     if (isSelectionValid(selectedNode, value, field.blocks)) {

@@ -399,38 +399,6 @@ export function getComponentPreviewSummary(component: any, value: any, relationS
   return summarizeConfiguredFields(component?.fields, value, 3, relationSupportEntries);
 }
 
-export function getCollapsedCardsStorageKey(scopeKey: string | undefined, fieldName: string) {
-  if (!scopeKey) return null;
-  return `${scopeKey}:${fieldName}`;
-}
-
-export function readCollapsedCardsState(storageKey: string | null) {
-  if (!storageKey || typeof window === 'undefined') {
-    return {};
-  }
-
-  try {
-    const raw = window.localStorage.getItem(storageKey);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-export function writeCollapsedCardsState(storageKey: string | null, value: Record<string, boolean>) {
-  if (!storageKey || typeof window === 'undefined') {
-    return;
-  }
-
-  try {
-    window.localStorage.setItem(storageKey, JSON.stringify(value));
-  } catch {
-    // Ignore storage failures; collapse state is best-effort.
-  }
-}
-
 export function groupBlocksByCategory(blocks: any[] | undefined) {
   const groups = new Map<string, any[]>();
 
