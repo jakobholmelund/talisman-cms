@@ -595,6 +595,8 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
               TanStackRouterVite({
                 routesDirectory: fileURLToPath(new URL('../ui/routes', import.meta.url)),
                 generatedRouteTree: fileURLToPath(new URL('../ui/routeTree.gen.ts', import.meta.url)),
+                // Each route's component becomes its own chunk, loaded when the route is first opened.
+                autoCodeSplitting: true,
               }),
               {
                 name: 'vite-plugin-talisman-cms-auth',
@@ -741,18 +743,19 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
                       (plugin.adminUi || []).map(ext => ({...ext, plugin: plugin.name}))
                     );
                     
-                    const imports = extensions.map((ext, idx) => `import Ext_${idx} from '${ext.componentPath}';`).join('\n');
-                    const configExports = extensions.map((ext, idx) => `{
+                    // The sidebar reads only the metadata, so each page component is a lazy import: its
+                    // chunk loads when the extension route first renders it.
+                    const configExports = extensions.map((ext) => `{
                       path: ${JSON.stringify(ext.path)},
                       label: ${JSON.stringify(ext.label)},
                       section: ${JSON.stringify(ext.section || null)},
                       plugin: ${JSON.stringify(ext.plugin)},
-                      component: Ext_${idx}
+                      component: lazy(() => import(${JSON.stringify(ext.componentPath)}))
                     }`).join(',\n');
 
                     return `
-                      ${imports}
-                      
+                      import { lazy } from 'react';
+
                       export const adminExtensions = [
                         ${configExports}
                       ];

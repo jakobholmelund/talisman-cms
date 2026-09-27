@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { createFileRoute, useRouter } from '@tanstack/react-router';
 // @ts-ignore
 import { adminExtensions } from 'virtual:talisman-cms/admin-extensions';
@@ -40,7 +40,10 @@ function ExtensionRoute() {
         <p className="text-sm text-zinc-400 mt-1">Provided by {extension.plugin}</p>
       </div>
       <div className="bg-zinc-950/40 rounded-xl border border-white/5 shadow-xl overflow-hidden min-h-[400px]">
-        <ExtensionComponent />
+        {/* Each plugin page is its own chunk (see the admin-extensions virtual module); it loads when first opened. */}
+        <Suspense fallback={<p className="p-6 text-sm text-zinc-400">Loading {extension.label}...</p>}>
+          <ExtensionComponent />
+        </Suspense>
       </div>
     </div>
   );

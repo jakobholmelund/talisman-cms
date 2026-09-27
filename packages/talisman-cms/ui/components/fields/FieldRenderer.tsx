@@ -1,12 +1,16 @@
-import React, { useContext, useId } from 'react';
+import React, { lazy, Suspense, useContext, useId } from 'react';
 import { Button } from '../ui/button';
 import { MediaFieldInput } from '../MediaFieldInput';
-import { formatFieldErrors, PageBuilderComposer, ServerFieldErrorsContext } from '../PageBuilderComposer';
-import { RichTextEditor } from '../RichTextEditor';
 import { buildDefaultValues, isRelationshipFieldType } from '../../lib/page-builder';
+import { formatFieldErrors, ServerFieldErrorsContext } from './field-errors';
 import { RelationFieldSummary } from './RelationFieldSummary';
 import { RelationshipPicker } from './RelationshipPicker';
 import type { RelationOptions, RelationSupportEntries } from './relations';
+
+// The rich text editor brings Tiptap and the page builder brings the block and component pickers.
+// Most forms have neither field, so both load on first use rather than with the admin.
+const RichTextEditor = lazy(() => import('../RichTextEditor').then((module) => ({ default: module.RichTextEditor })));
+const PageBuilderComposer = lazy(() => import('../PageBuilderComposer').then((module) => ({ default: module.PageBuilderComposer })));
 
 /** The admin API base path (normally /admin) for controls that call the API, such as the media field. */
 export const AdminBasePathContext = React.createContext('/admin');
@@ -21,6 +25,16 @@ export type FieldRendererProps = {
   /** Where the page builder remembers collapsed cards; the editor derives one key per entry. */
   collapseStorageKey?: string;
 };
+
+/** Shown while a lazily loaded control arrives; with a label it stands in for a control that renders its own. */
+function LoadingFieldPlaceholder({ label, what }: { label?: string; what: string }) {
+  return (
+    <div className="space-y-3 rounded-lg border border-white/10 bg-zinc-950/40 p-5 shadow-inner">
+      {label && <div className="text-sm font-medium text-zinc-300">{label}</div>}
+      <p className="text-xs text-zinc-500">Loading the {what}...</p>
+    </div>
+  );
+}
 
 // A date input takes YYYY-MM-DD only, so a stored ISO timestamp is trimmed to its date.
 function toInputValue(field: any, value: unknown) {
@@ -91,16 +105,18 @@ export function FieldRenderer({ field, form, fieldPath, relationOptions, relatio
 
   if (field.type === 'blocks') {
     return (
-      <PageBuilderComposer
-        field={field}
-        fieldName={fieldName}
-        form={form}
-        relationSupportEntries={relationSupportEntries}
-        collapseStorageKey={collapseStorageKey}
-        renderField={(nestedField, nestedFieldPath) => (
-          <FieldRenderer key={`${nestedFieldPath}:${nestedField.name}`} field={nestedField} fieldPath={nestedFieldPath} {...nestedProps} />
-        )}
-      />
+      <Suspense fallback={<LoadingFieldPlaceholder label={field.label} what="page builder" />}>
+        <PageBuilderComposer
+          field={field}
+          fieldName={fieldName}
+          form={form}
+          relationSupportEntries={relationSupportEntries}
+          collapseStorageKey={collapseStorageKey}
+          renderField={(nestedField, nestedFieldPath) => (
+            <FieldRenderer key={`${nestedFieldPath}:${nestedField.name}`} field={nestedField} fieldPath={nestedFieldPath} {...nestedProps} />
+          )}
+        />
+      </Suspense>
     );
   }
 
@@ -198,13 +214,15 @@ export function FieldRenderer({ field, form, fieldPath, relationOptions, relatio
                 describedBy={describedBy}
               />
             ) : field.type === 'richtext' ? (
-              <RichTextEditor
-                value={fieldApi.state.value} // ensure value format works with block editor
-                onChange={(val: any) => handleValueChange(val)}
-                hasError={hasError}
-                ariaLabelledBy={labelId}
-                ariaDescribedBy={describedBy}
-              />
+              <Suspense fallback={<LoadingFieldPlaceholder what="rich text editor" />}>
+                <RichTextEditor
+                  value={fieldApi.state.value} // ensure value format works with block editor
+                  onChange={(val: any) => handleValueChange(val)}
+                  hasError={hasError}
+                  ariaLabelledBy={labelId}
+                  ariaDescribedBy={describedBy}
+                />
+              </Suspense>
             ) : field.type === 'boolean' ? (
               <div className="flex items-center gap-2">
                 <input

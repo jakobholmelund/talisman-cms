@@ -12,7 +12,7 @@ import { variantChangeSchema } from '../dist/variants.js';
 // plugin's variants endpoint instead, which refuses keys it does not know. The keys are read from the
 // admin source.
 const adminUi = new URL('../../talisman-cms/ui/', import.meta.url);
-const entryEditorPath = 'routes/collections/$slug/$entryId.tsx';
+const entryEditorPath = 'components/editor/CollectionEntryEditor.tsx';
 const commerceModelsPath = 'lib/commerce-models.ts';
 const pageBuilderPath = 'lib/page-builder.ts';
 

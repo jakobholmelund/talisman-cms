@@ -4,3 +4,4 @@ export { RelationshipPicker } from './RelationshipPicker';
 export { RelationFieldSummary } from './RelationFieldSummary';
 export * from './relations';
 export * from './array-values';
+export * from './field-errors';

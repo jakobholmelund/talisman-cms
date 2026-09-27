@@ -3,7 +3,10 @@ import { createFileRoute } from '@tanstack/react-router';
 import { useForm } from '@tanstack/react-form';
 import { globals as configuredGlobals } from 'virtual:talisman-cms/config';
 import { ArrowLeft, Save } from 'lucide-react';
-import { AdminBasePathContext, buildRelationOptions, FieldRenderer, fieldsNeedPresetEntries, type RelationSupportEntries } from '../../components/fields';
+import { AdminBasePathContext, FieldRenderer } from '../../components/fields';
+// The loader's helpers come from their own module: importing them through the index would keep the
+// field renderer in the eager admin bundle, while the editor below loads with this route's chunk.
+import { buildRelationOptions, fieldsNeedPresetEntries, type RelationSupportEntries } from '../../components/fields/relations';
 import { Card, CardContent } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { fetchCollectionConfigs, fetchEntriesBySlug } from '../../lib/admin-api';

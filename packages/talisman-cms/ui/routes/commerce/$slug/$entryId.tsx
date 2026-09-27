@@ -1,7 +1,8 @@
 import React from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { getAdminSection } from '../../../lib/admin-sections';
-import { CollectionEntryEditor, loadEntryEditorData } from '../../collections/$slug/$entryId';
+import { CollectionEntryEditor } from '../../../components/editor/CollectionEntryEditor';
+import { loadEntryEditorData } from '../../../lib/entry-editor-data';
 
 export const Route = createFileRoute('/commerce/$slug/$entryId')({
   component: CommerceEntryEditorRoute,
