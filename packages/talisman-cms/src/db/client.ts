@@ -16,6 +16,8 @@ import {
   nextNativeUpdatedAt
 } from '../types';
 import { loadServiceConfig } from '../service/config';
+import { resolveCollectionRecord, syncCollectionDefinitions } from '../service/collections';
+import { NotFoundError } from '../service/errors';
 import {
   createDraftEntry,
   invalidateEntryCache,
@@ -50,30 +52,9 @@ async function getNativeSchemaModule() {
   };
 }
 
-async function ensureCollection(db: TalismanDb, slug: string) {
-  let collection = await db.query.collections.findFirst({
-    // @ts-ignore
-    where: (c, { eq }) => eq(c.slug, slug)
-  });
-  if (collection) return collection;
-
-  const config = (await getConfiguredCollections()).find((item) => item.slug === slug);
-  if (!config) throw new Error(`Collection ${slug} not found`);
-
-  await db.insert(schema.collections).values({
-    id: crypto.randomUUID(),
-    name: config.name,
-    slug,
-    fields: config.fields || [],
-    createdAt: new Date(),
-  }).onConflictDoNothing({ target: schema.collections.slug });
-
-  collection = await db.query.collections.findFirst({
-    // @ts-ignore
-    where: (c, { eq }) => eq(c.slug, slug)
-  });
-  if (!collection) throw new Error(`Collection ${slug} could not be initialized`);
-  return collection;
+/** The collection's stored row, from the isolate's memo after one sync of the configured collections. */
+async function ensureCollection(db: TalismanDb, binding: unknown, slug: string) {
+  return resolveCollectionRecord(db, binding, await loadServiceConfig(), slug);
 }
 
 /**
@@ -127,6 +108,14 @@ function mapNativeEntry(row: any, collectionId: string, nativeIdCol: string) {
     createdAt: row?.createdAt || new Date(),
     updatedAt: row?.updatedAt || new Date()
   };
+}
+
+/** The row with its fields generated from the native table when none are stored; the memoized row itself is left alone. */
+function withGeneratedFields(collection: any, nativeTable: any) {
+  if (nativeTable && (!collection.fields || (collection.fields as any[]).length === 0)) {
+    return { ...collection, fields: generateFieldsFromDrizzle(nativeTable) };
+  }
+  return collection;
 }
 
 async function syncConfiguredGlobals(db: TalismanDb) {
@@ -548,6 +537,7 @@ async function resolveRelationships(
   entriesToResolve: any[],
   collection: any,
   db: any,
+  binding: unknown,
   depth = 1,
   versionMode: 'draft' | 'published' = 'published'
 ): Promise<any[]> {
@@ -574,9 +564,9 @@ async function resolveRelationships(
 
     let targetCollection;
     try {
-      targetCollection = await ensureCollection(db, relationSlug);
+      targetCollection = await ensureCollection(db, binding, relationSlug);
     } catch (error) {
-      if (error instanceof Error && error.message === `Collection ${relationSlug} not found`) continue;
+      if (error instanceof NotFoundError) continue;
       throw error;
     }
     if (idsToFetch.size === 0) continue;
@@ -586,7 +576,7 @@ async function resolveRelationships(
     relatedDocs = relatedDocs.map((doc: any) => normalizeEntryDataForRead(doc, versionMode));
 
     if (depth > 1) {
-      relatedDocs = await resolveRelationships(relatedDocs, targetCollection, db, depth - 1, versionMode);
+      relatedDocs = await resolveRelationships(relatedDocs, targetCollection, db, binding, depth - 1, versionMode);
     } else {
       relatedDocs = relatedDocs.map((r: any) => ({ ...r, data: typeof r.data === 'string' ? JSON.parse(r.data) : r.data }));
     }
@@ -618,9 +608,7 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
           if (cached) return cached;
         }
 
-        for (const config of await getConfiguredCollections()) {
-          await ensureCollection(db, config.slug);
-        }
+        await syncCollectionDefinitions(db, env.DB, await loadServiceConfig());
         const data = await db.query.collections.findMany();
         
         if (opts?.cache !== false && env.KV) {
@@ -790,7 +778,7 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
         }
 
         const readStartedAt = new Date();
-        const collection = await ensureCollection(db, collectionSlug);
+        const collection = await ensureCollection(db, env.DB, collectionSlug);
         
         const { nativeSchemas, nativeSchemaConfig } = await getNativeSchemaModule();
         const nativeTable = nativeSchemas?.[collectionSlug];
@@ -814,12 +802,7 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
            data = data.map((entry: any) => normalizeEntryDataForRead(entry, versionMode));
         }
         
-        // Dynamically inject generated fields if missing, so resolver works
-        if ((!collection.fields || (collection.fields as any[]).length === 0) && nativeTable) {
-          collection.fields = generateFieldsFromDrizzle(nativeTable);
-        }
-        
-        data = await resolveRelationships(data, collection, db, opts?.depth ?? 1, versionMode);
+        data = await resolveRelationships(data, withGeneratedFields(collection, nativeTable), db, env.DB, opts?.depth ?? 1, versionMode);
         
         if (useCache && env.KV) {
           const inCollection = eq(schema.entries.collectionId, collection.id);
@@ -834,7 +817,7 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
       },
       async findBySlug(collectionSlug: string, slug: string, opts?: { depth?: number; version?: 'draft' | 'published' }) {
         const versionMode = opts?.version || 'published';
-        const collection = await ensureCollection(db, collectionSlug);
+        const collection = await ensureCollection(db, env.DB, collectionSlug);
         const { nativeSchemas, nativeSchemaConfig } = await getNativeSchemaModule();
         const nativeTable = nativeSchemas?.[collectionSlug];
         let data;
@@ -844,9 +827,6 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
           const slugColumn = nativeTable.slug || nativeTable[nativeIdCol];
           const rows = await db.select().from(nativeTable).where(eq(slugColumn, slug) as any).limit(1);
           if (rows[0]) data = mapNativeEntry(rows[0], collection.id, nativeIdCol);
-          if ((!collection.fields || (collection.fields as any[]).length === 0) && nativeTable) {
-            collection.fields = generateFieldsFromDrizzle(nativeTable);
-          }
         } else {
           // `slug` is the live slug of a published entry; a draft read looks for the slug the
           // entry will have after its next publish.
@@ -864,7 +844,7 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
         }
 
         if (!data) return null;
-        const resolved = await resolveRelationships([data], collection, db, opts?.depth ?? 1, versionMode);
+        const resolved = await resolveRelationships([data], withGeneratedFields(collection, nativeTable), db, env.DB, opts?.depth ?? 1, versionMode);
         return resolved[0];
       },
       async find(collectionSlug: string, id: string, opts?: { cache?: boolean; depth?: number; version?: 'draft' | 'published' }) {
@@ -878,7 +858,7 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
         }
 
         const readStartedAt = new Date();
-        const collection = await ensureCollection(db, collectionSlug);
+        const collection = await ensureCollection(db, env.DB, collectionSlug);
 
         const { nativeSchemas, nativeSchemaConfig } = await getNativeSchemaModule();
         const nativeTable = nativeSchemas?.[collectionSlug];
@@ -904,10 +884,7 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
         }
         
         if (data) {
-          if ((!collection.fields || (collection.fields as any[]).length === 0) && nativeTable) {
-            collection.fields = generateFieldsFromDrizzle(nativeTable);
-          }
-          const resolved = await resolveRelationships([data], collection, db, opts?.depth ?? 1, versionMode);
+          const resolved = await resolveRelationships([data], withGeneratedFields(collection, nativeTable), db, env.DB, opts?.depth ?? 1, versionMode);
           data = resolved[0];
         }
         
@@ -920,7 +897,7 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
         return data;
       },
       async create(collectionSlug: string, data: any, opts?: { slug?: string, status?: string }) {
-        const collection = await ensureCollection(db, collectionSlug);
+        const collection = await ensureCollection(db, env.DB, collectionSlug);
 
         const { nativeSchemas, nativeSchemaConfig } = await getNativeSchemaModule();
         const nativeTable = nativeSchemas?.[collectionSlug];
@@ -962,7 +939,7 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
         return created;
       },
       async update(collectionSlug: string, id: string, data?: any, opts?: { slug?: string, status?: string }) {
-        const collection = await ensureCollection(db, collectionSlug);
+        const collection = await ensureCollection(db, env.DB, collectionSlug);
 
         const { nativeSchemas, nativeSchemaConfig } = await getNativeSchemaModule();
         const nativeTable = nativeSchemas?.[collectionSlug];
@@ -1003,7 +980,7 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext) {
         return updated;
       },
       async delete(collectionSlug: string, id: string) {
-        const collection = await ensureCollection(db, collectionSlug);
+        const collection = await ensureCollection(db, env.DB, collectionSlug);
 
         const { nativeSchemas, nativeSchemaConfig } = await getNativeSchemaModule();
         const nativeTable = nativeSchemas?.[collectionSlug];

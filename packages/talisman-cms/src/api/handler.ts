@@ -8,6 +8,7 @@ import * as uiLibrariesModule from 'virtual:talisman-cms/ui-libraries';
 import * as nativeSchemasModule from 'virtual:talisman-cms/native-schemas';
 import * as collectionHooksModule from 'virtual:talisman-cms/collection-hooks';
 import { configFromModules } from '../service/config';
+import { configuredCollectionFields as collectionFields, oncePerDatabase, resolveCollectionRecord, syncCollectionDefinitions as syncCollections } from '../service/collections';
 import {
   buildZodSchemaForCollection,
   buildZodSchemaForFields,
@@ -43,7 +44,7 @@ const {
   nativeSchemas,
   collectionHooks,
 } = serviceConfig;
-import { HookError, NATIVE_RECORD_CONFLICT_MESSAGE, ServiceError, ValidationError, type HookPhase } from '../service/errors';
+import { HookError, NATIVE_RECORD_CONFLICT_MESSAGE, NotFoundError, ServiceError, ValidationError, type HookPhase } from '../service/errors';
 import { deleteStoredMedia } from '../db/media-policy';
 import { eq, desc, and, or, lt, count, isNull, sql, getTableColumns } from 'drizzle-orm';
 import {
@@ -232,67 +233,12 @@ function isSystemMediaCollection(collectionConfig: { nativeSchemaMapping?: { sch
   return collectionConfig.nativeSchemaMapping?.schemaPath === MEDIA_SCHEMA_PATH;
 }
 
-/** Work that should run once per isolate and D1 database, keyed by the binding. */
-function oncePerDatabase(runs: WeakMap<object, Promise<void>>, binding: unknown, run: () => Promise<void>) {
-  const key = binding && typeof binding === 'object' ? binding : null;
-  if (!key) return run();
-
-  let pending = runs.get(key);
-  if (!pending) {
-    pending = run();
-    runs.set(key, pending);
-    // A failed run is retried by the next request.
-    pending.catch(() => runs.delete(key));
-  }
-  return pending;
-}
-
 function configuredCollectionFields(collectionConfig: (typeof configCollections)[number]) {
-  const fields = collectionConfig.fields || [];
-  if (fields.length === 0 && collectionConfig.nativeSchemaMapping && nativeSchemas[collectionConfig.slug]) {
-    return generateFieldsFromDrizzle(nativeSchemas[collectionConfig.slug]);
-  }
-  return fields;
+  return collectionFields(collectionConfig, nativeSchemas);
 }
 
-const collectionSyncs = new WeakMap<object, Promise<void>>();
-
-/**
- * Entries reference a galaxy_collections row per configured collection, which also mirrors its
- * name and fields. The sync reads every row once per isolate and writes only rows that are
- * missing or changed, in one batch, so admin reads do not rewrite the table.
- */
 function syncCollectionDefinitions(db: ReturnType<typeof createDbClient>, binding: unknown) {
-  return oncePerDatabase(collectionSyncs, binding, async () => {
-    const stored = await db.select({
-      id: schema.collections.id,
-      slug: schema.collections.slug,
-      name: schema.collections.name,
-      fields: schema.collections.fields,
-    }).from(schema.collections);
-    const storedBySlug = new Map(stored.map((row) => [row.slug, row]));
-    const now = new Date();
-    const missing: (typeof schema.collections.$inferInsert)[] = [];
-    const writes: any[] = [];
-
-    for (const collectionConfig of configCollections) {
-      const fields = configuredCollectionFields(collectionConfig);
-      const row = storedBySlug.get(collectionConfig.slug);
-      if (!row) {
-        missing.push({ id: crypto.randomUUID(), name: collectionConfig.name, slug: collectionConfig.slug, fields, createdAt: now });
-      } else if (row.name !== collectionConfig.name || JSON.stringify(row.fields) !== JSON.stringify(fields)) {
-        writes.push(db.update(schema.collections).set({ name: collectionConfig.name, fields }).where(eq(schema.collections.id, row.id)));
-      }
-    }
-
-    // Ten rows of five values stay under D1's 100 bound parameters per statement.
-    for (let index = 0; index < missing.length; index += 10) {
-      writes.push(db.insert(schema.collections).values(missing.slice(index, index + 10))
-        .onConflictDoNothing({ target: schema.collections.slug }));
-    }
-
-    if (writes.length > 0) await db.batch(writes as [any, ...any[]]);
-  });
+  return syncCollections(db, binding, serviceConfig);
 }
 
 /** Row counts for native tables in one statement, since D1 limits the queries per request. */
@@ -347,35 +293,11 @@ async function resolveCollectionContext(db: ReturnType<typeof createDbClient>, s
     ? { ...configuredCollection, hooks: wrapCollectionHooks(collectionHooks[slug]) }
     : undefined;
   if (!collectionConfig) {
-    throw new HttpError(404, `Collection ${slug} not found`);
+    throw new NotFoundError(`Collection ${slug} not found`);
   }
 
-  await syncCollectionDefinitions(db, binding);
-  let collection = await db.query.collections.findFirst({
-    // @ts-ignore
-    where: (c, { eq }) => eq(c.slug, slug)
-  });
-
+  const collection = await resolveCollectionRecord(db, binding, serviceConfig, slug);
   const activeFields = configuredCollectionFields(collectionConfig);
-
-  if (!collection) {
-    const id = Date.now().toString() + '-' + Math.random().toString(36).substring(7);
-    const createdAt = new Date();
-
-    await db.insert(schema.collections).values({
-      id,
-      name: collectionConfig.name,
-      slug: collectionConfig.slug,
-      fields: activeFields,
-      createdAt
-    }).onConflictDoNothing({ target: schema.collections.slug });
-
-    collection = await db.query.collections.findFirst({
-      // @ts-ignore
-      where: (c, { eq }) => eq(c.slug, slug)
-    });
-    if (!collection) throw new Error(`Collection ${slug} could not be initialized`);
-  }
 
   const nativeTable = collectionConfig.nativeSchemaMapping && nativeSchemas[slug] ? nativeSchemas[slug] : null;
   const nativeIdCol = collectionConfig.nativeSchemaMapping?.idColumn || 'id';
