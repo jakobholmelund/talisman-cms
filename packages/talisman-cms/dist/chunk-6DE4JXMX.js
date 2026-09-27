@@ -280,6 +280,88 @@ function resolveFieldDefinitions(fields, plugins = []) {
     };
   });
 }
+function getNativeIdColumn(collectionConfig) {
+  return collectionConfig?.nativeSchemaMapping?.idColumn || "id";
+}
+function isNativeCollectionConfig(collectionConfig) {
+  return Boolean(collectionConfig?.nativeSchemaMapping);
+}
+function isSystemManagedNativeField(fieldName, collectionConfig) {
+  if (!isNativeCollectionConfig(collectionConfig)) return false;
+  return fieldName === getNativeIdColumn(collectionConfig) || fieldName === "createdAt" || fieldName === "updatedAt";
+}
+function normalizeFieldsForValidation(collectionConfig) {
+  if (!collectionConfig.nativeSchemaMapping) {
+    return resolveFieldDefinitions(collectionConfig.fields || []);
+  }
+  return resolveFieldDefinitions(collectionConfig.fields || []).map(
+    (field) => isSystemManagedNativeField(field.name, collectionConfig) ? { ...field, required: false } : field
+  );
+}
+function pickConfiguredNativeFields(fields, table, data) {
+  const writable = new Set(fields.map((field) => field.name));
+  for (const [property, column] of Object.entries(table || {})) {
+    if (column && typeof column === "object" && "dataType" in column && writable.has(column.name)) {
+      writable.add(property);
+    }
+  }
+  return Object.fromEntries(Object.entries(data).filter(([key]) => writable.has(key)));
+}
+function findUnwritableNativeColumns(fields, table, data, options = {}) {
+  const writable = pickConfiguredNativeFields(fields, table, data);
+  return Object.keys(data).filter((key) => {
+    const column = table?.[key];
+    if (Object.hasOwn(writable, key) || options.ignore?.includes(key) || !column || typeof column !== "object" || !("dataType" in column)) {
+      return false;
+    }
+    const value = data[key];
+    if (options.stored) return JSON.stringify(value ?? null) !== JSON.stringify(options.stored[key] ?? null);
+    return value !== void 0 && value !== null && value !== "";
+  });
+}
+var FREE_TEXT_FIELD_TYPES = /* @__PURE__ */ new Set(["text", "textarea", "color"]);
+function normalizeBlankNativeValues(collectionConfig, fields, table, data) {
+  const normalized = { ...data };
+  for (const [key, value] of Object.entries(data)) {
+    const column = table?.[key];
+    if (value !== "" || !column || typeof column !== "object" || !("dataType" in column)) continue;
+    const field = fields.find((candidate) => candidate.name === key || candidate.name === column.name);
+    if (!field || field.required || isSystemManagedNativeField(key, collectionConfig)) continue;
+    if (!column.notNull) {
+      normalized[key] = null;
+    } else if (!FREE_TEXT_FIELD_TYPES.has(field.type)) {
+      delete normalized[key];
+    }
+  }
+  return normalized;
+}
+var ENTRY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/;
+var ENTRY_SLUG_SEGMENT_PATTERN = /^[\p{L}\p{N}_.~:-]+$/u;
+var RESERVED_ENTRY_IDS = /* @__PURE__ */ new Set(["new", "all"]);
+var MAX_ENTRY_ID_LENGTH = 128;
+var MAX_ENTRY_SLUG_LENGTH = 200;
+function describeInvalidEntryId(value) {
+  if (typeof value !== "string") return "Entry id must be a string";
+  if (value.length === 0 || value.length > MAX_ENTRY_ID_LENGTH) {
+    return `Entry id must be 1 to ${MAX_ENTRY_ID_LENGTH} characters`;
+  }
+  if (!ENTRY_ID_PATTERN.test(value)) {
+    return 'Entry id may only use letters, numbers, ".", "_", ":" and "-", and must start with a letter or number';
+  }
+  if (RESERVED_ENTRY_IDS.has(value)) return `Entry id "${value}" is reserved`;
+  return null;
+}
+function describeInvalidEntrySlug(value) {
+  if (typeof value !== "string") return "Slug must be a string";
+  if (value.length === 0 || value.length > MAX_ENTRY_SLUG_LENGTH) {
+    return `Slug must be 1 to ${MAX_ENTRY_SLUG_LENGTH} characters`;
+  }
+  const segments = value.split("/");
+  if (segments.some((segment) => segment === "." || segment === ".." || !ENTRY_SLUG_SEGMENT_PATTERN.test(segment))) {
+    return 'Slug may only use letters, numbers, "-", "_", ".", "~" and ":", with single "/" between path segments';
+  }
+  return null;
+}
 var MAX_NATIVE_UPDATED_AT_LEAD_MS = 365 * 24 * 60 * 6e4;
 function nextNativeUpdatedAt(stored, now = /* @__PURE__ */ new Date()) {
   if (!(stored instanceof Date) || Number.isNaN(stored.getTime())) return now;
@@ -357,6 +439,22 @@ function requireValue(field, schema) {
 }
 function isRelationshipFieldType(type) {
   return type === "relationship" || type === "relation";
+}
+function formatValidationIssues(issues) {
+  const fieldErrors = {};
+  for (const issue of issues) {
+    const path = issue.path.map(String).join(".");
+    if (!path) continue;
+    const message = issue.code === "invalid_type" && (issue.received === "undefined" || issue.received === "null") ? REQUIRED_MESSAGE : issue.message;
+    const messages = fieldErrors[path] ??= [];
+    if (!messages.includes(message)) messages.push(message);
+  }
+  const names = Object.keys(fieldErrors);
+  return {
+    error: names.length > 0 ? `Some fields are invalid: ${names.join(", ")}` : issues[0]?.message || "Validation failed",
+    fieldErrors,
+    issues
+  };
 }
 var blankAsNull = (schema) => z.preprocess((value) => value === "" ? null : value, schema);
 function buildZodSchemaForFields(fields) {
@@ -440,6 +538,9 @@ function decodeGlobalData(value) {
   }
   return isGlobalData(data) ? data : {};
 }
+function buildZodSchemaForCollection(collectionConfig) {
+  return buildZodSchemaForFields(normalizeFieldsForValidation(collectionConfig));
+}
 function getPluginUiLibraries(plugins = []) {
   return plugins.flatMap((plugin) => plugin.uiLibraries || []);
 }
@@ -482,10 +583,18 @@ export {
   isRelationReference,
   isInlineComponentValue,
   resolveFieldDefinitions,
+  getNativeIdColumn,
+  pickConfiguredNativeFields,
+  findUnwritableNativeColumns,
+  normalizeBlankNativeValues,
+  describeInvalidEntryId,
+  describeInvalidEntrySlug,
   nextNativeUpdatedAt,
+  formatValidationIssues,
   buildZodSchemaForFields,
   isGlobalData,
   decodeGlobalData,
+  buildZodSchemaForCollection,
   getPluginUiLibraryMetadata,
   generateFieldsFromDrizzle
 };

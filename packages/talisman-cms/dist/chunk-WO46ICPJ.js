@@ -3,6 +3,10 @@ var MAX_MEDIA_BYTES = 10 * 1024 * 1024;
 var MEDIA_IMAGE_WIDTHS = [320, 640, 960, 1280, 1920];
 var MEDIA_CACHE_CONTROL = "public, max-age=3600";
 var MEDIA_CACHE_KEY_VERSION = "2";
+var MEDIA_SCHEMA_PATH = "talisman-cms/db/media";
+function isMediaCollection(collection) {
+  return collection.nativeSchemaMapping?.schemaPath === MEDIA_SCHEMA_PATH;
+}
 function mediaPath(id) {
   return `/api/media/${id}`;
 }
@@ -79,6 +83,8 @@ export {
   MAX_MEDIA_BYTES,
   MEDIA_IMAGE_WIDTHS,
   MEDIA_CACHE_CONTROL,
+  MEDIA_SCHEMA_PATH,
+  isMediaCollection,
   mediaPath,
   mediaCacheKey,
   deleteStoredMedia,

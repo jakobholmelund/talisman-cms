@@ -1,10 +1,11 @@
 import { T as TalismanAuthAdapter } from '../types-B9Ys5hZL.js';
-import { T as TalismanEnv } from '../client-DHZVVe7w.js';
+import { T as TalismanEnv } from '../client-D5mWOXyL.js';
 export { getAccessEmail } from './access.js';
 import 'astro';
 import 'drizzle-orm/d1';
 import '../media-Cm407HSH.js';
 import 'drizzle-orm/sqlite-core';
+import '../actor-BAnSg_qp.js';
 
 type LocalEnv = TalismanEnv & {
     TALISMAN_AUTH_SECRET?: string;

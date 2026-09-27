@@ -1,3 +1,5 @@
+import { A as Actor } from './actor-BAnSg_qp.js';
+
 type FieldType = 'text' | 'number' | 'boolean' | 'date' | 'textarea' | 'richtext' | 'relationship' | 'array' | 'blocks' | 'select' | 'relation' | 'group' | 'color' | 'media';
 type AdminSection = 'collections' | 'commerce';
 interface BlockSettingsConfig {
@@ -72,9 +74,17 @@ interface FieldDefinition {
 }
 interface CollectionHookArgs<T = any> {
     data: Partial<T>;
-    req: Request;
     operation: 'create' | 'update' | 'delete';
     originalDoc?: T;
+    /** Who is writing: the admin API's signed-in user, or trusted server code such as the SDK. */
+    actor: Actor;
+    /** The HTTP request, set only when the write came through the admin API. */
+    req?: Request;
+    /** The collection being written. */
+    collection: {
+        slug: string;
+        native: boolean;
+    };
 }
 interface CollectionHooks<T = any> {
     beforeValidate?: ((args: CollectionHookArgs<T>) => Promise<Partial<T>> | Partial<T>)[];
@@ -187,5 +197,11 @@ interface Plugin {
     uiLibraries?: UiLibraryDefinition[];
     vite?: any;
 }
+interface FieldValidationIssue {
+    path: PropertyKey[];
+    message: string;
+    code?: string;
+    received?: unknown;
+}
 
-export type { AdvancedAdapterDefinition as A, BlockDefinition as B, CollectionConfig as C, FieldDefinition as F, GlobalConfig as G, Plugin as P, RelationReference as R, UiComponentPresetDefinition as U, CollectionHookArgs as a, CollectionHooks as b, ComponentDefinition as c, ComponentSlotDefinition as d, FieldType as e, RuntimeCollectionHooks as f, UiLibraryBlockAdapter as g, UiLibraryComponentAdapter as h, UiLibraryDefinition as i, UiLibraryRequirement as j };
+export type { AdvancedAdapterDefinition as A, BlockDefinition as B, CollectionConfig as C, FieldDefinition as F, GlobalConfig as G, Plugin as P, RelationReference as R, UiComponentPresetDefinition as U, CollectionHookArgs as a, CollectionHooks as b, ComponentDefinition as c, ComponentSlotDefinition as d, FieldType as e, RuntimeCollectionHooks as f, UiLibraryBlockAdapter as g, UiLibraryComponentAdapter as h, UiLibraryDefinition as i, UiLibraryRequirement as j, FieldValidationIssue as k };

@@ -6,6 +6,13 @@ declare const MEDIA_IMAGE_WIDTHS: readonly [320, 640, 960, 1280, 1920];
  * deleted file stops being served everywhere within the hour.
  */
 declare const MEDIA_CACHE_CONTROL = "public, max-age=3600";
+declare const MEDIA_SCHEMA_PATH = "talisman-cms/db/media";
+/** Whether a configured collection is backed by the media table (the built-in `media` collection). */
+declare function isMediaCollection(collection: {
+    nativeSchemaMapping?: {
+        schemaPath?: string;
+    };
+}): boolean;
 /** The public path of an uploaded file: media-serve answers at `/api/media/<id>`. */
 declare function mediaPath(id: string): string;
 /** The edge-cache key media-serve uses for one file, as the original or at one resize width. */
@@ -29,4 +36,4 @@ declare function rasterImageType(bytes: Uint8Array): string | null;
 /** Protect both newly uploaded files and objects cached before upload validation existed. */
 declare function secureMediaResponse(response: Response): Response;
 
-export { MAX_MEDIA_BYTES, MEDIA_CACHE_CONTROL, MEDIA_IMAGE_WIDTHS, deleteStoredMedia, mediaCacheKey, mediaPath, notModifiedResponse, rasterImageType, secureMediaResponse };
+export { MAX_MEDIA_BYTES, MEDIA_CACHE_CONTROL, MEDIA_IMAGE_WIDTHS, MEDIA_SCHEMA_PATH, deleteStoredMedia, isMediaCollection, mediaCacheKey, mediaPath, notModifiedResponse, rasterImageType, secureMediaResponse };

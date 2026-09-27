@@ -1,7 +1,11 @@
-import { T as TalismanEnv } from './client-DHZVVe7w.js';
 import * as drizzle_orm_d1 from 'drizzle-orm/d1';
 import { s as schema, c as collections, e as entries } from './media-Cm407HSH.js';
+import { T as TalismanEnv } from './client-D5mWOXyL.js';
+export { i as invalidateEntryCache } from './client-D5mWOXyL.js';
 import 'drizzle-orm/sqlite-core';
+import './actor-BAnSg_qp.js';
+import './types-B9Ys5hZL.js';
+import 'astro';
 
 declare const DEFAULT_PUBLISHING_WORKFLOW_BINDING = "TALISMAN_PUBLISH_WORKFLOW";
 type EntryStatus = 'draft' | 'published' | 'archived';
@@ -237,11 +241,5 @@ declare function waitForWorkflowCompletion(instance: WorkflowInstance, timeoutMs
 declare function triggerPublishingWorkflow(env: TalismanEnv, payload: PublishWorkflowPayload, bindingName?: string): Promise<EntryRecord & {
     workflow?: PendingPublishWorkflow;
 }>;
-/**
- * Drops the KV copies of a collection's cached lists and of the given entries' cached reads. Code
- * that writes rows without getClient (a D1 batch, for example) calls it once the write has
- * committed, as the admin API and getClient do after theirs.
- */
-declare function invalidateEntryCache(env: TalismanEnv, collectionSlug: string, entryIds?: string | readonly string[]): Promise<void>;
 
-export { DEFAULT_PUBLISHING_WORKFLOW_BINDING, EntryNotFoundError, type EntryStatus, type PendingPublishWorkflow, type PublishWorkflowAction, type PublishWorkflowPayload, PublishWorkflowPendingError, type PublishWorkflowResult, RevisionConflictError, type RevisionType, SlugConflictError, archiveEntry, assertPublishableSlug, createDraftEntry, getCollectionBySlug, getEntryRevision, getLatestRevision, getVersionedEntry, invalidateEntryCache, isEntryNotFound, isPermanentPublishError, isRevisionConflict, isSlugConflict, listEntryRevisions, normalizeEntryDataForRead, publishEntry, restoreEntryRevision, runPublishingTransition, saveDraftEntry, toEditableEntry, triggerPublishingWorkflow, waitForWorkflowCompletion };
+export { DEFAULT_PUBLISHING_WORKFLOW_BINDING, EntryNotFoundError, type EntryStatus, type PendingPublishWorkflow, type PublishWorkflowAction, type PublishWorkflowPayload, PublishWorkflowPendingError, type PublishWorkflowResult, RevisionConflictError, type RevisionType, SlugConflictError, archiveEntry, assertPublishableSlug, createDraftEntry, getCollectionBySlug, getEntryRevision, getLatestRevision, getVersionedEntry, isEntryNotFound, isPermanentPublishError, isRevisionConflict, isSlugConflict, listEntryRevisions, normalizeEntryDataForRead, publishEntry, restoreEntryRevision, runPublishingTransition, saveDraftEntry, toEditableEntry, triggerPublishingWorkflow, waitForWorkflowCompletion };

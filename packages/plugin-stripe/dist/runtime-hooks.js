@@ -40,11 +40,13 @@ function createSyncHooks(pluginConfig, syncConfig, runtime) {
     return secretKey;
   };
   const adminChecks = /* @__PURE__ */ new WeakMap();
-  const isAdmin = (request) => {
-    let check = adminChecks.get(request);
+  const isAdmin = ({ actor, req }) => {
+    if (actor) return Promise.resolve(actor.kind !== "user" || actor.user.role === "admin");
+    if (!req) return Promise.resolve(false);
+    let check = adminChecks.get(req);
     if (!check) {
-      check = runtime.isAdmin(request);
-      adminChecks.set(request, check);
+      check = runtime.isAdmin(req);
+      adminChecks.set(req, check);
     }
     return check;
   };
@@ -93,19 +95,19 @@ function createSyncHooks(pluginConfig, syncConfig, runtime) {
     ],
     beforeDelete: [
       // Refuse before the CMS record is removed, so it cannot outlive its Stripe resource unnoticed.
-      async ({ req, originalDoc }) => {
+      async ({ actor, req, originalDoc }) => {
         if (!storedStripeId(originalDoc)) return;
-        if (!await isAdmin(req)) {
+        if (!await isAdmin({ actor, req })) {
           throw new Error(`[plugin-stripe] Only CMS admins can delete records linked to a Stripe ${resource}.`);
         }
         await requireSecretKey();
       }
     ],
     afterDelete: [
-      async ({ req, doc }) => {
+      async ({ actor, req, doc }) => {
         const stripeId = storedStripeId(doc);
         if (!stripeId) return;
-        if (!await isAdmin(req)) {
+        if (!await isAdmin({ actor, req })) {
           console.error(`[plugin-stripe] Kept ${resource} ${stripeId} in Stripe: the delete was not made by a CMS admin.`);
           return;
         }

@@ -1,6 +1,7 @@
 import { a as TalismanUser } from '../types-B9Ys5hZL.js';
-import { C as CollectionConfig } from '../types-DZZq-VQM.js';
+import { C as CollectionConfig } from '../types-1wLQqVHz.js';
 import 'astro';
+import '../actor-BAnSg_qp.js';
 
 type CollectionOperation = 'read' | 'create' | 'update' | 'delete';
 /** A collection may require an administrator for each generic CMS operation. */

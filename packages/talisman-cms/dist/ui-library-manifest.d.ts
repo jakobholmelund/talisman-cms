@@ -1,4 +1,7 @@
-import { j as UiLibraryRequirement, F as FieldDefinition, A as AdvancedAdapterDefinition, U as UiComponentPresetDefinition, d as ComponentSlotDefinition, i as UiLibraryDefinition, g as UiLibraryBlockAdapter, h as UiLibraryComponentAdapter } from './types-DZZq-VQM.js';
+import { j as UiLibraryRequirement, F as FieldDefinition, A as AdvancedAdapterDefinition, U as UiComponentPresetDefinition, d as ComponentSlotDefinition, i as UiLibraryDefinition, g as UiLibraryBlockAdapter, h as UiLibraryComponentAdapter } from './types-1wLQqVHz.js';
+import './actor-BAnSg_qp.js';
+import './types-B9Ys5hZL.js';
+import 'astro';
 
 type UiLibraryCatalogItemKind = 'block' | 'component';
 type UiLibraryCoverageStatus = 'complete' | 'partial' | 'unsupported';
@@ -106,8 +109,8 @@ declare function buildUiLibraryDefinition(library: Pick<UiLibraryDefinition, 'id
     blocks: UiLibraryBlockAdapter[];
     components: UiLibraryComponentAdapter[];
     presets: UiComponentPresetDefinition[];
-    id: string;
     name: string;
+    id: string;
     requirements?: UiLibraryRequirement[] | undefined;
 };
 declare function buildUiLibraryPlugin(pluginName: string, library: UiLibraryDefinition): {

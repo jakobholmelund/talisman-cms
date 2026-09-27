@@ -8,8 +8,84 @@ import {
 } from "./chunk-R6EGKTST.js";
 
 // src/versioning.ts
-import { and, desc, eq, isNull, ne, or } from "drizzle-orm";
+import { and as and2, desc, eq, isNull, ne, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
+
+// src/service/cache.ts
+import { and, count, gte, lte } from "drizzle-orm";
+var ENTRY_CACHE_TTL_SECONDS = 3600;
+var NATIVE_CACHE_TTL_SECONDS = 60;
+var cacheKeys = {
+  collections: () => "talisman:collections:all",
+  globals: () => "talisman:globals:all",
+  global: (slug) => `talisman:globals:${slug}`,
+  entries: (collectionSlug, version) => `talisman:entries:${collectionSlug}:all:${version}`,
+  entry: (collectionSlug, id, version) => `talisman:entries:${collectionSlug}:${id}:${version}`
+};
+var workerCacheContext = null;
+function getWorkerCacheContext() {
+  workerCacheContext ??= import("cloudflare:workers").then(({ waitUntil }) => typeof waitUntil === "function" ? { waitUntil: (promise) => waitUntil(promise) } : null).catch(() => null);
+  return workerCacheContext;
+}
+async function readCache(kv, key) {
+  try {
+    return await kv.get(key, "json");
+  } catch (error) {
+    console.warn(`[Talisman] KV cache read failed for ${key}`, error);
+    return null;
+  }
+}
+async function writeCache(kv, key, value, ctx, options = {}) {
+  const write = (async () => {
+    try {
+      await kv.put(key, JSON.stringify(value), { expirationTtl: options.ttl ?? ENTRY_CACHE_TTL_SECONDS });
+      if (options.changedSinceRead && await options.changedSinceRead()) {
+        await kv.delete(key);
+      }
+    } catch (error) {
+      console.warn(`[Talisman] KV cache write failed for ${key}`, error);
+    }
+  })();
+  const context = ctx ?? await getWorkerCacheContext();
+  if (context) {
+    try {
+      context.waitUntil(write);
+      return;
+    } catch {
+    }
+  }
+  await write;
+}
+var CONCURRENT_WRITE_WINDOW_MS = 5 * 6e4;
+function rowsUpdatedSince(db, table, since, where, stillPresent) {
+  return async () => {
+    const latest = new Date(Date.now() + CONCURRENT_WRITE_WINDOW_MS);
+    const rows = await db.select({ id: table.id }).from(table).where(and(gte(table.updatedAt, since), lte(table.updatedAt, latest), where)).limit(1);
+    if (rows.length > 0) return true;
+    if (!stillPresent) return false;
+    const [present] = await db.select({ total: count() }).from(table).where(stillPresent.where);
+    return (present?.total ?? 0) !== stillPresent.count;
+  };
+}
+async function invalidateEntryCache(env, collectionSlug, entryIds) {
+  const kv = env.KV;
+  if (!kv) return;
+  const prefix = `talisman:entries:${collectionSlug}`;
+  await Promise.all([`${prefix}:all`, `${prefix}:all:draft`, `${prefix}:all:published`].map((key) => kv.delete(key)));
+  const ids = (typeof entryIds === "string" ? [entryIds] : entryIds ?? []).filter(Boolean);
+  await Promise.all(ids.flatMap((id) => [`${prefix}:${id}`, `${prefix}:${id}:draft`, `${prefix}:${id}:published`]).map((key) => kv.delete(key)));
+}
+async function invalidateGlobalCache(env, slug) {
+  const kv = env.KV;
+  if (!kv) return;
+  const keys = [cacheKeys.globals(), ...slug ? [cacheKeys.global(slug)] : []];
+  await Promise.all(keys.map((key) => kv.delete(key)));
+}
+async function invalidateCollectionCache(env) {
+  await env.KV?.delete(cacheKeys.collections());
+}
+
+// src/versioning.ts
 var DEFAULT_PUBLISHING_WORKFLOW_BINDING = "TALISMAN_PUBLISH_WORKFLOW";
 var REVISION_CONFLICT_MESSAGE = "This entry changed since it was opened. Reload it before saving.";
 var RevisionConflictError = class extends Error {
@@ -80,7 +156,7 @@ async function getCollectionBySlug(db, collectionSlug) {
 async function getVersionedEntry(db, collectionId, entryId) {
   const entry = await db.query.entries.findFirst({
     // @ts-ignore
-    where: (e, { and: and2, eq: eq2 }) => and2(eq2(e.collectionId, collectionId), eq2(e.id, entryId))
+    where: (e, { and: and3, eq: eq2 }) => and3(eq2(e.collectionId, collectionId), eq2(e.id, entryId))
   });
   if (!entry) {
     throw new EntryNotFoundError(`Entry ${entryId} not found`);
@@ -98,12 +174,12 @@ async function listEntryRevisions(db, collectionId, entryId, opts = {}) {
       type: revisions.type,
       status: revisions.status,
       createdAt: revisions.createdAt
-    }).from(revisions).where(and(eq(revisions.collectionId, collectionId), eq(revisions.entryId, entryId))).orderBy(desc(revisions.revisionNumber), desc(revisions.createdAt));
+    }).from(revisions).where(and2(eq(revisions.collectionId, collectionId), eq(revisions.entryId, entryId))).orderBy(desc(revisions.revisionNumber), desc(revisions.createdAt));
     return opts.limit === void 0 ? query : query.limit(opts.limit);
   }
   return db.query.entryRevisions.findMany({
     // @ts-ignore
-    where: (r, { and: and2, eq: eq2 }) => and2(eq2(r.collectionId, collectionId), eq2(r.entryId, entryId)),
+    where: (r, { and: and3, eq: eq2 }) => and3(eq2(r.collectionId, collectionId), eq2(r.entryId, entryId)),
     // @ts-ignore
     orderBy: (r, { desc: desc2 }) => [desc2(r.revisionNumber), desc2(r.createdAt)],
     ...opts.limit === void 0 ? {} : { limit: opts.limit }
@@ -112,7 +188,7 @@ async function listEntryRevisions(db, collectionId, entryId, opts = {}) {
 async function getEntryRevision(db, collectionId, entryId, revisionId) {
   const revision = await db.query.entryRevisions.findFirst({
     // @ts-ignore
-    where: (r, { and: and2, eq: eq2 }) => and2(eq2(r.collectionId, collectionId), eq2(r.entryId, entryId), eq2(r.id, revisionId))
+    where: (r, { and: and3, eq: eq2 }) => and3(eq2(r.collectionId, collectionId), eq2(r.entryId, entryId), eq2(r.id, revisionId))
   });
   if (!revision) {
     throw new EntryNotFoundError(`Revision ${revisionId} not found for entry ${entryId}`);
@@ -124,7 +200,7 @@ function editableSlug(entry) {
 }
 async function assertDraftSlugAvailable(db, collectionId, entryId, slug) {
   const entries2 = entries;
-  const [holder] = await db.select({ id: entries2.id }).from(entries2).where(and(
+  const [holder] = await db.select({ id: entries2.id }).from(entries2).where(and2(
     eq(entries2.collectionId, collectionId),
     ne(entries2.id, entryId),
     or(eq(entries2.slug, slug), eq(entries2.draftSlug, slug))
@@ -135,7 +211,7 @@ async function assertPublishableSlug(db, entry) {
   const slug = editableSlug(entry);
   if (entry.status === "published" && slug === entry.slug) return;
   const entries2 = entries;
-  const [holder] = await db.select({ id: entries2.id }).from(entries2).where(and(
+  const [holder] = await db.select({ id: entries2.id }).from(entries2).where(and2(
     eq(entries2.collectionId, entry.collectionId),
     ne(entries2.id, entry.id),
     eq(entries2.status, "published"),
@@ -172,7 +248,7 @@ function buildBaselineRevision(db, entry) {
     createdAt: entry.updatedAt ?? /* @__PURE__ */ new Date()
   })];
   if (status === "published" && !entry.publishedRevisionId) {
-    queries.push(db.update(entries).set({ publishedData, publishedRevisionId: id }).where(and(eq(entries.id, entry.id), isNull(entries.publishedRevisionId))));
+    queries.push(db.update(entries).set({ publishedData, publishedRevisionId: id }).where(and2(eq(entries.id, entry.id), isNull(entries.publishedRevisionId))));
   }
   return queries;
 }
@@ -264,7 +340,7 @@ async function saveDraftEntry(db, collection, entryId, params) {
     expectedRevisionId: params.expectedRevisionId,
     existing
   });
-  await writeRevisionBatch(db, [db.update(entries).set(updates).where(and(eq(entries.collectionId, collection.id), eq(entries.id, entryId))), ...revision.queries]);
+  await writeRevisionBatch(db, [db.update(entries).set(updates).where(and2(eq(entries.collectionId, collection.id), eq(entries.id, entryId))), ...revision.queries]);
   return getVersionedEntry(db, collection.id, entryId);
 }
 async function publishEntry(db, collection, entryId, expectedRevisionId) {
@@ -288,7 +364,7 @@ async function publishEntry(db, collection, entryId, expectedRevisionId) {
     publishedAt: now,
     archivedAt: null,
     updatedAt: now
-  }).where(and(eq(entries.collectionId, collection.id), eq(entries.id, entryId)))]);
+  }).where(and2(eq(entries.collectionId, collection.id), eq(entries.id, entryId)))]);
   return getVersionedEntry(db, collection.id, entryId);
 }
 async function archiveEntry(db, collection, entryId, expectedRevisionId) {
@@ -307,7 +383,7 @@ async function archiveEntry(db, collection, entryId, expectedRevisionId) {
     status: "archived",
     archivedAt: now,
     updatedAt: now
-  }).where(and(eq(entries.collectionId, collection.id), eq(entries.id, entryId)))]);
+  }).where(and2(eq(entries.collectionId, collection.id), eq(entries.id, entryId)))]);
   return getVersionedEntry(db, collection.id, entryId);
 }
 async function restoreEntryRevision(db, collection, entryId, revisionId, expectedRevisionId) {
@@ -327,7 +403,7 @@ async function restoreEntryRevision(db, collection, entryId, revisionId, expecte
     updatedAt: now,
     status: entry.status === "archived" ? "draft" : entry.status,
     archivedAt: entry.status === "archived" ? null : entry.archivedAt
-  }).where(and(eq(entries.collectionId, collection.id), eq(entries.id, entryId))), ...restoredRevision.queries]);
+  }).where(and2(eq(entries.collectionId, collection.id), eq(entries.id, entryId))), ...restoredRevision.queries]);
   return getVersionedEntry(db, collection.id, entryId);
 }
 async function runPublishingTransition(env, payload) {
@@ -400,16 +476,16 @@ async function triggerPublishingWorkflow(env, payload, bindingName = DEFAULT_PUB
   }
   return getVersionedEntry(db, collection.id, payload.entryId);
 }
-async function invalidateEntryCache(env, collectionSlug, entryIds) {
-  const kv = env.KV;
-  if (!kv) return;
-  const prefix = `talisman:entries:${collectionSlug}`;
-  await Promise.all([`${prefix}:all`, `${prefix}:all:draft`, `${prefix}:all:published`].map((key) => kv.delete(key)));
-  const ids = (typeof entryIds === "string" ? [entryIds] : entryIds ?? []).filter(Boolean);
-  await Promise.all(ids.flatMap((id) => [`${prefix}:${id}`, `${prefix}:${id}:draft`, `${prefix}:${id}:published`]).map((key) => kv.delete(key)));
-}
 
 export {
+  NATIVE_CACHE_TTL_SECONDS,
+  cacheKeys,
+  readCache,
+  writeCache,
+  rowsUpdatedSince,
+  invalidateEntryCache,
+  invalidateGlobalCache,
+  invalidateCollectionCache,
   DEFAULT_PUBLISHING_WORKFLOW_BINDING,
   RevisionConflictError,
   isRevisionConflict,
@@ -434,6 +510,5 @@ export {
   runPublishingTransition,
   PublishWorkflowPendingError,
   waitForWorkflowCompletion,
-  triggerPublishingWorkflow,
-  invalidateEntryCache
+  triggerPublishingWorkflow
 };

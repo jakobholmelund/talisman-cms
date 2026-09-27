@@ -7,7 +7,7 @@ import {
 import {
   getPluginUiLibraryMetadata,
   resolveFieldDefinitions
-} from "./chunk-2NIG35DR.js";
+} from "./chunk-6DE4JXMX.js";
 import "./chunk-R6EGKTST.js";
 import "./chunk-MLKGABMK.js";
 
