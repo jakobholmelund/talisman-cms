@@ -20,12 +20,12 @@ import {
   toEditableEntry,
   triggerPublishingWorkflow,
   writeCache
-} from "./chunk-ZHVNEAET.js";
+} from "./chunk-HSF22PCU.js";
 import {
   collections,
   entries,
   globals
-} from "./chunk-IOIVRQZ4.js";
+} from "./chunk-SHMAAJ4S.js";
 import {
   deleteStoredMedia,
   isMediaCollection
@@ -1096,7 +1096,7 @@ function entriesService(ctx) {
         return rows2.map((row) => mapNativeEntry(row, collection.record.id, collection.nativeIdCol));
       }
       const entries2 = entries;
-      const rows = await db.select().from(entries2).where(and3(eq4(entries2.collectionId, collection.record.id), compiled.where)).orderBy(...compiled.orderBy.length > 0 ? compiled.orderBy : [desc2(entries2.createdAt)]);
+      const rows = await db.select().from(entries2).where(and3(eq4(entries2.collectionId, collection.record.id), compiled.where)).orderBy(...compiled.orderBy.length > 0 ? compiled.orderBy : [desc2(entries2.createdAt), desc2(entries2.id)]);
       return rows.map(toEditableEntry);
     },
     /**
@@ -1285,7 +1285,7 @@ function entriesService(ctx) {
         data = (await query).map((row) => mapNativeEntry(row, collection.record.id, collection.nativeIdCol));
       } else {
         const entries2 = entries;
-        let query = db.select().from(entries2).where(and3(eq4(entries2.collectionId, collection.record.id), versionMode === "published" ? eq4(entries2.status, "published") : void 0, compiled.where)).orderBy(...compiled.orderBy.length > 0 ? [...compiled.orderBy, desc2(entries2.id)] : [desc2(entries2.createdAt)]).$dynamic();
+        let query = db.select().from(entries2).where(and3(eq4(entries2.collectionId, collection.record.id), versionMode === "published" ? eq4(entries2.status, "published") : void 0, compiled.where)).orderBy(...compiled.orderBy.length > 0 ? [...compiled.orderBy, desc2(entries2.id)] : [desc2(entries2.createdAt), desc2(entries2.id)]).$dynamic();
         if (limit !== void 0) query = query.limit(limit).offset(compiled.offset ?? 0);
         data = (await query).map((entry) => normalizeEntryDataForRead(entry, versionMode));
       }

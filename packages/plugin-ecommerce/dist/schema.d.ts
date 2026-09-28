@@ -172,6 +172,7 @@ declare const carts: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     };
     dialect: "sqlite";
 }>;
+declare const FULFILLMENT_STATUSES: readonly ["unfulfilled", "partially_fulfilled", "fulfilled"];
 declare const orders: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     name: "_ecommerce_orders";
     schema: undefined;
@@ -962,8 +963,7 @@ declare const payments: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
 }>;
 /**
  * Payment provider refunds with the time they were issued: one row for each rise in an order's
- * providerRefundedCents, so an order's rows add up to it. Refunds recorded before migration 0028 have
- * no row. Gift card tender refunds are in giftCardRefunds.
+ * providerRefundedCents, so an order's rows add up to it. Gift card tender refunds are in giftCardRefunds.
  */
 declare const providerRefunds: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     name: "_ecommerce_provider_refunds";
@@ -2578,7 +2578,10 @@ declare const customers: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     };
     dialect: "sqlite";
 }>;
-/** Shopper profile and order owner. Verified email links connect it to the shared user identity. */
+/**
+ * Shopper profile and order owner. A verified email links it to the shared CMS user identity; the
+ * link is cleared when that user is deleted.
+ */
 declare const customerAccounts: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     name: "_ecommerce_customer_accounts";
     schema: undefined;
@@ -3420,6 +3423,7 @@ declare const referrals: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     };
     dialect: "sqlite";
 }>;
+declare const CREDIT_LEDGER_KINDS: readonly ["referral_award", "welcome_award", "checkout_reserve", "checkout_release", "purchase_credit_refund", "referral_reversal", "welcome_reversal"];
 /** Immutable entries make awards, spending, and reversals auditable. */
 declare const creditLedger: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     name: "_ecommerce_credit_ledger";
@@ -3892,6 +3896,7 @@ declare const discountCodes: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     };
     dialect: "sqlite";
 }>;
+declare const REDEMPTION_STATUSES: readonly ["reserved", "confirmed", "cancelled", "refunded"];
 /** Pending orders reserve a use and, for credit vouchers, part of the balance. */
 declare const discountRedemptions: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     name: "_ecommerce_discount_redemptions";
@@ -4044,7 +4049,8 @@ declare const discountRedemptions: drizzle_orm_sqlite_core.SQLiteTableWithColumn
     };
     dialect: "sqlite";
 }>;
-/** Purchased cards become spendable only after a verified provider payment. */
+declare const GIFT_CARD_PURCHASE_STATUSES: readonly ["pending", "paid", "cancelled", "partially_refunded", "refunded", "review"];
+/** Purchased cards become spendable only after a verified provider payment. Gift cards are USD only. */
 declare const giftCardPurchases: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     name: "_ecommerce_gift_card_purchases";
     schema: undefined;
@@ -4572,6 +4578,7 @@ declare const giftCards: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     };
     dialect: "sqlite";
 }>;
+declare const GIFT_CARD_LEDGER_KINDS: readonly ["issue", "reserve", "release", "refund_restore", "purchase_reversal"];
 declare const giftCardLedger: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     name: "_ecommerce_gift_card_ledger";
     schema: undefined;
@@ -5673,8 +5680,8 @@ declare const restocks: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     dialect: "sqlite";
 }>;
 /**
- * Administrator decisions on orders and gift card purchases parked for review (migration 0029), each
- * recorded with the retry or release it carried out. Exactly one of orderId and purchaseId is set.
+ * Administrator decisions on orders and gift card purchases parked for review, each recorded with the
+ * retry or release it carried out. Exactly one of orderId and purchaseId is set.
  */
 declare const reconcileDecisions: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     name: "_ecommerce_reconcile_decisions";
@@ -5827,6 +5834,8 @@ declare const reconcileDecisions: drizzle_orm_sqlite_core.SQLiteTableWithColumns
     };
     dialect: "sqlite";
 }>;
+declare const EMAIL_KINDS: readonly ["order_confirmation", "shipment", "shipment_update", "gift_card_claim"];
+declare const EMAIL_STATUSES: readonly ["pending", "sent", "failed", "cancelled"];
 /**
  * Order confirmations, shipment notices and gift card claim emails: one row per email, written with the
  * change that calls for it. No addresses; `lastError` is an error code.
@@ -12348,4 +12357,4 @@ declare const relations: drizzle_orm.ExtractTablesWithRelations<{
     }>;
 }>>;
 
-export { carts, categories, componentReservations, components, creditLedger, customerAccounts, customerSessions, customers, discountCodes, discountRedemptions, disputes, emailDeliveries, fulfillments, giftCardClaims, giftCardLedger, giftCardOrderRefunds, giftCardPurchases, giftCardRedemptions, giftCardRefunds, giftCardReviews, giftCards, inventoryReservations, orders, payments, productCategories, productTags, productVariantValues, productVariants, products, providerRefunds, rateLimits, reconcileDecisions, referralCodes, referralSettings, referrals, relations, restocks, signInTokens, stocks, tags, taxReversals, variantComponents, variants };
+export { CREDIT_LEDGER_KINDS, EMAIL_KINDS, EMAIL_STATUSES, FULFILLMENT_STATUSES, GIFT_CARD_LEDGER_KINDS, GIFT_CARD_PURCHASE_STATUSES, REDEMPTION_STATUSES, carts, categories, componentReservations, components, creditLedger, customerAccounts, customerSessions, customers, discountCodes, discountRedemptions, disputes, emailDeliveries, fulfillments, giftCardClaims, giftCardLedger, giftCardOrderRefunds, giftCardPurchases, giftCardRedemptions, giftCardRefunds, giftCardReviews, giftCards, inventoryReservations, orders, payments, productCategories, productTags, productVariantValues, productVariants, products, providerRefunds, rateLimits, reconcileDecisions, referralCodes, referralSettings, referrals, relations, restocks, signInTokens, stocks, tags, taxReversals, variantComponents, variants };

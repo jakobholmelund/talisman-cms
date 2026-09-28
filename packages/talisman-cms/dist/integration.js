@@ -13,7 +13,7 @@ import {
 } from "./chunk-GAOPNFAO.js";
 import {
   assembleMigrations
-} from "./chunk-B2BAGIY4.js";
+} from "./chunk-4NHF23I7.js";
 import "./chunk-MLKGABMK.js";
 
 // src/integration.ts

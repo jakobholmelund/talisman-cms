@@ -3,7 +3,7 @@ import {
   productVariants,
   stocks,
   variantComponents
-} from "./chunk-K4FWMXR2.js";
+} from "./chunk-YQM6TC4O.js";
 
 // src/variants.ts
 import { and, eq, exists, inArray, notExists, or, sql } from "drizzle-orm";

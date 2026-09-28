@@ -6,7 +6,7 @@ var collections = sqliteTable("galaxy_collections", {
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   description: text("description"),
-  fields: text("fields", { mode: "json" }).notNull().default("[]"),
+  fields: text("fields", { mode: "json" }).notNull().default([]),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull()
 });
 var entries = sqliteTable("galaxy_entries", {
@@ -29,8 +29,8 @@ var entries = sqliteTable("galaxy_entries", {
 }, (table) => [
   index("galaxy_entries_collection_status_created_idx").on(table.collectionId, table.status, table.createdAt),
   index("galaxy_entries_collection_status_slug_idx").on(table.collectionId, table.status, table.slug, table.createdAt),
-  // Migration 0023: one published entry per live slug in a collection.
-  uniqueIndex("galaxy_entries_published_slug_unique").on(table.collectionId, table.slug).where(sql`status = 'published'`)
+  // One published entry per live slug in a collection.
+  uniqueIndex("galaxy_entries_published_slug_unique").on(table.collectionId, table.slug).where(sql`${table.status} = 'published'`)
 ]);
 var entryRevisions = sqliteTable("galaxy_entry_revisions", {
   id: text("id").primaryKey(),
@@ -62,7 +62,7 @@ var globals = sqliteTable("galaxy_globals", {
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   description: text("description"),
-  data: text("data", { mode: "json" }).notNull().default("{}"),
+  data: text("data", { mode: "json" }).notNull().default({}),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
   /** Grows by one on every save; a save that names the version it loaded is refused when it moved on. */

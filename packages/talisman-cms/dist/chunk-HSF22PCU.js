@@ -2,7 +2,7 @@ import {
   collections,
   entries,
   entryRevisions
-} from "./chunk-IOIVRQZ4.js";
+} from "./chunk-SHMAAJ4S.js";
 import {
   readBinding
 } from "./chunk-GAOPNFAO.js";

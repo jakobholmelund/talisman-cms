@@ -1,5 +1,5 @@
 import { a as TalismanUser } from '../types-C5a-hx5D.js';
-import { C as CollectionConfig } from '../types-FBC1PekQ.js';
+import { C as CollectionConfig } from '../types-BdxRwCLu.js';
 import 'astro';
 import '../actor-Daa_hmny.js';
 import '../types-CqOBvOgc.js';
