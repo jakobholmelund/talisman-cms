@@ -1,8 +1,8 @@
-import { C as CacheContext, T as TalismanEnv, E as EntryQuery, a as EntriesPage, b as CreateEntryInput, U as UpdateEntryInput, S as SiteReadOptions, W as WriteExpectation } from './client-DyE8UiZp.js';
-export { c as ClientOptions, d as EntryStatusTarget, O as Operators, e as UpdateOptions, V as VersionMode, f as WhereClause, g as createDbClient, h as getClient, j as invalidateCollectionCache, i as invalidateEntryCache, k as invalidateGlobalCache } from './client-DyE8UiZp.js';
+import { C as CacheContext, T as TalismanEnv, E as EntryQuery, a as EntriesPage, b as CreateEntryInput, U as UpdateEntryInput, S as SiteReadOptions, W as WriteExpectation, c as CreateGlobalInput, d as SaveGlobalOptions } from './client-BYOu0i3b.js';
+export { e as ClientOptions, f as EntryStatusTarget, O as Operators, g as UpdateOptions, V as VersionMode, h as WhereClause, j as createDbClient, k as getClient, l as invalidateCollectionCache, i as invalidateEntryCache, m as invalidateGlobalCache } from './client-BYOu0i3b.js';
 export { EntryNotFoundError, PendingPublishWorkflow, RevisionConflictError, SlugConflictError } from './versioning.js';
 import { C as CollectionConfig, G as GlobalConfig, m as UiLibraryDefinition, e as CollectionHooks, p as FieldValidationIssue, d as CollectionHookArgs, F as FieldDefinition } from './types-FBC1PekQ.js';
-import { c as collections } from './media-Cm407HSH.js';
+import { c as collections } from './media-CIuK48g5.js';
 import { A as Actor } from './actor-Daa_hmny.js';
 export { s as systemActor, u as userActor } from './actor-Daa_hmny.js';
 import 'drizzle-orm/d1';
@@ -32,7 +32,7 @@ interface ServiceConfig {
  */
 declare function loadServiceConfig(): Promise<ServiceConfig>;
 
-type ServiceErrorCode = 'invalid_input' | 'forbidden' | 'not_found' | 'payload_too_large' | 'precondition_required' | 'conflict' | 'unsupported' | 'hook_failed';
+type ServiceErrorCode = 'invalid_input' | 'forbidden' | 'not_found' | 'payload_too_large' | 'precondition_required' | 'conflict' | 'stale_record' | 'unsupported' | 'hook_failed';
 /**
  * A failure the caller can act on, with the status the admin API answers. The SDK throws the same
  * classes, so server code matches them by class or `code`. Anything else the service throws is an
@@ -63,9 +63,17 @@ declare class NotFoundError extends ServiceError {
 declare class PayloadTooLargeError extends ServiceError {
     constructor(message?: string);
 }
-/** The record the write would create already exists. */
+/**
+ * The record the write would create already exists, or, with the code `stale_record`, the record
+ * changed since the caller loaded it. A stale write carries the record's current `version`, so the
+ * caller can load that version and try again; the admin API answers it in the response body.
+ */
 declare class ConflictError extends ServiceError {
-    constructor(message: string);
+    readonly version?: number | null;
+    constructor(message: string, options?: {
+        code?: 'conflict' | 'stale_record';
+        version?: number | null;
+    });
 }
 /** A write on a record that has revisions arrived without the revision the caller loaded. */
 declare class PreconditionRequiredError extends ServiceError {
@@ -118,13 +126,6 @@ interface ResolvedCollection {
     hooks?: CollectionHooks;
     /** Whether the collection is configured; a stored collection without configuration is readable by server code. */
     configured: boolean;
-}
-
-interface CreateGlobalInput {
-    slug?: unknown;
-    name?: unknown;
-    description?: unknown;
-    data?: unknown;
 }
 
 interface ServiceOptions {
@@ -204,8 +205,9 @@ declare function createService(env: TalismanEnv, options: ServiceOptions): {
             data: Record<string, any>;
             createdAt: Date;
             updatedAt: Date;
+            version: number;
         }>;
-        save(slug: string, data: unknown): Promise<{
+        save(slug: string, data: unknown, options?: SaveGlobalOptions): Promise<{
             id: string;
             name: string;
             slug: string;
@@ -213,7 +215,8 @@ declare function createService(env: TalismanEnv, options: ServiceOptions): {
             data: unknown;
             createdAt: Date;
             updatedAt: Date;
-        } | undefined>;
+            version: number;
+        }>;
     };
     revisions: {
         list(slug: string, entryId: string, options?: {
@@ -259,4 +262,4 @@ declare function createService(env: TalismanEnv, options: ServiceOptions): {
     };
 };
 
-export { AccessDeniedError, Actor, ConflictError, ConstraintError, CreateEntryInput, type CreateGlobalInput, EntriesPage, EntryQuery, HookError, type HookLogEntry, type HookPhase, InvalidInputError, NativeRecordConflictError, NotFoundError, PayloadTooLargeError, PreconditionRequiredError, type ResolvedCollection, type ServiceConfig, ServiceError, type ServiceErrorCode, type ServiceOptions, SiteReadOptions, TalismanEnv, type TalismanService, UnsupportedOperationError, UpdateEntryInput, ValidationError, WriteExpectation, createService, isServiceError, loadServiceConfig };
+export { AccessDeniedError, Actor, ConflictError, ConstraintError, CreateEntryInput, CreateGlobalInput, EntriesPage, EntryQuery, HookError, type HookLogEntry, type HookPhase, InvalidInputError, NativeRecordConflictError, NotFoundError, PayloadTooLargeError, PreconditionRequiredError, type ResolvedCollection, SaveGlobalOptions, type ServiceConfig, ServiceError, type ServiceErrorCode, type ServiceOptions, SiteReadOptions, TalismanEnv, type TalismanService, UnsupportedOperationError, UpdateEntryInput, ValidationError, WriteExpectation, createService, isServiceError, loadServiceConfig };

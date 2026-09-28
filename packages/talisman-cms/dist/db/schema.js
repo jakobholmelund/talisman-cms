@@ -4,7 +4,7 @@ import {
   entryRevisions,
   globals,
   media
-} from "../chunk-NSKY6EIU.js";
+} from "../chunk-VOL6BL52.js";
 import "../chunk-MLKGABMK.js";
 export {
   collections,

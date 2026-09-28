@@ -20,13 +20,13 @@ import {
   toEditableEntry,
   triggerPublishingWorkflow,
   writeCache
-} from "./chunk-IK3HDZKF.js";
+} from "./chunk-O5JSH6E5.js";
 import {
   collections,
   entries,
   globals,
   schema_exports
-} from "./chunk-NSKY6EIU.js";
+} from "./chunk-VOL6BL52.js";
 import {
   deleteStoredMedia,
   isMediaCollection
@@ -127,9 +127,11 @@ var PayloadTooLargeError = class extends ServiceError {
   }
 };
 var ConflictError = class extends ServiceError {
-  constructor(message) {
-    super("conflict", 409, message);
+  version;
+  constructor(message, options = {}) {
+    super(options.code ?? "conflict", 409, message);
     this.name = "ConflictError";
+    if (options.code === "stale_record") this.version = options.version ?? null;
   }
 };
 var PreconditionRequiredError = class extends ServiceError {
@@ -214,7 +216,13 @@ function getClient(env, ctx, options = {}) {
       findMany: async (opts) => (await service()).globals.list({ cache: opts?.cache }),
       find: async (slug, opts) => (await service()).globals.get(slug, { cache: opts?.cache }),
       create: async (input) => (await service()).globals.create(input),
-      update: async (slug, data) => (await service()).globals.save(slug, data)
+      /**
+       * Saves a global's data. `expectedVersion`, the `version` a read returned, makes the save fail
+       * with a `stale_record` ConflictError when another save came first; without it the save wins.
+       */
+      save: async (slug, data, opts) => (await service()).globals.save(slug, data, opts),
+      /** The same as `save`, under the name earlier releases used. */
+      update: async (slug, data, opts) => (await service()).globals.save(slug, data, opts)
     },
     entries: {
       findMany: async (collectionSlug, opts) => (await service()).entries.findMany(collectionSlug, opts),
@@ -1048,7 +1056,7 @@ async function nativeRow(ctx, collection, id) {
 async function entryRow(ctx, collection, id) {
   return ctx.db.query.entries.findFirst({
     // @ts-ignore
-    where: (e, { eq: eq5, and: and3 }) => and3(eq5(e.collectionId, collection.record.id), eq5(e.id, id))
+    where: (e, { eq: eq5, and: and4 }) => and4(eq5(e.collectionId, collection.record.id), eq5(e.id, id))
   });
 }
 function assertPublishable(collection, entry) {
@@ -1372,11 +1380,19 @@ function entriesService(ctx) {
 }
 
 // src/service/globals.ts
-import { eq as eq4 } from "drizzle-orm";
+import { and as and3, eq as eq4, sql as sql3 } from "drizzle-orm";
 var DATA_MESSAGE = "Global data must be a JSON object";
+var STALE_GLOBAL_MESSAGE = "This global changed since it was opened. Load the latest version before saving.";
 var globalSyncs = /* @__PURE__ */ new WeakMap();
 var newGlobalId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 var trimmed = (value) => typeof value === "string" && value.trim() ? value.trim() : null;
+function readExpectedVersion(value) {
+  if (value === void 0 || value === null) return null;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    throw new InvalidInputError("expectedVersion must be a positive whole number");
+  }
+  return value;
+}
 function withDecodedData(record) {
   return record ? { ...record, data: decodeGlobalData(record.data) } : record;
 }
@@ -1501,7 +1517,8 @@ function globalsService(ctx) {
         description: trimmed(input.description),
         data: isGlobalData(input.data) ? input.data : {},
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
+        version: 1
       };
       await db.insert(globals).values(created);
       await invalidateGlobalCache(env, slug);
@@ -1509,10 +1526,13 @@ function globalsService(ctx) {
     },
     /**
      * Saves a global's data, creating a configured global's row as needed. Saving to a slug that is
-     * neither configured nor stored would create a global, which is kept to administrators.
+     * neither configured nor stored would create a global, which is kept to administrators. Every
+     * save adds one to the row's `version`; a caller that passes the version it loaded is refused
+     * with a `stale_record` conflict when another save came first.
      */
-    async save(slug, data) {
+    async save(slug, data, options = {}) {
       if (!isGlobalData(data)) throw new ValidationError([{ path: [], message: DATA_MESSAGE }], void 0, DATA_MESSAGE);
+      const expectedVersion = readExpectedVersion(options.expectedVersion);
       const { config: globalConfig, record: existing } = await resolveGlobal(ctx, slug);
       if (!globalConfig && !existing && actor.kind === "user" && actor.user.role !== "admin") {
         throw new AccessDeniedError("Only administrators can create globals");
@@ -1525,23 +1545,36 @@ function globalsService(ctx) {
         }
         saved = parsed.data;
       }
-      const id = existing?.id || newGlobalId();
       const now = /* @__PURE__ */ new Date();
       const name = globalConfig?.name || existing?.name || slug;
       const description = globalConfig?.description || existing?.description || null;
-      await db.insert(globals).values({
-        id,
-        name,
-        slug,
-        description,
-        data: saved,
-        createdAt: existing?.createdAt || now,
-        updatedAt: now
-      }).onConflictDoUpdate({
-        target: globals.slug,
-        set: { name, description, data: saved, updatedAt: now }
-      });
-      const updated = await findGlobal(ctx, slug);
+      const nextVersion = sql3`${globals.version} + 1`;
+      let updated;
+      if (existing) {
+        const stillLoaded = expectedVersion === null ? void 0 : eq4(globals.version, expectedVersion);
+        [updated] = await db.update(globals).set({ name, description, data: saved, updatedAt: now, version: nextVersion }).where(and3(eq4(globals.id, existing.id), stillLoaded)).returning();
+      }
+      if (!updated) {
+        if (expectedVersion !== null) {
+          const current = await findGlobal(ctx, slug);
+          throw new ConflictError(STALE_GLOBAL_MESSAGE, { code: "stale_record", version: current?.version ?? null });
+        }
+        await db.insert(globals).values({
+          id: newGlobalId(),
+          name,
+          slug,
+          description,
+          data: saved,
+          createdAt: now,
+          updatedAt: now,
+          version: 1
+        }).onConflictDoUpdate({
+          target: globals.slug,
+          set: { name, description, data: saved, updatedAt: now, version: nextVersion }
+        });
+        updated = await findGlobal(ctx, slug);
+      }
+      if (!updated) throw new Error(`Global "${slug}" could not be read back after saving`);
       await invalidateGlobalCache(env, slug);
       return withDecodedData(updated);
     }

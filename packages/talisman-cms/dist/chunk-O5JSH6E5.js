@@ -2,7 +2,7 @@ import {
   entries,
   entryRevisions,
   schema_exports
-} from "./chunk-NSKY6EIU.js";
+} from "./chunk-VOL6BL52.js";
 import {
   readBinding
 } from "./chunk-GAOPNFAO.js";

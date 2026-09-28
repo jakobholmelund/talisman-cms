@@ -1,5 +1,5 @@
 import * as drizzle_orm_d1 from 'drizzle-orm/d1';
-import { s as schema } from './media-Cm407HSH.js';
+import { s as schema } from './media-CIuK48g5.js';
 import { A as Actor } from './actor-Daa_hmny.js';
 
 type CacheContext = Pick<ExecutionContext, 'waitUntil'>;
@@ -81,6 +81,21 @@ interface SiteReadOptions {
     cache?: boolean;
 }
 
+interface CreateGlobalInput {
+    slug?: unknown;
+    name?: unknown;
+    description?: unknown;
+    data?: unknown;
+}
+interface SaveGlobalOptions {
+    /**
+     * The `version` the caller loaded. A number that no longer matches the stored row refuses the
+     * save with a `stale_record` conflict that carries the current version. Null or undefined saves
+     * unconditionally, as trusted server code and clients written before versions may.
+     */
+    expectedVersion?: number | null;
+}
+
 type TalismanEnv = {
     DB: D1Database;
     STORAGE?: R2Bucket;
@@ -145,8 +160,13 @@ declare function getClient(env: TalismanEnv, ctx?: CacheContext, options?: Clien
             data: Record<string, any>;
             createdAt: Date;
             updatedAt: Date;
+            version: number;
         }>;
-        update: (slug: string, data: Record<string, any>) => Promise<{
+        /**
+         * Saves a global's data. `expectedVersion`, the `version` a read returned, makes the save fail
+         * with a `stale_record` ConflictError when another save came first; without it the save wins.
+         */
+        save: (slug: string, data: Record<string, any>, opts?: SaveGlobalOptions) => Promise<{
             id: string;
             name: string;
             slug: string;
@@ -154,7 +174,19 @@ declare function getClient(env: TalismanEnv, ctx?: CacheContext, options?: Clien
             data: unknown;
             createdAt: Date;
             updatedAt: Date;
-        } | undefined>;
+            version: number;
+        }>;
+        /** The same as `save`, under the name earlier releases used. */
+        update: (slug: string, data: Record<string, any>, opts?: SaveGlobalOptions) => Promise<{
+            id: string;
+            name: string;
+            slug: string;
+            description: string | null;
+            data: unknown;
+            createdAt: Date;
+            updatedAt: Date;
+            version: number;
+        }>;
     };
     entries: {
         findMany: (collectionSlug: string, opts?: SiteReadOptions & EntryQuery & {
@@ -174,4 +206,4 @@ declare function getClient(env: TalismanEnv, ctx?: CacheContext, options?: Clien
     };
 };
 
-export { type CacheContext as C, type EntryQuery as E, type Operators as O, type SiteReadOptions as S, type TalismanEnv as T, type UpdateEntryInput as U, type VersionMode as V, type WriteExpectation as W, type EntriesPage as a, type CreateEntryInput as b, type ClientOptions as c, type EntryStatusTarget as d, type UpdateOptions as e, type WhereClause as f, createDbClient as g, getClient as h, invalidateEntryCache as i, invalidateCollectionCache as j, invalidateGlobalCache as k };
+export { type CacheContext as C, type EntryQuery as E, type Operators as O, type SiteReadOptions as S, type TalismanEnv as T, type UpdateEntryInput as U, type VersionMode as V, type WriteExpectation as W, type EntriesPage as a, type CreateEntryInput as b, type CreateGlobalInput as c, type SaveGlobalOptions as d, type ClientOptions as e, type EntryStatusTarget as f, type UpdateOptions as g, type WhereClause as h, invalidateEntryCache as i, createDbClient as j, getClient as k, invalidateCollectionCache as l, invalidateGlobalCache as m };
