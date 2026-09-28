@@ -206,8 +206,9 @@ test('a quote and a checkout run the same statements for a 50-line basket as for
   assert.equal(large.quote.lines[2].name, 'Product 2 - Option');
   assert.equal(large.order.totalAmount, large.quote.totalAmount);
 
-  // The cart read and one batch of catalog reads, whatever the number of lines.
-  assert.equal(small.quoteStatements, 6);
+  // The cart read and one batch of three catalog reads (products with their groups, values with their
+  // stock and parts, groups with values), whatever the number of lines.
+  assert.equal(small.quoteStatements, 4);
   assert.equal(large.quoteStatements, small.quoteStatements);
   // Checkout adds the referral settings, the basket lock, one write batch with a statement per stock
   // table, and the order read.
@@ -236,8 +237,8 @@ test('a basket stored with more lines than one statement can bind is still quote
   assert.equal(quote.lines.length, 120);
   assert.equal(quote.totalAmount, lines.reduce((total, line) => total + 1000 + Number(line.productId.slice(1)), 0));
   assert.ok(usage.maxParams <= 90, `a statement bound ${usage.maxParams} parameters`);
-  // Products and their groups in two chunks each, the 60 values in one.
-  assert.equal(usage.statements, 1 + 2 * 2 + 3);
+  // Products with their groups in two chunks of 80 ids, the 60 values and the groups among them in one each.
+  assert.equal(usage.statements, 1 + 2 + 1 + 1);
   sqlite.close();
 });
 

@@ -1,8 +1,8 @@
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
+import type { TalismanEnv } from 'talisman-cms/client';
+import { batchGroups, chunked, commerceDb } from './db';
 import { INVENTORY_COLUMNS } from './inventory';
-import { chunked, placeholders } from './order-items';
 import { orders as ordersTable } from './schema';
 
 /** Invalid input to an order adjustment. The admin route answers it with 400. */
@@ -55,12 +55,6 @@ type TargetType = 'product' | 'variant' | 'stock' | 'component';
 type RestockedRow = { reservation_type: ReservationType; reservation_id: string; target_type: TargetType;
   target_id: string; quantity: number };
 
-type ReservationRow = {
-  type: ReservationType; id: string; order_id: string; target_type: TargetType; target_id: string;
-  quantity: number; released_at: number | null; label: string | null; sku: string | null; available: number;
-  admin_actor: string | null; reason: string | null; restocked_at: number | null;
-};
-
 /** A reservation row of an order: the stock one line of it took, and whether that went back. */
 export type OrderReservation = {
   type: ReservationType; id: string; targetType: TargetType; targetId: string;
@@ -78,59 +72,74 @@ export type OrderDispute = {
   statusBefore: string; createdAt: string; closedAt: string | null;
 };
 
-const isoTime = (seconds: number) => new Date(seconds * 1000).toISOString();
+type Reservation = OrderReservation & { orderId: string };
+type Restock = { adminActor: string; reason: string; createdAt: Date } | null;
+const restockView = (restock: Restock) => restock && { adminActor: restock.adminActor, reason: restock.reason, createdAt: restock.createdAt.toISOString() };
 
-// Labels follow the checkout line: the product, then the variant definition (or group) and the value.
-const inventoryRows = (ids: string[]) => `SELECT 'inventory' AS type, r.id, r.order_id, r.target_type, r.target_id,
-    r.quantity, r.released_at,
-    CASE r.target_type WHEN 'product' THEN p.name
-      WHEN 'variant' THEN gp.name || ' - ' || g.name
-      ELSE vp.name || ' - ' || COALESCE(vd.name, vg.name) || ': ' || v.value END AS label,
-    CASE r.target_type WHEN 'product' THEN p.sku
-      WHEN 'variant' THEN COALESCE(g.sku, gp.sku)
-      ELSE COALESCE(v.sku, vg.sku, vp.sku) END AS sku,
-    CASE r.target_type WHEN 'product' THEN p.id WHEN 'variant' THEN g.id ELSE s.id END IS NOT NULL AS available,
-    x.admin_actor, x.reason, x.created_at AS restocked_at
-  FROM _ecommerce_inventory_reservations r
-  LEFT JOIN _ecommerce_products p ON r.target_type = 'product' AND p.id = r.target_id
-  LEFT JOIN _ecommerce_product_variants g ON r.target_type = 'variant' AND g.id = r.target_id
-  LEFT JOIN _ecommerce_products gp ON gp.id = g.product_id
-  LEFT JOIN _ecommerce_stocks s ON r.target_type = 'stock' AND s.id = r.target_id
-  LEFT JOIN _ecommerce_product_variant_values v ON v.id = s.product_variant_value_id
-  LEFT JOIN _ecommerce_product_variants vg ON vg.id = v.product_variant_id
-  LEFT JOIN _ecommerce_variants vd ON vd.id = vg.variant_id
-  LEFT JOIN _ecommerce_products vp ON vp.id = vg.product_id
-  LEFT JOIN _ecommerce_restocks x ON x.reservation_type = 'inventory' AND x.reservation_id = r.id
-  WHERE r.order_id IN (${placeholders(ids)})
-  ORDER BY r.order_id, r.rowid`;
+type InventoryTarget = {
+  targetType: 'product' | 'variant' | 'stock';
+  product: { name: string; sku: string | null } | null;
+  productVariant: { name: string; sku: string | null; product: { name: string; sku: string | null } } | null;
+  stock: { productVariantValue: { value: string; sku: string | null;
+    productVariant: { name: string; sku: string | null; variant: { name: string } | null; product: { name: string; sku: string | null } } } } | null;
+};
 
-const componentRows = (ids: string[]) => `SELECT 'component' AS type, r.id, r.order_id, 'component' AS target_type,
-    r.component_id AS target_id, r.quantity, r.released_at, c.name AS label, c.sku, c.id IS NOT NULL AS available,
-    x.admin_actor, x.reason, x.created_at AS restocked_at
-  FROM _ecommerce_component_reservations r
-  LEFT JOIN _ecommerce_components c ON c.id = r.component_id
-  LEFT JOIN _ecommerce_restocks x ON x.reservation_type = 'component' AND x.reservation_id = r.id
-  WHERE r.order_id IN (${placeholders(ids)})
-  ORDER BY r.order_id, r.rowid`;
-
-function reservationView(row: ReservationRow): OrderReservation {
-  return {
-    type: row.type, id: row.id, targetType: row.target_type, targetId: row.target_id,
-    label: row.label, sku: row.sku, quantity: row.quantity,
-    returnedAt: row.released_at === null ? null : isoTime(row.released_at),
-    restock: row.admin_actor === null ? null : { adminActor: row.admin_actor, reason: row.reason ?? '',
-      createdAt: isoTime(row.restocked_at ?? 0) },
-    available: row.available === 1,
-  };
+/**
+ * The catalog's current name and SKU for the stock an inventory reservation holds, or null when the
+ * record is gone. Labels follow the checkout line: the product, then the variant definition (or
+ * group) and the value. The SKU is the most specific one set.
+ */
+function inventoryTarget(row: InventoryTarget): { label: string; sku: string | null } | null {
+  if (row.targetType === 'product') return row.product && { label: row.product.name, sku: row.product.sku };
+  if (row.targetType === 'variant') {
+    return row.productVariant && { label: `${row.productVariant.product.name} - ${row.productVariant.name}`,
+      sku: row.productVariant.sku ?? row.productVariant.product.sku };
+  }
+  const value = row.stock?.productVariantValue;
+  if (!value) return null;
+  const group = value.productVariant;
+  return { label: `${group.product.name} - ${group.variant?.name ?? group.name}: ${value.value}`,
+    sku: value.sku ?? group.sku ?? group.product.sku };
 }
 
-async function loadReservations(env: TalismanEnv, orderIds: string[]) {
-  const statements = chunked(orderIds).flatMap((ids) => [
-    env.DB.prepare(inventoryRows(ids)).bind(...ids),
-    env.DB.prepare(componentRows(ids)).bind(...ids),
-  ]);
-  const results = statements.length ? await env.DB.batch<ReservationRow>(statements) : [];
-  return results.flatMap((result) => result.results ?? []);
+/**
+ * The reservation rows of these orders, inventory rows then component rows, each in the order
+ * written, with the catalog's current name for the stock and the restock that returned it.
+ */
+async function loadReservations(env: TalismanEnv, orderIds: string[]): Promise<Reservation[]> {
+  const db = commerceDb(env);
+  const catalogNames = { columns: { name: true, sku: true } } as const;
+  const restock = { columns: { adminActor: true, reason: true, createdAt: true } } as const;
+  const rows = await batchGroups(db, {
+    inventory: chunked(orderIds).map((ids) => db.query.inventoryReservations.findMany({
+      where: { orderId: { in: ids } }, orderBy: (table, { sql }) => [table.orderId, sql`rowid`],
+      with: {
+        product: catalogNames,
+        productVariant: { ...catalogNames, with: { product: catalogNames } },
+        stock: { columns: { id: true }, with: { productVariantValue: { columns: { value: true, sku: true },
+          with: { productVariant: { ...catalogNames, with: { variant: { columns: { name: true } }, product: catalogNames } } } } } },
+        restock,
+      },
+    })),
+    component: chunked(orderIds).map((ids) => db.query.componentReservations.findMany({
+      where: { orderId: { in: ids } }, orderBy: (table, { sql }) => [table.orderId, sql`rowid`],
+      with: { component: catalogNames, restock },
+    })),
+  });
+  return [
+    ...rows.inventory.map((row): Reservation => {
+      const target = inventoryTarget(row);
+      return { type: 'inventory', id: row.id, orderId: row.orderId, targetType: row.targetType, targetId: row.targetId,
+        label: target?.label ?? null, sku: target?.sku ?? null, quantity: row.quantity,
+        returnedAt: row.releasedAt?.toISOString() ?? null, restock: restockView(row.restock), available: target !== null };
+    }),
+    // A component cannot be deleted while a reservation names it, so its record is always there.
+    ...rows.component.map((row): Reservation => ({
+      type: 'component', id: row.id, orderId: row.orderId, targetType: 'component', targetId: row.componentId,
+      label: row.component.name, sku: row.component.sku, quantity: row.quantity,
+      returnedAt: row.releasedAt?.toISOString() ?? null, restock: restockView(row.restock), available: true,
+    })),
+  ];
 }
 
 /** Order statuses whose stock can go back: every row of a refunded order, chosen rows of a partly refunded one. */
@@ -152,32 +161,28 @@ const listSchema = z.object({
  */
 export async function getOrderAdjustmentsAdmin(env: TalismanEnv, input: unknown) {
   const { orderIds } = parseInput(listSchema, input);
-  const ids = [...new Set(orderIds)];
-  const statements = chunked(ids).flatMap((chunk) => [
-    env.DB.prepare(`SELECT id, status, payment_provider, fulfillment_status FROM _ecommerce_orders
-      WHERE id IN (${placeholders(chunk)})`).bind(...chunk),
-    env.DB.prepare(`SELECT id, order_id, amount_cents, currency, reason, status, status_before, created_at, closed_at
-      FROM _ecommerce_disputes WHERE order_id IN (${placeholders(chunk)}) ORDER BY created_at, id`).bind(...chunk),
-  ]);
-  const results = await env.DB.batch<Record<string, any>>(statements);
-  const orders = results.filter((_, index) => index % 2 === 0).flatMap((result) => result.results ?? []) as
-    Array<{ id: string; status: string; payment_provider: string | null; fulfillment_status: string }>;
-  const disputes = results.filter((_, index) => index % 2 === 1).flatMap((result) => result.results ?? []) as
-    Array<{ id: string; order_id: string; amount_cents: number; currency: string; reason: string | null; status: string;
-      status_before: string; created_at: number; closed_at: number | null }>;
+  const db = commerceDb(env);
+  const { orders } = await batchGroups(db, {
+    orders: chunked([...new Set(orderIds)]).map((ids) => db.query.orders.findMany({
+      columns: { id: true, status: true, paymentProvider: true, fulfillmentStatus: true },
+      where: { id: { in: ids } },
+      with: { disputes: { columns: { id: true, amountCents: true, currency: true, reason: true, status: true, statusBefore: true,
+        createdAt: true, closedAt: true }, orderBy: { createdAt: 'asc', id: 'asc' } } },
+    })),
+  });
   const reservations = await loadReservations(env, orders.map((order) => order.id));
   return {
     orders: Object.fromEntries(orders.map((order) => [order.id, {
       orderId: order.id,
       status: order.status,
-      fulfillmentStatus: order.fulfillment_status,
-      restock: restockMode({ status: order.status, paymentProvider: order.payment_provider }),
-      disputes: disputes.filter((dispute) => dispute.order_id === order.id).map((dispute): OrderDispute => ({
-        id: dispute.id, status: dispute.status, open: dispute.closed_at === null, reason: dispute.reason,
-        amountCents: dispute.amount_cents, currency: dispute.currency, statusBefore: dispute.status_before,
-        createdAt: isoTime(dispute.created_at), closedAt: dispute.closed_at === null ? null : isoTime(dispute.closed_at),
+      fulfillmentStatus: order.fulfillmentStatus,
+      restock: restockMode(order),
+      disputes: order.disputes.map((dispute): OrderDispute => ({
+        id: dispute.id, status: dispute.status, open: dispute.closedAt === null, reason: dispute.reason,
+        amountCents: dispute.amountCents, currency: dispute.currency, statusBefore: dispute.statusBefore,
+        createdAt: dispute.createdAt.toISOString(), closedAt: dispute.closedAt?.toISOString() ?? null,
       })),
-      reservations: reservations.filter((row) => row.order_id === order.id).map(reservationView),
+      reservations: reservations.filter((row) => row.orderId === order.id).map(({ orderId: _orderId, ...row }): OrderReservation => row),
     }])),
   };
 }
@@ -212,7 +217,7 @@ function refusal(status: string) {
 export async function restockOrder(env: TalismanEnv, actor: string, input: unknown) {
   const values = parseInput(restockSchema, input);
   if (!actor.trim()) throw new Error('Administrator identity is required');
-  const order = await createDbClient(env).select({ status: ordersTable.status, paymentProvider: ordersTable.paymentProvider })
+  const order = await commerceDb(env).select({ status: ordersTable.status, paymentProvider: ordersTable.paymentProvider })
     .from(ordersTable).where(eq(ordersTable.id, values.orderId)).get();
   if (!order) throw new OrderAdjustmentRefusedError('Order not found');
   if ((order.paymentProvider ?? 'stripe') === 'admin_test') {
@@ -228,13 +233,13 @@ export async function restockOrder(env: TalismanEnv, actor: string, input: unkno
     ? values.reservations.map((wanted) => {
       const row = rows.find((candidate) => candidate.type === wanted.type && candidate.id === wanted.id);
       if (!row) throw new OrderAdjustmentInputError(`No ${wanted.type} reservation ${wanted.id} belongs to this order`);
-      if (row.released_at !== null) throw new OrderAdjustmentRefusedError(`${row.label ?? row.target_id} is already back in stock`);
-      if (row.available !== 1) {
-        throw new OrderAdjustmentRefusedError(`${row.target_id} is no longer in the catalog, so its stock cannot be returned`);
+      if (row.returnedAt !== null) throw new OrderAdjustmentRefusedError(`${row.label ?? row.targetId} is already back in stock`);
+      if (!row.available) {
+        throw new OrderAdjustmentRefusedError(`${row.targetId} is no longer in the catalog, so its stock cannot be returned`);
       }
       return row;
     })
-    : rows.filter((row) => row.released_at === null && row.available === 1);
+    : rows.filter((row) => row.returnedAt === null && row.available);
   if (!chosen.length) throw new OrderAdjustmentRefusedError('Nothing of this order is left to return to stock');
   if (new Set(chosen.map((row) => `${row.type}:${row.id}`)).size !== chosen.length) {
     throw new OrderAdjustmentInputError('Each item can be chosen once');

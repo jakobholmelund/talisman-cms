@@ -1,4 +1,36 @@
 import type { CollectionConfig, FieldDefinition } from 'talisman-cms';
+import type { TalismanEnv } from 'talisman-cms/client';
+import { commerceDb } from './db';
+import type { PRODUCT_STATUSES } from './schema';
+
+const byCreation = { createdAt: 'asc', id: 'asc' } as const;
+
+/**
+ * The catalog in one statement, for a storefront: every product with its variant groups, each with
+ * its definition, its values, their stock rows and bills of materials, and the product's categories
+ * and tags, oldest first; `status` narrows the products. Read from D1 without the KV cache, so a
+ * Commerce edit shows on the next request. One call serves every product a page shows.
+ */
+export function readCatalog(env: TalismanEnv, options: { status?: ReadonlyArray<typeof PRODUCT_STATUSES[number]> } = {}) {
+  return commerceDb(env).query.products.findMany({
+    where: options.status ? { status: { in: [...options.status] } } : undefined,
+    orderBy: byCreation,
+    with: {
+      categories: { orderBy: { name: 'asc' } },
+      tags: { orderBy: { name: 'asc' } },
+      variants: { orderBy: byCreation, with: {
+        variant: true,
+        values: { orderBy: byCreation, with: {
+          stock: true,
+          requirements: { orderBy: { componentId: 'asc' }, with: { component: true } },
+        } },
+      } },
+    },
+  });
+}
+
+/** A product as `readCatalog` returns it, with its nested groups, values, categories and tags. */
+export type CatalogProduct = Awaited<ReturnType<typeof readCatalog>>[number];
 
 /** Place site-specific content beside products and variants in the Commerce admin. */
 export function commerceContentCollection(config: {

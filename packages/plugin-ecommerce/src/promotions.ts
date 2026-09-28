@@ -1,5 +1,6 @@
 import { and, count, eq, inArray } from 'drizzle-orm';
-import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
+import type { TalismanEnv } from 'talisman-cms/client';
+import { commerceDb } from './db';
 import { z } from 'zod';
 import { customerAccounts, discountCodes, discountRedemptions, referralCodes, referralSettings } from './schema';
 import { getReferralPolicy, referralTermsError } from './referrals';
@@ -117,7 +118,7 @@ export async function evaluateDiscountCode(env: TalismanEnv, input: {
   const { currency } = readStoreSettings(env);
   const normalizedCode = input.code.trim().toUpperCase();
   if (!/^[A-Z0-9][A-Z0-9_-]{2,31}$/.test(normalizedCode)) throw new DiscountCodeRefusal('format', 'Invalid discount code');
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const code = await db.select().from(discountCodes).where(eq(discountCodes.code, normalizedCode)).get();
   if (!code) throw new DiscountCodeRefusal('unknown', 'Discount code is unavailable');
   if (!code.active) throw new DiscountCodeRefusal('inactive', 'Discount code is unavailable');
@@ -159,7 +160,7 @@ export async function evaluateDiscountCode(env: TalismanEnv, input: {
 }
 
 export async function getPromotionsAdmin(env: TalismanEnv) {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const codes = await db.select().from(discountCodes).orderBy(discountCodes.createdAt);
   const usage = await db.select({ code: discountRedemptions.code, status: discountRedemptions.status,
     uses: count() }).from(discountRedemptions)
@@ -174,7 +175,7 @@ export async function setReferralCodeActive(env: TalismanEnv, code: string, acti
   if (!/^REF-[A-F0-9]{20}$/.test(code) || typeof active !== 'boolean') {
     throw new Error('Invalid referral code status');
   }
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const changed = await db.update(referralCodes).set({ active })
     .where(eq(referralCodes.code, code)).returning({ code: referralCodes.code });
   if (!changed.length) throw new Error('Referral code not found');
@@ -185,7 +186,7 @@ export async function saveReferralSettings(env: TalismanEnv, input: unknown) {
   const parsed = referralSettingsSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues.map((issue) => issue.message).join('; '));
   const values = parsed.data;
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   await db.insert(referralSettings).values({ id: 'default', ...values, updatedAt: new Date() })
     .onConflictDoUpdate({ target: referralSettings.id, set: { ...values, updatedAt: new Date() } });
   return getReferralPolicy(env);
@@ -198,7 +199,7 @@ export async function createDiscountCode(env: TalismanEnv, input: unknown) {
       byte => byte.toString(16).padStart(2, '0')).join('').toUpperCase()}` : raw.code;
   const values = discountCodeSchema.parse({ ...raw, code: generatedCode });
   const now = new Date();
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   await db.insert(discountCodes).values({ ...values,
     remainingCents: values.type === 'credit' ? values.value : null,
     startsAt: values.startsAt ? new Date(values.startsAt * 1000) : null,
@@ -209,7 +210,7 @@ export async function createDiscountCode(env: TalismanEnv, input: unknown) {
 
 export async function updateDiscountCode(env: TalismanEnv, code: string, input: unknown) {
   const values = discountCodeSchema.parse({ ...(input as object), code });
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const current = await db.select().from(discountCodes).where(eq(discountCodes.code, values.code)).get();
   if (!current) throw new Error('Discount code not found');
   if (current.type !== values.type) throw new Error('Discount code type cannot be changed');

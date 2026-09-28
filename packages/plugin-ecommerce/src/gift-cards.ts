@@ -1,6 +1,7 @@
 import { and, eq, gt, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
+import type { TalismanEnv } from 'talisman-cms/client';
+import { commerceDb } from './db';
 import { readSetting } from 'talisman-cms/env';
 import { giftCardClaims, giftCardPurchases, giftCards, orders } from './schema';
 import type { PaymentProviderAdapter } from './payments';
@@ -142,7 +143,7 @@ export async function reencryptGiftCardCodes(env: TalismanEnv, input: unknown = 
   const keys = await giftCardKeyring(env);
   const current = keys[0];
   const prefix = `v2:${current.id}:`;
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const rows = await db.select({ id: giftCards.id, codeHash: giftCards.codeHash, encryptedCode: giftCards.encryptedCode })
     .from(giftCards)
     .where(and(sql`substr(${giftCards.encryptedCode}, 1, ${prefix.length}) <> ${prefix}`, gt(giftCards.id, after)))
@@ -298,7 +299,7 @@ function claimEmailView(value: unknown) {
 }
 
 export async function getGiftCardsAdmin(env: TalismanEnv) {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   return db.select({ id: giftCards.id, codeSuffix: giftCards.codeSuffix,
     source: giftCards.source, purchaseId: giftCards.purchaseId, replacesPurchaseId: giftCards.replacesPurchaseId,
     // The buyer of the purchase the card belongs to or replaces; the claim link resend goes there. The
@@ -365,7 +366,7 @@ export async function getGiftCardReviewsAdmin(env: TalismanEnv) {
 
 export async function setGiftCardActive(env: TalismanEnv, id: string, active: boolean) {
   if (!/^gift_[0-9a-f-]{36}$/.test(id) || typeof active !== 'boolean') throw new Error('Invalid gift card');
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const card = await db.select().from(giftCards).where(eq(giftCards.id, id)).get();
   if (!card || card.status === 'void') throw new Error('Gift card is unavailable');
   // Suspending is always possible. A purchased card, or a replacement for one, is reactivated only once
@@ -404,7 +405,7 @@ export async function evaluateGiftCard(env: TalismanEnv, code: string, amountDue
   const currency = giftCardCurrency(env);
   const normalized = code.trim().toUpperCase();
   if (!/^GIFT-[A-F0-9]{32}$/.test(normalized)) throw new GiftCardRefusal('format', 'Invalid gift card code');
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const card = await db.select().from(giftCards)
     .where(eq(giftCards.codeHash, await hashGiftCardSecret(normalized))).get();
   if (!card || card.status !== 'active' || card.currency !== currency || card.balanceCents <= 0) {
@@ -420,7 +421,7 @@ export async function evaluateGiftCard(env: TalismanEnv, code: string, amountDue
 export async function getGiftCardBalance(env: TalismanEnv, code: string) {
   const normalized = code.trim().toUpperCase();
   if (!/^GIFT-[A-F0-9]{32}$/.test(normalized)) throw new Error('Invalid gift card code');
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const card = await db.select({ balanceCents: giftCards.balanceCents,
     currency: giftCards.currency, status: giftCards.status }).from(giftCards)
     .where(eq(giftCards.codeHash, await hashGiftCardSecret(normalized))).get();
@@ -438,7 +439,7 @@ export async function startGiftCardPurchase(env: TalismanEnv, adapter: PaymentPr
   const id = `gp_${crypto.randomUUID()}`;
   const accessToken = randomHex(32);
   const timestamp = Math.floor(Date.now() / 1000);
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const pending = and(eq(giftCardPurchases.id, id), eq(giftCardPurchases.status, 'pending'));
   await db.insert(giftCardPurchases).values({ id, buyerEmail: values.buyerEmail, amountCents: values.amountCents,
     currency, status: 'pending', accessTokenHash: await hashGiftCardSecret(accessToken),
@@ -473,7 +474,7 @@ export async function confirmGiftCardPurchase(env: TalismanEnv, session: {
 }) {
   const id = session.metadata?.giftCardPurchaseId;
   if (!id) throw new Error('Gift card purchase ID is missing');
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const purchase = await db.select().from(giftCardPurchases).where(eq(giftCardPurchases.id, id)).get();
   if (!purchase || purchase.providerSessionId !== session.id ||
     purchase.amountCents !== session.amount_total ||
@@ -592,7 +593,7 @@ export const composeGiftCardClaimEmail: CommerceEmailComposer = async (env, purc
 export async function claimGiftCardCode(env: TalismanEnv, token: unknown) {
   if (typeof token !== 'string' || !CLAIM_TOKEN.test(token)) return null;
   const now = Math.floor(Date.now() / 1000);
-  const claim = await createDbClient(env).select({ id: giftCardClaims.id, cardId: giftCardClaims.cardId,
+  const claim = await commerceDb(env).select({ id: giftCardClaims.id, cardId: giftCardClaims.cardId,
     codeHash: giftCards.codeHash, encryptedCode: giftCards.encryptedCode, balanceCents: giftCards.balanceCents,
     currency: giftCards.currency })
     .from(giftCardClaims).innerJoin(giftCards, eq(giftCards.id, giftCardClaims.cardId))
@@ -676,7 +677,7 @@ export async function resendGiftCardClaimLink(env: TalismanEnv, actor: string, i
 }
 
 export async function expireGiftCardPurchase(env: TalismanEnv, id: string, sessionId: string) {
-  await createDbClient(env).update(giftCardPurchases).set({ status: 'cancelled', updatedAt: new Date() })
+  await commerceDb(env).update(giftCardPurchases).set({ status: 'cancelled', updatedAt: new Date() })
     .where(and(eq(giftCardPurchases.id, id), eq(giftCardPurchases.providerSessionId, sessionId),
       eq(giftCardPurchases.status, 'pending')));
 }
@@ -688,7 +689,7 @@ export async function expireGiftCardPurchase(env: TalismanEnv, id: string, sessi
  * match) throw a permanent ReconcileFailure, which reconcileCommerce parks.
  */
 export async function reconcileGiftCardPurchase(env: TalismanEnv, adapter: PaymentProviderAdapter | undefined, id: string) {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const purchase = await db.select().from(giftCardPurchases).where(eq(giftCardPurchases.id, id)).get();
   if (!purchase || purchase.status !== 'pending' || !purchase.providerSessionId) return null;
   if (purchase.reconcileReviewAt) return { status: 'pending', review: true };
@@ -723,7 +724,7 @@ export async function reconcileGiftCardPurchase(env: TalismanEnv, adapter: Payme
 
 export async function getPurchasedGiftCard(env: TalismanEnv, id: string, accessToken: string | undefined) {
   if (!/^gp_[0-9a-f-]{36}$/.test(id) || !accessToken) return null;
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const purchase = await db.select().from(giftCardPurchases).where(eq(giftCardPurchases.id, id)).get();
   if (!purchase || purchase.accessTokenHash !== await hashGiftCardSecret(accessToken)) return null;
   const card = await db.select().from(giftCards).where(eq(giftCards.purchaseId, id)).get();
@@ -823,7 +824,7 @@ export function giftCardPurchaseChargebackStatements(env: TalismanEnv, purchaseI
 export async function recordGiftCardPurchaseRefund(env: TalismanEnv, params: {
   paymentIntentId: string; amount: number; amountRefunded: number; currency: string;
 }) {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const purchase = await db.select().from(giftCardPurchases)
     .where(eq(giftCardPurchases.paymentIntentId, params.paymentIntentId)).get();
   if (!purchase) return null;
@@ -958,7 +959,7 @@ const refundSchema = z.object({
 export async function refundGiftCardTender(env: TalismanEnv, actor: string, input: unknown) {
   const values = refundSchema.parse(input);
   if (!actor.trim()) throw new Error('Administrator identity is required');
-  const current = await createDbClient(env).select({ giftCardId: orders.giftCardId, giftCardApplied: orders.giftCardApplied,
+  const current = await commerceDb(env).select({ giftCardId: orders.giftCardId, giftCardApplied: orders.giftCardApplied,
     giftCardRefundedCents: orders.giftCardRefundedCents, status: orders.status, referralCode: orders.referralCode })
     .from(orders).where(eq(orders.id, values.orderId)).get();
   if (!current?.giftCardId || !['paid', 'fulfilled', 'partially_refunded'].includes(current.status)) {
@@ -985,7 +986,7 @@ export async function refundGiftCardTender(env: TalismanEnv, actor: string, inpu
 export async function refundGiftCardOnlyOrder(env: TalismanEnv, actor: string, input: unknown) {
   const values = refundSchema.parse(input);
   if (!actor.trim() || values.amountCents !== undefined) throw new Error('Invalid full refund request');
-  const order = await createDbClient(env).select({ id: orders.id, giftCardId: orders.giftCardId,
+  const order = await commerceDb(env).select({ id: orders.id, giftCardId: orders.giftCardId,
     giftCardApplied: orders.giftCardApplied, giftCardRefundedCents: orders.giftCardRefundedCents,
     creditApplied: orders.creditApplied, paymentProvider: orders.paymentProvider, totalAmount: orders.totalAmount,
     status: orders.status, userId: orders.userId }).from(orders).where(eq(orders.id, values.orderId)).get();

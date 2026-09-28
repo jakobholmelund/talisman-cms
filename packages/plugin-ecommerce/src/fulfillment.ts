@@ -1,7 +1,8 @@
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
-import { ORDER_AMOUNT_COLUMNS, chunked, describeOrderItems, orderAmounts, placeholders } from './order-items';
+import type { TalismanEnv } from 'talisman-cms/client';
+import { batchGroups, chunked, commerceDb } from './db';
+import { ORDER_AMOUNT_COLUMNS, describeOrderItems, orderAmounts } from './order-items';
 import { deliverCommerceEmail } from './commerce-emails';
 import { COMMERCE_EMAIL_LEASE_SECONDS, commerceEmailStatement } from './email-deliveries';
 import { orders as ordersTable } from './schema';
@@ -22,7 +23,8 @@ export class FulfillmentInputError extends Error {
 /** Payment statuses in which an order may ship; a disputed, refunded or cancelled order may not. */
 const SHIPPABLE_STATUSES = ['paid', 'partially_refunded'];
 
-// Each view repeats the WHERE clause of its partial index in migration 0026. SQLite uses a partial
+// Each view repeats the WHERE clause of its partial index in the schema (`_ecommerce_orders_awaiting_idx`,
+// `_ecommerce_orders_recent_idx`). SQLite uses a partial
 // index only for a query that states the same conditions, with the same literals.
 const REAL_ORDER = `COALESCE(payment_provider, 'stripe') <> 'admin_test'`;
 const VIEWS: Record<OrdersView, { where: string; ascending: boolean }> = {
@@ -124,31 +126,31 @@ function decodeCursor(view: OrdersView, cursor: string) {
 
 /** The shipments of these orders by order id, in the order recorded. The latest correction of a shipment is in force. */
 async function loadShipments(env: TalismanEnv, orderIds: string[]) {
-  const statements = chunked(orderIds).map((ids) => env.DB.prepare(`SELECT id, order_id, kind, corrects_id,
-      completes_order, admin_actor, carrier, tracking_number, note, created_at
-    FROM _ecommerce_fulfillments WHERE order_id IN (${placeholders(ids)})
-    ORDER BY rowid`).bind(...ids));
-  const rows = (statements.length ? await env.DB.batch(statements) : [])
-    .flatMap((result) => (result.results ?? []) as FulfillmentRow[]);
+  const db = commerceDb(env);
+  const { rows } = await batchGroups(db, {
+    rows: chunked(orderIds).map((ids) => db.query.fulfillments.findMany({
+      where: { orderId: { in: ids } }, orderBy: (_table, { sql }) => sql`rowid`,
+    })),
+  });
   const shipments = new Map<string, Shipment>();
   const byOrder = new Map<string, Shipment[]>();
   for (const row of rows) {
     if (row.kind === 'shipment') {
-      const shipment: Shipment = { id: row.id, createdAt: isoTime(row.created_at), adminActor: row.admin_actor,
-        note: row.note, completesOrder: row.completes_order === 1,
-        carrier: row.carrier, trackingNumber: row.tracking_number,
-        recorded: { carrier: row.carrier, trackingNumber: row.tracking_number }, corrections: [] };
+      const shipment: Shipment = { id: row.id, createdAt: row.createdAt.toISOString(), adminActor: row.adminActor,
+        note: row.note, completesOrder: row.completesOrder,
+        carrier: row.carrier, trackingNumber: row.trackingNumber,
+        recorded: { carrier: row.carrier, trackingNumber: row.trackingNumber }, corrections: [] };
       shipments.set(row.id, shipment);
-      byOrder.set(row.order_id, [...byOrder.get(row.order_id) ?? [], shipment]);
+      byOrder.set(row.orderId, [...byOrder.get(row.orderId) ?? [], shipment]);
       continue;
     }
     // A correction comes after the shipment it names: the trigger requires that shipment to exist.
-    const shipment = row.corrects_id ? shipments.get(row.corrects_id) : undefined;
+    const shipment = row.correctsId ? shipments.get(row.correctsId) : undefined;
     if (!shipment) continue;
-    shipment.corrections.push({ id: row.id, createdAt: isoTime(row.created_at), adminActor: row.admin_actor,
-      carrier: row.carrier, trackingNumber: row.tracking_number, reason: row.note });
+    shipment.corrections.push({ id: row.id, createdAt: row.createdAt.toISOString(), adminActor: row.adminActor,
+      carrier: row.carrier, trackingNumber: row.trackingNumber, reason: row.note });
     shipment.carrier = row.carrier;
-    shipment.trackingNumber = row.tracking_number;
+    shipment.trackingNumber = row.trackingNumber;
   }
   return byOrder;
 }
@@ -168,7 +170,7 @@ export async function listCommerceOrdersAdmin(env: TalismanEnv, options: {
   const conditions = [view.where];
   const params: unknown[] = [];
   if (values.query?.includes('@')) {
-    // Order emails have an index on lower(customer_email) since migration 0024.
+    // Order emails have an index on lower(customer_email), `_ecommerce_orders_customer_email_idx`.
     conditions.push('lower(customer_email) = ?');
     params.push(values.query.toLowerCase());
   } else if (values.query) {
@@ -240,7 +242,7 @@ function refusal(cause: unknown, message: string) {
 export async function fulfillCommerceOrder(env: TalismanEnv, actor: string, input: unknown) {
   const values = parseInput(shipmentSchema, input);
   if (!actor.trim()) throw new Error('Administrator identity is required');
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const order = await db.select({ status: ordersTable.status, fulfillmentStatus: ordersTable.fulfillmentStatus,
     paymentProvider: ordersTable.paymentProvider }).from(ordersTable).where(eq(ordersTable.id, values.orderId)).get();
   if (!order) throw new Error('Order not found');
@@ -293,7 +295,7 @@ export async function correctCommerceFulfillment(env: TalismanEnv, actor: string
   if (!shipment || shipment.kind !== 'shipment') throw new Error('Shipment not found');
   if ((shipment.payment_provider ?? 'stripe') === 'admin_test') throw new Error('Admin test orders cannot be fulfilled');
   const current = rows.filter((row) => row.corrects_id === shipment.id).at(-1) ?? shipment;
-  // Shipments recorded before migration 0026 may hold an empty string where there is no value.
+  // A shipment row may hold an empty string where there is no value.
   if ((current.carrier || null) === values.carrier && (current.tracking_number || null) === values.trackingNumber) {
     throw new Error('The correction changes nothing');
   }

@@ -1,7 +1,8 @@
 import { and, eq, exists, inArray, notExists, or, sql, type AnyColumn, type SQL } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import { z } from 'zod';
-import { createDbClient, invalidateEntryCache, type TalismanEnv } from 'talisman-cms/client';
+import { invalidateEntryCache, type TalismanEnv } from 'talisman-cms/client';
+import { commerceDb, errorText, type CommerceDb } from './db';
 import { productVariantValues, productVariants, stocks, variantComponents } from './schema';
 
 /**
@@ -37,7 +38,7 @@ const STALE_MARKER = 'stale_record';
 const staleGuard = (db: Db, condition: SQL) =>
   db.get(sql`SELECT CASE WHEN ${condition} THEN ${sql.raw(`json_extract('{}', '$${STALE_MARKER}')`)} END AS conflict`);
 
-type Db = ReturnType<typeof createDbClient>;
+type Db = CommerceDb;
 type Batch = readonly [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]];
 /** A time in Unix seconds as the schema's timestamp columns take it. */
 const at = (seconds: number) => new Date(seconds * 1000);
@@ -101,15 +102,6 @@ function storedSeconds(token: string | number | undefined, record: string) {
   return milliseconds / 1000;
 }
 
-
-function errorText(error: unknown) {
-  const messages: string[] = [];
-  for (let current: any = error, depth = 0; current && depth < 5; current = current.cause, depth += 1) {
-    if (typeof current.message === 'string') messages.push(current.message);
-  }
-  return messages.join('\n');
-}
-
 /** The ids a statement's RETURNING clause gave back. */
 const returnedIds = (rows: Array<{ id: string }> | undefined) => (rows ?? []).map((row) => row.id);
 
@@ -158,7 +150,7 @@ export async function saveVariantValue(env: TalismanEnv, input: SaveVariantValue
   if (!value.id && stock?.id) throw new VariantChangeError(400, 'A new variant value has no stock row yet');
   const now = Math.floor(Date.now() / 1000);
   const valueId = value.id ?? `value_${crypto.randomUUID()}`;
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const one = { one: sql`1` };
   const conditions: SQL[] = [];
   if (value.id) {
@@ -219,7 +211,7 @@ export async function saveVariantValue(env: TalismanEnv, input: SaveVariantValue
  * The shared components themselves stay.
  */
 export async function deleteVariantValue(env: TalismanEnv, valueId: string) {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const [parts, stockRows, values] = await runBatch(db, [
     db.delete(variantComponents).where(eq(variantComponents.productVariantValueId, valueId)).returning({ id: variantComponents.id }),
     db.delete(stocks).where(eq(stocks.productVariantValueId, valueId)).returning({ id: stocks.id }),
@@ -236,7 +228,7 @@ export async function deleteVariantValue(env: TalismanEnv, valueId: string) {
 
 /** Delete a group with every value it has, their stock rows and their parts lists. */
 export async function deleteVariantGroup(env: TalismanEnv, groupId: string) {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const groupValues = db.select({ id: productVariantValues.id }).from(productVariantValues)
     .where(eq(productVariantValues.productVariantId, groupId));
   const [parts, stockRows, values, groups] = await runBatch(db, [

@@ -1,13 +1,14 @@
 import { and, eq, isNull, lte, or, sql } from 'drizzle-orm';
-import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
+import type { TalismanEnv } from 'talisman-cms/client';
+import { commerceDb } from './db';
 import { isEmailDeliveryError, parseAddress, resolveEmailProvider, sendEmail, type EmailProvider } from 'talisman-cms/email';
 import { readSetting } from 'talisman-cms/env';
 import { emailLink, type CommerceEmailMessage, type CommerceEmailStore, type CommerceEmailTemplates } from './emails';
 import { emailDeliveries } from './schema';
 
 /**
- * Order confirmations, shipment notices and gift card claim emails go through `_ecommerce_email_deliveries`
- * (migration 0030). The change that calls for an email writes its row in the same batch
+ * Order confirmations, shipment notices and gift card claim emails go through `_ecommerce_email_deliveries`.
+ * The change that calls for an email writes its row in the same batch
  * (`commerceEmailStatement`), so duplicate webhooks and the reconciliation path find one row. The email
  * is sent right after the batch commits and retried by the scheduled job until it is sent, given up
  * after COMMERCE_EMAIL_MAX_ATTEMPTS, or older than COMMERCE_EMAIL_MAX_AGE_SECONDS. A failed send never
@@ -253,7 +254,7 @@ export function commerceEmailHeld(kind: CommerceEmailKind, subjectId: string, st
  * null when no email of this kind and subject is pending, or 'busy' while a Worker is sending it.
  */
 export async function holdCommerceEmail(env: TalismanEnv, kind: CommerceEmailKind, subjectId: string, now: number) {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const [held] = await db.update(emailDeliveries).set({ claimedAt: at(now) })
     .where(and(pendingEmail(kind, subjectId), unclaimedAt(now))).returning({ id: emailDeliveries.id });
   if (held) return now;
@@ -303,7 +304,7 @@ export async function runCommerceEmailDelivery(env: TalismanEnv, kind: CommerceE
     const now = options.now ?? nowSeconds();
     const setup = options.setup ?? await commerceEmailSetup(env);
     const missing = missingEmailSettings(setup, kind);
-    const db = createDbClient(env);
+    const db = commerceDb(env);
     if (missing.length) {
       // Nothing is claimed or counted: the email waits until email is configured, up to its maximum age.
       await db.update(emailDeliveries).set({ lastError: 'not_configured' }).where(pendingEmail(kind, subjectId));

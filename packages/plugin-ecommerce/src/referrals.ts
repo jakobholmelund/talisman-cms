@@ -1,5 +1,6 @@
 import { and, desc, eq } from 'drizzle-orm';
-import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
+import type { TalismanEnv } from 'talisman-cms/client';
+import { commerceDb } from './db';
 import { readSetting } from 'talisman-cms/env';
 import type { PaymentProviderAdapter } from './payments';
 import { creditLedger, customerAccounts, orders, referralCodes, referrals, referralSettings } from './schema';
@@ -81,7 +82,7 @@ export function referralPolicy(env: TalismanEnv): ReferralPolicy {
 
 /** Saved admin settings win over the Worker settings, in both directions; the limits always come from the Worker. */
 export async function getReferralPolicy(env: TalismanEnv): Promise<ReferralPolicy> {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const saved = await db.select().from(referralSettings)
     .where(eq(referralSettings.id, 'default')).get();
   if (!saved) return referralPolicy(env);
@@ -180,7 +181,7 @@ export type ReferralReleaseResult = {
 export async function releaseReferralAwards(options: { env: TalismanEnv; paymentAdapters?: PaymentProviderAdapter[] },
   run: { now?: Date; limit?: number } = {}) {
   const { env, paymentAdapters = [] } = options;
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const now = Math.floor((run.now ?? new Date()).getTime() / 1000);
   const limit = Math.max(1, Math.min(50, Math.floor(run.limit ?? 10)));
   const policy = await getReferralPolicy(env);
@@ -253,7 +254,7 @@ export function validReferralCode(code: unknown): code is string {
 
 export async function findReferralCode(env: TalismanEnv, code: unknown) {
   if (!validReferralCode(code)) return null;
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const row = await db.select({ code: referralCodes.code, accountId: referralCodes.accountId,
     emailNormalized: customerAccounts.emailNormalized })
     .from(referralCodes).innerJoin(customerAccounts, eq(referralCodes.accountId, customerAccounts.id))
@@ -262,7 +263,7 @@ export async function findReferralCode(env: TalismanEnv, code: unknown) {
 }
 
 export async function getOrCreateReferralCode(env: TalismanEnv, accountId: string) {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   let existing = await db.select({ code: referralCodes.code }).from(referralCodes)
     .where(eq(referralCodes.accountId, accountId)).get();
   if (existing) return existing.code;
@@ -290,7 +291,7 @@ export type ReferralDashboard = {
 };
 
 export async function getReferralDashboard(env: TalismanEnv, accountId: string): Promise<ReferralDashboard> {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const account = await db.select({ creditBalance: customerAccounts.creditBalance }).from(customerAccounts)
     .where(eq(customerAccounts.id, accountId)).get();
   if (!account) throw new Error('Shopper account not found');

@@ -1,5 +1,6 @@
 import { and, eq, isNotNull, isNull } from 'drizzle-orm';
-import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
+import type { TalismanEnv } from 'talisman-cms/client';
+import { commerceDb } from './db';
 import { TaxAddressError, type PaymentProviderAdapter, type TaxCalculationParams } from './payments';
 import { orders, taxReversals } from './schema';
 import type { TaxSettings } from './store-settings';
@@ -197,7 +198,7 @@ export async function recordOrderTax(env: TalismanEnv, adapters: PaymentProvider
     const late = order.paid_at !== null && order.paid_at < Math.floor(Date.now() / 1000) - 300;
     const { transactionId } = await adapter.recordTaxTransaction({ orderId: order.id,
       calculationId: order.tax_calculation_id, ...(late ? { postedAt: order.paid_at! } : {}) });
-    const stored = await createDbClient(env).update(orders).set({ taxTransactionId: transactionId, ...TAX_SYNC_CLEARED })
+    const stored = await commerceDb(env).update(orders).set({ taxTransactionId: transactionId, ...TAX_SYNC_CLEARED })
       .where(and(eq(orders.id, order.id), isNull(orders.taxTransactionId))).run();
     return Number(stored.meta?.changes ?? 0) > 0;
   } catch (error) {
@@ -282,7 +283,7 @@ export async function reverseOrderTax(env: TalismanEnv, adapters: PaymentProvide
   }
   if (!recorded) return null;
   try {
-    await createDbClient(env).update(orders).set(TAX_SYNC_CLEARED)
+    await commerceDb(env).update(orders).set(TAX_SYNC_CLEARED)
       .where(and(eq(orders.id, orderId), isNotNull(orders.taxSyncLastAt)));
   } catch {
     // Best effort: a count left behind only delays the order's next reversal, never this one.
@@ -302,7 +303,7 @@ async function sendTaxReversal(env: TalismanEnv, adapter: PaymentProviderAdapter
       throw new ReconcileFailure('provider_not_configured', 'Payment provider cannot reverse tax');
     }
     const { reversalId } = await adapter.reverseTaxTransaction(reversal);
-    await createDbClient(env).update(taxReversals).set({ providerReversalId: reversalId, ...TAX_SYNC_CLEARED })
+    await commerceDb(env).update(taxReversals).set({ providerReversalId: reversalId, ...TAX_SYNC_CLEARED })
       .where(and(eq(taxReversals.reference, reversal.reference), eq(taxReversals.providerReversalId, '')));
   } catch (error) {
     await countTaxFailure(env, '_ecommerce_tax_reversals', `reference = ? AND provider_reversal_id = ''`,
@@ -390,7 +391,7 @@ const REFUNDED_ORDER_TAX_BACKOFF = backoffSql('tax_sync', 'o');
  */
 export async function reverseUnreversedTax(env: TalismanEnv, adapters: PaymentProviderAdapter[],
   now: number, limit: number) {
-  // Repeats the conditions of the partial index of migration 0029, so SQLite reads only refunded orders
+  // Repeats the conditions of the partial index `_ecommerce_orders_tax_refunded_idx`, so SQLite reads only refunded orders
   // with a tax transaction.
   const rows = await env.DB.prepare(`SELECT o.id FROM _ecommerce_orders o
     WHERE o.status IN ('partially_refunded', 'refunded') AND o.tax_transaction_id IS NOT NULL

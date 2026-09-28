@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
+import { errorText } from '../db';
 import { getOrderAdjustmentsAdmin, OrderAdjustmentInputError, OrderAdjustmentRefusedError,
   restockOrder } from '../order-adjustments';
 
@@ -46,10 +47,10 @@ export const ALL: APIRoute = async ({ request }) => {
     if (error instanceof OrderAdjustmentRefusedError) {
       return Response.json({ error: error.message }, { status: 409, headers });
     }
-    // Anything else, such as a database error, stays in the logs.
+    // Anything else, such as a database error, stays in the logs, with the database's own message.
     const reading = action === 'list';
     console.error(reading ? '[commerce] Order adjustments could not be read' : '[commerce] Restock failed',
-      error instanceof Error ? { name: error.name, message: error.message } : { name: typeof error });
+      error instanceof Error ? { name: error.name, message: errorText(error) } : { name: typeof error });
     return Response.json({ error: reading ? 'The orders could not be read. Check the server logs for details.'
       : 'The restock failed. Check the server logs for details.' }, { status: 500, headers });
   }

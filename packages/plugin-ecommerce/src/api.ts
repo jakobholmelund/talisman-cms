@@ -1,4 +1,5 @@
-import { TalismanEnv, createDbClient } from 'talisman-cms/client';
+import type { TalismanEnv } from 'talisman-cms/client';
+import { batchGroups, chunked, commerceDb } from './db';
 import * as schema from './schema';
 import { and, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 
@@ -49,9 +50,6 @@ export type CartItemInput = { productId: string; variantId?: string; quantity: n
 const RESERVATION_ROWS = `SELECT json_extract(value, '$.target') AS target, json_extract(value, '$.amount') AS amount
   FROM json_each(?)`;
 
-/** Most ids bound in one statement: D1 refuses a statement with more than 100 parameters. */
-const QUERY_ID_CHUNK = 90;
-
 /** A time in Unix seconds as the schema's timestamp columns take it. */
 const at = (seconds: number) => new Date(seconds * 1000);
 
@@ -81,12 +79,6 @@ type BasketCatalog = {
   /** Each value's bill of materials, in component id order. */
   requirements: Map<string, CatalogRequirement[]>;
 };
-
-function chunked<T>(values: T[], size = QUERY_ID_CHUNK) {
-  const chunks: T[][] = [];
-  for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size));
-  return chunks;
-}
 
 /** Most distinct lines one basket can hold. */
 export const CART_MAX_LINES = 50;
@@ -130,7 +122,7 @@ export function aggregateComponentDemand(items: Array<{ quantity: number; compon
 
 export function bindCommerceApi(options: CommerceApiOptions) {
   const { env, paymentAdapters = [] } = options;
-  const db = createDbClient(env);
+  const db = commerceDb(env);
 
   // Best effort: the provider's discount is single-use and expires with its checkout, so a
   // failed delete is logged and never blocks releasing the order.
@@ -155,59 +147,45 @@ export function bindCommerceApi(options: CommerceApiOptions) {
   async function loadBasketCatalog(items: Array<{ productId: string; variantId?: string | null }>): Promise<BasketCatalog> {
     const productIds = [...new Set(items.map((item) => String(item.productId)))];
     const variantIds = [...new Set(items.flatMap((item) => item.variantId ? [String(item.variantId)] : []))];
-    const slots = (ids: string[]) => ids.map(() => '?').join(', ');
-    const queries: Array<{ kind: 'products' | 'groups' | 'values' | 'requirements' | 'groupsWithValues'; statement: D1PreparedStatement }> = [];
-    for (const ids of chunked(productIds)) {
-      queries.push({ kind: 'products', statement: env.DB.prepare(`SELECT id, name, status, type, base_price,
-        inventory_quantity, is_physical FROM _ecommerce_products WHERE id IN (${slots(ids)})`).bind(...ids) });
-      queries.push({ kind: 'groups', statement: env.DB.prepare(`SELECT g.id, g.product_id, g.name, g.price_override,
-        g.inventory_quantity, d.name AS definition_name
-        FROM _ecommerce_product_variants g LEFT JOIN _ecommerce_variants d ON d.id = g.variant_id
-        WHERE g.product_id IN (${slots(ids)})`).bind(...ids) });
-    }
-    for (const ids of chunked(variantIds)) {
-      queries.push({ kind: 'values', statement: env.DB.prepare(`SELECT v.id, v.product_variant_id, v.value,
-        v.price_override, s.id AS stock_id, s.quantity AS stock_quantity
-        FROM _ecommerce_product_variant_values v LEFT JOIN _ecommerce_stocks s ON s.product_variant_value_id = v.id
-        WHERE v.id IN (${slots(ids)})`).bind(...ids) });
-      queries.push({ kind: 'requirements', statement: env.DB.prepare(`SELECT r.product_variant_value_id, r.component_id,
-        r.quantity, c.id AS found_component_id, c.name AS component_name, c.quantity AS component_quantity
-        FROM _ecommerce_variant_components r LEFT JOIN _ecommerce_components c ON c.id = r.component_id
-        WHERE r.product_variant_value_id IN (${slots(ids)})
-        ORDER BY r.product_variant_value_id, r.component_id`).bind(...ids) });
+    const rows = await batchGroups(db, {
+      // Each product with its variant groups, and each group with the name of its definition.
+      products: chunked(productIds).map((ids) => db.query.products.findMany({
+        columns: { id: true, name: true, status: true, type: true, basePrice: true, inventoryQuantity: true, isPhysical: true },
+        where: { id: { in: ids } },
+        with: { variants: { columns: { id: true, productId: true, name: true, priceOverride: true, inventoryQuantity: true },
+          with: { variant: { columns: { name: true } } } } },
+      })),
+      // Each value with its stock row and its bill of materials, in component id order.
+      values: chunked(variantIds).map((ids) => db.query.productVariantValues.findMany({
+        columns: { id: true, productVariantId: true, value: true, priceOverride: true },
+        where: { id: { in: ids } },
+        with: { stock: { columns: { id: true, quantity: true } },
+          requirements: { columns: { componentId: true, quantity: true }, orderBy: { componentId: 'asc' },
+            with: { component: { columns: { id: true, name: true, quantity: true } } } } },
+      })),
       // A line's variant id may name a legacy group instead of a value; such a group must have no values.
-      queries.push({ kind: 'groupsWithValues', statement: env.DB.prepare(`SELECT DISTINCT product_variant_id
-        FROM _ecommerce_product_variant_values WHERE product_variant_id IN (${slots(ids)})`).bind(...ids) });
-    }
+      groupsWithValues: chunked(variantIds).map((ids) => db.query.productVariants.findMany({
+        columns: { id: true }, where: { id: { in: ids }, values: true },
+      })),
+    });
     const catalog: BasketCatalog = { products: new Map(), groups: new Map(), productsWithGroups: new Set(),
       groupsWithValues: new Set(), values: new Map(), requirements: new Map() };
-    if (!queries.length) return catalog;
-    const results = await env.DB.batch<Record<string, any>>(queries.map((query) => query.statement));
-    queries.forEach(({ kind }, index) => {
-      for (const row of results[index]?.results ?? []) {
-        if (kind === 'products') {
-          catalog.products.set(row.id, { id: row.id, name: row.name, status: row.status, type: row.type,
-            basePrice: row.base_price, inventoryQuantity: row.inventory_quantity, isPhysical: Number(row.is_physical) === 1 });
-        } else if (kind === 'groups') {
-          catalog.groups.set(row.id, { id: row.id, productId: row.product_id, name: row.name,
-            definitionName: row.definition_name ?? null, priceOverride: row.price_override ?? null,
-            inventoryQuantity: row.inventory_quantity });
-          catalog.productsWithGroups.add(row.product_id);
-        } else if (kind === 'values') {
-          catalog.values.set(row.id, { id: row.id, groupId: row.product_variant_id, value: row.value,
-            priceOverride: row.price_override ?? null,
-            stock: row.stock_id === null || row.stock_id === undefined ? null : { id: row.stock_id, quantity: row.stock_quantity } });
-        } else if (kind === 'requirements') {
-          const list = catalog.requirements.get(row.product_variant_value_id) ?? [];
-          list.push({ componentId: row.component_id, quantity: row.quantity,
-            component: row.found_component_id === null || row.found_component_id === undefined ? null
-              : { id: row.found_component_id, name: row.component_name, quantity: row.component_quantity } });
-          catalog.requirements.set(row.product_variant_value_id, list);
-        } else {
-          catalog.groupsWithValues.add(row.product_variant_id);
-        }
+    for (const product of rows.products) {
+      catalog.products.set(product.id, { id: product.id, name: product.name, status: product.status, type: product.type,
+        basePrice: product.basePrice, inventoryQuantity: product.inventoryQuantity, isPhysical: product.isPhysical });
+      for (const group of product.variants) {
+        catalog.groups.set(group.id, { id: group.id, productId: group.productId, name: group.name,
+          definitionName: group.variant?.name ?? null, priceOverride: group.priceOverride, inventoryQuantity: group.inventoryQuantity });
+        catalog.productsWithGroups.add(group.productId);
       }
-    });
+    }
+    for (const value of rows.values) {
+      catalog.values.set(value.id, { id: value.id, groupId: value.productVariantId, value: value.value,
+        priceOverride: value.priceOverride, stock: value.stock && { id: value.stock.id, quantity: value.stock.quantity } });
+      catalog.requirements.set(value.id, value.requirements.map((requirement) => ({
+        componentId: requirement.componentId, quantity: requirement.quantity, component: requirement.component })));
+    }
+    for (const group of rows.groupsWithValues) catalog.groupsWithValues.add(group.id);
     return catalog;
   }
 
@@ -1588,9 +1566,9 @@ export async function reconcileCommerce(options: CommerceApiOptions, limit = 10)
   const { env } = options;
   const api = bindCommerceApi(options);
   const now = Math.floor(Date.now() / 1000);
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   // The queue selections below stay raw SQL: the tests pin their text and query plans, and the order
-  // queries need their status literal for the partial index of migration 0029. ';' follows ':', so the
+  // queries need their status literal for the partial index `_ecommerce_orders_pending_idx`. ';' follows ':', so the
   // range holds exactly the ids that start with 'preparing:', read from the unique index on
   // checkout_session_id. LIKE cannot use that index: it ignores case.
   const preparations = await env.DB.prepare(`SELECT id FROM _ecommerce_carts
@@ -1600,7 +1578,7 @@ export async function reconcileCommerce(options: CommerceApiOptions, limit = 10)
   // so it never keeps the admin's basket locked or crowds real orders out of this batch.
   const settlesAdminTest = options.paymentAdapters?.some(adapter => adapter.providerId === 'admin_test') ?? false;
   // Both order queries state `status = 'pending'` as a literal, which lets them use the partial index
-  // of migration 0029.
+  // `_ecommerce_orders_pending_idx`.
   const pending = await env.DB.prepare(`SELECT id FROM _ecommerce_orders
     WHERE status = 'pending' AND created_at < ? AND reconcile_review_at IS NULL AND ${RECONCILE_DUE}
       AND (? = 1 OR COALESCE(payment_provider, 'stripe') <> 'admin_test')
@@ -1707,7 +1685,7 @@ export async function purgeStaleCommerceData(options: CommercePurgeOptions) {
       WHERE user_id IS NULL AND closed = 0 AND checkout_session_id IS NULL AND updated_at < ?
         AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders WHERE cart_id = _ecommerce_carts.id)
       LIMIT ?)`, [now - 30 * day]],
-    // Shopper sessions, and sign-in links sent before migration 0024, a day after they expired, were used or signed out.
+    // Shopper sessions, and the `email_challenge` rows of earlier releases, a day after they expired, were used or signed out.
     ['customerSessions', `DELETE FROM _ecommerce_customer_sessions WHERE id IN (SELECT id
       FROM _ecommerce_customer_sessions WHERE expires_at < ? OR revoked_at < ? LIMIT ?)`, [now - day, now - day]],
     // Sign-in links, with the address they were sent to, a day after they expired or were used.
@@ -1731,7 +1709,7 @@ export async function purgeStaleCommerceData(options: CommercePurgeOptions) {
       WHERE window_start < ? LIMIT ?)`, [now - day]],
     ['authSessions', `DELETE FROM galaxy_auth_session WHERE id IN (SELECT id FROM galaxy_auth_session
       WHERE expires_at < ? LIMIT ?)`, [now]],
-    // better-auth records milliseconds. Shopper counters written in seconds before migration 0024 may remain.
+    // better-auth records milliseconds. Shopper counters written in seconds by earlier releases may remain.
     ['authRateLimits', `DELETE FROM galaxy_auth_rate_limit WHERE id IN (SELECT id FROM galaxy_auth_rate_limit
       WHERE CASE WHEN last_request >= 100000000000 THEN last_request / 1000 ELSE last_request END < ?
       LIMIT ?)`, [now - day]],

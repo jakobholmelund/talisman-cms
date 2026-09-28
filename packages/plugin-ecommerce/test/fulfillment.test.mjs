@@ -530,13 +530,13 @@ test('queue rows carry product names, variant labels, SKUs and labelled amounts'
   sqlite.close();
 });
 
-test('the queue queries use the indexes from migration 0026', async () => {
+test('the queue queries use the orders and fulfillments indexes', async () => {
   const { sqlite, DB, recorded } = database();
   for (let index = 0; index < 12; index++) insertOrder(sqlite, { createdAt: NOW - index, email: `buyer${index}@example.test` });
   const plans = async (options) => {
     recorded.length = 0;
     await listCommerceOrdersAdmin({ DB }, options);
-    return recorded.filter(([sql]) => /FROM _ecommerce_(orders|fulfillments)/.test(sql)).map(([sql, values]) => ({
+    return recorded.filter(([sql]) => /FROM _ecommerce_orders|from "_ecommerce_fulfillments"/.test(sql)).map(([sql, values]) => ({
       sql: sql.replace(/\s+/g, ' ').trim().slice(0, 40),
       plan: sqlite.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...values).map((step) => step.detail).join(' | '),
     }));
@@ -555,7 +555,7 @@ test('the queue queries use the indexes from migration 0026', async () => {
     assert.match(count.plan, /^SCAN _ecommerce_orders USING (COVERING )?INDEX _ecommerce_orders_awaiting_idx$/, `count: ${count.plan}`);
     assert.match(page.plan, index, `${JSON.stringify(options)}: ${page.plan}`);
     if (!options.query) assert.doesNotMatch(page.plan, /TEMP B-TREE/, 'the index gives the page its order');
-    for (const shipments of rest) assert.match(shipments.plan, /SEARCH _ecommerce_fulfillments USING INDEX _ecommerce_fulfillments_order_idx \(order_id=\?\)/);
+    for (const shipments of rest) assert.match(shipments.plan, /SEARCH d0 USING INDEX _ecommerce_fulfillments_order_idx \(order_id=\?\)/);
     assert.equal(rest.length, 1, 'shipments are read once per page');
   }
   sqlite.close();

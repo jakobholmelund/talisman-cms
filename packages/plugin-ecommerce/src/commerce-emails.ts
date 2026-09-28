@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
-import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
+import type { TalismanEnv } from 'talisman-cms/client';
+import { commerceDb } from './db';
 import { orderConfirmationEmail, shipmentEmail, type OrderConfirmationEmail, type OrderEmailAddress } from './emails';
 import { COMMERCE_EMAIL_LEASE_SECONDS, COMMERCE_EMAIL_MAX_AGE_SECONDS, applyEmailTemplate, bareEmailAddress,
   commerceEmailSetup, missingEmailSettings, runCommerceEmailDelivery, sendCommerceEmailNow, waitingEmailsResult,
@@ -87,7 +88,7 @@ function shipmentComposer(update: boolean): CommerceEmailComposer {
     if (index < 0) return { cancel: 'not_found' };
     const shipment = rows[index];
     const current = rows.filter((row) => row.corrects_id === shipment.id).at(-1) ?? shipment;
-    const order = await createDbClient(env).select({ id: orders.id, customerEmail: orders.customerEmail,
+    const order = await commerceDb(env).select({ id: orders.id, customerEmail: orders.customerEmail,
       paymentProvider: orders.paymentProvider, createdAt: orders.createdAt }).from(orders)
       .where(eq(orders.id, shipment.order_id)).get();
     if (!order || (order.paymentProvider ?? 'stripe') === 'admin_test') return { cancel: 'not_found' };
@@ -99,7 +100,7 @@ function shipmentComposer(update: boolean): CommerceEmailComposer {
       shipment: {
         id: shipment.id,
         shippedAt: new Date(shipment.created_at * 1000),
-        // Shipments recorded before migration 0026 may hold an empty string where there is no value.
+        // A shipment row may hold an empty string where there is no value.
         carrier: current.carrier || null,
         trackingNumber: current.tracking_number || null,
         completesOrder: shipment.completes_order === 1,

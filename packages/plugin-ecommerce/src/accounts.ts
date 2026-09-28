@@ -1,5 +1,6 @@
 import { and, count, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm';
-import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
+import type { TalismanEnv } from 'talisman-cms/client';
+import { commerceDb } from './db';
 import { ensureVerifiedEmailIdentity } from 'talisman-cms/auth/identity';
 import { parseAddress } from 'talisman-cms/email';
 import { readSetting } from 'talisman-cms/env';
@@ -78,7 +79,7 @@ function maskEmailAddress(email: string) {
 
 export async function findCustomerSession(env: TalismanEnv, token?: string | null) {
   if (!token || token.length > 128) return null;
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const session = await db.select().from(customerSessions)
     .where(and(eq(customerSessions.tokenHash, await hashToken(token)), gt(customerSessions.expiresAt, new Date()),
       isNull(customerSessions.revokedAt), eq(customerSessions.purpose, 'session'))).get();
@@ -104,7 +105,7 @@ function customerEmailReservedDaily(env: TalismanEnv, dailyLimit: number) {
 
 /** An address with a verified shopper account, or with a purchased order placed under it. */
 async function isExistingCustomer(env: TalismanEnv, email: string) {
-  const verified = await createDbClient(env).select({ id: customerAccounts.id }).from(customerAccounts)
+  const verified = await commerceDb(env).select({ id: customerAccounts.id }).from(customerAccounts)
     .where(and(eq(customerAccounts.emailNormalized, email), isNotNull(customerAccounts.emailVerifiedAt))).get();
   return Boolean(verified) || await hasPurchaseHistory(env, { emails: [email] });
 }
@@ -188,7 +189,7 @@ export async function requestCustomerEmailSignIn(env: TalismanEnv, email: string
   if (await clientOverLimit(env, 'shopper-email', sourceIp, { limit: REQUESTS_PER_SOURCE_PER_HOUR, windowSeconds: 3600, now })) {
     return dropped();
   }
-  const recent = await createDbClient(env).select({ count: count() }).from(signInTokens)
+  const recent = await commerceDb(env).select({ count: count() }).from(signInTokens)
     .where(and(eq(signInTokens.emailNormalized, normalized), gt(signInTokens.createdAt, at(now - ADDRESS_WINDOW_SECONDS))))
     .get();
   if ((recent?.count ?? 0) >= REQUESTS_PER_ADDRESS) return dropped();
@@ -222,7 +223,7 @@ async function sendSignInLink(env: TalismanEnv, email: string, now: number,
   linkForToken: (token: string) => string, sendLink: (to: string, link: string) => Promise<void>) {
   const token = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   const tokenHash = await hashToken(token);
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   await db.insert(signInTokens)
     .values({ tokenHash, emailNormalized: email, expiresAt: at(now + SIGN_IN_LINK_SECONDS), createdAt: at(now) });
   try {
@@ -245,7 +246,7 @@ export async function previewCustomerEmailSignIn(env: TalismanEnv, token: unknow
     throw new CustomerRequestLimitError();
   }
   if (!isSignInToken(token)) return null;
-  const link = await createDbClient(env).select({ emailNormalized: signInTokens.emailNormalized }).from(signInTokens)
+  const link = await commerceDb(env).select({ emailNormalized: signInTokens.emailNormalized }).from(signInTokens)
     .where(and(eq(signInTokens.tokenHash, await hashToken(token)), isNull(signInTokens.revokedAt),
       gt(signInTokens.expiresAt, at(now)))).get();
   const email = normalizeShopperEmail(link?.emailNormalized);
@@ -259,7 +260,7 @@ export async function previewCustomerEmailSignIn(env: TalismanEnv, token: unknow
 export async function consumeCustomerEmailSignIn(env: TalismanEnv, token: string) {
   if (!isSignInToken(token)) return null;
   const now = Math.floor(Date.now() / 1000);
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const [claimed] = await db.update(signInTokens).set({ revokedAt: at(now) })
     .where(and(eq(signInTokens.tokenHash, await hashToken(token)), isNull(signInTokens.revokedAt),
       gt(signInTokens.expiresAt, at(now))))
@@ -287,14 +288,14 @@ export async function consumeCustomerEmailSignIn(env: TalismanEnv, token: string
 
 export async function revokeCustomerSession(env: TalismanEnv, token?: string | null) {
   if (!token || token.length > 128) return;
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   await db.update(customerSessions).set({ revokedAt: new Date() })
     .where(eq(customerSessions.tokenHash, await hashToken(token)));
 }
 
 /** The account's orders. `status` is the payment status; `fulfillmentStatus` says whether they shipped. */
 export async function listCustomerOrders(env: TalismanEnv, accountId: string) {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   return db.select({
     id: orders.id,
     status: orders.status,

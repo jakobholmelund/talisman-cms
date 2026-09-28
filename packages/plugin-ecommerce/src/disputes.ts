@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
-import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
+import type { TalismanEnv } from 'talisman-cms/client';
+import { commerceDb } from './db';
 import { giftCardPurchaseChargebackStatements, giftCardPurchaseHoldStatements,
   giftCardPurchaseReleaseStatements } from './gift-cards';
 import { fullRefundStatements } from './order-adjustments';
@@ -194,7 +195,7 @@ async function closePurchaseDispute(env: TalismanEnv, purchase: DisputedPurchase
       ...giftCardPurchaseHoldStatements(env, purchase.id, now),
       ...giftCardPurchaseChargebackStatements(env, purchase.id, now),
     ]);
-    const current = await createDbClient(env).select({ status: giftCardPurchases.status }).from(giftCardPurchases)
+    const current = await commerceDb(env).select({ status: giftCardPurchases.status }).from(giftCardPurchases)
       .where(eq(giftCardPurchases.id, purchase.id)).get();
     if (current?.status === 'review') {
       throw new WebhookRetryLaterError('A checkout in progress holds value on the disputed purchase\'s card; '
@@ -226,7 +227,7 @@ async function closePurchaseDispute(env: TalismanEnv, purchase: DisputedPurchase
  */
 export async function applyStripeDispute(env: TalismanEnv, dispute: ProviderDispute,
   options: { closed: boolean; at: number; now?: number }) {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const now = options.now ?? Math.floor(Date.now() / 1000);
   const order = await db.select({ id: orders.id, currency: orders.currency, referralCode: orders.referralCode })
     .from(orders).where(eq(orders.paymentIntentId, dispute.paymentIntentId)).get();

@@ -812,50 +812,222 @@ const tables = {
   customers, customerAccounts, customerSessions, signInTokens, rateLimits, fulfillments, referralCodes, referrals,
   creditLedger, referralSettings, discountCodes, discountRedemptions, giftCardPurchases, giftCards, giftCardLedger,
   giftCardRedemptions, giftCardRefunds, giftCardReviews, giftCardOrderRefunds, taxReversals, disputes, restocks,
-  reconcileDecisions, emailDeliveries, giftCardClaims,
+  reconcileDecisions, emailDeliveries, giftCardClaims, cmsUsers,
 };
 
 /**
- * Every commerce table with the catalog and order relations, for a site's own relational queries:
- * `drizzle(env.DB, { relations })` gives `db.query.<table>` for each of them.
+ * Every commerce table with a relation for each of its foreign keys, in both directions, and for the
+ * links the schema keeps without a key: an order's shopper account and gift card, a customer session's
+ * order, a reservation's stock record and restock. The catalog junctions are `.through()` relations,
+ * so `products.categories` and `products.tags` are categories and tags, not junction rows. The
+ * plugin reads through them (`commerceDb(env).query.<table>`), and `createDbClient(env, relations)`
+ * gives a site's own code the same `db.query`. `test/relations.test.mjs` checks that no key is missed.
  */
 export const relations = defineRelations(tables, (r) => ({
-  carts: { orders: r.many.orders() },
+  carts: {
+    /** The order a checkout placed from the cart; a cart is checked out once. */
+    order: r.one.orders({ from: r.carts.id, to: r.orders.cartId }),
+  },
   orders: {
     cart: r.one.carts({ from: r.orders.cartId, to: r.carts.id }),
+    /** The shopper account that placed the order (`userId`); null for a guest order. */
+    account: r.one.customerAccounts({ from: r.orders.userId, to: r.customerAccounts.id }),
+    /** The gift card the order spent (`giftCardId`). */
+    giftCard: r.one.giftCards({ from: r.orders.giftCardId, to: r.giftCards.id }),
     payments: r.many.payments(),
+    providerRefunds: r.many.providerRefunds(),
+    componentReservations: r.many.componentReservations(),
+    inventoryReservations: r.many.inventoryReservations(),
+    fulfillments: r.many.fulfillments(),
+    referral: r.one.referrals({ from: r.orders.id, to: r.referrals.orderId }),
+    creditLedger: r.many.creditLedger(),
+    discountRedemption: r.one.discountRedemptions({ from: r.orders.id, to: r.discountRedemptions.orderId }),
+    giftCardRedemption: r.one.giftCardRedemptions({ from: r.orders.id, to: r.giftCardRedemptions.orderId }),
+    giftCardLedger: r.many.giftCardLedger(),
+    giftCardRefunds: r.many.giftCardRefunds(),
+    giftCardOrderRefund: r.one.giftCardOrderRefunds({ from: r.orders.id, to: r.giftCardOrderRefunds.orderId }),
+    taxReversals: r.many.taxReversals(),
+    disputes: r.many.disputes(),
+    restocks: r.many.restocks(),
+    reconcileDecisions: r.many.reconcileDecisions(),
+    /** The order-status sessions opened for the order. */
+    customerSessions: r.many.customerSessions(),
   },
   payments: { order: r.one.orders({ from: r.payments.orderId, to: r.orders.id, optional: false }) },
+  providerRefunds: { order: r.one.orders({ from: r.providerRefunds.orderId, to: r.orders.id, optional: false }) },
   products: {
+    /** The product's variant groups. */
     variants: r.many.productVariants(),
-    categories: r.many.productCategories(),
-    tags: r.many.productTags(),
+    categories: r.many.categories({
+      from: r.products.id.through(r.productCategories.productId),
+      to: r.categories.id.through(r.productCategories.categoryId),
+    }),
+    tags: r.many.tags({
+      from: r.products.id.through(r.productTags.productId),
+      to: r.tags.id.through(r.productTags.tagId),
+    }),
+    /** Checkout holds on the product's own stock. */
+    inventoryReservations: r.many.inventoryReservations({
+      from: r.products.id, to: r.inventoryReservations.targetId, where: { targetType: 'product' },
+    }),
   },
   variants: { productVariants: r.many.productVariants() },
   productVariants: {
     product: r.one.products({ from: r.productVariants.productId, to: r.products.id, optional: false }),
+    /** The variant definition the group is an instance of; null for a group named on its own. */
     variant: r.one.variants({ from: r.productVariants.variantId, to: r.variants.id }),
     values: r.many.productVariantValues(),
+    /** Checkout holds on the group's own stock (a group sold without values). */
+    inventoryReservations: r.many.inventoryReservations({
+      from: r.productVariants.id, to: r.inventoryReservations.targetId, where: { targetType: 'variant' },
+    }),
   },
   productVariantValues: {
     productVariant: r.one.productVariants({ from: r.productVariantValues.productVariantId, to: r.productVariants.id, optional: false }),
     stock: r.one.stocks({ from: r.productVariantValues.id, to: r.stocks.productVariantValueId }),
+    /** The value's bill of materials: each component with the quantity one unit needs. */
+    requirements: r.many.variantComponents(),
   },
   stocks: {
     productVariantValue: r.one.productVariantValues({ from: r.stocks.productVariantValueId, to: r.productVariantValues.id, optional: false }),
+    inventoryReservations: r.many.inventoryReservations({
+      from: r.stocks.id, to: r.inventoryReservations.targetId, where: { targetType: 'stock' },
+    }),
   },
-  tags: { products: r.many.productTags() },
-  productTags: {
-    product: r.one.products({ from: r.productTags.productId, to: r.products.id, optional: false }),
-    tag: r.one.tags({ from: r.productTags.tagId, to: r.tags.id, optional: false }),
+  components: {
+    /** The variant values whose bill of materials names the component. */
+    requirements: r.many.variantComponents(),
+    reservations: r.many.componentReservations(),
+  },
+  variantComponents: {
+    productVariantValue: r.one.productVariantValues({ from: r.variantComponents.productVariantValueId, to: r.productVariantValues.id, optional: false }),
+    component: r.one.components({ from: r.variantComponents.componentId, to: r.components.id, optional: false }),
+  },
+  componentReservations: {
+    order: r.one.orders({ from: r.componentReservations.orderId, to: r.orders.id, optional: false }),
+    component: r.one.components({ from: r.componentReservations.componentId, to: r.components.id, optional: false }),
+    /** The restock that returned the reservation's stock, if one did. */
+    restock: r.one.restocks({ from: r.componentReservations.id, to: r.restocks.reservationId, where: { reservationType: 'component' } }),
+  },
+  inventoryReservations: {
+    order: r.one.orders({ from: r.inventoryReservations.orderId, to: r.orders.id, optional: false }),
+    // The target is one of three tables by targetType; ids never repeat across them, so each is
+    // joined by id alone and the reader picks the one the type names.
+    product: r.one.products({ from: r.inventoryReservations.targetId, to: r.products.id }),
+    productVariant: r.one.productVariants({ from: r.inventoryReservations.targetId, to: r.productVariants.id }),
+    stock: r.one.stocks({ from: r.inventoryReservations.targetId, to: r.stocks.id }),
+    restock: r.one.restocks({ from: r.inventoryReservations.id, to: r.restocks.reservationId, where: { reservationType: 'inventory' } }),
   },
   categories: {
     parent: r.one.categories({ from: r.categories.parentId, to: r.categories.id, alias: 'category_hierarchy' }),
     children: r.many.categories({ alias: 'category_hierarchy' }),
-    products: r.many.productCategories(),
+    products: r.many.products(),
   },
   productCategories: {
     product: r.one.products({ from: r.productCategories.productId, to: r.products.id, optional: false }),
     category: r.one.categories({ from: r.productCategories.categoryId, to: r.categories.id, optional: false }),
   },
+  tags: { products: r.many.products() },
+  productTags: {
+    product: r.one.products({ from: r.productTags.productId, to: r.products.id, optional: false }),
+    tag: r.one.tags({ from: r.productTags.tagId, to: r.tags.id, optional: false }),
+  },
+  customerAccounts: {
+    /** The shared CMS user the shopper's verified email links to. */
+    cmsUser: r.one.cmsUsers({ from: r.customerAccounts.cmsUserId, to: r.cmsUsers.id }),
+    orders: r.many.orders({ from: r.customerAccounts.id, to: r.orders.userId }),
+    sessions: r.many.customerSessions(),
+    referralCode: r.one.referralCodes({ from: r.customerAccounts.id, to: r.referralCodes.accountId }),
+    /** The referrals the account's code earned. */
+    referralsMade: r.many.referrals({ from: r.customerAccounts.id, to: r.referrals.referrerAccountId }),
+    /** The referral that brought the account in, if one did. */
+    referredBy: r.one.referrals({ from: r.customerAccounts.id, to: r.referrals.referredAccountId }),
+    creditLedger: r.many.creditLedger(),
+    discountRedemptions: r.many.discountRedemptions(),
+  },
+  customerSessions: {
+    account: r.one.customerAccounts({ from: r.customerSessions.accountId, to: r.customerAccounts.id, optional: false }),
+    /** The order an order-status session shows; null for an account session. */
+    order: r.one.orders({ from: r.customerSessions.orderId, to: r.orders.id }),
+  },
+  fulfillments: {
+    order: r.one.orders({ from: r.fulfillments.orderId, to: r.orders.id, optional: false }),
+    /** The shipment a correction restates. */
+    corrects: r.one.fulfillments({ from: r.fulfillments.correctsId, to: r.fulfillments.id, alias: 'fulfillment_corrections' }),
+    corrections: r.many.fulfillments({ alias: 'fulfillment_corrections' }),
+  },
+  referralCodes: {
+    account: r.one.customerAccounts({ from: r.referralCodes.accountId, to: r.customerAccounts.id, optional: false }),
+    referrals: r.many.referrals(),
+  },
+  referrals: {
+    referralCode: r.one.referralCodes({ from: r.referrals.code, to: r.referralCodes.code, optional: false }),
+    referrer: r.one.customerAccounts({ from: r.referrals.referrerAccountId, to: r.customerAccounts.id, optional: false }),
+    referred: r.one.customerAccounts({ from: r.referrals.referredAccountId, to: r.customerAccounts.id, optional: false }),
+    order: r.one.orders({ from: r.referrals.orderId, to: r.orders.id, optional: false }),
+  },
+  creditLedger: {
+    account: r.one.customerAccounts({ from: r.creditLedger.accountId, to: r.customerAccounts.id, optional: false }),
+    order: r.one.orders({ from: r.creditLedger.orderId, to: r.orders.id, optional: false }),
+  },
+  discountCodes: { redemptions: r.many.discountRedemptions() },
+  discountRedemptions: {
+    discountCode: r.one.discountCodes({ from: r.discountRedemptions.code, to: r.discountCodes.code, optional: false }),
+    order: r.one.orders({ from: r.discountRedemptions.orderId, to: r.orders.id, optional: false }),
+    account: r.one.customerAccounts({ from: r.discountRedemptions.accountId, to: r.customerAccounts.id }),
+  },
+  giftCardPurchases: {
+    /** The card the purchase issued. */
+    card: r.one.giftCards({ from: r.giftCardPurchases.id, to: r.giftCards.purchaseId }),
+    /** Administrator-issued cards that took over the purchase's value. */
+    replacementCards: r.many.giftCards({ from: r.giftCardPurchases.id, to: r.giftCards.replacesPurchaseId }),
+    ledger: r.many.giftCardLedger(),
+    reviews: r.many.giftCardReviews(),
+    claims: r.many.giftCardClaims(),
+    disputes: r.many.disputes(),
+    reconcileDecisions: r.many.reconcileDecisions(),
+  },
+  giftCards: {
+    purchase: r.one.giftCardPurchases({ from: r.giftCards.purchaseId, to: r.giftCardPurchases.id }),
+    replacesPurchase: r.one.giftCardPurchases({ from: r.giftCards.replacesPurchaseId, to: r.giftCardPurchases.id }),
+    ledger: r.many.giftCardLedger(),
+    redemptions: r.many.giftCardRedemptions(),
+    refunds: r.many.giftCardRefunds(),
+    reviews: r.many.giftCardReviews(),
+    claims: r.many.giftCardClaims(),
+    orders: r.many.orders(),
+  },
+  giftCardLedger: {
+    card: r.one.giftCards({ from: r.giftCardLedger.cardId, to: r.giftCards.id, optional: false }),
+    order: r.one.orders({ from: r.giftCardLedger.orderId, to: r.orders.id }),
+    purchase: r.one.giftCardPurchases({ from: r.giftCardLedger.purchaseId, to: r.giftCardPurchases.id }),
+  },
+  giftCardRedemptions: {
+    card: r.one.giftCards({ from: r.giftCardRedemptions.cardId, to: r.giftCards.id, optional: false }),
+    order: r.one.orders({ from: r.giftCardRedemptions.orderId, to: r.orders.id, optional: false }),
+  },
+  giftCardRefunds: {
+    card: r.one.giftCards({ from: r.giftCardRefunds.cardId, to: r.giftCards.id, optional: false }),
+    order: r.one.orders({ from: r.giftCardRefunds.orderId, to: r.orders.id, optional: false }),
+  },
+  giftCardReviews: {
+    purchase: r.one.giftCardPurchases({ from: r.giftCardReviews.purchaseId, to: r.giftCardPurchases.id, optional: false }),
+    card: r.one.giftCards({ from: r.giftCardReviews.cardId, to: r.giftCards.id, optional: false }),
+  },
+  giftCardOrderRefunds: { order: r.one.orders({ from: r.giftCardOrderRefunds.orderId, to: r.orders.id, optional: false }) },
+  taxReversals: { order: r.one.orders({ from: r.taxReversals.orderId, to: r.orders.id, optional: false }) },
+  disputes: {
+    order: r.one.orders({ from: r.disputes.orderId, to: r.orders.id }),
+    giftCardPurchase: r.one.giftCardPurchases({ from: r.disputes.giftCardPurchaseId, to: r.giftCardPurchases.id }),
+  },
+  restocks: { order: r.one.orders({ from: r.restocks.orderId, to: r.orders.id, optional: false }) },
+  reconcileDecisions: {
+    order: r.one.orders({ from: r.reconcileDecisions.orderId, to: r.orders.id }),
+    purchase: r.one.giftCardPurchases({ from: r.reconcileDecisions.purchaseId, to: r.giftCardPurchases.id }),
+  },
+  giftCardClaims: {
+    purchase: r.one.giftCardPurchases({ from: r.giftCardClaims.purchaseId, to: r.giftCardPurchases.id, optional: false }),
+    card: r.one.giftCards({ from: r.giftCardClaims.cardId, to: r.giftCards.id, optional: false }),
+  },
+  cmsUsers: { customerAccount: r.one.customerAccounts({ from: r.cmsUsers.id, to: r.customerAccounts.cmsUserId }) },
 }));

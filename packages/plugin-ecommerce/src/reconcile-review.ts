@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
-import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
+import type { TalismanEnv } from 'talisman-cms/client';
+import { commerceDb } from './db';
 import { bindCommerceApi, type CommerceApiOptions } from './api';
 import { RECONCILE_FAILURE_MESSAGES, RECONCILE_TABLES, completedCheckoutReturn, decisionInsert, isMissingSessionError,
   isOtherStripeModeSession, isProviderError, reconcileFailure, uncheckedSessionRefusal, type PaymentReturn, type ReconcileDecision,
@@ -159,7 +160,7 @@ export async function releaseParkedCommerce(options: CommerceApiOptions, actor: 
     .first<{ session_id: string | null; created_at: number }>();
   if (!row) throw new Error(notParked(kind));
   const otherMode = isOtherStripeModeSession(env, row.session_id);
-  const recorded = () => createDbClient(env).select({ paymentReturned: reconcileDecisions.paymentReturned })
+  const recorded = () => commerceDb(env).select({ paymentReturned: reconcileDecisions.paymentReturned })
     .from(reconcileDecisions).where(eq(reconcileDecisions.id, decision.id)).get();
   let paymentReturned: PaymentReturn | null = null;
   if (kind === 'order') {
