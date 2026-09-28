@@ -128,6 +128,11 @@ function resolveRouteEntrypoint(name: string) {
   return routePath;
 }
 
+/** The plugin's D1 migrations; `dist/index.js` and `src/index.ts` both sit one level below the package root. */
+function resolveMigrationsDir() {
+  return fileURLToPath(new URL('../drizzle/', import.meta.url));
+}
+
 export function createEcommerceLayoutBlocks(productsCollectionSlug = 'products'): BlockDefinition[] {
   return [
     {
@@ -193,6 +198,7 @@ export const ecommercePlugin = (
 
   return {
     name: '@talisman-cms/plugin-ecommerce',
+    migrations: { dir: resolveMigrationsDir() },
     adminLinks: adminPageDefinitions.flatMap(page => {
       const href = config?.adminPages?.[page.key] || `/admin/extensions/${page.path}`;
       return href?.startsWith('/') && !href.startsWith('//')

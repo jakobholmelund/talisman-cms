@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { bindCommerceApi, reconcileCommerce as reconcileWithEmails } from '../dist/api.js';
@@ -9,6 +8,7 @@ import { TaxAddressError, TaxCalculationError } from '../dist/index.js';
 import { createDiscountCode } from '../dist/promotions.js';
 import { issueAdminGiftCard, refundGiftCardOnlyOrder, refundGiftCardTender } from '../dist/gift-cards.js';
 import { listCustomerOrders } from '../dist/accounts.js';
+import { migrationSql } from './helpers/migrations.mjs';
 // These tests leave email unconfigured, so the email retry pass reports the confirmations waiting for an
 // email provider (see emails.test.mjs). Only that result is dropped; any other email result still counts.
 const reconcileCommerce = async (...args) => (await reconcileWithEmails(...args))
@@ -29,7 +29,7 @@ function database() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
   for (const migration of migrationFiles) {
-    const sql = readFileSync(new URL(`../../talisman-cms/drizzle/${migration}`, import.meta.url), 'utf8');
+    const sql = migrationSql(migration);
     sqlite.exec(sql.replaceAll('--> statement-breakpoint', ''));
   }
   const DB = {

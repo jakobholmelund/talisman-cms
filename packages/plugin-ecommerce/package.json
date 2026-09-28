@@ -107,6 +107,7 @@
     "dist",
     "src/components",
     "src/admin",
+    "drizzle",
     "NOTICE"
   ],
   "scripts": {

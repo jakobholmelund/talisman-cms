@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { bindCommerceApi, reconcileCommerce } from '../dist/api.js';
@@ -13,6 +12,7 @@ import { issueAdminGiftCard, evaluateGiftCard, getGiftCardBalance, startGiftCard
   confirmGiftCardPurchase, getPurchasedGiftCard, recordGiftCardPurchaseRefund,
   refundGiftCardTender, refundGiftCardOnlyOrder, reconcileGiftCardPurchase } from '../dist/gift-cards.js';
 import { fulfillCommerceOrder, listCommerceOrdersAdmin } from '../dist/fulfillment.js';
+import { migrationSql } from './helpers/migrations.mjs';
 
 const giftEnv = (DB) => ({ DB, TALISMAN_COMMERCE_GIFT_CARD_KEY: 'a'.repeat(64) });
 const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.sql', '0007_local_auth.sql',
@@ -27,7 +27,7 @@ function database(migrationCount = migrationFiles.length) {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
   for (const migration of migrationFiles.slice(0, migrationCount)) {
-    const sql = readFileSync(new URL(`../../talisman-cms/drizzle/${migration}`, import.meta.url), 'utf8');
+    const sql = migrationSql(migration);
     sqlite.exec(sql.replaceAll('--> statement-breakpoint', ''));
   }
   const DB = {
@@ -76,8 +76,7 @@ test('the sign-in migration revokes basket-granted sessions without verified ema
       (id,account_id,token_hash,expires_at,created_at) VALUES (?,?,?,?,?)`)
       .run(account, account, account, now + 3600, now);
   }
-  sqlite.exec(readFileSync(new URL('../../talisman-cms/drizzle/0016_verified_customer_sessions.sql', import.meta.url), 'utf8')
-    .replaceAll('--> statement-breakpoint', ''));
+  sqlite.exec(migrationSql('0016_verified_customer_sessions.sql').replaceAll('--> statement-breakpoint', ''));
   assert.ok(sqlite.prepare(`SELECT revoked_at FROM _ecommerce_customer_sessions WHERE id = 'unverified'`).get().revoked_at);
   assert.equal(sqlite.prepare(`SELECT revoked_at FROM _ecommerce_customer_sessions WHERE id = 'verified'`).get().revoked_at, null);
   sqlite.close();

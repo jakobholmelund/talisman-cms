@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -8,6 +7,7 @@ import { CUSTOMER_SESSION_COOKIE, CustomerEmailLimitError, requestCustomerEmailS
   shopperSignInBotCheck } from '../dist/accounts.js';
 import { previewCustomerSignIn, readCustomerSignInToken,
   requestCustomerEmailSignIn as requestSignInFromBrowser } from '../dist/browser.js';
+import { migrationSql } from './helpers/migrations.mjs';
 
 // The account route reads its bindings and waitUntil from cloudflare:workers, and the email runtime
 // reads the provider registered with talismanCms({ email }) from a virtual module. Both come from
@@ -38,7 +38,7 @@ const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.
   '0029_commerce_reconcile_backoff.sql', '0030_commerce_order_emails.sql'];
 
 function applyMigration(sqlite, migration) {
-  const sql = readFileSync(new URL(`../../talisman-cms/drizzle/${migration}`, import.meta.url), 'utf8');
+  const sql = migrationSql(migration);
   sqlite.exec(sql.replaceAll('--> statement-breakpoint', ''));
 }
 

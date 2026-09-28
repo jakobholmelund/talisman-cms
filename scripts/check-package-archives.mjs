@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -53,11 +53,13 @@ try {
     for (const [name, version] of Object.entries({ ...manifest.dependencies, ...manifest.peerDependencies })) {
       assert.ok(!version.startsWith('workspace:'), `${manifest.name}: unresolved dependency ${name}`);
     }
-    if (manifest.name === 'talisman-cms') {
-      const journal = JSON.parse(readFileSync(join(cwd, 'drizzle', 'meta', '_journal.json'), 'utf8'));
-      assert.ok(journal.entries?.length, 'talisman-cms: migration journal is empty');
+    // A package with a migrations journal ships every file it lists; the core and plugin-ecommerce do.
+    const journalPath = join(cwd, 'drizzle', 'meta', '_journal.json');
+    if (existsSync(journalPath)) {
+      const journal = JSON.parse(readFileSync(journalPath, 'utf8'));
+      assert.ok(journal.entries?.length, `${manifest.name}: migration journal is empty`);
       for (const { tag } of journal.entries) {
-        assert.ok(entries.has(`package/drizzle/${tag}.sql`), `talisman-cms: missing migration ${tag}`);
+        assert.ok(entries.has(`package/drizzle/${tag}.sql`), `${manifest.name}: missing migration ${tag}`);
       }
     }
     console.log(`${manifest.name}@${manifest.version}: ${entries.size} archived files; exports and dependencies verified`);

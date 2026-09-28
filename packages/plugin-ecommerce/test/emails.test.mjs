@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { getTableConfig } from 'drizzle-orm/sqlite-core';
+import { migrationSql } from './helpers/migrations.mjs';
 
 // The routes read their bindings from cloudflare:workers and the admin route asks the CMS auth guard.
 // A site build provides two virtual modules: the email provider registered with talismanCms({ email })
@@ -54,7 +54,7 @@ function database() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
   for (const migration of migrationFiles) {
-    const sql = readFileSync(new URL(`../../talisman-cms/drizzle/${migration}`, import.meta.url), 'utf8');
+    const sql = migrationSql(migration);
     sqlite.exec(sql.replaceAll('--> statement-breakpoint', ''));
   }
   const recorded = [];

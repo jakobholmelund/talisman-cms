@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { CUSTOMER_SESSION_COOKIE } from '../dist/accounts.js';
 import { CART_SESSION_COOKIE } from '../dist/cookies.js';
+import { migrationSql } from './helpers/migrations.mjs';
 
 // Routes read their bindings from cloudflare:workers and the actions come from astro:actions.
 const stubs = {
@@ -39,7 +39,7 @@ function database() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
   for (const migration of migrationFiles) {
-    const sql = readFileSync(new URL(`../../talisman-cms/drizzle/${migration}`, import.meta.url), 'utf8');
+    const sql = migrationSql(migration);
     sqlite.exec(sql.replaceAll('--> statement-breakpoint', ''));
   }
   const DB = {
