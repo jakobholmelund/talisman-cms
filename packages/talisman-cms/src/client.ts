@@ -44,6 +44,7 @@ export {
   type HookLogEntry,
   type Operators,
   type ResolvedCollection,
+  type SaveGlobalOptions,
   type ServiceConfig,
   type ServiceOptions,
   type SiteReadOptions,

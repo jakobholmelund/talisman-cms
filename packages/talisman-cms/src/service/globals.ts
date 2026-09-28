@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import * as schema from '../db/schema';
 import { buildZodSchemaForFields, decodeGlobalData, isGlobalData, type GlobalConfig } from '../types';
 import { cacheKeys, invalidateGlobalCache, readCache, rowsUpdatedSince, writeCache } from './cache';
@@ -15,11 +15,30 @@ export interface CreateGlobalInput {
   data?: unknown;
 }
 
+export interface SaveGlobalOptions {
+  /**
+   * The `version` the caller loaded. A number that no longer matches the stored row refuses the
+   * save with a `stale_record` conflict that carries the current version. Null or undefined saves
+   * unconditionally, as trusted server code and clients written before versions may.
+   */
+  expectedVersion?: number | null;
+}
+
 const DATA_MESSAGE = 'Global data must be a JSON object';
+export const STALE_GLOBAL_MESSAGE = 'This global changed since it was opened. Load the latest version before saving.';
 const globalSyncs = new WeakMap<object, Promise<void>>();
 
 const newGlobalId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 const trimmed = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : null);
+
+/** Versions start at 1, so anything but a positive whole number is a caller's mistake. */
+function readExpectedVersion(value: unknown): number | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+    throw new InvalidInputError('expectedVersion must be a positive whole number');
+  }
+  return value;
+}
 
 /** Global data is stored as an object; a value cached or stored before that rule still reads as one. */
 function withDecodedData<T extends { data?: unknown } | null | undefined>(record: T): T {
@@ -160,6 +179,7 @@ export function globalsService(ctx: ServiceContext) {
         data: isGlobalData(input.data) ? input.data : {},
         createdAt: now,
         updatedAt: now,
+        version: 1,
       };
       await db.insert(schema.globals).values(created);
       await invalidateGlobalCache(env, slug);
@@ -168,10 +188,13 @@ export function globalsService(ctx: ServiceContext) {
 
     /**
      * Saves a global's data, creating a configured global's row as needed. Saving to a slug that is
-     * neither configured nor stored would create a global, which is kept to administrators.
+     * neither configured nor stored would create a global, which is kept to administrators. Every
+     * save adds one to the row's `version`; a caller that passes the version it loaded is refused
+     * with a `stale_record` conflict when another save came first.
      */
-    async save(slug: string, data: unknown) {
+    async save(slug: string, data: unknown, options: SaveGlobalOptions = {}) {
       if (!isGlobalData(data)) throw new ValidationError([{ path: [], message: DATA_MESSAGE }], undefined, DATA_MESSAGE);
+      const expectedVersion = readExpectedVersion(options.expectedVersion);
       const { config: globalConfig, record: existing } = await resolveGlobal(ctx, slug);
       if (!globalConfig && !existing && actor.kind === 'user' && actor.user.role !== 'admin') {
         throw new AccessDeniedError('Only administrators can create globals');
@@ -186,24 +209,46 @@ export function globalsService(ctx: ServiceContext) {
         saved = parsed.data;
       }
 
-      const id = existing?.id || newGlobalId();
       const now = new Date();
       const name = globalConfig?.name || existing?.name || slug;
       const description = globalConfig?.description || existing?.description || null;
-      await db.insert(schema.globals).values({
-        id,
-        name,
-        slug,
-        description,
-        data: saved,
-        createdAt: existing?.createdAt || now,
-        updatedAt: now,
-      }).onConflictDoUpdate({
-        target: schema.globals.slug,
-        set: { name, description, data: saved, updatedAt: now }
-      });
+      const nextVersion = sql`${schema.globals.version} + 1`;
 
-      const updated = await findGlobal(ctx, slug);
+      // The version check and the increment are one statement, so of two saves that name the same
+      // version only one changes a row; the other finds none and is refused with the version stored now.
+      let updated: GlobalRecord | undefined;
+      if (existing) {
+        const stillLoaded = expectedVersion === null ? undefined : eq(schema.globals.version, expectedVersion);
+        [updated] = await db.update(schema.globals)
+          .set({ name, description, data: saved, updatedAt: now, version: nextVersion })
+          .where(and(eq(schema.globals.id, existing.id), stillLoaded))
+          .returning();
+      }
+      if (!updated) {
+        if (expectedVersion !== null) {
+          const current = await findGlobal(ctx, slug);
+          throw new ConflictError(STALE_GLOBAL_MESSAGE, { code: 'stale_record', version: current?.version ?? null });
+        }
+        // No row to update: the global is new, or its row went away since it was read. A row another
+        // save creates at the same moment is updated instead.
+        await db.insert(schema.globals).values({
+          id: newGlobalId(),
+          name,
+          slug,
+          description,
+          data: saved,
+          createdAt: now,
+          updatedAt: now,
+          version: 1,
+        }).onConflictDoUpdate({
+          target: schema.globals.slug,
+          set: { name, description, data: saved, updatedAt: now, version: nextVersion }
+        });
+        updated = await findGlobal(ctx, slug);
+      }
+      // The row was just written or updated; only a database failure leaves it unreadable.
+      if (!updated) throw new Error(`Global "${slug}" could not be read back after saving`);
+
       await invalidateGlobalCache(env, slug);
       return withDecodedData(updated);
     },

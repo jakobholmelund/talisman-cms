@@ -4,6 +4,7 @@ import type { Actor } from '../service/actor';
 import type { CacheContext } from '../service/cache';
 import { loadServiceConfig } from '../service/config';
 import type { EntryStatusTarget, SiteReadOptions } from '../service/entries';
+import type { SaveGlobalOptions } from '../service/globals';
 import type { EntryQuery } from '../service/query';
 import { createService } from '../service/index';
 import type { VersionMode } from '../service/relations';
@@ -61,7 +62,13 @@ export function getClient(env: TalismanEnv, ctx?: CacheContext, options: ClientO
       findMany: async (opts?: { cache?: boolean }) => (await service()).globals.list({ cache: opts?.cache }),
       find: async (slug: string, opts?: { cache?: boolean }) => (await service()).globals.get(slug, { cache: opts?.cache }),
       create: async (input: { slug: string; name?: string; description?: string | null; data?: any }) => (await service()).globals.create(input),
-      update: async (slug: string, data: Record<string, any>) => (await service()).globals.save(slug, data),
+      /**
+       * Saves a global's data. `expectedVersion`, the `version` a read returned, makes the save fail
+       * with a `stale_record` ConflictError when another save came first; without it the save wins.
+       */
+      save: async (slug: string, data: Record<string, any>, opts?: SaveGlobalOptions) => (await service()).globals.save(slug, data, opts),
+      /** The same as `save`, under the name earlier releases used. */
+      update: async (slug: string, data: Record<string, any>, opts?: SaveGlobalOptions) => (await service()).globals.save(slug, data, opts),
     },
     entries: {
       findMany: async (collectionSlug: string, opts?: SiteReadOptions & EntryQuery & { limit?: number }) =>

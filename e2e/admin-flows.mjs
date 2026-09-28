@@ -669,6 +669,25 @@ const steps = {
     const valueLabel = `E2E value ${ctx.runId}`;
     const stock = '7';
 
+    // The product editor reads only this product's rows: every read of the flow tables carries a
+    // where filter, the groups are read by this product's id, and the products table is never listed.
+    const scopedSlugs = ['_ecommerce_product_variants', '_ecommerce_product_variant_values', '_ecommerce_stocks', '_ecommerce_variant_components'];
+    const unscopedReads = [];
+    let groupReads = 0;
+    const onRequest = (request) => {
+      if (request.method() !== 'GET') return;
+      const url = new URL(request.url());
+      const slug = url.pathname.match(/\/api\/collections\/([^/]+)\/entries$/)?.[1];
+      if (!slug) return;
+      const filtered = [...url.searchParams.keys()].some((key) => key.startsWith('where['));
+      if (slug === 'products' || (scopedSlugs.includes(slug) && !filtered)) unscopedReads.push(`${slug}?${url.searchParams}`);
+      if (slug === '_ecommerce_product_variants') {
+        groupReads += 1;
+        if (url.searchParams.get('where[productId]') !== productId) unscopedReads.push(`${slug}?${url.searchParams}`);
+      }
+    };
+    page.on('request', onRequest);
+
     await openEntry(page, 'products', productId, 'commerce');
     const optionsHeading = page.getByRole('heading', { name: 'Options & stock' });
     await expectVisible(optionsHeading, 'the "Options & stock" configurator');
@@ -714,6 +733,9 @@ const steps = {
     await expectVisible(reloadedValue, `the value "${valueLabel}" after reloading`);
     await expectValue(reloadedValue.getByLabel('Value Label'), valueLabel, 'the Value Label after reloading');
     await expectValue(reloadedValue.getByLabel('Stock Quantity'), stock, 'the Stock Quantity after reloading');
+    page.off('request', onRequest);
+    if (groupReads === 0) fail('the product editor did not read the variant groups');
+    if (unscopedReads.length > 0) fail(`the product editor listed whole collections or another product's rows: ${unscopedReads.join(', ')}`);
     return `product ${productId}: group, value and stock ${stock} persisted`;
   },
 
@@ -765,6 +787,63 @@ const steps = {
     await expectVisible(page.getByRole('heading', { level: 1, name: 'Site Settings' }), 'the global after reloading');
     await expectValue(labelled(page, 'Site Title'), siteTitle, 'the Site Title after reloading');
     return `Site Title "${siteTitle}" saved and persisted`;
+  },
+
+  async 'globals-conflict'(ctx) {
+    const pageA = ctx.admin.page;
+    const second = await signedInSession(ctx, ctx.options.adminEmail, ctx.options.adminPassword, 'second admin');
+    const pageB = second.page;
+    const titleA = `E2E site ${ctx.runId} by A`;
+    const titleB = `E2E site ${ctx.runId} by B`;
+    const heading = (page) => page.getByRole('heading', { level: 1, name: 'Site Settings' });
+    const saveGlobal = (page, what) => clickAndAwaitResponse(
+      page,
+      page.getByRole('button', { name: 'Save', exact: true }),
+      apiResponse('POST', apiPath('/globals/site-settings')),
+      what
+    );
+
+    try {
+      for (const [page, who] of [[pageA, 'A'], [pageB, 'B']]) {
+        await page.goto(`${ADMIN_PATH}/globals/site-settings`);
+        await expectVisible(heading(page), `the Site Settings global for ${who}`);
+      }
+
+      // A saves a new title. B, still on the version both loaded, is refused and keeps its edit.
+      await labelled(pageA, 'Site Title').fill(titleA);
+      const savedA = await saveGlobal(pageA, "A's save");
+      if (!savedA.ok()) fail(`A's save was refused with ${await responseSummary(savedA)}`);
+      await expectVisible(pageA.getByRole('status').filter({ hasText: /^Saved$/ }), 'the "Saved" notice for A');
+
+      await labelled(pageB, 'Site Title').fill(titleB);
+      const refused = await saveGlobal(pageB, "B's save");
+      if (refused.status() !== 409) fail(`B's stale save was answered with ${await responseSummary(refused)} instead of HTTP 409`);
+      const body = await refused.json().catch(() => ({}));
+      if (body.code !== 'stale_record') fail(`B's refused save carried code ${JSON.stringify(body.code)} instead of "stale_record"`);
+      await expectVisible(pageB.getByRole('alert').filter({ hasText: 'changed after you opened it' }), 'the stale alert ("This global changed after you opened it")');
+      await expectValue(labelled(pageB, 'Site Title'), titleB, "B's edit, kept in the form after the refusal");
+
+      // Loading the latest version (its confirm is accepted) shows A's value; B's next save then goes through.
+      const loadLatest = pageB.getByRole('button', { name: 'Load latest version', exact: true });
+      await expectVisible(loadLatest, 'the "Load latest version" button');
+      await loadLatest.click();
+      await expectValue(labelled(pageB, 'Site Title'), titleA, "the Site Title (A's value) after loading the latest version");
+      await expectVisible(pageB.getByRole('status').filter({ hasText: 'The latest saved version is now in the form' }), 'the notice after loading the latest version');
+      await expectNoAlert(pageB, 'after loading the latest version');
+
+      await labelled(pageB, 'Site Title').fill(titleB);
+      const savedB = await saveGlobal(pageB, "B's save from the latest version");
+      if (!savedB.ok()) fail(`B's save from the latest version was refused with ${await responseSummary(savedB)}`);
+      await expectVisible(pageB.getByRole('status').filter({ hasText: /^Saved$/ }), 'the "Saved" notice for B');
+
+      await pageA.reload();
+      await expectVisible(heading(pageA), 'the global on A after reloading');
+      await expectValue(labelled(pageA, 'Site Title'), titleB, "the Site Title (B's value) on A after reloading");
+    } finally {
+      await second.context.close().catch(() => {});
+      ctx.sessions = ctx.sessions.filter((session) => session !== second.context);
+    }
+    return 'HTTP 409 stale_record shown as the stale alert; latest loaded, then saved from the new version';
   },
 
   async 'mobile-nav'(ctx) {

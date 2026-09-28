@@ -89,8 +89,8 @@ async function run(scenario, mode, user) {
     runtime.env.KV = KV;
     let outcome;
     if (mode === 'http') {
-      const { method, path, body } = scenario.http(ids);
-      const response = await as(user, () => call(method, path, body));
+      const { method, path, body, headers } = scenario.http(ids);
+      const response = await as(user, () => call(method, path, body, headers));
       outcome = { status: response.status, body: normalizeBody(response.body) };
     } else {
       const actor = mode === 'service' ? actors.userActor(user, new Request('https://cms.test/admin/api/x', { method: 'POST' })) : actors.systemActor('sdk');
@@ -178,6 +178,12 @@ const scenarios = [
   { name: 'create a global with non-object data', adminOnly: true, http: () => ({ method: 'POST', path: '/globals', body: { slug: 'footer', data: 'text' } }), service: (api) => api.globals.create({ slug: 'footer', data: 'text' }) },
   { name: 'save a configured global', http: () => ({ method: 'POST', path: '/globals/site', body: { siteName: 'Talisman' } }), service: (api) => api.globals.save('site', { siteName: 'Talisman' }) },
   { name: 'save a configured global with a blank required field', http: () => ({ method: 'POST', path: '/globals/site', body: { siteName: ' ' } }), service: (api) => api.globals.save('site', { siteName: ' ' }) },
+  { name: 'save a configured global with its version', http: () => ({ method: 'POST', path: '/globals/site', body: { siteName: 'Talisman' }, headers: { 'If-Match': '"1"' } }),
+    service: (api) => api.globals.save('site', { siteName: 'Talisman' }, { expectedVersion: 1 }) },
+  { name: 'save a configured global with a stale version', http: () => ({ method: 'POST', path: '/globals/site', body: { siteName: 'Talisman' }, headers: { 'If-Match': '"7"' } }),
+    service: (api) => api.globals.save('site', { siteName: 'Talisman' }, { expectedVersion: 7 }) },
+  { name: 'save a stored global with a stale version', http: () => ({ method: 'POST', path: '/globals/footer', body: { note: 'Bye' }, headers: { 'If-Match': '1' } }),
+    service: (api) => api.globals.save('footer', { note: 'Bye' }, { expectedVersion: 1 }) },
   { name: 'save a global that is neither configured nor stored', http: () => ({ method: 'POST', path: '/globals/brand-new', body: { note: 'x' } }), service: (api) => api.globals.save('brand-new', { note: 'x' }) },
   { name: 'save a non-object global', http: () => ({ method: 'POST', path: '/globals/site', body: ['no'] }), service: (api) => api.globals.save('site', ['no']) },
 ];

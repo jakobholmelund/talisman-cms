@@ -45,6 +45,27 @@ test('getClient runs the same validation and hooks as the admin API, and its err
   }
 });
 
+test('getClient saves a global with the version it loaded, and a stale save says which version is stored', { skip }, async () => {
+  const sqlite = database();
+  try {
+    const client = getClient(runtime.env);
+    const loaded = await client.globals.find('site');
+    assert.equal(loaded.version, 1);
+    const saved = await client.globals.save('site', { siteName: 'One' }, { expectedVersion: loaded.version });
+    assert.deepEqual([saved.version, saved.data], [2, { siteName: 'One' }]);
+    await assert.rejects(client.globals.save('site', { siteName: 'Two' }, { expectedVersion: loaded.version }),
+      (error) => error instanceof publicClient.ConflictError && error.code === 'stale_record' && error.version === 2);
+    assert.equal(sqlite.prepare(`SELECT data FROM galaxy_globals WHERE slug = 'site'`).get().data, '{"siteName":"One"}');
+    // Server code may leave the version out, under either name; a version that cannot exist is refused.
+    assert.equal((await client.globals.update('site', { siteName: 'Three' })).version, 3);
+    assert.equal((await client.globals.save('site', { siteName: 'Four' })).version, 4);
+    await assert.rejects(client.globals.save('site', { siteName: 'Five' }, { expectedVersion: 0 }), publicClient.InvalidInputError);
+    await assert.rejects(client.globals.save('site', { siteName: 'Five' }, { expectedVersion: '4' }), publicClient.InvalidInputError);
+  } finally {
+    sqlite.close();
+  }
+});
+
 test('getClient reads keep their shapes: undefined for a missing entry, null for a missing slug, drafts on request', { skip }, async () => {
   const sqlite = database();
   try {

@@ -9,7 +9,7 @@ const hourAgo = Math.floor(Date.now() / 1000) - 3600;
 function database() {
   const sqlite = new DatabaseSync(':memory:');
   for (const migration of ['0000_skinny_odin', '0001_abandoned_shotgun', '0002_flowery_midnight',
-    '0003_content_versioning', '0018_entry_revision_integrity', '0021_entry_draft_slug']) {
+    '0003_content_versioning', '0018_entry_revision_integrity', '0021_entry_draft_slug', '0031_global_versions']) {
     const sql = readFileSync(new URL(`../drizzle/${migration}.sql`, import.meta.url), 'utf8');
     sqlite.exec(sql.replaceAll('--> statement-breakpoint', ''));
   }

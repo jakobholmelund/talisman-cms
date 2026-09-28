@@ -52,5 +52,5 @@ export type { CreateEntryInput, EntriesPage, EntryStatusTarget, SiteReadOptions,
 export type { ResolvedCollection } from './collections';
 export type { VersionMode } from './relations';
 export type { EntryQuery, Operators, Scalar, WhereClause } from './query';
-export type { CreateGlobalInput } from './globals';
+export type { CreateGlobalInput, SaveGlobalOptions } from './globals';
 export type { HookLogEntry } from './hooks';

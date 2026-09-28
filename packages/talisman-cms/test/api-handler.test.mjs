@@ -418,6 +418,59 @@ test('entry ids and slugs are checked for format, and a slug names one entry per
   }
 });
 
+test('a global save may name the version it loaded, and a stale one is refused with the current version', { skip }, async () => {
+  const sqlite = database();
+  try {
+    const stored = () => sqlite.prepare(`SELECT data, version FROM galaxy_globals WHERE slug = 'site'`).get();
+    const loaded = await call('GET', '/globals/site');
+    assert.equal(loaded.status, 200);
+    assert.equal(loaded.body.version, 1);
+    assert.equal(loaded.headers.get('ETag'), '"1"');
+
+    // The ETag goes back as If-Match, quoted or bare; each save adds one to the version.
+    const first = await call('POST', '/globals/site', { siteName: 'First' }, { 'If-Match': '"1"' });
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.deepEqual([first.body.version, first.headers.get('ETag'), first.body.data], [2, '"2"', { siteName: 'First' }]);
+    const second = await call('POST', '/globals/site', { siteName: 'Second' }, { 'If-Match': '2' });
+    assert.equal(second.status, 200);
+    assert.equal(second.body.version, 3);
+    assert.deepEqual({ ...stored() }, { data: '{"siteName":"Second"}', version: 3 });
+
+    // A version that moved on is refused with the current one, and the row is left alone.
+    const stale = await call('POST', '/globals/site', { siteName: 'Stale' }, { 'If-Match': '"2"' });
+    assert.equal(stale.status, 409);
+    assert.deepEqual(stale.body, { error: 'This global changed since it was opened. Load the latest version before saving.', code: 'stale_record', version: 3 });
+    assert.deepEqual({ ...stored() }, { data: '{"siteName":"Second"}', version: 3 });
+
+    // The check and the increment are one statement, so two saves that name the same version cannot both win.
+    const update = runtime.env.DB.statements.filter((statement) => /^update "galaxy_globals"/.test(statement)).at(-1);
+    assert.match(update, /"version" = "galaxy_globals"\."version" \+ 1/);
+    assert.match(update, /where \("galaxy_globals"\."id" = \? and "galaxy_globals"\."version" = \?\)/);
+
+    // No header, or `*`, saves as before; a value that is not a version is a client mistake.
+    assert.equal((await call('POST', '/globals/site', { siteName: 'Unconditional' })).body.version, 4);
+    assert.equal((await call('POST', '/globals/site', { siteName: 'Any' }, { 'If-Match': '*' })).body.version, 5);
+    for (const value of ['abc', '"3', 'W/"3"', '', '0']) {
+      const refused = await call('POST', '/globals/site', { siteName: 'Bad token' }, { 'If-Match': value });
+      assert.equal(refused.status, 400, `If-Match: ${value}`);
+      assert.equal(typeof refused.body.error, 'string');
+    }
+    assert.deepEqual({ ...stored() }, { data: '{"siteName":"Any"}', version: 5 });
+    assert.equal((await call('GET', '/globals')).body.find((global) => global.slug === 'site').version, 5);
+
+    // A version for a global that has no row is stale too, and creates nothing; without one the save creates it.
+    const missing = await call('POST', '/globals/brand-new', { note: 'x' }, { 'If-Match': '"1"' });
+    assert.deepEqual([missing.status, missing.body.code, missing.body.version], [409, 'stale_record', null]);
+    assert.equal(sqlite.prepare(`SELECT COUNT(*) AS total FROM galaxy_globals WHERE slug = 'brand-new'`).get().total, 0);
+    const created = await call('POST', '/globals/brand-new', { note: 'x' });
+    assert.deepEqual([created.status, created.body.version, created.headers.get('ETag')], [200, 1, '"1"']);
+    const listed = await call('POST', '/globals', { slug: 'footer', name: 'Footer' });
+    assert.deepEqual([listed.status, listed.body.version, listed.headers.get('ETag')], [201, 1, '"1"']);
+  } finally {
+    sqlite.close();
+  }
+});
+
 test('editors update existing globals but only administrators create new ones', { skip }, async () => {
   const sqlite = database();
   try {

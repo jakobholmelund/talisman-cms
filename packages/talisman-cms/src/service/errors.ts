@@ -7,6 +7,7 @@ export type ServiceErrorCode =
   | 'payload_too_large'
   | 'precondition_required'
   | 'conflict'
+  | 'stale_record'
   | 'unsupported'
   | 'hook_failed';
 
@@ -70,11 +71,18 @@ export class PayloadTooLargeError extends ServiceError {
   }
 }
 
-/** The record the write would create already exists. */
+/**
+ * The record the write would create already exists, or, with the code `stale_record`, the record
+ * changed since the caller loaded it. A stale write carries the record's current `version`, so the
+ * caller can load that version and try again; the admin API answers it in the response body.
+ */
 export class ConflictError extends ServiceError {
-  constructor(message: string) {
-    super('conflict', 409, message);
+  readonly version?: number | null;
+
+  constructor(message: string, options: { code?: 'conflict' | 'stale_record'; version?: number | null } = {}) {
+    super(options.code ?? 'conflict', 409, message);
     this.name = 'ConflictError';
+    if (options.code === 'stale_record') this.version = options.version ?? null;
   }
 }
 

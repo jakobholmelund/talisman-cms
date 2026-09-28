@@ -109,7 +109,7 @@ export function database() {
   sqlite.exec('PRAGMA foreign_keys = ON');
   for (const migration of ['0000_skinny_odin', '0001_abandoned_shotgun', '0002_flowery_midnight',
     '0003_content_versioning', '0006_media_metadata', '0018_entry_revision_integrity', '0020_revision_baseline_and_globals',
-    '0021_entry_draft_slug', '0022_wrap_non_object_globals', '0023_published_slug_unique']) {
+    '0021_entry_draft_slug', '0022_wrap_non_object_globals', '0023_published_slug_unique', '0031_global_versions']) {
     const sql = readFileSync(new URL(`../../drizzle/${migration}.sql`, import.meta.url), 'utf8');
     for (const statement of sql.split('--> statement-breakpoint')) {
       if (statement.trim()) sqlite.exec(statement);
@@ -157,13 +157,14 @@ export function database() {
   return sqlite;
 }
 
-export async function call(method, path, body) {
+export async function call(method, path, body, headers = undefined) {
   const request = new Request(`https://cms.test/admin/api${path}`, {
     method,
+    headers,
     body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
   });
   const response = await ALL({ request, locals: {} });
-  return { status: response.status, body: await response.json() };
+  return { status: response.status, body: await response.json(), headers: response.headers };
 }
 
 export const admin = { id: 'admin-1', email: 'admin@example.test', role: 'admin' };

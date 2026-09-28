@@ -12,9 +12,10 @@ import { T, applyMigration, assertIntegrity, fullSchema, migrationFileNames, mig
 
 // The plugin ships 0025 to 0030 in its drizzle/; the core's drizzle/ holds 0000 to 0024, which also
 // created the commerce tables of their time (0019 changes both auth and commerce tables, and a file
-// name is fixed once a database has applied it). `wrangler d1 migrations apply` reads one folder per
-// binding, so the integration copies both sets into one; this test builds that folder the same way and
-// applies it as wrangler does, to a fresh database and to ones that earlier releases migrated.
+// name is fixed once a database has applied it), and continues the shared sequence from 0031.
+// `wrangler d1 migrations apply` reads one folder per binding, so the integration copies both sets
+// into one; this test builds that folder the same way and applies it as wrangler does, to a fresh
+// database and to ones that earlier releases migrated.
 const pluginDir = new URL('../drizzle/', import.meta.url);
 const pluginJournal = JSON.parse(readFileSync(new URL('meta/_journal.json', pluginDir), 'utf8'));
 const coreJournal = JSON.parse(readFileSync(new URL('../../talisman-cms/drizzle/meta/_journal.json', import.meta.url), 'utf8'));
@@ -110,15 +111,19 @@ const ALL_MIGRATIONS = [
   '0028_provider_refunds_and_disputes.sql',
   '0029_commerce_reconcile_backoff.sql',
   '0030_commerce_order_emails.sql',
+  '0031_global_versions.sql',
 ];
-const PLUGIN_MIGRATIONS = ALL_MIGRATIONS.slice(25);
+const PLUGIN_MIGRATIONS = ALL_MIGRATIONS.slice(25, 31);
+// What a database on the core chain through 0024 has left to apply: the plugin's files, then the core's later ones.
+const AFTER_0024 = ALL_MIGRATIONS.slice(25);
 
-test('the core and the plugin together ship the sequence 0000 to 0030, once each, in wrangler order', () => {
+test('the core and the plugin together ship the sequence 0000 to 0031, once each, in wrangler order', () => {
   const files = listMigrationSources(migrationSources);
   assert.deepEqual(files.map((file) => file.name), ALL_MIGRATIONS);
   assert.deepEqual(files.map((file) => file.source), [
     ...ALL_MIGRATIONS.slice(0, 25).map(() => 'talisman-cms'),
     ...PLUGIN_MIGRATIONS.map(() => '@talisman-cms/plugin-ecommerce'),
+    ...ALL_MIGRATIONS.slice(31).map(() => 'talisman-cms'),
   ]);
   // The assembled folder holds exactly those files, plus the record of who ships each.
   assert.deepEqual(readdirSync(assembled).filter((name) => name.endsWith('.sql')).sort(wranglerOrder), ALL_MIGRATIONS);
@@ -128,7 +133,8 @@ test('the core and the plugin together ship the sequence 0000 to 0030, once each
     assert.equal(readFileSync(join(assembled, name), 'utf8'), readFileSync(source.path, 'utf8'), name);
   }
 
-  // The plugin journal lists its files once, in order, and the core's ends where the plugin's begins.
+  // The plugin journal lists its files once, in order; the core's holds 0000 to 0024 and then the
+  // files after the plugin's, and `when` rises along the whole shared sequence.
   assert.deepEqual(readdirSync(pluginDir).filter((name) => name.endsWith('.sql')).sort(), PLUGIN_MIGRATIONS);
   assert.deepEqual(pluginJournal.entries.map((entry) => `${entry.tag}.sql`), PLUGIN_MIGRATIONS);
   pluginJournal.entries.forEach((entry, index) => {
@@ -136,8 +142,15 @@ test('the core and the plugin together ship the sequence 0000 to 0030, once each
     assert.match(entry.tag, /^\d{4}_[a-z0-9_]+$/);
     if (index > 0) assert.ok(entry.when > pluginJournal.entries[index - 1].when, `${entry.tag}: when is not after the previous entry`);
   });
-  assert.equal(coreTags.at(-1), '0024_shopper_sign_in_tokens');
-  assert.ok(pluginJournal.entries[0].when > coreJournal.entries.at(-1).when);
+  assert.equal(coreTags[24], '0024_shopper_sign_in_tokens');
+  assert.deepEqual(coreTags.slice(25).map((tag) => `${tag}.sql`), ALL_MIGRATIONS.slice(31));
+  const journalByFile = new Map([...coreJournal.entries, ...pluginJournal.entries].map((entry) => [`${entry.tag}.sql`, entry]));
+  ALL_MIGRATIONS.reduce((previous, name) => {
+    const entry = journalByFile.get(name);
+    assert.ok(entry, `${name}: in neither journal`);
+    if (previous) assert.ok(entry.when > previous.when, `${name}: when is not after ${previous.tag}`);
+    return entry;
+  }, null);
 });
 
 test('a fresh database gets the schema the plugin queries', () => {
@@ -161,23 +174,24 @@ test('a fresh database gets the schema the plugin queries', () => {
   }
 });
 
-test('a seeded database at 0024 takes exactly the plugin migrations from the assembled folder', () => {
+test('a seeded database at 0024 takes exactly the migrations after it from the assembled folder', () => {
   const db = openDatabase();
   try {
     // A site on the core chain through 0024, with rows from earlier releases and the demo seed, as
     // wrangler left it: every applied file name recorded.
     db.exec(D1_MIGRATIONS_TABLE);
-    for (const tag of coreTags) {
+    for (const tag of coreTags.slice(0, 25)) {
       applyMigration(db, tag);
       seeds[tag]?.(db);
       recordApplied(db, `${tag}.sql`);
     }
     db.exec(readFileSync(new URL('../../talisman-cms/seeds/ecommerce-demo.sql', import.meta.url), 'utf8'));
+    db.exec(`INSERT INTO galaxy_globals (id, name, slug, data, created_at, updated_at) VALUES ('g-banner', 'Banner', 'banner', '{"title":"Hi"}', ${T}, ${T})`);
     assertIntegrity(db);
     const demoProducts = rows(db, `SELECT id FROM _ecommerce_products WHERE id LIKE 'demo_%' ORDER BY id`);
     assert.ok(demoProducts.length >= 2);
 
-    assert.deepEqual(applyFolder(db, assembled), PLUGIN_MIGRATIONS);
+    assert.deepEqual(applyFolder(db, assembled), AFTER_0024);
     assert.deepEqual(rows(db, 'SELECT name FROM d1_migrations ORDER BY id').map(({ name }) => name), ALL_MIGRATIONS);
     assertIntegrity(db);
     assert.deepEqual(rows(db, `SELECT id FROM _ecommerce_products WHERE id LIKE 'demo_%' ORDER BY id`), demoProducts);
@@ -220,6 +234,9 @@ test('a seeded database at 0024 takes exactly the plugin migrations from the ass
     // 0030: orders paid and gift cards bought before it are sent no email.
     assert.deepEqual([row(db, 'SELECT COUNT(*) AS n FROM _ecommerce_email_deliveries').n,
       row(db, 'SELECT COUNT(*) AS n FROM _ecommerce_gift_card_claims').n], [0, 0]);
+    // 0031: every global from before it is at version 1, with its data as it was.
+    assert.deepEqual(rows(db, `SELECT data, version FROM galaxy_globals WHERE slug = 'banner'`), [{ data: '{"title":"Hi"}', version: 1 }]);
+    assert.equal(row(db, 'SELECT COUNT(*) AS n FROM galaxy_globals WHERE version <> 1').n, 0);
 
     // The upgraded database has the schema of a fresh install, and a second run applies nothing.
     assert.deepEqual(fullSchema(db), freshSchema());
@@ -229,7 +246,7 @@ test('a seeded database at 0024 takes exactly the plugin migrations from the ass
   }
 });
 
-test('a database that applied 0000 to 0030 from the core folder has nothing to apply from the assembled one', () => {
+test('a database that applied 0000 to 0031 by file name has nothing to apply from the assembled folder', () => {
   const db = openDatabase();
   try {
     db.exec(D1_MIGRATIONS_TABLE);

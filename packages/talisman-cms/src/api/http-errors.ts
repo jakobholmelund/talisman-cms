@@ -1,6 +1,6 @@
 import { formatValidationIssues } from '../types';
 import { isEntryNotFound, isRevisionConflict, isSlugConflict } from '../versioning';
-import { HookError, ServiceError, ValidationError, constraintErrorFrom, isDatabaseError, type ServiceErrorCode } from '../service/errors';
+import { ConflictError, HookError, ServiceError, ValidationError, constraintErrorFrom, isDatabaseError, type ServiceErrorCode } from '../service/errors';
 
 const CODES: Record<number, ServiceErrorCode> = { 403: 'forbidden', 404: 'not_found', 405: 'unsupported', 409: 'conflict', 413: 'payload_too_large', 428: 'precondition_required' };
 
@@ -22,6 +22,10 @@ export const INTERNAL_ERROR_MESSAGE = 'The request could not be completed. Check
 export function toErrorResponse(error: unknown, context: string): Response {
   if (error instanceof ValidationError) {
     return Response.json({ ...formatValidationIssues(error.issues), ...error.details }, { status: 400 });
+  }
+  // A stale write names its code and the record's current version, so a client can reload and retry.
+  if (error instanceof ConflictError && error.code === 'stale_record') {
+    return Response.json({ error: error.message, code: error.code, version: error.version ?? null }, { status: error.status });
   }
   // A hook failure is answered below, once a database cause has been ruled out.
   if (error instanceof ServiceError && !(error instanceof HookError)) {

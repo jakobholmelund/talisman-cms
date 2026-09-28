@@ -256,15 +256,25 @@ const expectedAt0020 = {
   ],
 };
 
+// One sequence of numbers runs across the core and the ecommerce plugin: the core ships 0000 to
+// 0024 and continues from 0031, the plugin ships 0025 to 0030 in between.
+const PLUGIN_NUMBERS = [25, 26, 27, 28, 29, 30];
+
 test('the journal lists every migration file once, in file-name order', () => {
   const files = readdirSync(drizzleDir).filter((name) => name.endsWith('.sql')).sort();
   assert.deepEqual(files, tags.map((tag) => `${tag}.sql`));
+  const numbers = journal.entries.map((entry) => Number(entry.tag.slice(0, 4)));
   journal.entries.forEach((entry, index) => {
     assert.equal(entry.idx, index, `${entry.tag}: idx`);
     assert.match(entry.tag, /^\d{4}_[a-z0-9_]+$/);
-    assert.equal(Number(entry.tag.slice(0, 4)), index, `${entry.tag}: number does not match its position`);
     if (index > 0) assert.ok(entry.when > journal.entries[index - 1].when, `${entry.tag}: when is not after the previous entry`);
   });
+  // The numbers rise by one, except where the plugin's files sit.
+  const expectedNumbers = [];
+  for (let number = 0; expectedNumbers.length < numbers.length; number += 1) {
+    if (!PLUGIN_NUMBERS.includes(number)) expectedNumbers.push(number);
+  }
+  assert.deepEqual(numbers, expectedNumbers, 'the numbers continue the shared sequence around the plugin migrations');
   assert.ok(tags.includes(BASELINE));
 });
 
@@ -580,6 +590,28 @@ test('0023 lets one published entry per collection serve a slug, and its check f
   }
 });
 
+test('0031 gives every global a version of 1, and a Worker from before it still writes rows without one', () => {
+  const db = openDatabase();
+  try {
+    migrate(db, { to: '0024_shopper_sign_in_tokens' });
+    db.exec(`INSERT INTO galaxy_globals (id, name, slug, data, created_at, updated_at) VALUES ('g-site', 'Site', 'site', '{"title":"Hi"}', ${T}, ${T})`);
+    applyMigration(db, '0031_global_versions');
+    assert.deepEqual(rows(db, 'SELECT slug, data, version FROM galaxy_globals'), [{ slug: 'site', data: '{"title":"Hi"}', version: 1 }]);
+
+    // The previous Worker names no version and gets 1; a versioned save adds one in the same statement
+    // that checks the version it loaded, so a second save with the same version changes nothing.
+    db.exec(`INSERT INTO galaxy_globals (id, name, slug, data, created_at, updated_at) VALUES ('g-footer', 'Footer', 'footer', '{}', ${T}, ${T})`);
+    const save = db.prepare(`UPDATE galaxy_globals SET data = ?, version = version + 1 WHERE slug = 'site' AND version = ?`);
+    assert.equal(save.run('{"title":"Edited"}', 1).changes, 1);
+    assert.equal(save.run('{"title":"Stale"}', 1).changes, 0);
+    assert.deepEqual(rows(db, 'SELECT slug, data, version FROM galaxy_globals ORDER BY slug'),
+      [{ slug: 'footer', data: '{}', version: 1 }, { slug: 'site', data: '{"title":"Edited"}', version: 2 }]);
+    assertIntegrity(db);
+  } finally {
+    db.close();
+  }
+});
+
 test('the ecommerce demo seed applies to the migrated schema and stores post content as Tiptap JSON', () => {
   const db = openDatabase();
   try {
@@ -611,7 +643,7 @@ test('the integration assembles the core and plugin migrations into the project 
     mkdirSync(project);
     const pluginDir = join(work, 'plugin-drizzle');
     mkdirSync(pluginDir);
-    writeFileSync(join(pluginDir, '0031_plugin_table.sql'), 'CREATE TABLE plugin_table (id text PRIMARY KEY);\n');
+    writeFileSync(join(pluginDir, '0032_plugin_table.sql'), 'CREATE TABLE plugin_table (id text PRIMARY KEY);\n');
     const plugin = { name: 'test-plugin', onInit: (config) => config, migrations: { dir: pluginDir } };
     const setup = (options, wranglerToml) => {
       writeFileSync(join(project, 'wrangler.toml'), wranglerToml);
@@ -630,8 +662,8 @@ test('the integration assembles the core and plugin migrations into the project 
     assert.deepEqual(listed(), tags.map((tag) => `${tag}.sql`));
     assert.deepEqual(JSON.parse(readFileSync(join(assembled, 'sources.json'), 'utf8')).at(-1), { name: `${tags.at(-1)}.sql`, source: 'talisman-cms' });
     setup({ plugins: [plugin] }, pointed);
-    assert.deepEqual(listed(), [...tags.map((tag) => `${tag}.sql`), '0031_plugin_table.sql']);
-    assert.deepEqual(JSON.parse(readFileSync(join(assembled, 'sources.json'), 'utf8')).at(-1), { name: '0031_plugin_table.sql', source: 'test-plugin' });
+    assert.deepEqual(listed(), [...tags.map((tag) => `${tag}.sql`), '0032_plugin_table.sql']);
+    assert.deepEqual(JSON.parse(readFileSync(join(assembled, 'sources.json'), 'utf8')).at(-1), { name: '0032_plugin_table.sql', source: 'test-plugin' });
     setup({}, pointed);
     assert.deepEqual(listed(), tags.map((tag) => `${tag}.sql`));
     assert.equal(warn.mock.callCount(), 0);

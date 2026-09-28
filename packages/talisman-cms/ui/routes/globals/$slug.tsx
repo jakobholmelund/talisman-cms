@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useForm } from '@tanstack/react-form';
 import { globals as configuredGlobals } from 'virtual:talisman-cms/config';
@@ -27,9 +27,14 @@ type GlobalRecord = {
   data: string | Record<string, any> | null;
   createdAt: string;
   updatedAt: string;
+  /** Grows with every save; it goes back as `If-Match` so a save over someone else's is refused. */
+  version?: number | null;
 };
 
 type FieldErrors = Record<string, string[]>;
+
+const STALE_SAVE_CODE = 'stale_record';
+const LATEST_LOADED_MESSAGE = 'The latest saved version is now in the form.';
 
 // A stable empty schema: a fresh [] per render would re-run the reset effect below on every keystroke.
 const EMPTY_FIELDS: any[] = [];
@@ -133,15 +138,25 @@ function GlobalEditorRoute() {
   const computedDefaults = mergeStoredValues(buildDefaultValues(schemaFields), parseGlobalData(storedGlobal.data, schemaFields));
   const [rawJsonValue, setRawJsonValue] = useState(() => JSON.stringify(parseGlobalData(global.data, schemaFields), null, 2));
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoadingLatest, setIsLoadingLatest] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  // A save was refused because the stored version moved on; the edits are still in the form.
+  const [staleSave, setStaleSave] = useState(false);
   const collapseStorageKey = `talisman-cms:collapsed:global:${global.slug}`;
-  // A failed save moves focus to its message; a successful one leaves it on the Save button.
+  const conflictTitleId = useId();
+  // A failed save moves focus to its message, a refused one to the conflict panel; a successful one
+  // leaves it on the Save button.
   const saveErrorRef = useRef<HTMLParagraphElement | null>(null);
+  const conflictPanelRef = useRef<HTMLDivElement | null>(null);
+  const saveButtonRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     if (saveError) saveErrorRef.current?.focus();
   }, [saveError]);
+  useEffect(() => {
+    if (staleSave) conflictPanelRef.current?.focus();
+  }, [staleSave]);
 
   const form = useForm({
     defaultValues: computedDefaults,
@@ -174,7 +189,15 @@ function GlobalEditorRoute() {
     setSaveError('');
     setSaveMessage('');
     setFieldErrors({});
+    setStaleSave(false);
   }, [form, global.slug, global.updatedAt, schemaFields]);
+
+  /** Puts a stored record into the form and remembers it as the version the next save names. */
+  function showStoredGlobal(record: GlobalRecord) {
+    setStoredGlobal(record);
+    form.reset(mergeStoredValues(buildDefaultValues(schemaFields), parseGlobalData(record.data, schemaFields)));
+    setRawJsonValue(JSON.stringify(parseGlobalData(record.data, schemaFields), null, 2));
+  }
 
   function showFieldErrors(nextFieldErrors: FieldErrors) {
     setFieldErrors(nextFieldErrors);
@@ -183,12 +206,35 @@ function GlobalEditorRoute() {
     }
   }
 
+  // Replaces the form with what is stored now. The edits in the form are lost, so the user confirms first.
+  async function loadLatestVersion() {
+    if (isSaving || isLoadingLatest) return;
+    if (!window.confirm('Loading the latest version replaces your unsaved changes. Continue?')) return;
+    setIsLoadingLatest(true);
+    setSaveError('');
+    setSaveMessage('');
+    try {
+      const res = await fetch(`${adminBasePath}/api/globals/${global.slug}`);
+      if (!res.ok) throw new Error(res.status === 401 ? 'Your session has expired. Sign in again in another tab, then try again.' : `Failed to load the latest version (HTTP ${res.status}).`);
+      showStoredGlobal(await res.json() as GlobalRecord);
+      setFieldErrors({});
+      setStaleSave(false);
+      setSaveMessage(LATEST_LOADED_MESSAGE);
+      saveButtonRef.current?.focus();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Failed to load the latest version.');
+    } finally {
+      setIsLoadingLatest(false);
+    }
+  }
+
   async function handleSave() {
-    if (isSaving) return;
+    if (isSaving || isLoadingLatest) return;
     setIsSaving(true);
     setSaveError('');
     setSaveMessage('');
     setFieldErrors({});
+    setStaleSave(false);
     for (const field of schemaFields) {
       if (form.getFieldMeta(field.name)?.errorMap?.onServer) setServerFieldError(form, field.name, undefined);
     }
@@ -202,30 +248,36 @@ function GlobalEditorRoute() {
         throw new Error('The JSON document must be an object, for example {"title": "Hello"}.');
       }
 
+      // The version the record was loaded with travels as If-Match; the server refuses the save
+      // with HTTP 409 when someone else saved in between. Without a version the save wins, as before.
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (typeof storedGlobal.version === 'number') headers['If-Match'] = `"${storedGlobal.version}"`;
       const res = await fetch(`${adminBasePath}/api/globals/${global.slug}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers,
         body: JSON.stringify(payload),
       });
 
       const result = await res.json().catch(() => ({})) as Partial<GlobalRecord> & {
         error?: string;
         message?: string;
+        code?: string;
         fieldErrors?: FieldErrors;
         details?: { fieldErrors?: FieldErrors };
       };
+      if (res.status === 409 && result.code === STALE_SAVE_CODE) {
+        // The edits stay in the form; the panel offers the latest version.
+        setStaleSave(true);
+        return;
+      }
       if (!res.ok) {
         const nextFieldErrors = result.fieldErrors || result.details?.fieldErrors;
         if (nextFieldErrors && typeof nextFieldErrors === 'object') showFieldErrors(nextFieldErrors);
         throw new Error(result.error || result.message || 'Failed to save global');
       }
 
-      const nextValues = mergeStoredValues(buildDefaultValues(schemaFields), parseGlobalData(result.data, schemaFields));
-      setStoredGlobal((current) => ({ ...current, ...result }));
-      form.reset(nextValues);
-      setRawJsonValue(JSON.stringify(parseGlobalData(result.data, schemaFields), null, 2));
+      // The answer carries the new version, which the next save names.
+      showStoredGlobal({ ...storedGlobal, ...result } as GlobalRecord);
       setSaveMessage('Saved');
     } catch (error) {
       if (error instanceof SyntaxError) {
@@ -263,7 +315,7 @@ function GlobalEditorRoute() {
         <div className="flex items-center gap-3">
           {saveMessage ? <p role="status" className="text-sm text-emerald-400">{saveMessage}</p> : null}
           <p role="status" className="sr-only">{isSaving ? 'Saving...' : ''}</p>
-          <Button className="gap-2" onClick={handleSave} aria-disabled={isSaving || undefined} aria-busy={isSaving || undefined}>
+          <Button ref={saveButtonRef} className="gap-2" onClick={handleSave} aria-disabled={isSaving || isLoadingLatest || undefined} aria-busy={isSaving || undefined}>
             <Save size={16} />
             {isSaving ? 'Saving...' : 'Save'}
           </Button>
@@ -315,6 +367,24 @@ function GlobalEditorRoute() {
           )}
 
           {saveError ? <p role="alert" ref={saveErrorRef} tabIndex={-1} className="text-sm text-red-400 focus:outline-none">{saveError}</p> : null}
+          {/* Announces a refused save; the panel itself is a region that takes focus, as it holds controls. */}
+          <p role="alert" className="sr-only">{staleSave ? 'This global changed after you opened it.' : ''}</p>
+          {staleSave ? (
+            <div ref={conflictPanelRef} role="region" aria-labelledby={conflictTitleId} tabIndex={-1} className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60">
+              <div id={conflictTitleId} className="font-medium text-amber-50">This global changed after you opened it</div>
+              <p className="text-amber-100/80">
+                The save was refused because another editor saved this global. Your changes are still in the form. Load the latest version to see what changed; it replaces your changes, so copy anything you want to keep first.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" size="sm" variant="outline" onClick={() => void loadLatestVersion()} aria-disabled={isSaving || isLoadingLatest || undefined} aria-busy={isLoadingLatest || undefined}>
+                  Load latest version
+                </Button>
+                <Button type="button" size="sm" variant="ghost" onClick={() => { setStaleSave(false); saveButtonRef.current?.focus(); }}>
+                  Dismiss
+                </Button>
+              </div>
+            </div>
+          ) : null}
           {Object.keys(fieldErrors).length > 0 ? (
             <ul role="alert" className="space-y-1 text-sm text-red-400">
               {Object.entries(fieldErrors).map(([name, messages]) => (

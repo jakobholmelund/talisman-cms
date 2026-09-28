@@ -64,4 +64,6 @@ export const globals = sqliteTable('galaxy_globals', {
   data: text('data', { mode: 'json' }).notNull().default('{}'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  /** Grows by one on every save; a save that names the version it loaded is refused when it moved on. */
+  version: integer('version').notNull().default(1),
 });

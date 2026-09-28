@@ -54,6 +54,27 @@ async function readJsonObject(request: Request) {
   return body;
 }
 
+/**
+ * The version a global save names in `If-Match`: a bare or quoted whole number, as the ETag of the
+ * GET gives it. No header, or `*`, saves unconditionally; anything else is a client mistake.
+ */
+function readIfMatchVersion(request: Request): number | null {
+  const header = request.headers.get('if-match');
+  if (header === null) return null;
+  const value = header.trim();
+  if (value === '*') return null;
+  const match = value.match(/^(\d{1,15})$|^"(\d{1,15})"$/);
+  if (!match) throw new HttpError(400, 'If-Match must be the version the global was loaded with, as a whole number, bare or in quotes.');
+  return Number(match[1] ?? match[2]);
+}
+
+/** A global with its version in the body and as the ETag a conditional save sends back. */
+function globalResponse(global: { version?: unknown }, status = 200) {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (typeof global.version === 'number') headers.ETag = `"${global.version}"`;
+  return new Response(JSON.stringify(global), { status, headers });
+}
+
 /** Path segments arrive percent-encoded; lookups use the decoded id. */
 function decodePathSegment(segment: string) {
   let value: string;
@@ -211,17 +232,19 @@ export const ALL: APIRoute = async ({ request, locals }) => {
         }
         const global = await service.globals.get(slug);
         if (!global) return new Response(JSON.stringify({ error: 'Global not found' }), { status: 404 });
-        return new Response(JSON.stringify(global), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        return globalResponse(global);
       }
 
       if (request.method === 'POST') {
         if (!slug) {
           const body = await readJsonObject(request);
           const created = await service.globals.create({ slug: body.slug, name: body.name, description: body.description, data: body.data });
-          return new Response(JSON.stringify(created), { status: 201, headers: { 'Content-Type': 'application/json' } });
+          return globalResponse(created, 201);
         }
-        const updated = await service.globals.save(slug, await readJsonBody(request));
-        return new Response(JSON.stringify(updated), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        // The header is checked before the body is read; a stale version answers 409 with the current one.
+        const expectedVersion = readIfMatchVersion(request);
+        const updated = await service.globals.save(slug, await readJsonBody(request), { expectedVersion });
+        return globalResponse(updated);
       }
     } catch (e: any) {
       return toErrorResponse(e, 'Error in /api/globals');

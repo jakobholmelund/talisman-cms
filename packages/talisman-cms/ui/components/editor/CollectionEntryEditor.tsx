@@ -841,23 +841,26 @@ export function CollectionEntryEditor({
       // Publish and archive act on the stored draft, so only save first when there is something to save.
       if (action === 'save' || isNew || hasUnsavedChangesRef.current) {
         const savedEntry = await persistDraft();
-        if (isNew) {
-          createdEntryId = savedEntry.id;
-          if (action === 'save') {
+        if (isNew) createdEntryId = savedEntry.id;
+        if (action === 'save') {
+          if (isNew) {
             stashEditorNotice(slug, savedEntry.id, savedNotice, 'status');
             openCreatedEntry(savedEntry.id);
-            return;
+          } else {
+            await refreshEntryState(savedEntry.id);
+            setNotice(savedNotice);
           }
-          targetEntry = await fetchEntry(savedEntry.id);
-        } else {
-          targetEntry = await refreshEntryState(savedEntry.id);
+          return;
         }
+        // The save's answer is the entry with the revision it made. An existing entry's form takes the
+        // saved state from it without a re-read (the history reloads after the transition); a new
+        // entry's editor remounts at its URL afterwards. The publish or archive then chains from that
+        // revision: a re-read could return a newer revision someone else saved in between, and the
+        // transition would land on top of it.
+        if (!isNew) syncEntryState(savedEntry);
+        targetEntry = savedEntry;
       }
 
-      if (action === 'save') {
-        setNotice(savedNotice);
-        return;
-      }
       const doneNotice = `The ${recordLabel} is ${action === 'publish' ? 'published' : 'archived'}.`;
 
       const nextEntry = await requestEditorApi(`${basePath}/api/collections/${slug}/entries/${targetEntry.id}/${action}`, {
@@ -887,8 +890,8 @@ export function CollectionEntryEditor({
         return;
       }
 
-      // The form is left alone: it already holds the entry before the transition (a draft save reloads
-      // it first), and anything typed during the server's wait or from now on must stay in it.
+      // The form is left alone: it already holds the entry before the transition (a draft save puts
+      // its answer in the form first), and anything typed during the server's wait or from now on must stay in it.
       setPendingTransition({ ...pending, phase: 'checking' });
       const latest = await fetchEntry(pending.entryId).catch(() => null);
       if (latest && hasEntryMovedOn(latest, pending)) await settlePendingTransition(pending, latest);
