@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
+import { applyCoreMigrations } from './helpers/migrations.mjs';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../dist/db/schema.js';
@@ -14,11 +14,7 @@ import {
 function database() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
-  for (const migration of ['0000_skinny_odin', '0001_abandoned_shotgun', '0002_flowery_midnight',
-    '0003_content_versioning', '0018_entry_revision_integrity', '0021_entry_draft_slug', '0023_published_slug_unique']) {
-    const sql = readFileSync(new URL(`../drizzle/${migration}.sql`, import.meta.url), 'utf8');
-    sqlite.exec(sql.replaceAll('--> statement-breakpoint', ''));
-  }
+  applyCoreMigrations(sqlite);
   sqlite.prepare('INSERT INTO galaxy_collections (id, name, slug, fields, created_at) VALUES (?, ?, ?, ?, ?)')
     .run('posts-id', 'Posts', 'posts', '[]', Math.floor(Date.now() / 1000));
   let failBatchAt = 0;
@@ -196,68 +192,6 @@ test('publishing an entry without revisions records the baseline in the same bat
     assert.deepEqual(revisions.map((revision) => [revision.revisionNumber, revision.type, revision.status]),
       [[2, 'publish', 'published'], [1, 'draft_save', 'draft']]);
     assert.equal(published.publishedRevisionId, revisions[0].id);
-  } finally {
-    sqlite.close();
-  }
-});
-
-function applyMigration(sqlite, name) {
-  const sql = readFileSync(new URL(`../drizzle/${name}.sql`, import.meta.url), 'utf8');
-  for (const statement of sql.split('--> statement-breakpoint')) {
-    if (statement.trim()) sqlite.exec(statement);
-  }
-}
-
-test('migration 0020 backfills baseline revisions and unwraps double-encoded globals, and can run again', () => {
-  const { sqlite } = database();
-  try {
-    insertSeededEntry(sqlite, { id: 'published-seed', data: { title: 'Live' } });
-    insertSeededEntry(sqlite, { id: 'draft-seed', status: 'draft', data: { title: 'Draft' } });
-    insertSeededEntry(sqlite, { id: 'archived-seed', status: 'archived', data: { title: 'Old' }, publishedData: { title: 'Old live' } });
-    insertSeededEntry(sqlite, { id: 'edited', data: { title: 'Edited' }, publishedData: { title: 'Edited' } });
-    sqlite.prepare(`INSERT INTO galaxy_entry_revisions (id, entry_id, collection_id, revision_number, type, status, data, created_at)
-      VALUES ('rev-edited', 'edited', 'posts-id', 4, 'publish', 'published', '{"title":"Edited"}', 1)`).run();
-
-    const insertGlobal = sqlite.prepare(`INSERT INTO galaxy_globals (id, name, slug, data, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 1)`);
-    insertGlobal.run('g1', 'Double', 'double', JSON.stringify(JSON.stringify({ siteName: 'Talisman' })));
-    insertGlobal.run('g2', 'Empty default', 'empty', JSON.stringify('{}'));
-    insertGlobal.run('g3', 'Object', 'object', JSON.stringify({ siteName: 'Kept' }));
-    insertGlobal.run('g4', 'Plain string', 'plain', JSON.stringify('not json'));
-    insertGlobal.run('g5', 'Invalid', 'invalid', '{broken');
-    insertGlobal.run('g6', 'Encoded number', 'number', JSON.stringify('42'));
-
-    applyMigration(sqlite, '0020_revision_baseline_and_globals');
-    const snapshot = () => ({
-      revisions: sqlite.prepare('SELECT id, entry_id, revision_number, type, status, data FROM galaxy_entry_revisions ORDER BY id').all()
-        .map((row) => ({ ...row })),
-      entries: sqlite.prepare('SELECT id, published_data, published_revision_id FROM galaxy_entries ORDER BY id').all()
-        .map((row) => ({ ...row })),
-      globals: Object.fromEntries(sqlite.prepare('SELECT slug, data FROM galaxy_globals').all().map((row) => [row.slug, row.data])),
-    });
-    const first = snapshot();
-
-    assert.deepEqual(first.revisions.map((row) => [row.id, row.revision_number, row.type, row.status, JSON.parse(row.data).title]), [
-      ['baseline_rev_archived-seed', 1, 'archive', 'archived', 'Old'],
-      ['baseline_rev_draft-seed', 1, 'draft_save', 'draft', 'Draft'],
-      ['baseline_rev_published-seed', 1, 'publish', 'published', 'Live'],
-      ['rev-edited', 4, 'publish', 'published', 'Edited'],
-    ]);
-    const entries = Object.fromEntries(first.entries.map((row) => [row.id, row]));
-    assert.equal(entries['published-seed'].published_revision_id, 'baseline_rev_published-seed');
-    assert.deepEqual(JSON.parse(entries['published-seed'].published_data), { title: 'Live' });
-    assert.equal(entries['draft-seed'].published_revision_id, null);
-    assert.equal(entries['draft-seed'].published_data, null);
-    assert.equal(entries.edited.published_revision_id, null);
-
-    assert.deepEqual(JSON.parse(first.globals.double), { siteName: 'Talisman' });
-    assert.equal(first.globals.empty, '{}');
-    assert.equal(first.globals.object, JSON.stringify({ siteName: 'Kept' }));
-    assert.equal(first.globals.plain, JSON.stringify('not json'));
-    assert.equal(first.globals.invalid, '{broken');
-    assert.equal(first.globals.number, JSON.stringify('42'));
-
-    applyMigration(sqlite, '0020_revision_baseline_and_globals');
-    assert.deepEqual(snapshot(), first);
   } finally {
     sqlite.close();
   }

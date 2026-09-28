@@ -2,7 +2,9 @@
   "name": "@talisman-cms/plugin-ecommerce",
   "version": "0.0.1",
   "license": "Apache-2.0",
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "Native E-Commerce plugin for Talisman CMS",
   "keywords": [
     "talisman-cms",
@@ -112,10 +114,13 @@
     "src/components",
     "src/admin",
     "drizzle",
-    "NOTICE"
+    "NOTICE",
+    "!drizzle/**/snapshot.json"
   ],
   "scripts": {
     "build": "tsup src/index.ts src/browser.ts src/accounts.ts src/referrals.ts src/promotions.ts src/gift-cards.ts src/fulfillment.ts src/emails.ts src/order-adjustments.ts src/variants.ts src/catalog.ts src/api.ts src/adapters/stripe.ts src/adapters/admin-test.ts src/schema.ts src/actions.ts src/runtime.ts src/scheduled.ts src/cookies.ts src/money.ts src/routes/ecommerce-account.ts src/routes/ecommerce-discount.ts src/routes/ecommerce-admin-promotions.ts src/routes/ecommerce-gift-cards.ts src/routes/ecommerce-admin-gift-cards.ts src/routes/ecommerce-cart.ts src/routes/ecommerce-checkout.ts src/routes/ecommerce-admin-test-checkout.ts src/routes/ecommerce-admin-reconcile.ts src/routes/ecommerce-admin-fulfillment.ts src/routes/ecommerce-admin-orders.ts src/routes/ecommerce-admin-variants.ts src/routes/ecommerce-order.ts src/routes/ecommerce-webhook.ts --format esm --dts --clean --external cloudflare:workers --external astro:actions --external astro/zod --external astro",
+    "db:generate": "drizzle-kit generate",
+    "db:generate:custom": "drizzle-kit generate --custom",
     "test": "pnpm build && node --experimental-sqlite --test test/*.test.mjs",
     "dev": "tsup src/index.ts src/browser.ts src/accounts.ts src/referrals.ts src/promotions.ts src/gift-cards.ts src/fulfillment.ts src/emails.ts src/order-adjustments.ts src/variants.ts src/catalog.ts src/api.ts src/adapters/stripe.ts src/adapters/admin-test.ts src/schema.ts src/actions.ts src/runtime.ts src/scheduled.ts src/cookies.ts src/money.ts src/routes/ecommerce-account.ts src/routes/ecommerce-discount.ts src/routes/ecommerce-admin-promotions.ts src/routes/ecommerce-gift-cards.ts src/routes/ecommerce-admin-gift-cards.ts src/routes/ecommerce-cart.ts src/routes/ecommerce-checkout.ts src/routes/ecommerce-admin-test-checkout.ts src/routes/ecommerce-admin-reconcile.ts src/routes/ecommerce-admin-fulfillment.ts src/routes/ecommerce-admin-orders.ts src/routes/ecommerce-admin-variants.ts src/routes/ecommerce-order.ts src/routes/ecommerce-webhook.ts --format esm --dts --watch --external cloudflare:workers --external astro:actions --external astro/zod --external astro",
     "prepack": "pnpm run build",
@@ -137,6 +142,7 @@
     "@tanstack/react-router": "^1.170.38",
     "@types/react": "^19.3.0",
     "astro": "^7.3.3",
+    "drizzle-kit": "rc",
     "drizzle-orm": "rc",
     "kysely": "0.29.6",
     "react": "^19.3.0",

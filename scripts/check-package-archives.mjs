@@ -53,13 +53,15 @@ try {
     for (const [name, version] of Object.entries({ ...manifest.dependencies, ...manifest.peerDependencies })) {
       assert.ok(!version.startsWith('workspace:'), `${manifest.name}: unresolved dependency ${name}`);
     }
-    // A package with a migrations journal ships every file it lists; the core and plugin-ecommerce do.
-    const journalPath = join(cwd, 'drizzle', 'meta', '_journal.json');
-    if (existsSync(journalPath)) {
-      const journal = JSON.parse(readFileSync(journalPath, 'utf8'));
-      assert.ok(journal.entries?.length, `${manifest.name}: migration journal is empty`);
-      for (const { tag } of journal.entries) {
-        assert.ok(entries.has(`package/drizzle/${tag}.sql`), `${manifest.name}: missing migration ${tag}`);
+    // A package with migrations ships every drizzle-kit migration folder's SQL and none of the
+    // snapshots drizzle-kit keeps beside them; the core and plugin-ecommerce do.
+    const migrationsDir = join(cwd, 'drizzle');
+    if (existsSync(migrationsDir)) {
+      const folders = readdirSync(migrationsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+      assert.ok(folders.length, `${manifest.name}: no migrations in drizzle/`);
+      for (const folder of folders) {
+        assert.ok(entries.has(`package/drizzle/${folder}/migration.sql`), `${manifest.name}: missing migration ${folder}`);
+        assert.ok(!entries.has(`package/drizzle/${folder}/snapshot.json`), `${manifest.name}: drizzle-kit snapshot ${folder} is packed`);
       }
     }
     console.log(`${manifest.name}@${manifest.version}: ${entries.size} archived files; exports and dependencies verified`);

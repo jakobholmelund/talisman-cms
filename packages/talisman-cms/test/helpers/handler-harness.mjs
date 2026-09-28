@@ -1,10 +1,10 @@
 // The harness the admin API handler tests share: Node type stripping and `module.registerHooks`
 // stand in for the Astro virtual modules and `cloudflare:workers`, an in-memory `node:sqlite`
 // database plays D1, and `call()` drives the handler as the stubbed user (`as()` switches users).
-import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { applyCoreMigrations } from './migrations.mjs';
 
 // The API handler ships as source and imports Astro virtual modules, so this file loads it with
 // Node's type stripping and stands in for the virtual modules and `cloudflare:workers`.
@@ -107,14 +107,7 @@ export const doc = (text) => ({ type: 'doc', content: [{ type: 'paragraph', cont
 export function database() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
-  for (const migration of ['0000_skinny_odin', '0001_abandoned_shotgun', '0002_flowery_midnight',
-    '0003_content_versioning', '0006_media_metadata', '0018_entry_revision_integrity', '0020_revision_baseline_and_globals',
-    '0021_entry_draft_slug', '0022_wrap_non_object_globals', '0023_published_slug_unique', '0031_global_versions']) {
-    const sql = readFileSync(new URL(`../../drizzle/${migration}.sql`, import.meta.url), 'utf8');
-    for (const statement of sql.split('--> statement-breakpoint')) {
-      if (statement.trim()) sqlite.exec(statement);
-    }
-  }
+  applyCoreMigrations(sqlite);
   sqlite.exec(`CREATE TABLE test_parts (id text PRIMARY KEY NOT NULL, name text NOT NULL, quantity integer NOT NULL,
     internal_note text, created_at integer NOT NULL, updated_at integer NOT NULL)`);
   const statements = [];

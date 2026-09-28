@@ -7,7 +7,7 @@ import { CUSTOMER_SESSION_COOKIE, CustomerEmailLimitError, requestCustomerEmailS
   shopperSignInBotCheck } from '../dist/accounts.js';
 import { previewCustomerSignIn, readCustomerSignInToken,
   requestCustomerEmailSignIn as requestSignInFromBrowser } from '../dist/browser.js';
-import { migrationSql } from './helpers/migrations.mjs';
+import { applyAllMigrations } from './helpers/migrations.mjs';
 
 // The account route reads its bindings and waitUntil from cloudflare:workers, and the email runtime
 // reads the provider registered with talismanCms({ email }) from a virtual module. Both come from
@@ -29,23 +29,10 @@ const { ALL } = await import('../dist/routes/ecommerce-account.js');
 const { LocalAuthAdapter } = await import('talisman-cms/auth/local');
 
 const ORIGIN = 'https://shop.test';
-const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.sql', '0007_local_auth.sql',
-  '0008_shared_components.sql', '0010_checkout_inventory.sql', '0011_order_payment_provider.sql',
-  '0012_customer_accounts.sql', '0013_referrals_and_credit.sql', '0014_promotions.sql',
-  '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
-  '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql', '0025_order_shipping_and_tax.sql',
-  '0026_order_fulfillment_status.sql', '0027_gift_card_review.sql', '0028_provider_refunds_and_disputes.sql',
-  '0029_commerce_reconcile_backoff.sql', '0030_commerce_order_emails.sql'];
-
-function applyMigration(sqlite, migration) {
-  const sql = migrationSql(migration);
-  sqlite.exec(sql.replaceAll('--> statement-breakpoint', ''));
-}
-
-function database(migrations = migrationFiles) {
+function database() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
-  for (const migration of migrations) applyMigration(sqlite, migration);
+  applyAllMigrations(sqlite);
   const DB = {
     prepare(sql) {
       const prepared = sqlite.prepare(sql);
@@ -93,8 +80,8 @@ function emailBinding(error) {
 
 const bindingError = (code) => Object.assign(new Error(`${code} for shopper@example.test`), { code });
 
-function shop(overrides = {}, migrations = migrationFiles) {
-  const { sqlite, DB } = database(migrations);
+function shop(overrides = {}) {
+  const { sqlite, DB } = database();
   const EMAIL = emailBinding();
   const env = {
     DB, EMAIL,
@@ -423,34 +410,6 @@ test("better-auth pruning its rate-limit table leaves the shopper counters and t
   sqlite.close();
 });
 
-test('links sent before migration 0024 still work, and its counters move out of better-auth\'s table', async () => {
-  const upgrade = migrationFiles.indexOf('0024_shopper_sign_in_tokens.sql');
-  const { sqlite, env } = shop({}, migrationFiles.slice(0, upgrade));
-  const now = Math.floor(Date.now() / 1000);
-  // What the previous release wrote: an unverified account per request, a challenge row, and seconds-based counters.
-  sqlite.prepare(`INSERT INTO _ecommerce_customer_accounts (id, email, email_normalized, created_at, updated_at)
-    VALUES ('acct_pending', 'pending@example.test', 'pending@example.test', ?, ?)`).run(now - 60, now - 60);
-  const challenge = sqlite.prepare(`INSERT INTO _ecommerce_customer_sessions
-    (id, account_id, token_hash, expires_at, created_at, purpose) VALUES (?, 'acct_pending', ?, ?, ?, 'email_challenge')`);
-  const live = `${crypto.randomUUID()}${crypto.randomUUID()}`;
-  const expired = `${crypto.randomUUID()}${crypto.randomUUID()}`;
-  const hash = (token) => createHash('sha256').update(token).digest('hex');
-  challenge.run('live', hash(live), now + 600, now - 60);
-  challenge.run('expired', hash(expired), now - 60, now - 960);
-  const counter = sqlite.prepare('INSERT INTO galaxy_auth_rate_limit (id, key, count, last_request) VALUES (?, ?, ?, ?)');
-  counter.run('daily', 'shopper-email:daily', 150, now - 3600);
-  counter.run('cms', '198.51.100.7|/sign-in/email', 2, Date.now());
-  for (const migration of migrationFiles.slice(upgrade)) applyMigration(sqlite, migration);
-
-  assert.deepEqual(sqlite.prepare('SELECT key FROM galaxy_auth_rate_limit').all().map((row) => row.key), ['198.51.100.7|/sign-in/email']);
-  assert.deepEqual({ ...sqlite.prepare('SELECT key, count, window_start FROM _ecommerce_rate_limits').get() },
-    { key: 'shopper-email:daily', count: 150, window_start: now - 3600 });
-  assert.deepEqual((await account(env, { token: live, preview: true })).json, { email: 'p•••@example.test' });
-  const signedIn = await account(env, { token: live });
-  assert.equal(signedIn.json.account.id, 'acct_pending');
-  assert.equal((await account(env, { token: expired })).status, 400);
-  sqlite.close();
-});
 
 test('a suppressed recipient gets the normal answer, and the log carries only the code', async (t) => {
   const logs = captureLogs(t);

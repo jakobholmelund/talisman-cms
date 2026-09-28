@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { migrationFileNames, migrationSql } from './helpers/migrations.mjs';
+import { applyAllMigrations } from './helpers/migrations.mjs';
 
 // The admin variants route and the core's API handler read their bindings from cloudflare:workers and
 // ask the CMS auth adapter for the user. The handler ships as source and imports Astro virtual modules,
@@ -55,13 +55,12 @@ const ORIGIN = 'https://shop.test';
 const STALE_MESSAGE = 'This record changed since it was opened. Reload it before saving.';
 const admin = { id: 'admin-1', email: 'admin@example.test', role: 'admin' };
 const editor = { id: 'editor-1', email: 'editor@example.test', role: 'editor' };
-const migrations = migrationFileNames();
 
 /** Every migration, as a site applies them, behind a D1 stand-in that counts statements and parameters. */
 function database() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
-  for (const name of migrations) sqlite.exec(migrationSql(name));
+  applyAllMigrations(sqlite);
   const usage = { statements: 0, maxParams: 0 };
   const DB = {
     prepare(sql) {

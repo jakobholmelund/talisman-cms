@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
+import { applyCoreMigrations } from './helpers/migrations.mjs';
 
 // The auth routes and the plugin route guard ship as source and import Astro virtual modules, so this
 // file loads them with Node's type stripping and stands in for the virtual modules and `cloudflare:workers`.
@@ -128,7 +128,7 @@ const SETUP_TOKEN = 'setup-token-0123456789abcdef0123456789';
 
 function setupDatabase() {
   const sqlite = new DatabaseSync(':memory:');
-  sqlite.exec(readFileSync(new URL('../drizzle/0007_local_auth.sql', import.meta.url), 'utf8'));
+  applyCoreMigrations(sqlite);
   runtime.env = {
     DB: d1(sqlite),
     TALISMAN_AUTH_SECRET: 'talisman-test-secret-0123456789abcdef',

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
+import { applyCoreMigrations } from './helpers/migrations.mjs';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../dist/db/schema.js';
@@ -21,10 +21,7 @@ const { TalismanPublishWorkflow } = await import('../dist/workflows.js');
 function setup() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
-  for (const migration of ['0000_skinny_odin', '0001_abandoned_shotgun', '0002_flowery_midnight',
-    '0003_content_versioning', '0018_entry_revision_integrity', '0021_entry_draft_slug', '0023_published_slug_unique']) {
-    sqlite.exec(readFileSync(new URL(`../drizzle/${migration}.sql`, import.meta.url), 'utf8').replaceAll('--> statement-breakpoint', ''));
-  }
+  applyCoreMigrations(sqlite);
   sqlite.prepare('INSERT INTO galaxy_collections (id, name, slug, fields, created_at) VALUES (?, ?, ?, ?, ?)')
     .run('posts-id', 'Posts', 'posts', '[]', Math.floor(Date.now() / 1000));
   const DB = {

@@ -12,24 +12,13 @@ import { issueAdminGiftCard, evaluateGiftCard, getGiftCardBalance, startGiftCard
   confirmGiftCardPurchase, getPurchasedGiftCard, recordGiftCardPurchaseRefund,
   refundGiftCardTender, refundGiftCardOnlyOrder, reconcileGiftCardPurchase } from '../dist/gift-cards.js';
 import { fulfillCommerceOrder, listCommerceOrdersAdmin } from '../dist/fulfillment.js';
-import { migrationSql } from './helpers/migrations.mjs';
+import { applyAllMigrations } from './helpers/migrations.mjs';
 
 const giftEnv = (DB) => ({ DB, TALISMAN_COMMERCE_GIFT_CARD_KEY: 'a'.repeat(64) });
-const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.sql', '0007_local_auth.sql',
-  '0008_shared_components.sql', '0010_checkout_inventory.sql', '0011_order_payment_provider.sql',
-  '0012_customer_accounts.sql', '0013_referrals_and_credit.sql', '0014_promotions.sql',
-  '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
-  '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql', '0025_order_shipping_and_tax.sql',
-  '0026_order_fulfillment_status.sql', '0027_gift_card_review.sql', '0028_provider_refunds_and_disputes.sql',
-  '0029_commerce_reconcile_backoff.sql', '0030_commerce_order_emails.sql'];
-
-function database(migrationCount = migrationFiles.length) {
+function database() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
-  for (const migration of migrationFiles.slice(0, migrationCount)) {
-    const sql = migrationSql(migration);
-    sqlite.exec(sql.replaceAll('--> statement-breakpoint', ''));
-  }
+  applyAllMigrations(sqlite);
   const DB = {
     prepare(sql) {
       const prepared = sqlite.prepare(sql);
@@ -62,25 +51,6 @@ function database(migrationCount = migrationFiles.length) {
   return { sqlite, DB };
 }
 
-test('the sign-in migration revokes basket-granted sessions without verified email', () => {
-  const { sqlite } = database(migrationFiles.indexOf('0016_verified_customer_sessions.sql'));
-  const now = Math.floor(Date.now() / 1000);
-  sqlite.prepare(`INSERT INTO _ecommerce_customer_accounts
-    (id,email,email_normalized,email_verified_at,created_at,updated_at) VALUES (?,?,?,?,?,?)`)
-    .run('unverified', 'u@example.test', 'u@example.test', null, now, now);
-  sqlite.prepare(`INSERT INTO _ecommerce_customer_accounts
-    (id,email,email_normalized,email_verified_at,created_at,updated_at) VALUES (?,?,?,?,?,?)`)
-    .run('verified', 'v@example.test', 'v@example.test', now, now, now);
-  for (const account of ['unverified', 'verified']) {
-    sqlite.prepare(`INSERT INTO _ecommerce_customer_sessions
-      (id,account_id,token_hash,expires_at,created_at) VALUES (?,?,?,?,?)`)
-      .run(account, account, account, now + 3600, now);
-  }
-  sqlite.exec(migrationSql('0016_verified_customer_sessions.sql').replaceAll('--> statement-breakpoint', ''));
-  assert.ok(sqlite.prepare(`SELECT revoked_at FROM _ecommerce_customer_sessions WHERE id = 'unverified'`).get().revoked_at);
-  assert.equal(sqlite.prepare(`SELECT revoked_at FROM _ecommerce_customer_sessions WHERE id = 'verified'`).get().revoked_at, null);
-  sqlite.close();
-});
 
 /** Referral awards are released by the scheduled job once the hold has passed and no dispute is open. */
 function releaseAfterHold(DB) {

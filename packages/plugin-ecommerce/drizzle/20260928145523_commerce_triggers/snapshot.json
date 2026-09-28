@@ -1,0 +1,6448 @@
+{
+  "id": "63c852c7-a08b-407f-9619-196c27cafd8a",
+  "prevIds": [
+    "d19776fa-a00a-4214-9a1a-994f6bda0f36"
+  ],
+  "version": "7",
+  "dialect": "sqlite",
+  "ddl": [
+    {
+      "name": "_ecommerce_carts",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_categories",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_component_reservations",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_components",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_credit_ledger",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_customer_accounts",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_customer_sessions",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_customers",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_discount_codes",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_discount_redemptions",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_disputes",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_email_deliveries",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_fulfillments",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_gift_card_claims",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_gift_card_ledger",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_gift_card_order_refunds",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_gift_card_purchases",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_gift_card_redemptions",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_gift_card_refunds",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_gift_card_reviews",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_gift_cards",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_inventory_reservations",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_orders",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_payments",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_product_categories",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_product_tags",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_product_variant_values",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_product_variants",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_products",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_provider_refunds",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_rate_limits",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_reconcile_decisions",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_referral_codes",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_referral_settings",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_referrals",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_restocks",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_sign_in_tokens",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_stocks",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_tags",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_tax_reversals",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_variant_components",
+      "entityType": "tables"
+    },
+    {
+      "name": "_ecommerce_variants",
+      "entityType": "tables"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_carts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "session_token",
+      "entityType": "columns",
+      "table": "_ecommerce_carts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "user_id",
+      "entityType": "columns",
+      "table": "_ecommerce_carts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "checkout_session_id",
+      "entityType": "columns",
+      "table": "_ecommerce_carts"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "version",
+      "entityType": "columns",
+      "table": "_ecommerce_carts"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'[]'",
+      "generated": null,
+      "name": "items",
+      "entityType": "columns",
+      "table": "_ecommerce_carts"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "false",
+      "generated": null,
+      "name": "closed",
+      "entityType": "columns",
+      "table": "_ecommerce_carts"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "closed_at",
+      "entityType": "columns",
+      "table": "_ecommerce_carts"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_carts"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_carts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_categories"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "_ecommerce_categories"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "slug",
+      "entityType": "columns",
+      "table": "_ecommerce_categories"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "description",
+      "entityType": "columns",
+      "table": "_ecommerce_categories"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "image",
+      "entityType": "columns",
+      "table": "_ecommerce_categories"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "parent_id",
+      "entityType": "columns",
+      "table": "_ecommerce_categories"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_categories"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_categories"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_component_reservations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "table": "_ecommerce_component_reservations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "component_id",
+      "entityType": "columns",
+      "table": "_ecommerce_component_reservations"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "quantity",
+      "entityType": "columns",
+      "table": "_ecommerce_component_reservations"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "released_at",
+      "entityType": "columns",
+      "table": "_ecommerce_component_reservations"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_components"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "sku",
+      "entityType": "columns",
+      "table": "_ecommerce_components"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "_ecommerce_components"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "quantity",
+      "entityType": "columns",
+      "table": "_ecommerce_components"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_components"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_components"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_credit_ledger"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "account_id",
+      "entityType": "columns",
+      "table": "_ecommerce_credit_ledger"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "table": "_ecommerce_credit_ledger"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "kind",
+      "entityType": "columns",
+      "table": "_ecommerce_credit_ledger"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "amount_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_credit_ledger"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_credit_ledger"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_customer_accounts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "cms_user_id",
+      "entityType": "columns",
+      "table": "_ecommerce_customer_accounts"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "email",
+      "entityType": "columns",
+      "table": "_ecommerce_customer_accounts"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "email_normalized",
+      "entityType": "columns",
+      "table": "_ecommerce_customer_accounts"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "email_verified_at",
+      "entityType": "columns",
+      "table": "_ecommerce_customer_accounts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "_ecommerce_customer_accounts"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "credit_balance",
+      "entityType": "columns",
+      "table": "_ecommerce_customer_accounts"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_customer_accounts"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_customer_accounts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_customer_sessions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "account_id",
+      "entityType": "columns",
+      "table": "_ecommerce_customer_sessions"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "table": "_ecommerce_customer_sessions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "token_hash",
+      "entityType": "columns",
+      "table": "_ecommerce_customer_sessions"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "expires_at",
+      "entityType": "columns",
+      "table": "_ecommerce_customer_sessions"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_customer_sessions"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "revoked_at",
+      "entityType": "columns",
+      "table": "_ecommerce_customer_sessions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'session'",
+      "generated": null,
+      "name": "purpose",
+      "entityType": "columns",
+      "table": "_ecommerce_customer_sessions"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_customers"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "_ecommerce_customers"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "email",
+      "entityType": "columns",
+      "table": "_ecommerce_customers"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "stripe_customer_id",
+      "entityType": "columns",
+      "table": "_ecommerce_customers"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "user_id",
+      "entityType": "columns",
+      "table": "_ecommerce_customers"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_customers"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_customers"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "code",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "description",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "type",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "value",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "remaining_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "max_discount_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "min_order_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'[]'",
+      "generated": null,
+      "name": "eligible_product_ids",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "max_uses",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "max_uses_per_customer",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "false",
+      "generated": null,
+      "name": "first_order_only",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "starts_at",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "expires_at",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "true",
+      "generated": null,
+      "name": "active",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_redemptions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "code",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_redemptions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_redemptions"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "account_id",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_redemptions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "email_normalized",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_redemptions"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "amount_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_redemptions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'reserved'",
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_redemptions"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_redemptions"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_discount_redemptions"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "provider",
+      "entityType": "columns",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "gift_card_purchase_id",
+      "entityType": "columns",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "amount_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "currency",
+      "entityType": "columns",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reason",
+      "entityType": "columns",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "status_before",
+      "entityType": "columns",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "closed_at",
+      "entityType": "columns",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_email_deliveries"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "kind",
+      "entityType": "columns",
+      "table": "_ecommerce_email_deliveries"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "subject_id",
+      "entityType": "columns",
+      "table": "_ecommerce_email_deliveries"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'pending'",
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "_ecommerce_email_deliveries"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "attempts",
+      "entityType": "columns",
+      "table": "_ecommerce_email_deliveries"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "last_error",
+      "entityType": "columns",
+      "table": "_ecommerce_email_deliveries"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "next_attempt_at",
+      "entityType": "columns",
+      "table": "_ecommerce_email_deliveries"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "claimed_at",
+      "entityType": "columns",
+      "table": "_ecommerce_email_deliveries"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "sent_at",
+      "entityType": "columns",
+      "table": "_ecommerce_email_deliveries"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_email_deliveries"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_fulfillments"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "table": "_ecommerce_fulfillments"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "admin_actor",
+      "entityType": "columns",
+      "table": "_ecommerce_fulfillments"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "carrier",
+      "entityType": "columns",
+      "table": "_ecommerce_fulfillments"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "tracking_number",
+      "entityType": "columns",
+      "table": "_ecommerce_fulfillments"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "note",
+      "entityType": "columns",
+      "table": "_ecommerce_fulfillments"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_fulfillments"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'shipment'",
+      "generated": null,
+      "name": "kind",
+      "entityType": "columns",
+      "table": "_ecommerce_fulfillments"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "corrects_id",
+      "entityType": "columns",
+      "table": "_ecommerce_fulfillments"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "true",
+      "generated": null,
+      "name": "completes_order",
+      "entityType": "columns",
+      "table": "_ecommerce_fulfillments"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_claims"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "token_hash",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_claims"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "purchase_id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_claims"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "card_id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_claims"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "expires_at",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_claims"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "used_at",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_claims"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "revoked_at",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_claims"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_claims"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_by",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_claims"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reason",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_claims"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_ledger"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "card_id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_ledger"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_ledger"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "purchase_id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_ledger"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "kind",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_ledger"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "amount_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_ledger"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_ledger"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_order_refunds"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "admin_actor",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_order_refunds"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reason",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_order_refunds"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_order_refunds"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "buyer_email",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "amount_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'usd'",
+      "generated": null,
+      "name": "currency",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'pending'",
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "provider_session_id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "payment_intent_id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "provider_refunded_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "refund_adjusted_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "access_token_hash",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "reconcile_attempts",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reconcile_last_at",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reconcile_last_error",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reconcile_review_at",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_redemptions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "card_id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_redemptions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_redemptions"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "amount_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_redemptions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'reserved'",
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_redemptions"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_redemptions"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_redemptions"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_refunds"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "card_id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_refunds"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_refunds"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "amount_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_refunds"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "admin_actor",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_refunds"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reason",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_refunds"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_refunds"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_reviews"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "purchase_id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_reviews"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "card_id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_reviews"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "outcome",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_reviews"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "refunded_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_reviews"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "adjustment_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_reviews"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "admin_actor",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_reviews"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reason",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_reviews"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_card_reviews"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "code_hash",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "code_suffix",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "encrypted_code",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "source",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "purchase_id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "replaces_purchase_id",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "false",
+      "generated": null,
+      "name": "held_for_review",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "admin_actor",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "admin_reason",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "initial_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "balance_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'usd'",
+      "generated": null,
+      "name": "currency",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'active'",
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_inventory_reservations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "table": "_ecommerce_inventory_reservations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "target_type",
+      "entityType": "columns",
+      "table": "_ecommerce_inventory_reservations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "target_id",
+      "entityType": "columns",
+      "table": "_ecommerce_inventory_reservations"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "quantity",
+      "entityType": "columns",
+      "table": "_ecommerce_inventory_reservations"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "released_at",
+      "entityType": "columns",
+      "table": "_ecommerce_inventory_reservations"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "cart_id",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "user_id",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "checkout_session_id",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "payment_intent_id",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "provider_refunded_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "payment_provider",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "referral_code",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "referral_reward_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "discount_code",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "discount_amount",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "gift_card_id",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "gift_card_applied",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "gift_card_refunded_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "credit_applied",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "subtotal_amount",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "shipping_amount",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "shipping_rate_id",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "shipping_label",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "tax_amount",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "tax_behavior",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "tax_calculation_id",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "tax_transaction_id",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'draft'",
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'unfulfilled'",
+      "generated": null,
+      "name": "fulfillment_status",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'[]'",
+      "generated": null,
+      "name": "items",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "total_amount",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'usd'",
+      "generated": null,
+      "name": "currency",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "customer_email",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "shipping_address",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "billing_address",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "reconcile_attempts",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reconcile_last_at",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reconcile_last_error",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reconcile_review_at",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "tax_sync_attempts",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "tax_sync_last_at",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "tax_sync_last_error",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_payments"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "table": "_ecommerce_payments"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "provider",
+      "entityType": "columns",
+      "table": "_ecommerce_payments"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "provider_id",
+      "entityType": "columns",
+      "table": "_ecommerce_payments"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "_ecommerce_payments"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "amount",
+      "entityType": "columns",
+      "table": "_ecommerce_payments"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_payments"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "product_id",
+      "entityType": "columns",
+      "table": "_ecommerce_product_categories"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "category_id",
+      "entityType": "columns",
+      "table": "_ecommerce_product_categories"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "product_id",
+      "entityType": "columns",
+      "table": "_ecommerce_product_tags"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "tag_id",
+      "entityType": "columns",
+      "table": "_ecommerce_product_tags"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_product_variant_values"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "product_variant_id",
+      "entityType": "columns",
+      "table": "_ecommerce_product_variant_values"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "value",
+      "entityType": "columns",
+      "table": "_ecommerce_product_variant_values"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "sku",
+      "entityType": "columns",
+      "table": "_ecommerce_product_variant_values"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "image",
+      "entityType": "columns",
+      "table": "_ecommerce_product_variant_values"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "price_override",
+      "entityType": "columns",
+      "table": "_ecommerce_product_variant_values"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_product_variant_values"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_product_variant_values"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_product_variants"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "product_id",
+      "entityType": "columns",
+      "table": "_ecommerce_product_variants"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "variant_id",
+      "entityType": "columns",
+      "table": "_ecommerce_product_variants"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "_ecommerce_product_variants"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "sku",
+      "entityType": "columns",
+      "table": "_ecommerce_product_variants"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "price_override",
+      "entityType": "columns",
+      "table": "_ecommerce_product_variants"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "inventory_quantity",
+      "entityType": "columns",
+      "table": "_ecommerce_product_variants"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_product_variants"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_product_variants"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_products"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "_ecommerce_products"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "slug",
+      "entityType": "columns",
+      "table": "_ecommerce_products"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "sku",
+      "entityType": "columns",
+      "table": "_ecommerce_products"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "description",
+      "entityType": "columns",
+      "table": "_ecommerce_products"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'[]'",
+      "generated": null,
+      "name": "images",
+      "entityType": "columns",
+      "table": "_ecommerce_products"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'[]'",
+      "generated": null,
+      "name": "category_ids",
+      "entityType": "columns",
+      "table": "_ecommerce_products"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'[]'",
+      "generated": null,
+      "name": "tag_ids",
+      "entityType": "columns",
+      "table": "_ecommerce_products"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "base_price",
+      "entityType": "columns",
+      "table": "_ecommerce_products"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "true",
+      "generated": null,
+      "name": "is_physical",
+      "entityType": "columns",
+      "table": "_ecommerce_products"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "inventory_quantity",
+      "entityType": "columns",
+      "table": "_ecommerce_products"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'standard'",
+      "generated": null,
+      "name": "type",
+      "entityType": "columns",
+      "table": "_ecommerce_products"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'draft'",
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "_ecommerce_products"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_products"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_products"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_provider_refunds"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "table": "_ecommerce_provider_refunds"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "provider",
+      "entityType": "columns",
+      "table": "_ecommerce_provider_refunds"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "provider_refund_id",
+      "entityType": "columns",
+      "table": "_ecommerce_provider_refunds"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "amount_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_provider_refunds"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_provider_refunds"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "key",
+      "entityType": "columns",
+      "table": "_ecommerce_rate_limits"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "count",
+      "entityType": "columns",
+      "table": "_ecommerce_rate_limits"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "window_start",
+      "entityType": "columns",
+      "table": "_ecommerce_rate_limits"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "purchase_id",
+      "entityType": "columns",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "action",
+      "entityType": "columns",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "failure",
+      "entityType": "columns",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "payment_returned",
+      "entityType": "columns",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "admin_actor",
+      "entityType": "columns",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reason",
+      "entityType": "columns",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "code",
+      "entityType": "columns",
+      "table": "_ecommerce_referral_codes"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "account_id",
+      "entityType": "columns",
+      "table": "_ecommerce_referral_codes"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "true",
+      "generated": null,
+      "name": "active",
+      "entityType": "columns",
+      "table": "_ecommerce_referral_codes"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_referral_codes"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_referral_settings"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "true",
+      "generated": null,
+      "name": "enabled",
+      "entityType": "columns",
+      "table": "_ecommerce_referral_settings"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "1000",
+      "generated": null,
+      "name": "reward_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_referral_settings"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "5000",
+      "generated": null,
+      "name": "min_order_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_referral_settings"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "30",
+      "generated": null,
+      "name": "attribution_days",
+      "entityType": "columns",
+      "table": "_ecommerce_referral_settings"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_referral_settings"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "code",
+      "entityType": "columns",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "referrer_account_id",
+      "entityType": "columns",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "referred_account_id",
+      "entityType": "columns",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reward_cents",
+      "entityType": "columns",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'usd'",
+      "generated": null,
+      "name": "currency",
+      "entityType": "columns",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'approved'",
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reservation_type",
+      "entityType": "columns",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reservation_id",
+      "entityType": "columns",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "target_type",
+      "entityType": "columns",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "target_id",
+      "entityType": "columns",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "quantity",
+      "entityType": "columns",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "admin_actor",
+      "entityType": "columns",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reason",
+      "entityType": "columns",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "token_hash",
+      "entityType": "columns",
+      "table": "_ecommerce_sign_in_tokens"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "email_normalized",
+      "entityType": "columns",
+      "table": "_ecommerce_sign_in_tokens"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "expires_at",
+      "entityType": "columns",
+      "table": "_ecommerce_sign_in_tokens"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_sign_in_tokens"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "revoked_at",
+      "entityType": "columns",
+      "table": "_ecommerce_sign_in_tokens"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_stocks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "product_variant_value_id",
+      "entityType": "columns",
+      "table": "_ecommerce_stocks"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "quantity",
+      "entityType": "columns",
+      "table": "_ecommerce_stocks"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_stocks"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_stocks"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_tags"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "_ecommerce_tags"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'blue'",
+      "generated": null,
+      "name": "color",
+      "entityType": "columns",
+      "table": "_ecommerce_tags"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_tags"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_tags"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_tax_reversals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "table": "_ecommerce_tax_reversals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reference",
+      "entityType": "columns",
+      "table": "_ecommerce_tax_reversals"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "amount",
+      "entityType": "columns",
+      "table": "_ecommerce_tax_reversals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "provider_reversal_id",
+      "entityType": "columns",
+      "table": "_ecommerce_tax_reversals"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "tax_sync_attempts",
+      "entityType": "columns",
+      "table": "_ecommerce_tax_reversals"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "tax_sync_last_at",
+      "entityType": "columns",
+      "table": "_ecommerce_tax_reversals"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "tax_sync_last_error",
+      "entityType": "columns",
+      "table": "_ecommerce_tax_reversals"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_tax_reversals"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_variant_components"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "product_variant_value_id",
+      "entityType": "columns",
+      "table": "_ecommerce_variant_components"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "component_id",
+      "entityType": "columns",
+      "table": "_ecommerce_variant_components"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "1",
+      "generated": null,
+      "name": "quantity",
+      "entityType": "columns",
+      "table": "_ecommerce_variant_components"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_variant_components"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_variant_components"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "_ecommerce_variants"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "_ecommerce_variants"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "_ecommerce_variants"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "_ecommerce_variants"
+    },
+    {
+      "columns": [
+        "parent_id"
+      ],
+      "tableTo": "_ecommerce_categories",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_categories_parent_id__ecommerce_categories_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_categories"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "tableTo": "_ecommerce_orders",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_component_reservations_order_id__ecommerce_orders_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_component_reservations"
+    },
+    {
+      "columns": [
+        "component_id"
+      ],
+      "tableTo": "_ecommerce_components",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_component_reservations_component_id__ecommerce_components_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_component_reservations"
+    },
+    {
+      "columns": [
+        "account_id"
+      ],
+      "tableTo": "_ecommerce_customer_accounts",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_credit_ledger_account_id__ecommerce_customer_accounts_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_credit_ledger"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "tableTo": "_ecommerce_orders",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_credit_ledger_order_id__ecommerce_orders_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_credit_ledger"
+    },
+    {
+      "columns": [
+        "cms_user_id"
+      ],
+      "tableTo": "galaxy_auth_user",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "SET NULL",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_customer_accounts_cms_user_id_galaxy_auth_user_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_customer_accounts"
+    },
+    {
+      "columns": [
+        "account_id"
+      ],
+      "tableTo": "_ecommerce_customer_accounts",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_customer_sessions_account_id__ecommerce_customer_accounts_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_customer_sessions"
+    },
+    {
+      "columns": [
+        "code"
+      ],
+      "tableTo": "_ecommerce_discount_codes",
+      "columnsTo": [
+        "code"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_discount_redemptions_code__ecommerce_discount_codes_code_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_discount_redemptions"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "tableTo": "_ecommerce_orders",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_discount_redemptions_order_id__ecommerce_orders_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_discount_redemptions"
+    },
+    {
+      "columns": [
+        "account_id"
+      ],
+      "tableTo": "_ecommerce_customer_accounts",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_discount_redemptions_account_id__ecommerce_customer_accounts_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_discount_redemptions"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "tableTo": "_ecommerce_orders",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_disputes_order_id__ecommerce_orders_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "columns": [
+        "gift_card_purchase_id"
+      ],
+      "tableTo": "_ecommerce_gift_card_purchases",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_disputes_gift_card_purchase_id__ecommerce_gift_card_purchases_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "tableTo": "_ecommerce_orders",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_fulfillments_order_id__ecommerce_orders_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_fulfillments"
+    },
+    {
+      "columns": [
+        "corrects_id"
+      ],
+      "tableTo": "_ecommerce_fulfillments",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_fulfillments_corrects_id__ecommerce_fulfillments_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_fulfillments"
+    },
+    {
+      "columns": [
+        "purchase_id"
+      ],
+      "tableTo": "_ecommerce_gift_card_purchases",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_gift_card_claims_purchase_id__ecommerce_gift_card_purchases_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_gift_card_claims"
+    },
+    {
+      "columns": [
+        "card_id"
+      ],
+      "tableTo": "_ecommerce_gift_cards",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_gift_card_claims_card_id__ecommerce_gift_cards_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_gift_card_claims"
+    },
+    {
+      "columns": [
+        "card_id"
+      ],
+      "tableTo": "_ecommerce_gift_cards",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_gift_card_ledger_card_id__ecommerce_gift_cards_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_gift_card_ledger"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "tableTo": "_ecommerce_orders",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_gift_card_ledger_order_id__ecommerce_orders_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_gift_card_ledger"
+    },
+    {
+      "columns": [
+        "purchase_id"
+      ],
+      "tableTo": "_ecommerce_gift_card_purchases",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_gift_card_ledger_purchase_id__ecommerce_gift_card_purchases_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_gift_card_ledger"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "tableTo": "_ecommerce_orders",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_gift_card_order_refunds_order_id__ecommerce_orders_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_gift_card_order_refunds"
+    },
+    {
+      "columns": [
+        "card_id"
+      ],
+      "tableTo": "_ecommerce_gift_cards",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_gift_card_redemptions_card_id__ecommerce_gift_cards_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_gift_card_redemptions"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "tableTo": "_ecommerce_orders",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_gift_card_redemptions_order_id__ecommerce_orders_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_gift_card_redemptions"
+    },
+    {
+      "columns": [
+        "card_id"
+      ],
+      "tableTo": "_ecommerce_gift_cards",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_gift_card_refunds_card_id__ecommerce_gift_cards_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_gift_card_refunds"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "tableTo": "_ecommerce_orders",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_gift_card_refunds_order_id__ecommerce_orders_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_gift_card_refunds"
+    },
+    {
+      "columns": [
+        "purchase_id"
+      ],
+      "tableTo": "_ecommerce_gift_card_purchases",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_gift_card_reviews_purchase_id__ecommerce_gift_card_purchases_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_gift_card_reviews"
+    },
+    {
+      "columns": [
+        "card_id"
+      ],
+      "tableTo": "_ecommerce_gift_cards",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_gift_card_reviews_card_id__ecommerce_gift_cards_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_gift_card_reviews"
+    },
+    {
+      "columns": [
+        "purchase_id"
+      ],
+      "tableTo": "_ecommerce_gift_card_purchases",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_gift_cards_purchase_id__ecommerce_gift_card_purchases_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "columns": [
+        "replaces_purchase_id"
+      ],
+      "tableTo": "_ecommerce_gift_card_purchases",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_gift_cards_replaces_purchase_id__ecommerce_gift_card_purchases_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "tableTo": "_ecommerce_orders",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_inventory_reservations_order_id__ecommerce_orders_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_inventory_reservations"
+    },
+    {
+      "columns": [
+        "cart_id"
+      ],
+      "tableTo": "_ecommerce_carts",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_orders_cart_id__ecommerce_carts_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "tableTo": "_ecommerce_orders",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_payments_order_id__ecommerce_orders_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_payments"
+    },
+    {
+      "columns": [
+        "product_id"
+      ],
+      "tableTo": "_ecommerce_products",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_product_categories_product_id__ecommerce_products_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_product_categories"
+    },
+    {
+      "columns": [
+        "category_id"
+      ],
+      "tableTo": "_ecommerce_categories",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_product_categories_category_id__ecommerce_categories_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_product_categories"
+    },
+    {
+      "columns": [
+        "product_id"
+      ],
+      "tableTo": "_ecommerce_products",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_product_tags_product_id__ecommerce_products_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_product_tags"
+    },
+    {
+      "columns": [
+        "tag_id"
+      ],
+      "tableTo": "_ecommerce_tags",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_product_tags_tag_id__ecommerce_tags_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_product_tags"
+    },
+    {
+      "columns": [
+        "product_variant_id"
+      ],
+      "tableTo": "_ecommerce_product_variants",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_product_variant_values_product_variant_id__ecommerce_product_variants_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_product_variant_values"
+    },
+    {
+      "columns": [
+        "product_id"
+      ],
+      "tableTo": "_ecommerce_products",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_product_variants_product_id__ecommerce_products_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_product_variants"
+    },
+    {
+      "columns": [
+        "variant_id"
+      ],
+      "tableTo": "_ecommerce_variants",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_product_variants_variant_id__ecommerce_variants_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_product_variants"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "tableTo": "_ecommerce_orders",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_provider_refunds_order_id__ecommerce_orders_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_provider_refunds"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "tableTo": "_ecommerce_orders",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_reconcile_decisions_order_id__ecommerce_orders_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "columns": [
+        "purchase_id"
+      ],
+      "tableTo": "_ecommerce_gift_card_purchases",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_reconcile_decisions_purchase_id__ecommerce_gift_card_purchases_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "columns": [
+        "account_id"
+      ],
+      "tableTo": "_ecommerce_customer_accounts",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_referral_codes_account_id__ecommerce_customer_accounts_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_referral_codes"
+    },
+    {
+      "columns": [
+        "code"
+      ],
+      "tableTo": "_ecommerce_referral_codes",
+      "columnsTo": [
+        "code"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_referrals_code__ecommerce_referral_codes_code_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "columns": [
+        "referrer_account_id"
+      ],
+      "tableTo": "_ecommerce_customer_accounts",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_referrals_referrer_account_id__ecommerce_customer_accounts_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "columns": [
+        "referred_account_id"
+      ],
+      "tableTo": "_ecommerce_customer_accounts",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_referrals_referred_account_id__ecommerce_customer_accounts_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "tableTo": "_ecommerce_orders",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_referrals_order_id__ecommerce_orders_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "tableTo": "_ecommerce_orders",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_restocks_order_id__ecommerce_orders_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "columns": [
+        "product_variant_value_id"
+      ],
+      "tableTo": "_ecommerce_product_variant_values",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_stocks_product_variant_value_id__ecommerce_product_variant_values_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_stocks"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "tableTo": "_ecommerce_orders",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_tax_reversals_order_id__ecommerce_orders_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_tax_reversals"
+    },
+    {
+      "columns": [
+        "product_variant_value_id"
+      ],
+      "tableTo": "_ecommerce_product_variant_values",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_variant_components_product_variant_value_id__ecommerce_product_variant_values_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_variant_components"
+    },
+    {
+      "columns": [
+        "component_id"
+      ],
+      "tableTo": "_ecommerce_components",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "nameExplicit": false,
+      "name": "fk__ecommerce_variant_components_component_id__ecommerce_components_id_fk",
+      "entityType": "fks",
+      "table": "_ecommerce_variant_components"
+    },
+    {
+      "columns": [
+        "product_id",
+        "category_id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_product_categories_pk",
+      "entityType": "pks",
+      "table": "_ecommerce_product_categories"
+    },
+    {
+      "columns": [
+        "product_id",
+        "tag_id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_product_tags_pk",
+      "entityType": "pks",
+      "table": "_ecommerce_product_tags"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_carts_pk",
+      "table": "_ecommerce_carts",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_categories_pk",
+      "table": "_ecommerce_categories",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_component_reservations_pk",
+      "table": "_ecommerce_component_reservations",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_components_pk",
+      "table": "_ecommerce_components",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_credit_ledger_pk",
+      "table": "_ecommerce_credit_ledger",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_customer_accounts_pk",
+      "table": "_ecommerce_customer_accounts",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_customer_sessions_pk",
+      "table": "_ecommerce_customer_sessions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_customers_pk",
+      "table": "_ecommerce_customers",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "code"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_discount_codes_pk",
+      "table": "_ecommerce_discount_codes",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_discount_redemptions_pk",
+      "table": "_ecommerce_discount_redemptions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_disputes_pk",
+      "table": "_ecommerce_disputes",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_email_deliveries_pk",
+      "table": "_ecommerce_email_deliveries",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_fulfillments_pk",
+      "table": "_ecommerce_fulfillments",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_gift_card_claims_pk",
+      "table": "_ecommerce_gift_card_claims",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_gift_card_ledger_pk",
+      "table": "_ecommerce_gift_card_ledger",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_gift_card_order_refunds_pk",
+      "table": "_ecommerce_gift_card_order_refunds",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_gift_card_purchases_pk",
+      "table": "_ecommerce_gift_card_purchases",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_gift_card_redemptions_pk",
+      "table": "_ecommerce_gift_card_redemptions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_gift_card_refunds_pk",
+      "table": "_ecommerce_gift_card_refunds",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_gift_card_reviews_pk",
+      "table": "_ecommerce_gift_card_reviews",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_gift_cards_pk",
+      "table": "_ecommerce_gift_cards",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_inventory_reservations_pk",
+      "table": "_ecommerce_inventory_reservations",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_orders_pk",
+      "table": "_ecommerce_orders",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_payments_pk",
+      "table": "_ecommerce_payments",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_product_variant_values_pk",
+      "table": "_ecommerce_product_variant_values",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_product_variants_pk",
+      "table": "_ecommerce_product_variants",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_products_pk",
+      "table": "_ecommerce_products",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_provider_refunds_pk",
+      "table": "_ecommerce_provider_refunds",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "key"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_rate_limits_pk",
+      "table": "_ecommerce_rate_limits",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_reconcile_decisions_pk",
+      "table": "_ecommerce_reconcile_decisions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "code"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_referral_codes_pk",
+      "table": "_ecommerce_referral_codes",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_referral_settings_pk",
+      "table": "_ecommerce_referral_settings",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_referrals_pk",
+      "table": "_ecommerce_referrals",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_restocks_pk",
+      "table": "_ecommerce_restocks",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "token_hash"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_sign_in_tokens_pk",
+      "table": "_ecommerce_sign_in_tokens",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_stocks_pk",
+      "table": "_ecommerce_stocks",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_tags_pk",
+      "table": "_ecommerce_tags",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_tax_reversals_pk",
+      "table": "_ecommerce_tax_reversals",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_variant_components_pk",
+      "table": "_ecommerce_variant_components",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_variants_pk",
+      "table": "_ecommerce_variants",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        {
+          "value": "checkout_session_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_carts_checkout_session_id_unique",
+      "entityType": "indexes",
+      "table": "_ecommerce_carts"
+    },
+    {
+      "columns": [
+        {
+          "value": "user_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": "\"_ecommerce_carts\".\"closed\" = 0 AND \"_ecommerce_carts\".\"user_id\" IS NOT NULL",
+      "origin": "manual",
+      "name": "_ecommerce_carts_user_open_unique",
+      "entityType": "indexes",
+      "table": "_ecommerce_carts"
+    },
+    {
+      "columns": [
+        {
+          "value": "order_id",
+          "isExpression": false
+        },
+        {
+          "value": "component_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "component_reservation_unique",
+      "entityType": "indexes",
+      "table": "_ecommerce_component_reservations"
+    },
+    {
+      "columns": [
+        {
+          "value": "order_id",
+          "isExpression": false
+        },
+        {
+          "value": "kind",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "credit_ledger_order_kind_unique",
+      "entityType": "indexes",
+      "table": "_ecommerce_credit_ledger"
+    },
+    {
+      "columns": [
+        {
+          "value": "account_id",
+          "isExpression": false
+        },
+        {
+          "value": "created_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_credit_ledger_account_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_credit_ledger"
+    },
+    {
+      "columns": [
+        {
+          "value": "cms_user_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": "\"_ecommerce_customer_accounts\".\"cms_user_id\" IS NOT NULL",
+      "origin": "manual",
+      "name": "_ecommerce_customer_accounts_cms_user_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_customer_accounts"
+    },
+    {
+      "columns": [
+        {
+          "value": "account_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_customer_sessions_account_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_customer_sessions"
+    },
+    {
+      "columns": [
+        {
+          "value": "account_id",
+          "isExpression": false
+        },
+        {
+          "value": "purpose",
+          "isExpression": false
+        },
+        {
+          "value": "created_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_customer_sessions_challenge_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_customer_sessions"
+    },
+    {
+      "columns": [
+        {
+          "value": "code",
+          "isExpression": false
+        },
+        {
+          "value": "status",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_discount_redemptions_code_status_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_discount_redemptions"
+    },
+    {
+      "columns": [
+        {
+          "value": "code",
+          "isExpression": false
+        },
+        {
+          "value": "email_normalized",
+          "isExpression": false
+        },
+        {
+          "value": "status",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_discount_redemptions_email_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_discount_redemptions"
+    },
+    {
+      "columns": [
+        {
+          "value": "order_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": "\"_ecommerce_disputes\".\"order_id\" IS NOT NULL",
+      "origin": "manual",
+      "name": "_ecommerce_disputes_order_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "columns": [
+        {
+          "value": "gift_card_purchase_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": "\"_ecommerce_disputes\".\"gift_card_purchase_id\" IS NOT NULL",
+      "origin": "manual",
+      "name": "_ecommerce_disputes_purchase_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "columns": [
+        {
+          "value": "kind",
+          "isExpression": false
+        },
+        {
+          "value": "subject_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_email_deliveries_kind_subject_unique",
+      "entityType": "indexes",
+      "table": "_ecommerce_email_deliveries"
+    },
+    {
+      "columns": [
+        {
+          "value": "next_attempt_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": "\"_ecommerce_email_deliveries\".\"status\" = 'pending'",
+      "origin": "manual",
+      "name": "_ecommerce_email_deliveries_due_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_email_deliveries"
+    },
+    {
+      "columns": [
+        {
+          "value": "order_id",
+          "isExpression": false
+        },
+        {
+          "value": "created_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_fulfillments_order_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_fulfillments"
+    },
+    {
+      "columns": [
+        {
+          "value": "purchase_id",
+          "isExpression": false
+        },
+        {
+          "value": "created_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_gift_card_claims_purchase_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_gift_card_claims"
+    },
+    {
+      "columns": [
+        {
+          "value": "card_id",
+          "isExpression": false
+        },
+        {
+          "value": "created_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_gift_card_ledger_card_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_gift_card_ledger"
+    },
+    {
+      "columns": [
+        {
+          "value": "status",
+          "isExpression": false
+        },
+        {
+          "value": "created_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_gift_card_purchases_status_created_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "columns": [
+        {
+          "value": "card_id",
+          "isExpression": false
+        },
+        {
+          "value": "status",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_gift_card_redemptions_card_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_gift_card_redemptions"
+    },
+    {
+      "columns": [
+        {
+          "value": "order_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_gift_card_refunds_order_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_gift_card_refunds"
+    },
+    {
+      "columns": [
+        {
+          "value": "purchase_id",
+          "isExpression": false
+        },
+        {
+          "value": "created_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_gift_card_reviews_purchase_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_gift_card_reviews"
+    },
+    {
+      "columns": [
+        {
+          "value": "replaces_purchase_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": "\"_ecommerce_gift_cards\".\"replaces_purchase_id\" IS NOT NULL",
+      "origin": "manual",
+      "name": "_ecommerce_gift_cards_replaces_purchase_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "columns": [
+        {
+          "value": "order_id",
+          "isExpression": false
+        },
+        {
+          "value": "target_type",
+          "isExpression": false
+        },
+        {
+          "value": "target_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "inventory_reservation_unique",
+      "entityType": "indexes",
+      "table": "_ecommerce_inventory_reservations"
+    },
+    {
+      "columns": [
+        {
+          "value": "user_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_orders_user_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "columns": [
+        {
+          "value": "checkout_session_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_orders_checkout_session_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "columns": [
+        {
+          "value": "lower(\"customer_email\")",
+          "isExpression": true
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_orders_customer_email_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "columns": [
+        {
+          "value": "created_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": "\"_ecommerce_orders\".\"status\" = 'pending'",
+      "origin": "manual",
+      "name": "_ecommerce_orders_pending_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "columns": [
+        {
+          "value": "created_at",
+          "isExpression": false
+        },
+        {
+          "value": "id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": "\"_ecommerce_orders\".\"status\" IN ('paid', 'partially_refunded') AND \"_ecommerce_orders\".\"fulfillment_status\" <> 'fulfilled' AND COALESCE(\"_ecommerce_orders\".\"payment_provider\", 'stripe') <> 'admin_test'",
+      "origin": "manual",
+      "name": "_ecommerce_orders_awaiting_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "columns": [
+        {
+          "value": "created_at",
+          "isExpression": false
+        },
+        {
+          "value": "id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": "\"_ecommerce_orders\".\"status\" NOT IN ('pending', 'cancelled', 'draft') AND COALESCE(\"_ecommerce_orders\".\"payment_provider\", 'stripe') <> 'admin_test'",
+      "origin": "manual",
+      "name": "_ecommerce_orders_recent_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "columns": [
+        {
+          "value": "created_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": "\"_ecommerce_orders\".\"status\" IN ('partially_refunded', 'refunded') AND \"_ecommerce_orders\".\"tax_transaction_id\" IS NOT NULL",
+      "origin": "manual",
+      "name": "_ecommerce_orders_tax_refunded_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "columns": [
+        {
+          "value": "status",
+          "isExpression": false
+        },
+        {
+          "value": "created_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": "\"_ecommerce_orders\".\"tax_calculation_id\" IS NOT NULL AND \"_ecommerce_orders\".\"tax_transaction_id\" IS NULL",
+      "origin": "manual",
+      "name": "_ecommerce_orders_tax_transaction_missing_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "columns": [
+        {
+          "value": "provider",
+          "isExpression": false
+        },
+        {
+          "value": "provider_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_payments_provider_id_unique",
+      "entityType": "indexes",
+      "table": "_ecommerce_payments"
+    },
+    {
+      "columns": [
+        {
+          "value": "order_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_payments_order_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_payments"
+    },
+    {
+      "columns": [
+        {
+          "value": "order_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_provider_refunds_order_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_provider_refunds"
+    },
+    {
+      "columns": [
+        {
+          "value": "order_id",
+          "isExpression": false
+        },
+        {
+          "value": "created_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_reconcile_decisions_order_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "columns": [
+        {
+          "value": "purchase_id",
+          "isExpression": false
+        },
+        {
+          "value": "created_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_reconcile_decisions_purchase_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "columns": [
+        {
+          "value": "referrer_account_id",
+          "isExpression": false
+        },
+        {
+          "value": "created_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_referrals_referrer_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "columns": [
+        {
+          "value": "reservation_type",
+          "isExpression": false
+        },
+        {
+          "value": "reservation_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_restocks_reservation_unique",
+      "entityType": "indexes",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "columns": [
+        {
+          "value": "order_id",
+          "isExpression": false
+        },
+        {
+          "value": "created_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_restocks_order_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "columns": [
+        {
+          "value": "email_normalized",
+          "isExpression": false
+        },
+        {
+          "value": "created_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_sign_in_tokens_email_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_sign_in_tokens"
+    },
+    {
+      "columns": [
+        {
+          "value": "order_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "_ecommerce_tax_reversals_order_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_tax_reversals"
+    },
+    {
+      "columns": [
+        {
+          "value": "created_at",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": "\"_ecommerce_tax_reversals\".\"provider_reversal_id\" = ''",
+      "origin": "manual",
+      "name": "_ecommerce_tax_reversals_unsent_idx",
+      "entityType": "indexes",
+      "table": "_ecommerce_tax_reversals"
+    },
+    {
+      "columns": [
+        {
+          "value": "product_variant_value_id",
+          "isExpression": false
+        },
+        {
+          "value": "component_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "variant_component_unique",
+      "entityType": "indexes",
+      "table": "_ecommerce_variant_components"
+    },
+    {
+      "columns": [
+        "session_token"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_carts_session_token_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_carts"
+    },
+    {
+      "columns": [
+        "slug"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_categories_slug_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_categories"
+    },
+    {
+      "columns": [
+        "sku"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_components_sku_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_components"
+    },
+    {
+      "columns": [
+        "email_normalized"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_customer_accounts_email_normalized_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_customer_accounts"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_customer_sessions_order_id_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_customer_sessions"
+    },
+    {
+      "columns": [
+        "token_hash"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_customer_sessions_token_hash_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_customer_sessions"
+    },
+    {
+      "columns": [
+        "stripe_customer_id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_customers_stripe_customer_id_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_customers"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_discount_redemptions_order_id_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_discount_redemptions"
+    },
+    {
+      "columns": [
+        "token_hash"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_gift_card_claims_token_hash_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_gift_card_claims"
+    },
+    {
+      "columns": [
+        "provider_session_id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_gift_card_purchases_provider_session_id_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "columns": [
+        "payment_intent_id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_gift_card_purchases_payment_intent_id_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_gift_card_redemptions_order_id_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_gift_card_redemptions"
+    },
+    {
+      "columns": [
+        "code_hash"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_gift_cards_code_hash_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "columns": [
+        "purchase_id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_gift_cards_purchase_id_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "columns": [
+        "cart_id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_orders_cart_id_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "columns": [
+        "payment_intent_id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_orders_payment_intent_id_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "columns": [
+        "sku"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_product_variant_values_sku_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_product_variant_values"
+    },
+    {
+      "columns": [
+        "sku"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_product_variants_sku_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_product_variants"
+    },
+    {
+      "columns": [
+        "slug"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_products_slug_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_products"
+    },
+    {
+      "columns": [
+        "account_id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_referral_codes_account_id_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_referral_codes"
+    },
+    {
+      "columns": [
+        "referred_account_id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_referrals_referred_account_id_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_referrals_order_id_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "columns": [
+        "product_variant_value_id"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_stocks_product_variant_value_id_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_stocks"
+    },
+    {
+      "columns": [
+        "name"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_tags_name_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_tags"
+    },
+    {
+      "columns": [
+        "reference"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_tax_reversals_reference_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_tax_reversals"
+    },
+    {
+      "columns": [
+        "name"
+      ],
+      "nameExplicit": false,
+      "name": "_ecommerce_variants_name_unique",
+      "entityType": "uniques",
+      "table": "_ecommerce_variants"
+    },
+    {
+      "value": "\"quantity\" > 0",
+      "name": "component_reservation_quantity_positive",
+      "entityType": "checks",
+      "table": "_ecommerce_component_reservations"
+    },
+    {
+      "value": "\"quantity\" >= 0",
+      "name": "component_quantity_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_components"
+    },
+    {
+      "value": "\"kind\" IN ('referral_award', 'welcome_award', 'checkout_reserve', 'checkout_release', 'purchase_credit_refund', 'referral_reversal', 'welcome_reversal')",
+      "name": "credit_ledger_kind",
+      "entityType": "checks",
+      "table": "_ecommerce_credit_ledger"
+    },
+    {
+      "value": "\"amount_cents\" != 0",
+      "name": "credit_ledger_amount_nonzero",
+      "entityType": "checks",
+      "table": "_ecommerce_credit_ledger"
+    },
+    {
+      "value": "\"purpose\" IN ('session', 'email_challenge')",
+      "name": "customer_session_purpose",
+      "entityType": "checks",
+      "table": "_ecommerce_customer_sessions"
+    },
+    {
+      "value": "\"type\" IN ('credit', 'amount', 'percent')",
+      "name": "discount_code_type",
+      "entityType": "checks",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "value": "\"value\" > 0",
+      "name": "discount_code_value_positive",
+      "entityType": "checks",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "value": "\"remaining_cents\" >= 0",
+      "name": "discount_code_remaining_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "value": "\"max_discount_cents\" > 0",
+      "name": "discount_code_max_discount_positive",
+      "entityType": "checks",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "value": "\"min_order_cents\" >= 0",
+      "name": "discount_code_min_order_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "value": "\"max_uses\" > 0",
+      "name": "discount_code_max_uses_positive",
+      "entityType": "checks",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "value": "\"max_uses_per_customer\" > 0",
+      "name": "discount_code_max_uses_per_customer_positive",
+      "entityType": "checks",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "value": "\"first_order_only\" IN (0, 1)",
+      "name": "discount_code_first_order_only_flag",
+      "entityType": "checks",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "value": "\"active\" IN (0, 1)",
+      "name": "discount_code_active_flag",
+      "entityType": "checks",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "value": "(\"type\" = 'credit' AND \"remaining_cents\" IS NOT NULL AND \"remaining_cents\" <= \"value\" AND \"max_discount_cents\" IS NULL)\n    OR (\"type\" = 'amount' AND \"remaining_cents\" IS NULL AND \"max_discount_cents\" IS NULL)\n    OR (\"type\" = 'percent' AND \"value\" BETWEEN 1 AND 10000 AND \"remaining_cents\" IS NULL)",
+      "name": "discount_code_type_shape",
+      "entityType": "checks",
+      "table": "_ecommerce_discount_codes"
+    },
+    {
+      "value": "\"amount_cents\" > 0",
+      "name": "discount_redemption_amount_positive",
+      "entityType": "checks",
+      "table": "_ecommerce_discount_redemptions"
+    },
+    {
+      "value": "\"status\" IN ('reserved', 'confirmed', 'cancelled', 'refunded')",
+      "name": "discount_redemption_status",
+      "entityType": "checks",
+      "table": "_ecommerce_discount_redemptions"
+    },
+    {
+      "value": "\"amount_cents\" >= 0",
+      "name": "dispute_amount_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "value": "(\"order_id\" IS NULL) <> (\"gift_card_purchase_id\" IS NULL)",
+      "name": "dispute_names_one_subject",
+      "entityType": "checks",
+      "table": "_ecommerce_disputes"
+    },
+    {
+      "value": "\"kind\" IN ('order_confirmation', 'shipment', 'shipment_update', 'gift_card_claim')",
+      "name": "email_delivery_kind",
+      "entityType": "checks",
+      "table": "_ecommerce_email_deliveries"
+    },
+    {
+      "value": "\"status\" IN ('pending', 'sent', 'failed', 'cancelled')",
+      "name": "email_delivery_status",
+      "entityType": "checks",
+      "table": "_ecommerce_email_deliveries"
+    },
+    {
+      "value": "\"attempts\" >= 0",
+      "name": "email_delivery_attempts_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_email_deliveries"
+    },
+    {
+      "value": "(\"status\" = 'sent') = (\"sent_at\" IS NOT NULL)",
+      "name": "email_delivery_sent_has_time",
+      "entityType": "checks",
+      "table": "_ecommerce_email_deliveries"
+    },
+    {
+      "value": "\"kind\" IN ('shipment', 'correction')",
+      "name": "fulfillment_kind",
+      "entityType": "checks",
+      "table": "_ecommerce_fulfillments"
+    },
+    {
+      "value": "\"completes_order\" IN (0, 1)",
+      "name": "fulfillment_completes_order_flag",
+      "entityType": "checks",
+      "table": "_ecommerce_fulfillments"
+    },
+    {
+      "value": "(\"kind\" = 'shipment') = (\"corrects_id\" IS NULL)",
+      "name": "fulfillment_correction_names_shipment",
+      "entityType": "checks",
+      "table": "_ecommerce_fulfillments"
+    },
+    {
+      "value": "\"kind\" = 'shipment' OR \"completes_order\" = 0",
+      "name": "fulfillment_only_shipment_completes",
+      "entityType": "checks",
+      "table": "_ecommerce_fulfillments"
+    },
+    {
+      "value": "\"expires_at\" > \"created_at\"",
+      "name": "gift_card_claim_expires_after_creation",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_claims"
+    },
+    {
+      "value": "(\"created_by\" IS NULL AND \"reason\" IS NULL)\n    OR (\"created_by\" IS NOT NULL AND \"reason\" IS NOT NULL AND length(trim(\"created_by\")) > 0 AND length(trim(\"reason\")) >= 8)",
+      "name": "gift_card_claim_resend_shape",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_claims"
+    },
+    {
+      "value": "\"kind\" IN ('issue', 'reserve', 'release', 'refund_restore', 'purchase_reversal')",
+      "name": "gift_card_ledger_kind",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_ledger"
+    },
+    {
+      "value": "\"amount_cents\" != 0",
+      "name": "gift_card_ledger_amount_nonzero",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_ledger"
+    },
+    {
+      "value": "(\"kind\" IN ('issue', 'release', 'refund_restore') AND \"amount_cents\" > 0)\n    OR (\"kind\" IN ('reserve', 'purchase_reversal') AND \"amount_cents\" < 0)",
+      "name": "gift_card_ledger_amount_sign",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_ledger"
+    },
+    {
+      "value": "\"amount_cents\" BETWEEN 500 AND 100000",
+      "name": "gift_card_purchase_amount_range",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "value": "\"currency\" = 'usd'",
+      "name": "gift_card_purchase_currency_usd",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "value": "\"status\" IN ('pending', 'paid', 'cancelled', 'partially_refunded', 'refunded', 'review')",
+      "name": "gift_card_purchase_status",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "value": "\"provider_refunded_cents\" >= 0",
+      "name": "gift_card_purchase_provider_refunded_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "value": "\"refund_adjusted_cents\" >= 0 AND \"refund_adjusted_cents\" <= \"provider_refunded_cents\"",
+      "name": "gift_card_purchase_refund_adjusted_within_refunded",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "value": "\"reconcile_attempts\" >= 0",
+      "name": "gift_card_purchase_reconcile_attempts_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_purchases"
+    },
+    {
+      "value": "\"amount_cents\" > 0",
+      "name": "gift_card_redemption_amount_positive",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_redemptions"
+    },
+    {
+      "value": "\"status\" IN ('reserved', 'confirmed', 'cancelled', 'refunded')",
+      "name": "gift_card_redemption_status",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_redemptions"
+    },
+    {
+      "value": "\"amount_cents\" > 0",
+      "name": "gift_card_refund_amount_positive",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_refunds"
+    },
+    {
+      "value": "\"outcome\" IN ('reinstate', 'void')",
+      "name": "gift_card_review_outcome",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_reviews"
+    },
+    {
+      "value": "\"refunded_cents\" > 0",
+      "name": "gift_card_review_refunded_positive",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_reviews"
+    },
+    {
+      "value": "\"adjustment_cents\" >= 0",
+      "name": "gift_card_review_adjustment_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_reviews"
+    },
+    {
+      "value": "length(trim(\"admin_actor\")) > 0",
+      "name": "gift_card_review_admin_actor_filled",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_reviews"
+    },
+    {
+      "value": "length(trim(\"reason\")) >= 8",
+      "name": "gift_card_review_reason_length",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_card_reviews"
+    },
+    {
+      "value": "\"source\" IN ('purchase', 'admin')",
+      "name": "gift_card_source",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "value": "\"initial_cents\" BETWEEN 500 AND 100000",
+      "name": "gift_card_initial_range",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "value": "\"balance_cents\" BETWEEN 0 AND \"initial_cents\"",
+      "name": "gift_card_balance_within_initial",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "value": "\"currency\" = 'usd'",
+      "name": "gift_card_currency_usd",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "value": "\"status\" IN ('active', 'suspended', 'void')",
+      "name": "gift_card_status",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "value": "\"replaces_purchase_id\" IS NULL OR \"source\" = 'admin'",
+      "name": "gift_card_replacement_by_admin",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "value": "\"held_for_review\" IN (0, 1)",
+      "name": "gift_card_held_for_review_flag",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "value": "(\"source\" = 'purchase' AND \"purchase_id\" IS NOT NULL AND \"admin_actor\" IS NULL)\n    OR (\"source\" = 'admin' AND \"purchase_id\" IS NULL AND \"admin_actor\" IS NOT NULL AND \"admin_reason\" IS NOT NULL)",
+      "name": "gift_card_source_shape",
+      "entityType": "checks",
+      "table": "_ecommerce_gift_cards"
+    },
+    {
+      "value": "\"target_type\" IN ('product', 'variant', 'stock')",
+      "name": "inventory_reservation_target_type",
+      "entityType": "checks",
+      "table": "_ecommerce_inventory_reservations"
+    },
+    {
+      "value": "\"quantity\" > 0",
+      "name": "inventory_reservation_quantity_positive",
+      "entityType": "checks",
+      "table": "_ecommerce_inventory_reservations"
+    },
+    {
+      "value": "\"referral_reward_cents\" >= 0",
+      "name": "orders_referral_reward_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "value": "\"credit_applied\" >= 0",
+      "name": "orders_credit_applied_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "value": "\"subtotal_amount\" >= 0",
+      "name": "orders_subtotal_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "value": "\"provider_refunded_cents\" >= 0",
+      "name": "orders_provider_refunded_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "value": "\"discount_amount\" >= 0",
+      "name": "orders_discount_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "value": "\"gift_card_applied\" >= 0",
+      "name": "orders_gift_card_applied_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "value": "\"gift_card_refunded_cents\" >= 0 AND \"gift_card_refunded_cents\" <= \"gift_card_applied\"",
+      "name": "orders_gift_card_refunded_within_applied",
+      "entityType": "checks",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "value": "\"shipping_amount\" >= 0",
+      "name": "orders_shipping_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "value": "\"tax_amount\" >= 0",
+      "name": "orders_tax_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "value": "\"tax_behavior\" IS NULL OR \"tax_behavior\" IN ('inclusive', 'exclusive')",
+      "name": "orders_tax_behavior",
+      "entityType": "checks",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "value": "\"fulfillment_status\" IN ('unfulfilled', 'partially_fulfilled', 'fulfilled')",
+      "name": "orders_fulfillment_status",
+      "entityType": "checks",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "value": "\"reconcile_attempts\" >= 0",
+      "name": "orders_reconcile_attempts_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "value": "\"tax_sync_attempts\" >= 0",
+      "name": "orders_tax_sync_attempts_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_orders"
+    },
+    {
+      "value": "\"amount_cents\" > 0",
+      "name": "provider_refund_amount_positive",
+      "entityType": "checks",
+      "table": "_ecommerce_provider_refunds"
+    },
+    {
+      "value": "\"action\" IN ('retry', 'release')",
+      "name": "reconcile_decision_action",
+      "entityType": "checks",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "value": "\"payment_returned\" IS NULL OR \"payment_returned\" IN ('refunded', 'dispute_lost', 'confirmed')",
+      "name": "reconcile_decision_payment_returned",
+      "entityType": "checks",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "value": "length(trim(\"admin_actor\")) > 0",
+      "name": "reconcile_decision_admin_actor_filled",
+      "entityType": "checks",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "value": "length(trim(\"reason\")) >= 8",
+      "name": "reconcile_decision_reason_length",
+      "entityType": "checks",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "value": "(\"order_id\" IS NULL) <> (\"purchase_id\" IS NULL)",
+      "name": "reconcile_decision_names_one_subject",
+      "entityType": "checks",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "value": "\"payment_returned\" IS NULL OR \"action\" = 'release'",
+      "name": "reconcile_decision_release_returns",
+      "entityType": "checks",
+      "table": "_ecommerce_reconcile_decisions"
+    },
+    {
+      "value": "\"id\" = 'default'",
+      "name": "referral_settings_singleton",
+      "entityType": "checks",
+      "table": "_ecommerce_referral_settings"
+    },
+    {
+      "value": "\"enabled\" IN (0, 1)",
+      "name": "referral_settings_enabled_flag",
+      "entityType": "checks",
+      "table": "_ecommerce_referral_settings"
+    },
+    {
+      "value": "\"reward_cents\" BETWEEN 1 AND 100000",
+      "name": "referral_settings_reward_range",
+      "entityType": "checks",
+      "table": "_ecommerce_referral_settings"
+    },
+    {
+      "value": "\"min_order_cents\" BETWEEN 1 AND 10000000",
+      "name": "referral_settings_min_order_range",
+      "entityType": "checks",
+      "table": "_ecommerce_referral_settings"
+    },
+    {
+      "value": "\"attribution_days\" BETWEEN 1 AND 90",
+      "name": "referral_settings_attribution_range",
+      "entityType": "checks",
+      "table": "_ecommerce_referral_settings"
+    },
+    {
+      "value": "\"reward_cents\" >= 0",
+      "name": "referral_reward_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "value": "\"status\" IN ('approved', 'void')",
+      "name": "referral_status",
+      "entityType": "checks",
+      "table": "_ecommerce_referrals"
+    },
+    {
+      "value": "\"reservation_type\" IN ('inventory', 'component')",
+      "name": "restock_reservation_type",
+      "entityType": "checks",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "value": "\"target_type\" IN ('product', 'variant', 'stock', 'component')",
+      "name": "restock_target_type",
+      "entityType": "checks",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "value": "\"quantity\" > 0",
+      "name": "restock_quantity_positive",
+      "entityType": "checks",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "value": "length(trim(\"admin_actor\")) > 0",
+      "name": "restock_admin_actor_filled",
+      "entityType": "checks",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "value": "length(trim(\"reason\")) >= 8",
+      "name": "restock_reason_length",
+      "entityType": "checks",
+      "table": "_ecommerce_restocks"
+    },
+    {
+      "value": "\"amount\" > 0",
+      "name": "tax_reversal_amount_positive",
+      "entityType": "checks",
+      "table": "_ecommerce_tax_reversals"
+    },
+    {
+      "value": "\"tax_sync_attempts\" >= 0",
+      "name": "tax_reversal_tax_sync_attempts_nonnegative",
+      "entityType": "checks",
+      "table": "_ecommerce_tax_reversals"
+    },
+    {
+      "value": "\"quantity\" > 0",
+      "name": "variant_component_quantity_positive",
+      "entityType": "checks",
+      "table": "_ecommerce_variant_components"
+    }
+  ],
+  "renames": []
+}

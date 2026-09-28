@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
+import { applyCoreMigrations } from './helpers/migrations.mjs';
 import { hashPassword } from 'better-auth/crypto';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 
@@ -60,13 +60,7 @@ function d1(sqlite) {
 function setup(prefix = 'TALISMAN') {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
-  sqlite.exec(readFileSync(new URL('../drizzle/0007_local_auth.sql', import.meta.url), 'utf8'));
-  sqlite.exec(`CREATE TABLE _ecommerce_customer_accounts (
-    id text PRIMARY KEY NOT NULL, email text NOT NULL, email_normalized text NOT NULL UNIQUE,
-    email_verified_at integer, name text, created_at integer NOT NULL, updated_at integer NOT NULL
-  )`);
-  const shared = readFileSync(new URL('../drizzle/0019_shared_customer_identity.sql', import.meta.url), 'utf8');
-  for (const sql of shared.split('--> statement-breakpoint')) if (sql.trim()) sqlite.exec(sql);
+  applyCoreMigrations(sqlite);
   for (const key of Object.keys(env)) delete env[key];
   Object.assign(env, {
     DB: d1(sqlite),

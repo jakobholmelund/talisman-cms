@@ -90,6 +90,9 @@ importers:
       astro:
         specifier: ^7.3.3
         version: 7.3.3(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)(@types/node@26.6.2)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.1)
+      drizzle-kit:
+        specifier: rc
+        version: 1.0.0-rc.4
       drizzle-orm:
         specifier: rc
         version: 1.0.0-rc.4(@cloudflare/workers-types@5.20260921.1)(zod@3.25.76)
@@ -248,6 +251,9 @@ importers:
       astro:
         specifier: ^7.3.3
         version: 7.3.3(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)(@types/node@26.6.2)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.1)
+      drizzle-kit:
+        specifier: rc
+        version: 1.0.0-rc.4
       drizzle-orm:
         specifier: rc
         version: 1.0.0-rc.4(@cloudflare/workers-types@5.20260921.1)(zod@3.25.76)

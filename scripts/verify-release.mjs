@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 
 const checks = [
   ['build'],
+  ['db:check'],
   ['test'],
   ['--filter', 'talisman-cms', 'exec', 'tsc', '--noEmit', '-p', 'tsconfig.json'],
   ['--filter', 'talisman-cms', 'exec', 'tsc', '--noEmit', '-p', 'ui/tsconfig.json'],

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
+import { applyCoreMigrations } from './helpers/migrations.mjs';
 
 // The media routes ship as source and read `cloudflare:workers` and the auth virtual module; this
 // file loads them with Node's type stripping and stands in for both.
@@ -136,9 +136,7 @@ test('an upload whose record cannot be saved removes its file again', { skip }, 
 
   // With a database the file and its record are both kept.
   const sqlite = new DatabaseSync(':memory:');
-  for (const migration of ['0000_skinny_odin', '0006_media_metadata']) {
-    sqlite.exec(readFileSync(new URL(`../drizzle/${migration}.sql`, import.meta.url), 'utf8').replaceAll('--> statement-breakpoint', ''));
-  }
+  applyCoreMigrations(sqlite);
   runtime.env.DB = {
     prepare(sql) {
       let values = [];

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { migrationSql } from './helpers/migrations.mjs';
+import { applyAllMigrations } from './helpers/migrations.mjs';
 
 // Server modules read their bindings from cloudflare:workers; serve them from globalThis.workerEnv.
 registerHooks({
@@ -14,21 +14,12 @@ registerHooks({
 });
 const { scheduled } = await import('../dist/scheduled.js');
 
-const migrationFiles = ['0004_ecommerce_plugin.sql', '0005_variant_value_images.sql', '0007_local_auth.sql',
-  '0008_shared_components.sql', '0010_checkout_inventory.sql', '0011_order_payment_provider.sql',
-  '0012_customer_accounts.sql', '0013_referrals_and_credit.sql', '0014_promotions.sql',
-  '0015_gift_cards.sql', '0016_verified_customer_sessions.sql', '0017_commerce_fulfillment.sql',
-  '0019_shared_customer_identity.sql', '0024_shopper_sign_in_tokens.sql', '0025_order_shipping_and_tax.sql',
-  '0026_order_fulfillment_status.sql', '0027_gift_card_review.sql', '0028_provider_refunds_and_disputes.sql',
-  '0029_commerce_reconcile_backoff.sql', '0030_commerce_order_emails.sql'];
 
 /** An in-memory D1 stand-in that records every statement and refuses the ones matching `refused`. */
 function database() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
-  for (const migration of migrationFiles) {
-    sqlite.exec(migrationSql(migration).replaceAll('--> statement-breakpoint', ''));
-  }
+  applyAllMigrations(sqlite);
   const statements = [];
   const state = { refused: null };
   const DB = {
