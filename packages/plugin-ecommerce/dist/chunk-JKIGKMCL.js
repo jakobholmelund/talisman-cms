@@ -1,14 +1,17 @@
 import {
   getReferralPolicy,
   referralReversalStatements
-} from "./chunk-HBUWVAQK.js";
+} from "./chunk-XVZVMCBJ.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
 } from "./chunk-GNU6N22K.js";
 import {
+  emailDeliveries,
+  giftCardClaims,
   giftCardPurchases,
-  giftCards
+  giftCards,
+  orders
 } from "./chunk-SFZBZWCM.js";
 import {
   emailLink,
@@ -21,9 +24,9 @@ import {
 } from "./chunk-2UYSCNNW.js";
 
 // src/gift-cards.ts
-import { eq, sql } from "drizzle-orm";
+import { and as and2, eq as eq2, gt, isNull as isNull2, sql as sql2 } from "drizzle-orm";
 import { z as z2 } from "zod";
-import { createDbClient } from "talisman-cms/client";
+import { createDbClient as createDbClient2 } from "talisman-cms/client";
 import { readSetting as readSetting2 } from "talisman-cms/env";
 
 // src/store-settings.ts
@@ -585,6 +588,8 @@ async function reconcileAttempt(env, kind, id, now, attempt) {
 }
 
 // src/email-deliveries.ts
+import { and, eq, isNull, lte, or, sql } from "drizzle-orm";
+import { createDbClient } from "talisman-cms/client";
 import { isEmailDeliveryError, parseAddress, resolveEmailProvider, sendEmail } from "talisman-cms/email";
 import { readSetting } from "talisman-cms/env";
 var COMMERCE_EMAIL_MAX_ATTEMPTS = 10;
@@ -609,6 +614,16 @@ var KIND_LABELS = {
 };
 var CONFIGURATION_ERRORS = /* @__PURE__ */ new Set(["not_configured", "sender_rejected", "invalid_message"]);
 var nowSeconds = () => Math.floor(Date.now() / 1e3);
+var at = (seconds) => new Date(seconds * 1e3);
+var pendingEmail = (kind, subjectId) => and(
+  eq(emailDeliveries.kind, kind),
+  eq(emailDeliveries.subjectId, subjectId),
+  eq(emailDeliveries.status, "pending")
+);
+var unclaimedAt = (now) => or(
+  isNull(emailDeliveries.claimedAt),
+  lte(emailDeliveries.claimedAt, at(now - COMMERCE_EMAIL_LEASE_SECONDS))
+);
 function originOf(value) {
   try {
     return value ? new URL(value).origin : null;
@@ -735,12 +750,10 @@ function commerceEmailHeld(kind, subjectId, stamp) {
     WHERE kind = ? AND subject_id = ? AND status = 'pending' AND claimed_at = ?)`, params: [kind, subjectId, stamp] };
 }
 async function holdCommerceEmail(env, kind, subjectId, now) {
-  const held = await env.DB.prepare(`UPDATE _ecommerce_email_deliveries SET claimed_at = ?
-    WHERE kind = ? AND subject_id = ? AND status = 'pending' AND (claimed_at IS NULL OR claimed_at <= ?)
-    RETURNING id`).bind(now, kind, subjectId, now - COMMERCE_EMAIL_LEASE_SECONDS).first();
+  const db = createDbClient(env);
+  const [held] = await db.update(emailDeliveries).set({ claimedAt: at(now) }).where(and(pendingEmail(kind, subjectId), unclaimedAt(now))).returning({ id: emailDeliveries.id });
   if (held) return now;
-  const pending = await env.DB.prepare(`SELECT id FROM _ecommerce_email_deliveries
-    WHERE kind = ? AND subject_id = ? AND status = 'pending'`).bind(kind, subjectId).first();
+  const pending = await db.select({ id: emailDeliveries.id }).from(emailDeliveries).where(pendingEmail(kind, subjectId)).get();
   return pending ? "busy" : null;
 }
 function releaseCommerceEmailStatement(env, kind, subjectId, stamp) {
@@ -773,29 +786,25 @@ async function runCommerceEmailDelivery(env, kind, subjectId, compose, options =
     const now = options.now ?? nowSeconds();
     const setup = options.setup ?? await commerceEmailSetup(env);
     const missing = missingEmailSettings(setup, kind);
+    const db = createDbClient(env);
     if (missing.length) {
-      await env.DB.prepare(`UPDATE _ecommerce_email_deliveries SET last_error = 'not_configured'
-        WHERE kind = ? AND subject_id = ? AND status = 'pending'`).bind(kind, subjectId).run();
+      await db.update(emailDeliveries).set({ lastError: "not_configured" }).where(pendingEmail(kind, subjectId));
       return { id, status: "error", error: `${label} waits: email needs ${missing.join(", ")}` };
     }
-    const claimed = await env.DB.prepare(`UPDATE _ecommerce_email_deliveries SET claimed_at = ?, attempts = attempts + 1
-      WHERE kind = ? AND subject_id = ? AND status = 'pending' AND next_attempt_at <= ?
-        AND (claimed_at IS NULL OR claimed_at <= ?)
-      RETURNING id, attempts`).bind(now, kind, subjectId, now, now - COMMERCE_EMAIL_LEASE_SECONDS).first();
+    const [claimed] = await db.update(emailDeliveries).set({ claimedAt: at(now), attempts: sql`${emailDeliveries.attempts} + 1` }).where(and(pendingEmail(kind, subjectId), lte(emailDeliveries.nextAttemptAt, at(now)), unclaimedAt(now))).returning({ id: emailDeliveries.id, attempts: emailDeliveries.attempts });
     if (!claimed) return null;
-    const settle = async (assignments, ...params) => {
-      const { meta } = await env.DB.prepare(`UPDATE _ecommerce_email_deliveries
-        SET ${assignments}, claimed_at = NULL WHERE id = ? AND claimed_at = ?`).bind(...params, claimed.id, now).run();
+    const settle = async (outcome) => {
+      const { meta } = await db.update(emailDeliveries).set({ ...outcome, claimedAt: null }).where(and(eq(emailDeliveries.id, claimed.id), eq(emailDeliveries.claimedAt, at(now)))).run();
       return Number(meta?.changes ?? 0) > 0;
     };
     const recordFailure = async (code) => {
       if (code === "recipient_suppressed") {
-        return await settle(`status = 'failed', last_error = ?`, code) ? { id, status: "email_undeliverable", error: code } : null;
+        return await settle({ status: "failed", lastError: code }) ? { id, status: "email_undeliverable", error: code } : null;
       }
       if (claimed.attempts >= COMMERCE_EMAIL_MAX_ATTEMPTS) {
-        return await settle(`status = 'failed', last_error = ?`, code) ? { id, status: "error", error: `${label} was given up after ${claimed.attempts} attempts (${code})` } : null;
+        return await settle({ status: "failed", lastError: code }) ? { id, status: "error", error: `${label} was given up after ${claimed.attempts} attempts (${code})` } : null;
       }
-      if (!await settle(`last_error = ?, next_attempt_at = ?`, code, now + commerceEmailRetryDelay(claimed.attempts))) return null;
+      if (!await settle({ lastError: code, nextAttemptAt: at(now + commerceEmailRetryDelay(claimed.attempts)) })) return null;
       return CONFIGURATION_ERRORS.has(code) ? { id, status: "error", error: `${label} could not be sent (${code}); it is retried` } : { id, status: "email_retry", error: code };
     };
     let composed;
@@ -806,10 +815,10 @@ async function runCommerceEmailDelivery(env, kind, subjectId, compose, options =
       return await recordFailure("compose_failed");
     }
     if ("cancel" in composed) {
-      return await settle(`status = 'cancelled', last_error = ?`, composed.cancel) ? { id, status: "email_cancelled", error: composed.cancel } : null;
+      return await settle({ status: "cancelled", lastError: composed.cancel }) ? { id, status: "email_cancelled", error: composed.cancel } : null;
     }
     if ("fail" in composed) {
-      return await settle(`status = 'failed', last_error = ?`, composed.fail) ? { id, status: "email_undeliverable", error: composed.fail } : null;
+      return await settle({ status: "failed", lastError: composed.fail }) ? { id, status: "email_undeliverable", error: composed.fail } : null;
     }
     try {
       await sendCommerceMessage(env, setup, kind, composed.to, composed.message);
@@ -817,7 +826,7 @@ async function runCommerceEmailDelivery(env, kind, subjectId, compose, options =
       await composed.onFailure?.().catch(() => void 0);
       return await recordFailure(emailErrorCode(error));
     }
-    await settle(`status = 'sent', sent_at = ?, last_error = NULL`, now);
+    await settle({ status: "sent", sentAt: at(now), lastError: null });
     return { id, status: "email_sent" };
   } catch (error) {
     return { id, status: "error", error: `${label} could not be recorded (${error instanceof Error ? error.name : "error"})` };
@@ -850,6 +859,7 @@ var hex = (bytes) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "
 var unhex = (value) => new Uint8Array(value.match(/.{2}/g)?.map((byte) => parseInt(byte, 16)) ?? []);
 var randomHex = (bytes) => hex(crypto.getRandomValues(new Uint8Array(bytes)));
 var utf8 = new TextEncoder();
+var at2 = (seconds) => new Date(seconds * 1e3);
 var KEY_PATTERN = /^[0-9a-fA-F]{64}$/;
 var VERSIONED_SECRET = /^v2:([0-9a-f]{16}):([0-9a-f]{24}):((?:[0-9a-f]{2}){17,})$/;
 var UNVERSIONED_SECRET = /^([0-9a-fA-F]{24}):((?:[0-9a-fA-F]{2}){17,})$/;
@@ -1080,7 +1090,7 @@ function claimEmailView(value) {
   return { status: email.status, lastError: email.lastError, attempts: email.attempts };
 }
 async function getGiftCardsAdmin(env) {
-  const db = createDbClient(env);
+  const db = createDbClient2(env);
   return db.select({
     id: giftCards.id,
     codeSuffix: giftCards.codeSuffix,
@@ -1089,7 +1099,7 @@ async function getGiftCardsAdmin(env) {
     replacesPurchaseId: giftCards.replacesPurchaseId,
     // The buyer of the purchase the card belongs to or replaces; the claim link resend goes there. The
     // subqueries name the card's columns with their table, because drizzle leaves them unqualified.
-    buyerEmail: sql`(SELECT p.buyer_email FROM _ecommerce_gift_card_purchases p
+    buyerEmail: sql2`(SELECT p.buyer_email FROM _ecommerce_gift_card_purchases p
       WHERE p.id = COALESCE(_ecommerce_gift_cards.purchase_id, _ecommerce_gift_cards.replaces_purchase_id))`,
     adminActor: giftCards.adminActor,
     adminReason: giftCards.adminReason,
@@ -1098,10 +1108,10 @@ async function getGiftCardsAdmin(env) {
     currency: giftCards.currency,
     status: giftCards.status,
     // While its purchase is held for review, the card cannot be reactivated.
-    inReview: sql`EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p
+    inReview: sql2`EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p
       WHERE p.id IN (${giftCards.purchaseId}, ${giftCards.replacesPurchaseId}) AND p.status = 'review')`.mapWith(Boolean),
     // Read through the purchase index: a card's links all belong to its purchase, or to the one it replaces.
-    claimLink: sql`(SELECT json_object('createdAt', l.created_at, 'expiresAt', l.expires_at, 'usedAt', l.used_at,
+    claimLink: sql2`(SELECT json_object('createdAt', l.created_at, 'expiresAt', l.expires_at, 'usedAt', l.used_at,
         'revokedAt', l.revoked_at, 'resent', l.created_by IS NOT NULL)
       FROM _ecommerce_gift_card_claims l
       WHERE l.purchase_id = COALESCE(_ecommerce_gift_cards.purchase_id, _ecommerce_gift_cards.replaces_purchase_id)
@@ -1109,7 +1119,7 @@ async function getGiftCardsAdmin(env) {
       -- A link the buyer can still use comes first, so a resend that failed never hides a working link.
       ORDER BY (l.used_at IS NULL AND l.revoked_at IS NULL AND l.expires_at > CAST(strftime('%s', 'now') AS INTEGER)) DESC,
         l.created_at DESC, l.rowid DESC LIMIT 1)`.mapWith(claimLinkView),
-    claimEmail: sql`(SELECT json_object('status', d.status, 'lastError', d.last_error, 'attempts', d.attempts)
+    claimEmail: sql2`(SELECT json_object('status', d.status, 'lastError', d.last_error, 'attempts', d.attempts)
       FROM _ecommerce_email_deliveries d WHERE d.kind = 'gift_card_claim' AND d.subject_id = _ecommerce_gift_cards.purchase_id)`.mapWith(claimEmailView),
     createdAt: giftCards.createdAt
   }).from(giftCards).orderBy(giftCards.createdAt);
@@ -1139,8 +1149,8 @@ async function getGiftCardReviewsAdmin(env) {
 }
 async function setGiftCardActive(env, id, active) {
   if (!/^gift_[0-9a-f-]{36}$/.test(id) || typeof active !== "boolean") throw new Error("Invalid gift card");
-  const db = createDbClient(env);
-  const card = await db.select().from(giftCards).where(eq(giftCards.id, id)).get();
+  const db = createDbClient2(env);
+  const card = await db.select().from(giftCards).where(eq2(giftCards.id, id)).get();
   if (!card || card.status === "void") throw new Error("Gift card is unavailable");
   const timestamp = Math.floor(Date.now() / 1e3);
   const result = await env.DB.prepare(`UPDATE _ecommerce_gift_cards SET status = ?,held_for_review = 0,updated_at = ?
@@ -1165,8 +1175,8 @@ async function evaluateGiftCard(env, code, amountDue) {
   const currency = giftCardCurrency(env);
   const normalized = code.trim().toUpperCase();
   if (!/^GIFT-[A-F0-9]{32}$/.test(normalized)) throw new GiftCardRefusal("format", "Invalid gift card code");
-  const db = createDbClient(env);
-  const card = await db.select().from(giftCards).where(eq(giftCards.codeHash, await hashGiftCardSecret(normalized))).get();
+  const db = createDbClient2(env);
+  const card = await db.select().from(giftCards).where(eq2(giftCards.codeHash, await hashGiftCardSecret(normalized))).get();
   if (!card || card.status !== "active" || card.currency !== currency || card.balanceCents <= 0) {
     throw new GiftCardRefusal("unavailable", "Gift card is unavailable");
   }
@@ -1178,12 +1188,12 @@ async function evaluateGiftCard(env, code, amountDue) {
 async function getGiftCardBalance(env, code) {
   const normalized = code.trim().toUpperCase();
   if (!/^GIFT-[A-F0-9]{32}$/.test(normalized)) throw new Error("Invalid gift card code");
-  const db = createDbClient(env);
+  const db = createDbClient2(env);
   const card = await db.select({
     balanceCents: giftCards.balanceCents,
     currency: giftCards.currency,
     status: giftCards.status
-  }).from(giftCards).where(eq(giftCards.codeHash, await hashGiftCardSecret(normalized))).get();
+  }).from(giftCards).where(eq2(giftCards.codeHash, await hashGiftCardSecret(normalized))).get();
   if (!card) throw new Error("Gift card not found");
   return card;
 }
@@ -1195,17 +1205,18 @@ async function startGiftCardPurchase(env, adapter, input, urls) {
   const id = `gp_${crypto.randomUUID()}`;
   const accessToken = randomHex(32);
   const timestamp = Math.floor(Date.now() / 1e3);
-  await env.DB.prepare(`INSERT INTO _ecommerce_gift_card_purchases
-    (id,buyer_email,amount_cents,currency,status,access_token_hash,created_at,updated_at)
-    VALUES (?,?,?,?,'pending',?,?,?)`).bind(
+  const db = createDbClient2(env);
+  const pending = and2(eq2(giftCardPurchases.id, id), eq2(giftCardPurchases.status, "pending"));
+  await db.insert(giftCardPurchases).values({
     id,
-    values.buyerEmail,
-    values.amountCents,
+    buyerEmail: values.buyerEmail,
+    amountCents: values.amountCents,
     currency,
-    await hashGiftCardSecret(accessToken),
-    timestamp,
-    timestamp
-  ).run();
+    status: "pending",
+    accessTokenHash: await hashGiftCardSecret(accessToken),
+    createdAt: at2(timestamp),
+    updatedAt: at2(timestamp)
+  });
   let providerSessionId;
   try {
     const session = await adapter.createCheckoutSession({
@@ -1218,29 +1229,26 @@ async function startGiftCardPurchase(env, adapter, input, urls) {
       cancelUrl: urls.cancelUrl
     });
     providerSessionId = session.providerSessionId;
-    await env.DB.prepare(`UPDATE _ecommerce_gift_card_purchases SET provider_session_id = ?, updated_at = ?
-      WHERE id = ? AND status = 'pending'`).bind(session.providerSessionId, timestamp, id).run();
+    await db.update(giftCardPurchases).set({ providerSessionId: session.providerSessionId, updatedAt: at2(timestamp) }).where(pending);
     return { id, accessToken, paymentUrl: session.url };
   } catch (error) {
     if (providerSessionId) {
       try {
         await adapter.expireCheckoutSession?.(providerSessionId);
       } catch {
-        await env.DB.prepare(`UPDATE _ecommerce_gift_card_purchases SET provider_session_id = ?
-          WHERE id = ? AND status = 'pending'`).bind(providerSessionId, id).run();
+        await db.update(giftCardPurchases).set({ providerSessionId }).where(pending);
         throw error;
       }
     }
-    await env.DB.prepare(`UPDATE _ecommerce_gift_card_purchases SET status = 'cancelled', updated_at = ?
-      WHERE id = ? AND status = 'pending'`).bind(Math.floor(Date.now() / 1e3), id).run();
+    await db.update(giftCardPurchases).set({ status: "cancelled", updatedAt: /* @__PURE__ */ new Date() }).where(pending);
     throw error;
   }
 }
 async function confirmGiftCardPurchase(env, session) {
   const id = session.metadata?.giftCardPurchaseId;
   if (!id) throw new Error("Gift card purchase ID is missing");
-  const db = createDbClient(env);
-  const purchase = await db.select().from(giftCardPurchases).where(eq(giftCardPurchases.id, id)).get();
+  const db = createDbClient2(env);
+  const purchase = await db.select().from(giftCardPurchases).where(eq2(giftCardPurchases.id, id)).get();
   if (!purchase || purchase.providerSessionId !== session.id || purchase.amountCents !== session.amount_total || session.currency?.toLowerCase() !== purchase.currency.toLowerCase() || session.payment_status !== "paid" || typeof session.payment_intent !== "string") {
     throw new WebhookMismatchError("purchase_mismatch", "Gift card payment does not match purchase");
   }
@@ -1330,20 +1338,31 @@ var composeGiftCardClaimEmail = async (env, purchaseId, setup, now) => {
 async function claimGiftCardCode(env, token) {
   if (typeof token !== "string" || !CLAIM_TOKEN.test(token)) return null;
   const now = Math.floor(Date.now() / 1e3);
-  const claim = await env.DB.prepare(`SELECT l.id,l.card_id,c.code_hash,c.encrypted_code,c.balance_cents,c.currency
-    FROM _ecommerce_gift_card_claims l JOIN _ecommerce_gift_cards c ON c.id = l.card_id
-    WHERE l.token_hash = ? AND l.used_at IS NULL AND l.revoked_at IS NULL AND l.expires_at > ? AND c.status = 'active'`).bind(await hashGiftCardSecret(token), now).first();
+  const claim = await createDbClient2(env).select({
+    id: giftCardClaims.id,
+    cardId: giftCardClaims.cardId,
+    codeHash: giftCards.codeHash,
+    encryptedCode: giftCards.encryptedCode,
+    balanceCents: giftCards.balanceCents,
+    currency: giftCards.currency
+  }).from(giftCardClaims).innerJoin(giftCards, eq2(giftCards.id, giftCardClaims.cardId)).where(and2(
+    eq2(giftCardClaims.tokenHash, await hashGiftCardSecret(token)),
+    isNull2(giftCardClaims.usedAt),
+    isNull2(giftCardClaims.revokedAt),
+    gt(giftCardClaims.expiresAt, at2(now)),
+    eq2(giftCards.status, "active")
+  )).get();
   if (!claim) return null;
   const code = await decryptCardSecret(
     await giftCardKeyring(env),
-    { id: claim.card_id, codeHash: claim.code_hash, encryptedCode: claim.encrypted_code }
+    { id: claim.cardId, codeHash: claim.codeHash, encryptedCode: claim.encryptedCode }
   );
   const used = await env.DB.prepare(`UPDATE _ecommerce_gift_card_claims SET used_at = ?
     WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?
       AND EXISTS (SELECT 1 FROM _ecommerce_gift_cards WHERE id = ? AND status = 'active')
-    RETURNING id`).bind(now, claim.id, now, claim.card_id).all();
+    RETURNING id`).bind(now, claim.id, now, claim.cardId).all();
   if (!used.results?.length) return null;
-  return { code, balanceCents: claim.balance_cents, currency: claim.currency };
+  return { code, balanceCents: claim.balanceCents, currency: claim.currency };
 }
 var resendSchema = z2.object({
   purchaseId: purchaseIdSchema,
@@ -1396,12 +1415,15 @@ async function resendGiftCardClaimLink(env, actor, input) {
   return { purchaseId: values.purchaseId, claimId: link.id, expiresAt: new Date(link.expiresAt * 1e3).toISOString() };
 }
 async function expireGiftCardPurchase(env, id, sessionId) {
-  await env.DB.prepare(`UPDATE _ecommerce_gift_card_purchases SET status = 'cancelled',updated_at = ?
-    WHERE id = ? AND provider_session_id = ? AND status = 'pending'`).bind(Math.floor(Date.now() / 1e3), id, sessionId).run();
+  await createDbClient2(env).update(giftCardPurchases).set({ status: "cancelled", updatedAt: /* @__PURE__ */ new Date() }).where(and2(
+    eq2(giftCardPurchases.id, id),
+    eq2(giftCardPurchases.providerSessionId, sessionId),
+    eq2(giftCardPurchases.status, "pending")
+  ));
 }
 async function reconcileGiftCardPurchase(env, adapter, id) {
-  const db = createDbClient(env);
-  const purchase = await db.select().from(giftCardPurchases).where(eq(giftCardPurchases.id, id)).get();
+  const db = createDbClient2(env);
+  const purchase = await db.select().from(giftCardPurchases).where(eq2(giftCardPurchases.id, id)).get();
   if (!purchase || purchase.status !== "pending" || !purchase.providerSessionId) return null;
   if (purchase.reconcileReviewAt) return { status: "pending", review: true };
   if (adapter?.providerId !== "stripe" || !adapter.getCheckoutSession) {
@@ -1433,10 +1455,10 @@ async function reconcileGiftCardPurchase(env, adapter, id) {
 }
 async function getPurchasedGiftCard(env, id, accessToken) {
   if (!/^gp_[0-9a-f-]{36}$/.test(id) || !accessToken) return null;
-  const db = createDbClient(env);
-  const purchase = await db.select().from(giftCardPurchases).where(eq(giftCardPurchases.id, id)).get();
+  const db = createDbClient2(env);
+  const purchase = await db.select().from(giftCardPurchases).where(eq2(giftCardPurchases.id, id)).get();
   if (!purchase || purchase.accessTokenHash !== await hashGiftCardSecret(accessToken)) return null;
-  const card = await db.select().from(giftCards).where(eq(giftCards.purchaseId, id)).get();
+  const card = await db.select().from(giftCards).where(eq2(giftCards.purchaseId, id)).get();
   return {
     status: purchase.status,
     amountCents: purchase.amountCents,
@@ -1500,8 +1522,8 @@ function giftCardPurchaseChargebackStatements(env, purchaseId, timestamp) {
   ];
 }
 async function recordGiftCardPurchaseRefund(env, params) {
-  const db = createDbClient(env);
-  const purchase = await db.select().from(giftCardPurchases).where(eq(giftCardPurchases.paymentIntentId, params.paymentIntentId)).get();
+  const db = createDbClient2(env);
+  const purchase = await db.select().from(giftCardPurchases).where(eq2(giftCardPurchases.paymentIntentId, params.paymentIntentId)).get();
   if (!purchase) return null;
   if (purchase.amountCents !== params.amount || params.currency.toLowerCase() !== purchase.currency.toLowerCase() || !Number.isSafeInteger(params.amountRefunded) || params.amountRefunded < 0 || params.amountRefunded > purchase.amountCents) {
     throw new WebhookMismatchError("refund_mismatch", "Gift card refund does not match purchase");
@@ -1513,7 +1535,7 @@ async function recordGiftCardPurchaseRefund(env, params) {
       WHERE id = ? AND provider_refunded_cents < ?`).bind(params.amountRefunded, timestamp, purchase.id, params.amountRefunded),
     ...giftCardPurchaseHoldStatements(env, purchase.id, timestamp)
   ]);
-  const current = await db.select({ status: giftCardPurchases.status }).from(giftCardPurchases).where(eq(giftCardPurchases.id, purchase.id)).get();
+  const current = await db.select({ status: giftCardPurchases.status }).from(giftCardPurchases).where(eq2(giftCardPurchases.id, purchase.id)).get();
   return { success: true, purchaseId: purchase.id, status: current?.status ?? "review" };
 }
 var reviewSchema = z2.object({
@@ -1608,20 +1630,24 @@ var refundSchema = z2.object({
 async function refundGiftCardTender(env, actor, input) {
   const values = refundSchema.parse(input);
   if (!actor.trim()) throw new Error("Administrator identity is required");
-  const row = await env.DB.prepare(`SELECT id,gift_card_id,gift_card_applied,gift_card_refunded_cents,status,referral_code
-    FROM _ecommerce_orders WHERE id = ?`).bind(values.orderId).all();
-  const current = row.results?.[0];
-  if (!current?.gift_card_id || !["paid", "fulfilled", "partially_refunded"].includes(current.status)) {
+  const current = await createDbClient2(env).select({
+    giftCardId: orders.giftCardId,
+    giftCardApplied: orders.giftCardApplied,
+    giftCardRefundedCents: orders.giftCardRefundedCents,
+    status: orders.status,
+    referralCode: orders.referralCode
+  }).from(orders).where(eq2(orders.id, values.orderId)).get();
+  if (!current?.giftCardId || !["paid", "fulfilled", "partially_refunded"].includes(current.status)) {
     throw new Error("Order is unavailable for a gift card refund");
   }
-  const remaining = current.gift_card_applied - current.gift_card_refunded_cents;
+  const remaining = current.giftCardApplied - current.giftCardRefundedCents;
   if (!values.amountCents || values.amountCents > remaining) throw new Error("Refund exceeds gift card payment");
   const id = `gfr_${crypto.randomUUID()}`;
   const now = Math.floor(Date.now() / 1e3);
   const statements = [env.DB.prepare(`INSERT INTO _ecommerce_gift_card_refunds
     (id,card_id,order_id,amount_cents,admin_actor,reason,created_at)
-    VALUES (?,?,?,?,?,?,?)`).bind(id, current.gift_card_id, values.orderId, values.amountCents, actor, values.reason, now)];
-  if (current.referral_code) {
+    VALUES (?,?,?,?,?,?,?)`).bind(id, current.giftCardId, values.orderId, values.amountCents, actor, values.reason, now)];
+  if (current.referralCode) {
     const policy = await getReferralPolicy(env);
     statements.push(...referralReversalStatements(env, values.orderId, { minOrderCents: policy.minOrderCents, now }));
   }
@@ -1631,21 +1657,29 @@ async function refundGiftCardTender(env, actor, input) {
 async function refundGiftCardOnlyOrder(env, actor, input) {
   const values = refundSchema.parse(input);
   if (!actor.trim() || values.amountCents !== void 0) throw new Error("Invalid full refund request");
-  const row = await env.DB.prepare(`SELECT id,gift_card_id,gift_card_applied,gift_card_refunded_cents,
-    credit_applied,payment_provider,total_amount,status,user_id FROM _ecommerce_orders WHERE id = ?`).bind(values.orderId).all();
-  const order = row.results?.[0];
-  if (!order || order.payment_provider !== "gift_card" || order.total_amount !== 0 || !["paid", "partially_refunded", "fulfilled"].includes(order.status)) {
+  const order = await createDbClient2(env).select({
+    id: orders.id,
+    giftCardId: orders.giftCardId,
+    giftCardApplied: orders.giftCardApplied,
+    giftCardRefundedCents: orders.giftCardRefundedCents,
+    creditApplied: orders.creditApplied,
+    paymentProvider: orders.paymentProvider,
+    totalAmount: orders.totalAmount,
+    status: orders.status,
+    userId: orders.userId
+  }).from(orders).where(eq2(orders.id, values.orderId)).get();
+  if (!order || order.paymentProvider !== "gift_card" || order.totalAmount !== 0 || !["paid", "partially_refunded", "fulfilled"].includes(order.status)) {
     throw new Error("Only paid gift-card-only orders can be refunded here");
   }
   const now = Math.floor(Date.now() / 1e3);
-  const remaining = order.gift_card_applied - order.gift_card_refunded_cents;
+  const remaining = order.giftCardApplied - order.giftCardRefundedCents;
   const statements = [
     env.DB.prepare(`INSERT INTO _ecommerce_gift_card_order_refunds
       (order_id,admin_actor,reason,created_at) VALUES (?,?,?,?)`).bind(order.id, actor, values.reason, now)
   ];
   if (remaining > 0) statements.push(env.DB.prepare(`INSERT INTO _ecommerce_gift_card_refunds
     (id,card_id,order_id,amount_cents,admin_actor,reason,created_at)
-    VALUES (?,?,?,?,?,?,?)`).bind(`gfr_full_${order.id}`, order.gift_card_id, order.id, remaining, actor, values.reason, now));
+    VALUES (?,?,?,?,?,?,?)`).bind(`gfr_full_${order.id}`, order.giftCardId, order.id, remaining, actor, values.reason, now));
   statements.push(env.DB.prepare(`UPDATE _ecommerce_orders SET status = 'refunded',updated_at = ?
     WHERE id = ? AND payment_provider = 'gift_card' AND total_amount = 0
       AND status IN ('paid','fulfilled','partially_refunded')`).bind(now, order.id));
@@ -1653,9 +1687,9 @@ async function refundGiftCardOnlyOrder(env, actor, input) {
     WHERE order_id = ? AND status = 'confirmed'`).bind(now, order.id));
   statements.push(env.DB.prepare(`UPDATE _ecommerce_discount_redemptions SET status = 'refunded',updated_at = ?
     WHERE order_id = ? AND status = 'confirmed'`).bind(now, order.id));
-  if (order.credit_applied > 0 && order.user_id) statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
+  if (order.creditApplied > 0 && order.userId) statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
     (id,account_id,order_id,kind,amount_cents,created_at)
-    VALUES (?, ?, ?, 'purchase_credit_refund', ?, ?) ON CONFLICT(order_id,kind) DO NOTHING`).bind(`credit_refund_${order.id}`, order.user_id, order.id, order.credit_applied, now));
+    VALUES (?, ?, ?, 'purchase_credit_refund', ?, ?) ON CONFLICT(order_id,kind) DO NOTHING`).bind(`credit_refund_${order.id}`, order.userId, order.id, order.creditApplied, now));
   statements.push(env.DB.prepare(`UPDATE _ecommerce_payments SET status = 'refunded' WHERE order_id = ?`).bind(order.id));
   await env.DB.batch(statements);
   return { orderId: order.id, status: "refunded" };

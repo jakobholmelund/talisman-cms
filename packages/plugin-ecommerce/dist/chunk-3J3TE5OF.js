@@ -1,10 +1,10 @@
 import {
   INVENTORY_COLUMNS,
   fullRefundStatements
-} from "./chunk-IK22DR6W.js";
+} from "./chunk-Y3HORIA5.js";
 import {
   evaluateDiscountCode
-} from "./chunk-GGFLTIUK.js";
+} from "./chunk-P5DZUQYQ.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
@@ -12,7 +12,7 @@ import {
   deliverCommerceEmail,
   deliverPendingCommerceEmails,
   fulfillCommerceOrder
-} from "./chunk-BGS2NWOG.js";
+} from "./chunk-7YPMQZEE.js";
 import {
   RECONCILE_DUE,
   RECONCILE_ORDER,
@@ -41,7 +41,7 @@ import {
   recordGiftCardPurchaseRefund,
   sessionLookupFailure,
   uncheckedSessionRefusal
-} from "./chunk-A7BNM2SK.js";
+} from "./chunk-JKIGKMCL.js";
 import {
   canonicalEmail,
   canonicalEmailSql,
@@ -53,31 +53,33 @@ import {
   hasCanonicalPurchase,
   referralReversalStatements,
   releaseReferralAwards
-} from "./chunk-HBUWVAQK.js";
+} from "./chunk-XVZVMCBJ.js";
 import {
   PURCHASED_ORDER_STATUSES,
   claimInterval,
   hasPurchaseHistory
-} from "./chunk-NKZQB4F4.js";
+} from "./chunk-ARHHJKHE.js";
 import {
   carts,
   componentReservations,
   customerAccounts,
+  customerSessions,
   giftCardPurchases,
   inventoryReservations,
   orders,
   productVariantValues,
   productVariants,
   products,
-  referralCodes
+  referralCodes,
+  taxReversals
 } from "./chunk-SFZBZWCM.js";
 import {
   minimumChargeAmount
 } from "./chunk-2UYSCNNW.js";
 
 // src/api.ts
-import { createDbClient as createDbClient2 } from "talisman-cms/client";
-import { and, eq as eq2, inArray, isNull, sql } from "drizzle-orm";
+import { createDbClient as createDbClient3 } from "talisman-cms/client";
+import { and as and2, eq as eq3, inArray, isNotNull as isNotNull2, isNull as isNull2, lt, or, sql } from "drizzle-orm";
 
 // src/provider-checks.ts
 var PROVIDER_CHECK_INTERVAL_SECONDS = 15;
@@ -191,6 +193,8 @@ function deliveryEstimate(rate) {
 }
 
 // src/tax.ts
+import { and, eq, isNotNull, isNull } from "drizzle-orm";
+import { createDbClient } from "talisman-cms/client";
 var SHIPPING_TAX_CODE = "txcd_92010001";
 var TaxCalculationError = class extends Error {
   constructor(options) {
@@ -278,7 +282,7 @@ function taxProvider(adapters, paymentProvider) {
   return adapters.find((adapter) => adapter.providerId === providerId);
 }
 var PAID_STATUSES = ["paid", "fulfilled", "partially_refunded", "refunded", "disputed"];
-var TAX_SYNC_CLEARED = "tax_sync_attempts = 0, tax_sync_last_at = NULL, tax_sync_last_error = NULL";
+var TAX_SYNC_CLEARED = { taxSyncAttempts: 0, taxSyncLastAt: null, taxSyncLastError: null };
 var ORDER_TAX_BACKOFF = backoffSql("tax_sync");
 var unixNow = () => Math.floor(Date.now() / 1e3);
 async function countTaxFailure(env, table, where, key, error, now) {
@@ -304,8 +308,7 @@ async function recordOrderTax(env, adapters, orderId, now = unixNow()) {
       calculationId: order.tax_calculation_id,
       ...late ? { postedAt: order.paid_at } : {}
     });
-    const stored = await env.DB.prepare(`UPDATE _ecommerce_orders SET tax_transaction_id = ?, ${TAX_SYNC_CLEARED}
-      WHERE id = ? AND tax_transaction_id IS NULL`).bind(transactionId, order.id).run();
+    const stored = await createDbClient(env).update(orders).set({ taxTransactionId: transactionId, ...TAX_SYNC_CLEARED }).where(and(eq(orders.id, order.id), isNull(orders.taxTransactionId))).run();
     return Number(stored.meta?.changes ?? 0) > 0;
   } catch (error) {
     await countTaxFailure(env, "_ecommerce_orders", "id = ? AND tax_transaction_id IS NULL", order.id, error, now);
@@ -365,8 +368,7 @@ async function reverseOrderTax(env, adapters, orderId, now = unixNow()) {
   }
   if (!recorded) return null;
   try {
-    await env.DB.prepare(`UPDATE _ecommerce_orders SET ${TAX_SYNC_CLEARED}
-      WHERE id = ? AND tax_sync_last_at IS NOT NULL`).bind(orderId).run();
+    await createDbClient(env).update(orders).set(TAX_SYNC_CLEARED).where(and(eq(orders.id, orderId), isNotNull(orders.taxSyncLastAt)));
   } catch {
   }
   await sendTaxReversal(env, recorded.adapter, recorded.reversal, now);
@@ -378,8 +380,7 @@ async function sendTaxReversal(env, adapter, reversal, now) {
       throw new ReconcileFailure("provider_not_configured", "Payment provider cannot reverse tax");
     }
     const { reversalId } = await adapter.reverseTaxTransaction(reversal);
-    await env.DB.prepare(`UPDATE _ecommerce_tax_reversals SET provider_reversal_id = ?, ${TAX_SYNC_CLEARED}
-      WHERE reference = ? AND provider_reversal_id = ''`).bind(reversalId, reversal.reference).run();
+    await createDbClient(env).update(taxReversals).set({ providerReversalId: reversalId, ...TAX_SYNC_CLEARED }).where(and(eq(taxReversals.reference, reversal.reference), eq(taxReversals.providerReversalId, "")));
   } catch (error) {
     await countTaxFailure(
       env,
@@ -453,8 +454,8 @@ async function reverseUnreversedTax(env, adapters, now, limit) {
 }
 
 // src/disputes.ts
-import { eq } from "drizzle-orm";
-import { createDbClient } from "talisman-cms/client";
+import { eq as eq2 } from "drizzle-orm";
+import { createDbClient as createDbClient2 } from "talisman-cms/client";
 function parseStripeDispute(data, eventTime) {
   const paymentIntentId = typeof data?.payment_intent === "string" ? data.payment_intent : data?.payment_intent?.id;
   if (typeof data?.id !== "string" || !data.id || typeof paymentIntentId !== "string" || !paymentIntentId) return null;
@@ -595,7 +596,7 @@ async function closePurchaseDispute(env, purchase, dispute, closedAt, now) {
       ...giftCardPurchaseHoldStatements(env, purchase.id, now),
       ...giftCardPurchaseChargebackStatements(env, purchase.id, now)
     ]);
-    const current = await env.DB.prepare(`SELECT status FROM _ecommerce_gift_card_purchases WHERE id = ?`).bind(purchase.id).first();
+    const current = await createDbClient2(env).select({ status: giftCardPurchases.status }).from(giftCardPurchases).where(eq2(giftCardPurchases.id, purchase.id)).get();
     if (current?.status === "review") {
       throw new WebhookRetryLaterError("A checkout in progress holds value on the disputed purchase's card; the lost dispute is applied once it completes or expires");
     }
@@ -617,14 +618,14 @@ async function closePurchaseDispute(env, purchase, dispute, closedAt, now) {
   ]);
 }
 async function applyStripeDispute(env, dispute, options) {
-  const db = createDbClient(env);
+  const db = createDbClient2(env);
   const now = options.now ?? Math.floor(Date.now() / 1e3);
-  const order = await db.select({ id: orders.id, currency: orders.currency, referralCode: orders.referralCode }).from(orders).where(eq(orders.paymentIntentId, dispute.paymentIntentId)).get();
+  const order = await db.select({ id: orders.id, currency: orders.currency, referralCode: orders.referralCode }).from(orders).where(eq2(orders.paymentIntentId, dispute.paymentIntentId)).get();
   if (order) {
     const status = options.closed ? await closeOrderDispute(env, order, dispute, options.at, now) : await openOrderDispute(env, order, dispute, now);
     return { orderId: order.id, status };
   }
-  const purchase = await db.select({ id: giftCardPurchases.id, currency: giftCardPurchases.currency }).from(giftCardPurchases).where(eq(giftCardPurchases.paymentIntentId, dispute.paymentIntentId)).get();
+  const purchase = await db.select({ id: giftCardPurchases.id, currency: giftCardPurchases.currency }).from(giftCardPurchases).where(eq2(giftCardPurchases.paymentIntentId, dispute.paymentIntentId)).get();
   if (purchase) {
     if (options.closed) await closePurchaseDispute(env, purchase, dispute, options.at, now);
     else await openPurchaseDispute(env, purchase, dispute, now);
@@ -638,6 +639,7 @@ var PARKED_CHECKOUT_MESSAGE = "The store is reviewing the payment for this check
 var RESERVATION_ROWS = `SELECT json_extract(value, '$.target') AS target, json_extract(value, '$.amount') AS amount
   FROM json_each(?)`;
 var QUERY_ID_CHUNK = 90;
+var at = (seconds) => new Date(seconds * 1e3);
 function chunked(values, size = QUERY_ID_CHUNK) {
   const chunks = [];
   for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size));
@@ -676,7 +678,7 @@ function aggregateComponentDemand(items) {
 }
 function bindCommerceApi(options) {
   const { env, paymentAdapters = [] } = options;
-  const db = createDbClient2(env);
+  const db = createDbClient3(env);
   async function discardCheckoutDiscount(adapter, orderId) {
     if (!adapter?.discardCheckoutDiscount) return;
     try {
@@ -828,7 +830,7 @@ function bindCommerceApi(options) {
       const groupsWithValues = new Set(groups.length ? (await db.selectDistinct({ id: productVariantValues.productVariantId }).from(productVariantValues).where(inArray(productVariantValues.productVariantId, groups.map((group) => group.id)))).map((value) => value.id) : []);
       const owners = new Map(groups.filter((group) => !groupsWithValues.has(group.id)).map((group) => [group.id, group.productId]));
       const choices = new Map(groups.filter((group) => groupsWithValues.has(group.id)).map((group) => [group.id, group.productId]));
-      for (const value of await db.select({ id: productVariantValues.id, productId: productVariants.productId }).from(productVariantValues).innerJoin(productVariants, eq2(productVariants.id, productVariantValues.productVariantId)).where(inArray(productVariantValues.id, variantIds))) {
+      for (const value of await db.select({ id: productVariantValues.id, productId: productVariants.productId }).from(productVariantValues).innerJoin(productVariants, eq3(productVariants.id, productVariantValues.productVariantId)).where(inArray(productVariantValues.id, variantIds))) {
         owners.set(value.id, value.productId);
       }
       const unchosenGroup = added.find((item) => item.variantId && choices.get(item.variantId) === item.productId);
@@ -845,7 +847,7 @@ function bindCommerceApi(options) {
     return items.map(({ productId, variantId, quantity }) => variantId ? { productId, variantId, quantity } : { productId, quantity });
   }
   async function finalizeOrderPayment(params) {
-    const order = await db.select().from(orders).where(eq2(orders.id, params.orderId)).get();
+    const order = await db.select().from(orders).where(eq3(orders.id, params.orderId)).get();
     if (!order) {
       throw new Error(`Order not found: ${params.orderId}`);
     }
@@ -890,8 +892,8 @@ function bindCommerceApi(options) {
     }
     if (order.referralCode && order.referralRewardCents > 0 && params.provider !== "admin_test") {
       const policy = await getReferralPolicy(env);
-      const referrer = await db.select({ emailNormalized: customerAccounts.emailNormalized }).from(referralCodes).innerJoin(customerAccounts, eq2(customerAccounts.id, referralCodes.accountId)).where(eq2(referralCodes.code, order.referralCode)).get();
-      const buyerAccount = order.userId ? await db.select({ emailNormalized: customerAccounts.emailNormalized }).from(customerAccounts).where(eq2(customerAccounts.id, order.userId)).get() : void 0;
+      const referrer = await db.select({ emailNormalized: customerAccounts.emailNormalized }).from(referralCodes).innerJoin(customerAccounts, eq3(customerAccounts.id, referralCodes.accountId)).where(eq3(referralCodes.code, order.referralCode)).get();
+      const buyerAccount = order.userId ? await db.select({ emailNormalized: customerAccounts.emailNormalized }).from(customerAccounts).where(eq3(customerAccounts.id, order.userId)).get() : void 0;
       const checkoutEmail = (order.customerEmail || "").trim().toLowerCase();
       const buyerCanonicals = canonicalEmails([checkoutEmail, normalizedEmail, buyerAccount?.emailNormalized]);
       const referrerCanonical = canonicalEmail(referrer?.emailNormalized);
@@ -962,7 +964,7 @@ function bindCommerceApi(options) {
       }));
     }
     await env.DB.batch(statements);
-    const current = await db.select().from(orders).where(eq2(orders.id, params.orderId)).get();
+    const current = await db.select().from(orders).where(eq3(orders.id, params.orderId)).get();
     if (current?.status !== "paid") throw new Error("Order is no longer pending");
     if (current.taxCalculationId && !current.taxTransactionId) {
       await recordConfirmedOrderTax(env, paymentAdapters, params.orderId);
@@ -971,7 +973,7 @@ function bindCommerceApi(options) {
     return { success: true, orderId: params.orderId, status: "paid" };
   }
   async function recordProviderRefund(params) {
-    const order = await db.select().from(orders).where(eq2(orders.paymentIntentId, params.paymentIntentId)).get();
+    const order = await db.select().from(orders).where(eq3(orders.paymentIntentId, params.paymentIntentId)).get();
     if (!order) return null;
     if (order.paymentProvider !== "stripe" || order.totalAmount !== params.amount || order.currency.toLowerCase() !== String(params.currency).toLowerCase() || !Number.isSafeInteger(params.amountRefunded) || params.amountRefunded < 0 || params.amountRefunded > order.totalAmount) {
       throw new WebhookMismatchError("refund_mismatch", "Refund does not match order payment");
@@ -1041,7 +1043,7 @@ function bindCommerceApi(options) {
   async function assertNoAwaitedPayment(references) {
     const purchaseId = references?.giftCardPurchaseId || null;
     const orderId = purchaseId ? null : references?.orderId || null;
-    const record = purchaseId ? await db.select({ status: giftCardPurchases.status }).from(giftCardPurchases).where(eq2(giftCardPurchases.id, purchaseId)).get() : orderId ? await db.select({ status: orders.status }).from(orders).where(eq2(orders.id, orderId)).get() : void 0;
+    const record = purchaseId ? await db.select({ status: giftCardPurchases.status }).from(giftCardPurchases).where(eq3(giftCardPurchases.id, purchaseId)).get() : orderId ? await db.select({ status: orders.status }).from(orders).where(eq3(orders.id, orderId)).get() : void 0;
     if (!record || record.status === "cancelled" || record.status === "draft") return;
     if (record.status === "pending") {
       throw new WebhookRetryLaterError(`The ${purchaseId ? "gift card purchase" : "order"} this payment is for has no recorded payment yet`);
@@ -1050,17 +1052,17 @@ function bindCommerceApi(options) {
   }
   async function applyStripeEvent(event, stripeAdapter) {
     const text = (value) => typeof value === "string" && value ? value : null;
-    const at = Number.isSafeInteger(event.created) && event.created > 0 ? event.created : Math.floor(Date.now() / 1e3);
+    const at2 = Number.isSafeInteger(event.created) && event.created > 0 ? event.created : Math.floor(Date.now() / 1e3);
     if (event.type === "checkout.session.completed") {
       const session = event.data;
       if (session.payment_status !== "paid") return ignoredEvent(event);
       const purchaseId = text(session.metadata?.giftCardPurchaseId);
       if (purchaseId) {
-        const purchase = await db.select({ id: giftCardPurchases.id }).from(giftCardPurchases).where(eq2(giftCardPurchases.id, purchaseId)).get();
+        const purchase = await db.select({ id: giftCardPurchases.id }).from(giftCardPurchases).where(eq3(giftCardPurchases.id, purchaseId)).get();
         return purchase ? confirmGiftCardPurchase(env, session) : ignoredEvent(event);
       }
       const orderId = text(session.metadata?.orderId) ?? text(session.client_reference_id);
-      const order = orderId ? await db.select({ id: orders.id }).from(orders).where(eq2(orders.id, orderId)).get() : void 0;
+      const order = orderId ? await db.select({ id: orders.id }).from(orders).where(eq3(orders.id, orderId)).get() : void 0;
       if (!order) return ignoredEvent(event);
       return finalizeOrderPayment({
         orderId: order.id,
@@ -1077,14 +1079,14 @@ function bindCommerceApi(options) {
       const session = event.data;
       const purchaseId = text(session.metadata?.giftCardPurchaseId);
       if (purchaseId) {
-        const purchase = await db.select({ id: giftCardPurchases.id }).from(giftCardPurchases).where(eq2(giftCardPurchases.id, purchaseId)).get();
+        const purchase = await db.select({ id: giftCardPurchases.id }).from(giftCardPurchases).where(eq3(giftCardPurchases.id, purchaseId)).get();
         if (!purchase) return ignoredEvent(event);
         await expireGiftCardPurchase(env, purchaseId, session.id);
         return { success: true, event: event.type };
       }
       const orderId = text(session.metadata?.orderId) ?? text(session.client_reference_id);
       if (orderId) {
-        const order = await db.select().from(orders).where(eq2(orders.id, orderId)).get();
+        const order = await db.select().from(orders).where(eq3(orders.id, orderId)).get();
         if (order?.checkoutSessionId === session.id) {
           const cancelled = await bindCommerceApi(options).orders.cancel(orderId, { sessionExpired: true });
           return { success: true, event: event.type, cancelled: cancelled?.status === "cancelled" };
@@ -1111,7 +1113,7 @@ function bindCommerceApi(options) {
       const latest = listed.filter((item) => typeof item?.id === "string").sort((a, b) => Number(b.created ?? 0) - Number(a.created ?? 0))[0];
       const recorded = await recordProviderRefund({
         ...refund,
-        refundedAt: at,
+        refundedAt: at2,
         providerRefundId: typeof latest?.id === "string" ? latest.id : null
       });
       if (recorded) {
@@ -1125,9 +1127,9 @@ function bindCommerceApi(options) {
       return ignoredEvent(event);
     }
     if (event.type === "charge.dispute.created" || event.type === "charge.dispute.closed") {
-      const dispute = parseStripeDispute(event.data, at);
+      const dispute = parseStripeDispute(event.data, at2);
       if (!dispute) return ignoredEvent(event);
-      const applied = await applyStripeDispute(env, dispute, { closed: event.type === "charge.dispute.closed", at });
+      const applied = await applyStripeDispute(env, dispute, { closed: event.type === "charge.dispute.closed", at: at2 });
       if (applied && "orderId" in applied && applied.status === "refunded") {
         await reverseRefundedOrderTax(env, paymentAdapters, applied.orderId);
       }
@@ -1141,7 +1143,7 @@ function bindCommerceApi(options) {
     carts: {
       async quote(cartId) {
         const { currency } = readStoreSettings(env);
-        const cart = await db.select().from(carts).where(eq2(carts.id, cartId)).get();
+        const cart = await db.select().from(carts).where(eq3(carts.id, cartId)).get();
         if (!cart) throw new Error("Cart not found");
         const catalog = await loadBasketCatalog(cart.items);
         const lines = [];
@@ -1177,21 +1179,21 @@ function bindCommerceApi(options) {
       },
       async find(sessionToken, userId) {
         if (!sessionToken && !userId) return null;
-        const conditions = [eq2(carts.closed, false)];
+        const conditions = [eq3(carts.closed, false)];
         if (userId) {
-          conditions.push(eq2(carts.userId, userId));
+          conditions.push(eq3(carts.userId, userId));
         } else if (sessionToken) {
-          conditions.push(eq2(carts.sessionToken, sessionToken));
-          conditions.push(isNull(carts.userId));
+          conditions.push(eq3(carts.sessionToken, sessionToken));
+          conditions.push(isNull2(carts.userId));
         }
-        return await db.select().from(carts).where(and(...conditions)).get();
+        return await db.select().from(carts).where(and2(...conditions)).get();
       },
       /** Attach the current browser basket to an authenticated shopper account. */
       async claim(sessionToken, userId, choice) {
-        const account = await db.select({ id: customerAccounts.id }).from(customerAccounts).where(eq2(customerAccounts.id, userId)).get();
+        const account = await db.select({ id: customerAccounts.id }).from(customerAccounts).where(eq3(customerAccounts.id, userId)).get();
         if (!account) throw new Error("Customer account not found");
-        const guest = await db.select().from(carts).where(and(eq2(carts.sessionToken, sessionToken), eq2(carts.closed, false))).get();
-        const owned = await db.select().from(carts).where(and(eq2(carts.userId, userId), eq2(carts.closed, false))).get();
+        const guest = await db.select().from(carts).where(and2(eq3(carts.sessionToken, sessionToken), eq3(carts.closed, false))).get();
+        const owned = await db.select().from(carts).where(and2(eq3(carts.userId, userId), eq3(carts.closed, false))).get();
         if (guest?.userId === userId) return guest;
         if (guest?.userId) throw new Error("Basket belongs to another account");
         if (guest?.checkoutSessionId) throw new Error("Checkout already started for this cart");
@@ -1201,19 +1203,19 @@ function bindCommerceApi(options) {
           }
           if (owned.checkoutSessionId) throw new Error("Checkout already started for this cart");
           if (guest.items.length && choice !== "account") {
-            const released = await db.update(carts).set({ userId: null, updatedAt: /* @__PURE__ */ new Date() }).where(and(
-              eq2(carts.id, owned.id),
-              eq2(carts.userId, userId),
-              eq2(carts.version, owned.version),
-              eq2(carts.closed, false)
+            const released = await db.update(carts).set({ userId: null, updatedAt: /* @__PURE__ */ new Date() }).where(and2(
+              eq3(carts.id, owned.id),
+              eq3(carts.userId, userId),
+              eq3(carts.version, owned.version),
+              eq3(carts.closed, false)
             )).returning({ id: carts.id });
             if (!released.length) throw new Error("Basket changed during account upgrade; reload and try again");
           } else {
-            const released = await db.update(carts).set({ sessionToken: null, updatedAt: /* @__PURE__ */ new Date() }).where(and(
-              eq2(carts.id, guest.id),
-              eq2(carts.sessionToken, sessionToken),
-              eq2(carts.version, guest.version),
-              eq2(carts.closed, false)
+            const released = await db.update(carts).set({ sessionToken: null, updatedAt: /* @__PURE__ */ new Date() }).where(and2(
+              eq3(carts.id, guest.id),
+              eq3(carts.sessionToken, sessionToken),
+              eq3(carts.version, guest.version),
+              eq3(carts.closed, false)
             )).returning({ id: carts.id });
             if (!released.length) throw new Error("Basket changed during account upgrade; reload and try again");
           }
@@ -1221,17 +1223,16 @@ function bindCommerceApi(options) {
         const target = choice === "account" && owned ? owned : guest?.items.length ? guest : owned ?? guest;
         if (target) {
           if (!guest) {
-            await env.DB.prepare(`UPDATE _ecommerce_carts SET session_token = NULL
-              WHERE session_token = ? AND closed = 1`).bind(sessionToken).run();
+            await db.update(carts).set({ sessionToken: null }).where(and2(eq3(carts.sessionToken, sessionToken), eq3(carts.closed, true)));
           }
-          const updated = await db.update(carts).set({ userId, sessionToken, updatedAt: /* @__PURE__ */ new Date(), version: sql`${carts.version} + 1` }).where(and(
-            eq2(carts.id, target.id),
-            eq2(carts.closed, false),
-            isNull(carts.checkoutSessionId),
-            eq2(carts.version, target.version)
+          const updated = await db.update(carts).set({ userId, sessionToken, updatedAt: /* @__PURE__ */ new Date(), version: sql`${carts.version} + 1` }).where(and2(
+            eq3(carts.id, target.id),
+            eq3(carts.closed, false),
+            isNull2(carts.checkoutSessionId),
+            eq3(carts.version, target.version)
           )).returning({ id: carts.id });
           if (!updated.length) throw new Error("Basket changed during account upgrade; reload and try again");
-          return await db.select().from(carts).where(eq2(carts.id, target.id)).get();
+          return await db.select().from(carts).where(eq3(carts.id, target.id)).get();
         }
         return null;
       },
@@ -1243,11 +1244,13 @@ function bindCommerceApi(options) {
         let cart = await this.find(sessionToken, userId);
         if (!cart) {
           if (!userId) {
-            await env.DB.prepare(`UPDATE _ecommerce_carts SET session_token = NULL
-               WHERE session_token = ? AND closed = 0 AND user_id IS NOT NULL`).bind(sessionToken).run();
+            await db.update(carts).set({ sessionToken: null }).where(and2(
+              eq3(carts.sessionToken, sessionToken),
+              eq3(carts.closed, false),
+              isNotNull2(carts.userId)
+            ));
           }
-          await env.DB.prepare(`UPDATE _ecommerce_carts SET session_token = NULL
-             WHERE session_token = ? AND closed = 1`).bind(sessionToken).run();
+          await db.update(carts).set({ sessionToken: null }).where(and2(eq3(carts.sessionToken, sessionToken), eq3(carts.closed, true)));
           const cartId = `cart_${crypto.randomUUID()}`;
           const now = /* @__PURE__ */ new Date();
           await db.insert(carts).values({
@@ -1274,7 +1277,7 @@ function bindCommerceApi(options) {
       },
       async updateItems(cartId, items) {
         assertCartItems(items);
-        const cart = await db.select().from(carts).where(eq2(carts.id, cartId)).get();
+        const cart = await db.select().from(carts).where(eq3(carts.id, cartId)).get();
         if (!cart) {
           throw new Error("Cart not found");
         }
@@ -1285,14 +1288,14 @@ function bindCommerceApi(options) {
           throw new Error("Checkout already started for this cart");
         }
         const checked = await checkCartItems(items, cart.items);
-        const updated = await db.update(carts).set({ items: checked, updatedAt: /* @__PURE__ */ new Date(), version: sql`${carts.version} + 1` }).where(and(
-          eq2(carts.id, cartId),
-          eq2(carts.closed, false),
-          isNull(carts.checkoutSessionId),
-          eq2(carts.version, cart.version)
+        const updated = await db.update(carts).set({ items: checked, updatedAt: /* @__PURE__ */ new Date(), version: sql`${carts.version} + 1` }).where(and2(
+          eq3(carts.id, cartId),
+          eq3(carts.closed, false),
+          isNull2(carts.checkoutSessionId),
+          eq3(carts.version, cart.version)
         )).returning({ id: carts.id });
         if (!updated.length) throw new Error("Basket changed or checkout already started; reload and try again");
-        return await db.select().from(carts).where(eq2(carts.id, cartId)).get();
+        return await db.select().from(carts).where(eq3(carts.id, cartId)).get();
       }
     },
     orders: {
@@ -1305,7 +1308,7 @@ function bindCommerceApi(options) {
        * provider is not asked about a parked one.
        */
       async resumeFromCart(cartId, options2 = {}) {
-        const cart = await db.select().from(carts).where(eq2(carts.id, cartId)).get();
+        const cart = await db.select().from(carts).where(eq3(carts.id, cartId)).get();
         if (!cart?.checkoutSessionId) return null;
         if (cart.checkoutSessionId.startsWith("preparing:")) {
           const cutoff = Math.floor(Date.now() / 1e3) - 35 * 60;
@@ -1315,7 +1318,7 @@ function bindCommerceApi(options) {
               WHERE cart_id = _ecommerce_carts.id AND status = 'pending')`).bind(Math.floor(Date.now() / 1e3), cartId, cart.checkoutSessionId, cutoff).run();
           return null;
         }
-        const order = await db.select().from(orders).where(eq2(orders.checkoutSessionId, cart.checkoutSessionId)).get();
+        const order = await db.select().from(orders).where(eq3(orders.checkoutSessionId, cart.checkoutSessionId)).get();
         if (!order || order.status !== "pending") return null;
         if (order.paymentProvider === "gift_card" && order.totalAmount === 0) {
           await finalizeOrderPayment({
@@ -1408,7 +1411,7 @@ function bindCommerceApi(options) {
       async createFromCart(cartId, options2) {
         const settings = readStoreSettings(env);
         const { currency, deliveryCountries } = settings;
-        const cart = await db.select().from(carts).where(eq2(carts.id, cartId)).get();
+        const cart = await db.select().from(carts).where(eq3(carts.id, cartId)).get();
         if (!cart || cart.items.length === 0) {
           throw new Error("Cart is empty or not found");
         }
@@ -1508,7 +1511,7 @@ function bindCommerceApi(options) {
         const owner = cart.userId ? await db.select({
           creditBalance: customerAccounts.creditBalance,
           emailNormalized: customerAccounts.emailNormalized
-        }).from(customerAccounts).where(eq2(customerAccounts.id, cart.userId)).get() : void 0;
+        }).from(customerAccounts).where(eq3(customerAccounts.id, cart.userId)).get() : void 0;
         if (owner && defaultAdapter.providerId === "stripe") {
           creditApplied = Math.min(
             Math.max(0, owner.creditBalance),
@@ -1553,11 +1556,14 @@ function bindCommerceApi(options) {
         const now = /* @__PURE__ */ new Date();
         const timestamp = Math.floor(now.getTime() / 1e3);
         const preparationLock = `preparing:${orderId}`;
-        const snapshot = JSON.stringify(cart.items);
-        const lock = await env.DB.prepare(`UPDATE _ecommerce_carts
-           SET checkout_session_id = ?, updated_at = ?, version = version + 1
-           WHERE id = ? AND closed = 0 AND checkout_session_id IS NULL AND items = ? AND version = ? RETURNING id`).bind(preparationLock, timestamp, cartId, snapshot, cart.version).all();
-        if (!lock.results?.length) throw new Error("Checkout already started for this cart");
+        const lock = await db.update(carts).set({ checkoutSessionId: preparationLock, updatedAt: now, version: sql`${carts.version} + 1` }).where(and2(
+          eq3(carts.id, cartId),
+          eq3(carts.closed, false),
+          isNull2(carts.checkoutSessionId),
+          eq3(carts.items, cart.items),
+          eq3(carts.version, cart.version)
+        )).returning({ id: carts.id });
+        if (!lock.length) throw new Error("Checkout already started for this cart");
         let session;
         let committed = false;
         let providerDiscount = false;
@@ -1717,8 +1723,7 @@ function bindCommerceApi(options) {
           } finally {
             if (providerDiscount) await discardCheckoutDiscount(defaultAdapter, orderId);
           }
-          await env.DB.prepare(`UPDATE _ecommerce_carts SET checkout_session_id = NULL
-             WHERE id = ? AND checkout_session_id = ?`).bind(cartId, preparationLock).run();
+          await db.update(carts).set({ checkoutSessionId: null }).where(and2(eq3(carts.id, cartId), eq3(carts.checkoutSessionId, preparationLock)));
           throw error;
         }
       },
@@ -1744,7 +1749,7 @@ function bindCommerceApi(options) {
         return await this.find(orderId);
       },
       async find(id) {
-        const order = await db.select().from(orders).where(eq2(orders.id, id)).get();
+        const order = await db.select().from(orders).where(eq3(orders.id, id)).get();
         if (!order) return null;
         return order;
       },
@@ -1753,7 +1758,7 @@ function bindCommerceApi(options) {
         if (!order?.cartId) return null;
         if (customerId && order.userId === customerId) return order;
         if (!sessionToken) return null;
-        const cart = await db.select().from(carts).where(eq2(carts.id, order.cartId)).get();
+        const cart = await db.select().from(carts).where(eq3(carts.id, order.cartId)).get();
         return cart?.sessionToken === sessionToken ? order : null;
       },
       /**
@@ -1793,7 +1798,7 @@ function bindCommerceApi(options) {
        * Stripe session of the other mode is never asked about, since this Worker's key cannot read it.
        */
       async cancel(id, options2 = {}) {
-        const order = await db.select().from(orders).where(eq2(orders.id, id)).get();
+        const order = await db.select().from(orders).where(eq3(orders.id, id)).get();
         if (!order) return null;
         if (PURCHASED_ORDER_STATUSES.includes(order.status)) return order;
         const timestamp = Math.floor(Date.now() / 1e3);
@@ -1801,8 +1806,8 @@ function bindCommerceApi(options) {
         if (order.reconcileReviewAt && !options2.sessionExpired && !options2.reviewRelease) {
           throw new Error(PARKED_CHECKOUT_MESSAGE);
         }
-        const reservations = await db.select().from(componentReservations).where(eq2(componentReservations.orderId, id));
-        const inventoryReservations2 = await db.select().from(inventoryReservations).where(eq2(inventoryReservations.orderId, id));
+        const reservations = await db.select().from(componentReservations).where(eq3(componentReservations.orderId, id));
+        const inventoryReservations2 = await db.select().from(inventoryReservations).where(eq3(inventoryReservations.orderId, id));
         const otherModeSession = (order.paymentProvider ?? "stripe") === "stripe" && isOtherStripeModeSession(env, order.checkoutSessionId);
         let paymentReturned = null;
         if (order.checkoutSessionId && !options2.sessionExpired && order.paymentProvider !== "admin_test") {
@@ -1941,6 +1946,7 @@ async function reconcileCommerce(options, limit = 10) {
   const { env } = options;
   const api = bindCommerceApi(options);
   const now = Math.floor(Date.now() / 1e3);
+  const db = createDbClient3(env);
   const preparations = await env.DB.prepare(`SELECT id FROM _ecommerce_carts
     WHERE checkout_session_id >= 'preparing:' AND checkout_session_id < 'preparing;' AND updated_at < ?
     ORDER BY updated_at LIMIT ?`).bind(now - 35 * 60, count).all();
@@ -2018,9 +2024,10 @@ async function reconcileCommerce(options, limit = 10) {
       error: error instanceof Error ? error.message : "Email delivery failed"
     });
   }
-  await env.DB.prepare(`DELETE FROM _ecommerce_customer_sessions
-    WHERE (purpose = 'email_challenge' AND expires_at < ?)
-      OR (purpose = 'session' AND expires_at < ?)`).bind(now - 24 * 60 * 60, now - 30 * 24 * 60 * 60).run();
+  await db.delete(customerSessions).where(or(
+    and2(eq3(customerSessions.purpose, "email_challenge"), lt(customerSessions.expiresAt, at(now - 24 * 60 * 60))),
+    and2(eq3(customerSessions.purpose, "session"), lt(customerSessions.expiresAt, at(now - 30 * 24 * 60 * 60)))
+  ));
   return results;
 }
 var PURGE_MAX_BATCHES = 20;

@@ -91,7 +91,7 @@ declare function fulfillCommerceOrder(env: TalismanEnv, actor: string, input: un
     fulfillmentId: string;
     orderId: string;
     status: string | undefined;
-    fulfillmentStatus: FulfillmentStatus | undefined;
+    fulfillmentStatus: "unfulfilled" | "partially_fulfilled" | "fulfilled" | undefined;
 }>;
 /**
  * Appends a correction that restates a shipment's carrier and tracking number, with the reason.

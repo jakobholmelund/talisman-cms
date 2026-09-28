@@ -17,16 +17,23 @@ import {
   runCommerceEmailDelivery,
   sendCommerceEmailNow,
   waitingEmailsResult
-} from "./chunk-A7BNM2SK.js";
+} from "./chunk-JKIGKMCL.js";
+import {
+  orders
+} from "./chunk-SFZBZWCM.js";
 import {
   orderConfirmationEmail,
   shipmentEmail
 } from "./chunk-NMGICNSV.js";
 
 // src/fulfillment.ts
+import { eq as eq2 } from "drizzle-orm";
 import { z } from "zod";
+import { createDbClient as createDbClient2 } from "talisman-cms/client";
 
 // src/commerce-emails.ts
+import { eq } from "drizzle-orm";
+import { createDbClient } from "talisman-cms/client";
 var BUYER_AMOUNT_LABELS = {
   charged: "Amount charged",
   providerRefunded: "Refunded to your payment method",
@@ -87,14 +94,18 @@ function shipmentComposer(update) {
     if (index < 0) return { cancel: "not_found" };
     const shipment = rows[index];
     const current = rows.filter((row) => row.corrects_id === shipment.id).at(-1) ?? shipment;
-    const order = await env.DB.prepare(`SELECT id, customer_email, payment_provider, created_at FROM _ecommerce_orders
-      WHERE id = ?`).bind(shipment.order_id).first();
-    if (!order || (order.payment_provider ?? "stripe") === "admin_test") return { cancel: "not_found" };
-    const to = bareEmailAddress(order.customer_email);
+    const order = await createDbClient(env).select({
+      id: orders.id,
+      customerEmail: orders.customerEmail,
+      paymentProvider: orders.paymentProvider,
+      createdAt: orders.createdAt
+    }).from(orders).where(eq(orders.id, shipment.order_id)).get();
+    if (!order || (order.paymentProvider ?? "stripe") === "admin_test") return { cancel: "not_found" };
+    const to = bareEmailAddress(order.customerEmail);
     if (!to) return { fail: "invalid_recipient" };
     const email = {
       store: setup.store,
-      order: { id: order.id, placedAt: new Date(order.created_at * 1e3) },
+      order: { id: order.id, placedAt: order.createdAt },
       shipment: {
         id: shipment.id,
         shippedAt: new Date(shipment.created_at * 1e3),
@@ -295,7 +306,7 @@ async function listCommerceOrdersAdmin(env, options = {}) {
   const described = await describeOrderItems(env, storedItems.flat());
   const shipments = await loadShipments(env, rows.map((row) => row.id));
   let offset = 0;
-  const orders = rows.map((row, index) => {
+  const orders2 = rows.map((row, index) => {
     const items = described.slice(offset, offset += storedItems[index].length);
     const provider = row.payment_provider ?? "stripe";
     return {
@@ -327,7 +338,7 @@ async function listCommerceOrdersAdmin(env, options = {}) {
     pageSize: values.limit,
     awaitingCount: Number(counted.results?.[0]?.count ?? 0),
     nextCursor: found.length > values.limit ? encodeCursor(values.view, rows[rows.length - 1]) : null,
-    orders
+    orders: orders2
   };
 }
 function refusal(cause, message) {
@@ -336,11 +347,15 @@ function refusal(cause, message) {
 async function fulfillCommerceOrder(env, actor, input) {
   const values = parseInput(shipmentSchema, input);
   if (!actor.trim()) throw new Error("Administrator identity is required");
-  const order = await env.DB.prepare(`SELECT status, fulfillment_status, payment_provider
-    FROM _ecommerce_orders WHERE id = ?`).bind(values.orderId).first();
+  const db = createDbClient2(env);
+  const order = await db.select({
+    status: orders.status,
+    fulfillmentStatus: orders.fulfillmentStatus,
+    paymentProvider: orders.paymentProvider
+  }).from(orders).where(eq2(orders.id, values.orderId)).get();
   if (!order) throw new Error("Order not found");
-  if ((order.payment_provider ?? "stripe") === "admin_test") throw new Error("Admin test orders cannot be fulfilled");
-  if (order.fulfillment_status === "fulfilled") throw new Error("Order has already shipped in full");
+  if ((order.paymentProvider ?? "stripe") === "admin_test") throw new Error("Admin test orders cannot be fulfilled");
+  if (order.fulfillmentStatus === "fulfilled") throw new Error("Order has already shipped in full");
   if (!SHIPPABLE_STATUSES.includes(order.status)) {
     throw new Error(`A ${order.status.replaceAll("_", " ")} order cannot ship`);
   }
@@ -366,12 +381,12 @@ async function fulfillCommerceOrder(env, actor, input) {
     throw refusal(cause, "Order is not ready for fulfillment");
   }
   await deliverCommerceEmail(env, "shipment", id);
-  const current = await env.DB.prepare(`SELECT status, fulfillment_status FROM _ecommerce_orders WHERE id = ?`).bind(values.orderId).first();
+  const current = await db.select({ status: orders.status, fulfillmentStatus: orders.fulfillmentStatus }).from(orders).where(eq2(orders.id, values.orderId)).get();
   return {
     fulfillmentId: id,
     orderId: values.orderId,
     status: current?.status,
-    fulfillmentStatus: current?.fulfillment_status
+    fulfillmentStatus: current?.fulfillmentStatus
   };
 }
 async function correctCommerceFulfillment(env, actor, input) {

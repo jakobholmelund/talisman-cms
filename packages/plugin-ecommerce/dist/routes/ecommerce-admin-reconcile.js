@@ -5,11 +5,11 @@ import "../chunk-6L7TQXAW.js";
 import {
   bindCommerceApi,
   reconcileCommerce
-} from "../chunk-2LIQHRTV.js";
-import "../chunk-IK22DR6W.js";
-import "../chunk-GGFLTIUK.js";
+} from "../chunk-3J3TE5OF.js";
+import "../chunk-Y3HORIA5.js";
+import "../chunk-P5DZUQYQ.js";
 import "../chunk-BGDJXEM5.js";
-import "../chunk-BGS2NWOG.js";
+import "../chunk-7YPMQZEE.js";
 import "../chunk-WP5KVMJI.js";
 import {
   RECONCILE_FAILURE_MESSAGES,
@@ -21,14 +21,16 @@ import {
   isProviderError,
   reconcileFailure,
   uncheckedSessionRefusal
-} from "../chunk-A7BNM2SK.js";
-import "../chunk-HBUWVAQK.js";
+} from "../chunk-JKIGKMCL.js";
+import "../chunk-XVZVMCBJ.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
 } from "../chunk-GNU6N22K.js";
-import "../chunk-NKZQB4F4.js";
-import "../chunk-SFZBZWCM.js";
+import "../chunk-ARHHJKHE.js";
+import {
+  reconcileDecisions
+} from "../chunk-SFZBZWCM.js";
 import "../chunk-NMGICNSV.js";
 import "../chunk-2UYSCNNW.js";
 
@@ -37,6 +39,8 @@ import { authorizeCmsRequest } from "talisman-cms/auth/guard";
 
 // src/reconcile-review.ts
 import { z } from "zod";
+import { eq } from "drizzle-orm";
+import { createDbClient } from "talisman-cms/client";
 var ReconcileInputError = class extends Error {
   name = "ReconcileInputError";
 };
@@ -134,7 +138,7 @@ async function releaseParkedCommerce(options, actor, input) {
       created_at FROM ${RECONCILE_TABLES[kind]} WHERE id = ? AND ${PARKED}`).bind(id).first();
   if (!row) throw new Error(notParked(kind));
   const otherMode = isOtherStripeModeSession(env, row.session_id);
-  const recorded = () => env.DB.prepare("SELECT payment_returned FROM _ecommerce_reconcile_decisions WHERE id = ?").bind(decision.id).first();
+  const recorded = () => createDbClient(env).select({ paymentReturned: reconcileDecisions.paymentReturned }).from(reconcileDecisions).where(eq(reconcileDecisions.id, decision.id)).get();
   let paymentReturned = null;
   if (kind === "order") {
     try {
@@ -144,7 +148,7 @@ async function releaseParkedCommerce(options, actor, input) {
     }
     const decided = await recorded();
     if (!decided) throw new Error("The order changed while it was being released; reload the list");
-    paymentReturned = decided.payment_returned;
+    paymentReturned = decided.paymentReturned;
   } else {
     if (row.session_id) {
       const stripe = options.paymentAdapters?.find((adapter) => adapter.providerId === "stripe");

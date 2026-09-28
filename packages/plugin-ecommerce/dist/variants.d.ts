@@ -24,17 +24,17 @@ declare const saveValueInput: z.ZodObject<{
         image: z.ZodEffects<z.ZodNullable<z.ZodString>, string | null, string | null>;
         priceOverride: z.ZodNullable<z.ZodNumber>;
     }, "strict", z.ZodTypeAny, {
-        image: string | null;
-        sku: string | null;
         value: string;
+        sku: string | null;
         priceOverride: number | null;
+        image: string | null;
         id?: string | undefined;
         expectedUpdatedAt?: string | number | undefined;
     }, {
-        image: string | null;
-        sku: string | null;
         value: string;
+        sku: string | null;
         priceOverride: number | null;
+        image: string | null;
         id?: string | undefined;
         expectedUpdatedAt?: string | number | undefined;
     }>;
@@ -53,10 +53,10 @@ declare const saveValueInput: z.ZodObject<{
     }>>;
 }, "strict", z.ZodTypeAny, {
     value: {
-        image: string | null;
-        sku: string | null;
         value: string;
+        sku: string | null;
         priceOverride: number | null;
+        image: string | null;
         id?: string | undefined;
         expectedUpdatedAt?: string | number | undefined;
     };
@@ -68,10 +68,10 @@ declare const saveValueInput: z.ZodObject<{
     } | undefined;
 }, {
     value: {
-        image: string | null;
-        sku: string | null;
         value: string;
+        sku: string | null;
         priceOverride: number | null;
+        image: string | null;
         id?: string | undefined;
         expectedUpdatedAt?: string | number | undefined;
     };
@@ -93,17 +93,17 @@ declare const variantChangeSchema: z.ZodDiscriminatedUnion<"action", [z.ZodObjec
         image: z.ZodEffects<z.ZodNullable<z.ZodString>, string | null, string | null>;
         priceOverride: z.ZodNullable<z.ZodNumber>;
     }, "strict", z.ZodTypeAny, {
-        image: string | null;
-        sku: string | null;
         value: string;
+        sku: string | null;
         priceOverride: number | null;
+        image: string | null;
         id?: string | undefined;
         expectedUpdatedAt?: string | number | undefined;
     }, {
-        image: string | null;
-        sku: string | null;
         value: string;
+        sku: string | null;
         priceOverride: number | null;
+        image: string | null;
         id?: string | undefined;
         expectedUpdatedAt?: string | number | undefined;
     }>;
@@ -124,10 +124,10 @@ declare const variantChangeSchema: z.ZodDiscriminatedUnion<"action", [z.ZodObjec
     action: z.ZodLiteral<"saveValue">;
 }, "strict", z.ZodTypeAny, {
     value: {
-        image: string | null;
-        sku: string | null;
         value: string;
+        sku: string | null;
         priceOverride: number | null;
+        image: string | null;
         id?: string | undefined;
         expectedUpdatedAt?: string | number | undefined;
     };
@@ -140,10 +140,10 @@ declare const variantChangeSchema: z.ZodDiscriminatedUnion<"action", [z.ZodObjec
     } | undefined;
 }, {
     value: {
-        image: string | null;
-        sku: string | null;
         value: string;
+        sku: string | null;
         priceOverride: number | null;
+        image: string | null;
         id?: string | undefined;
         expectedUpdatedAt?: string | number | undefined;
     };

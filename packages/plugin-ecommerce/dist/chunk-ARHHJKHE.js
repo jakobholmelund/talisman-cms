@@ -1,17 +1,21 @@
 import {
   customerAccounts,
   customerSessions,
-  orders
+  orders,
+  rateLimits,
+  signInTokens
 } from "./chunk-SFZBZWCM.js";
 
 // src/accounts.ts
-import { and, eq, gt, isNull } from "drizzle-orm";
-import { createDbClient } from "talisman-cms/client";
+import { and as and2, count, eq as eq2, gt as gt2, isNotNull, isNull } from "drizzle-orm";
+import { createDbClient as createDbClient2 } from "talisman-cms/client";
 import { ensureVerifiedEmailIdentity } from "talisman-cms/auth/identity";
 import { parseAddress } from "talisman-cms/email";
 import { readSetting as readSetting2 } from "talisman-cms/env";
 
 // src/rate-limits.ts
+import { and, eq, gt } from "drizzle-orm";
+import { createDbClient } from "talisman-cms/client";
 var MAX_RATE_LIMIT_WINDOW_SECONDS = 24 * 60 * 60;
 async function sha256Hex(value) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -26,7 +30,7 @@ function rateLimitSource(ip) {
   if (halves.length > 2) return value;
   const left = halves[0] ? halves[0].split(":") : [];
   const right = halves[1] ? halves[1].split(":") : [];
-  const width = [...left, ...right].reduce((count, group) => count + (group.includes(".") ? 2 : 1), 0);
+  const width = [...left, ...right].reduce((count2, group) => count2 + (group.includes(".") ? 2 : 1), 0);
   if (halves.length === 1 ? width !== 8 : width > 7) return value;
   const groups = [...left, ...Array(8 - width).fill("0"), ...right].slice(0, 4);
   if (groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return value;
@@ -44,13 +48,13 @@ async function countRequest(env, key, now, windowSeconds) {
   return limit?.count;
 }
 async function peekRequestCount(env, key, now, windowSeconds) {
-  const row = await env.DB.prepare(`SELECT count FROM _ecommerce_rate_limits WHERE key = ? AND window_start > ?`).bind(key, now - windowSeconds).first();
+  const row = await createDbClient(env).select({ count: rateLimits.count }).from(rateLimits).where(and(eq(rateLimits.key, key), gt(rateLimits.windowStart, now - windowSeconds))).get();
   return row?.count ?? 0;
 }
 async function clientOverLimit(env, bucket, sourceIp, { limit, windowSeconds, now = Math.floor(Date.now() / 1e3) }) {
   if (!sourceIp || sourceIp.length > 64) return false;
-  const count = await countRequest(env, `${bucket}:${await sha256Hex(rateLimitSource(sourceIp))}`, now, windowSeconds);
-  return (count ?? limit + 1) > limit;
+  const count2 = await countRequest(env, `${bucket}:${await sha256Hex(rateLimitSource(sourceIp))}`, now, windowSeconds);
+  return (count2 ?? limit + 1) > limit;
 }
 async function claimInterval(env, key, intervalSeconds, now = Math.floor(Date.now() / 1e3)) {
   if (!(intervalSeconds > 0 && intervalSeconds <= MAX_RATE_LIMIT_WINDOW_SECONDS)) {
@@ -139,6 +143,7 @@ var CustomerRequestLimitError = class extends Error {
   }
 };
 var hashToken = sha256Hex;
+var at = (seconds) => new Date(seconds * 1e3);
 function normalizeShopperEmail(email) {
   if (typeof email !== "string") return null;
   const normalized = email.trim().toLowerCase();
@@ -147,21 +152,21 @@ function normalizeShopperEmail(email) {
 }
 var isSignInToken = (token) => typeof token === "string" && /^[0-9a-f-]{72}$/.test(token);
 function maskEmailAddress(email) {
-  const at = email.lastIndexOf("@");
-  const [first = ""] = Array.from(email.slice(0, Math.max(0, at)));
-  return `${first}\u2022\u2022\u2022${email.slice(at)}`;
+  const at2 = email.lastIndexOf("@");
+  const [first = ""] = Array.from(email.slice(0, Math.max(0, at2)));
+  return `${first}\u2022\u2022\u2022${email.slice(at2)}`;
 }
 async function findCustomerSession(env, token) {
   if (!token || token.length > 128) return null;
-  const db = createDbClient(env);
-  const session = await db.select().from(customerSessions).where(and(
-    eq(customerSessions.tokenHash, await hashToken(token)),
-    gt(customerSessions.expiresAt, /* @__PURE__ */ new Date()),
+  const db = createDbClient2(env);
+  const session = await db.select().from(customerSessions).where(and2(
+    eq2(customerSessions.tokenHash, await hashToken(token)),
+    gt2(customerSessions.expiresAt, /* @__PURE__ */ new Date()),
     isNull(customerSessions.revokedAt),
-    eq(customerSessions.purpose, "session")
+    eq2(customerSessions.purpose, "session")
   )).get();
   if (!session) return null;
-  return await db.select().from(customerAccounts).where(eq(customerAccounts.id, session.accountId)).get() ?? null;
+  return await db.select().from(customerAccounts).where(eq2(customerAccounts.id, session.accountId)).get() ?? null;
 }
 function customerEmailDailyLimit(env) {
   const configured = Number(readSetting2(env, "COMMERCE_EMAIL_DAILY_LIMIT"));
@@ -173,8 +178,7 @@ function customerEmailReservedDaily(env, dailyLimit) {
   return Number.isSafeInteger(configured) && configured >= 0 && configured < dailyLimit ? configured : Math.floor(dailyLimit / 4);
 }
 async function isExistingCustomer(env, email) {
-  const verified = await env.DB.prepare(`SELECT 1 AS found FROM _ecommerce_customer_accounts
-    WHERE email_normalized = ? AND email_verified_at IS NOT NULL LIMIT 1`).bind(email).first();
+  const verified = await createDbClient2(env).select({ id: customerAccounts.id }).from(customerAccounts).where(and2(eq2(customerAccounts.emailNormalized, email), isNotNull(customerAccounts.emailVerifiedAt))).get();
   return Boolean(verified) || await hasPurchaseHistory(env, { emails: [email] });
 }
 function shopperSignInBotCheck(env) {
@@ -213,8 +217,7 @@ async function requestCustomerEmailSignIn(env, email, linkForToken, sendLink, so
   if (await clientOverLimit(env, "shopper-email", sourceIp, { limit: REQUESTS_PER_SOURCE_PER_HOUR, windowSeconds: 3600, now })) {
     return dropped();
   }
-  const recent = await env.DB.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_sign_in_tokens
-    WHERE email_normalized = ? AND created_at > ?`).bind(normalized, now - ADDRESS_WINDOW_SECONDS).first();
+  const recent = await createDbClient2(env).select({ count: count() }).from(signInTokens).where(and2(eq2(signInTokens.emailNormalized, normalized), gt2(signInTokens.createdAt, at(now - ADDRESS_WINDOW_SECONDS)))).get();
   if ((recent?.count ?? 0) >= REQUESTS_PER_ADDRESS) return dropped();
   const addressKey = await sha256Hex(normalized);
   if ((await countRequest(env, `shopper-email:address:${addressKey}`, now, ADDRESS_WINDOW_SECONDS) ?? REQUESTS_PER_ADDRESS + 1) > REQUESTS_PER_ADDRESS) return dropped();
@@ -239,12 +242,12 @@ async function requestCustomerEmailSignIn(env, email, linkForToken, sendLink, so
 async function sendSignInLink(env, email, now, linkForToken, sendLink) {
   const token = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   const tokenHash = await hashToken(token);
-  await env.DB.prepare(`INSERT INTO _ecommerce_sign_in_tokens (token_hash, email_normalized, expires_at, created_at)
-    VALUES (?, ?, ?, ?)`).bind(tokenHash, email, now + SIGN_IN_LINK_SECONDS, now).run();
+  const db = createDbClient2(env);
+  await db.insert(signInTokens).values({ tokenHash, emailNormalized: email, expiresAt: at(now + SIGN_IN_LINK_SECONDS), createdAt: at(now) });
   try {
     await sendLink(email, linkForToken(token));
   } catch (error) {
-    await env.DB.prepare(`UPDATE _ecommerce_sign_in_tokens SET revoked_at = ? WHERE token_hash = ?`).bind(Math.floor(Date.now() / 1e3), tokenHash).run();
+    await db.update(signInTokens).set({ revokedAt: /* @__PURE__ */ new Date() }).where(eq2(signInTokens.tokenHash, tokenHash));
     throw error;
   }
 }
@@ -254,23 +257,34 @@ async function previewCustomerEmailSignIn(env, token, sourceIp) {
     throw new CustomerRequestLimitError();
   }
   if (!isSignInToken(token)) return null;
-  const link = await env.DB.prepare(`SELECT email_normalized FROM _ecommerce_sign_in_tokens
-    WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?`).bind(await hashToken(token), now).first();
-  const email = normalizeShopperEmail(link?.email_normalized);
+  const link = await createDbClient2(env).select({ emailNormalized: signInTokens.emailNormalized }).from(signInTokens).where(and2(
+    eq2(signInTokens.tokenHash, await hashToken(token)),
+    isNull(signInTokens.revokedAt),
+    gt2(signInTokens.expiresAt, at(now))
+  )).get();
+  const email = normalizeShopperEmail(link?.emailNormalized);
   return email ? maskEmailAddress(email) : null;
 }
 async function consumeCustomerEmailSignIn(env, token) {
   if (!isSignInToken(token)) return null;
   const now = Math.floor(Date.now() / 1e3);
-  const claimed = await env.DB.prepare(`UPDATE _ecommerce_sign_in_tokens SET revoked_at = ?
-    WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ? RETURNING email_normalized`).bind(now, await hashToken(token), now).all();
-  const email = normalizeShopperEmail(claimed.results?.[0]?.email_normalized);
+  const db = createDbClient2(env);
+  const [claimed] = await db.update(signInTokens).set({ revokedAt: at(now) }).where(and2(
+    eq2(signInTokens.tokenHash, await hashToken(token)),
+    isNull(signInTokens.revokedAt),
+    gt2(signInTokens.expiresAt, at(now))
+  )).returning({ emailNormalized: signInTokens.emailNormalized });
+  const email = normalizeShopperEmail(claimed?.emailNormalized);
   if (!email) return null;
-  await env.DB.prepare(`INSERT INTO _ecommerce_customer_accounts
-    (id, email, email_normalized, email_verified_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(email_normalized) DO NOTHING`).bind(`acct_${crypto.randomUUID()}`, email, email, now, now, now).run();
-  const db = createDbClient(env);
-  const account = await db.select().from(customerAccounts).where(eq(customerAccounts.emailNormalized, email)).get();
+  await db.insert(customerAccounts).values({
+    id: `acct_${crypto.randomUUID()}`,
+    email,
+    emailNormalized: email,
+    emailVerifiedAt: at(now),
+    createdAt: at(now),
+    updatedAt: at(now)
+  }).onConflictDoNothing({ target: customerAccounts.emailNormalized });
+  const account = await db.select().from(customerAccounts).where(eq2(customerAccounts.emailNormalized, email)).get();
   if (!account) return null;
   const cmsUserId = await ensureVerifiedEmailIdentity(env, account.emailNormalized, account.name);
   const sessionToken = `${crypto.randomUUID()}${crypto.randomUUID()}`;
@@ -292,11 +306,11 @@ async function consumeCustomerEmailSignIn(env, token) {
 }
 async function revokeCustomerSession(env, token) {
   if (!token || token.length > 128) return;
-  const db = createDbClient(env);
-  await db.update(customerSessions).set({ revokedAt: /* @__PURE__ */ new Date() }).where(eq(customerSessions.tokenHash, await hashToken(token)));
+  const db = createDbClient2(env);
+  await db.update(customerSessions).set({ revokedAt: /* @__PURE__ */ new Date() }).where(eq2(customerSessions.tokenHash, await hashToken(token)));
 }
 async function listCustomerOrders(env, accountId) {
-  const db = createDbClient(env);
+  const db = createDbClient2(env);
   return db.select({
     id: orders.id,
     status: orders.status,
@@ -310,7 +324,7 @@ async function listCustomerOrders(env, accountId) {
     creditApplied: orders.creditApplied,
     currency: orders.currency,
     createdAt: orders.createdAt
-  }).from(orders).where(eq(orders.userId, accountId));
+  }).from(orders).where(eq2(orders.userId, accountId));
 }
 
 export {

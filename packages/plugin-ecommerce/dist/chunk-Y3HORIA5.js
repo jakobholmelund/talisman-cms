@@ -2,9 +2,14 @@ import {
   chunked,
   placeholders
 } from "./chunk-WP5KVMJI.js";
+import {
+  orders
+} from "./chunk-SFZBZWCM.js";
 
 // src/order-adjustments.ts
+import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { createDbClient } from "talisman-cms/client";
 
 // src/inventory.ts
 var INVENTORY_COLUMNS = {
@@ -101,7 +106,7 @@ async function loadReservations(env, orderIds) {
   return results.flatMap((result) => result.results ?? []);
 }
 function restockMode(order) {
-  if ((order.payment_provider ?? "stripe") === "admin_test") return null;
+  if ((order.paymentProvider ?? "stripe") === "admin_test") return null;
   return order.status === "refunded" ? "all" : order.status === "partially_refunded" ? "choose" : null;
 }
 var listSchema = z.object({
@@ -117,15 +122,15 @@ async function getOrderAdjustmentsAdmin(env, input) {
       FROM _ecommerce_disputes WHERE order_id IN (${placeholders(chunk)}) ORDER BY created_at, id`).bind(...chunk)
   ]);
   const results = await env.DB.batch(statements);
-  const orders = results.filter((_, index) => index % 2 === 0).flatMap((result) => result.results ?? []);
+  const orders2 = results.filter((_, index) => index % 2 === 0).flatMap((result) => result.results ?? []);
   const disputes = results.filter((_, index) => index % 2 === 1).flatMap((result) => result.results ?? []);
-  const reservations = await loadReservations(env, orders.map((order) => order.id));
+  const reservations = await loadReservations(env, orders2.map((order) => order.id));
   return {
-    orders: Object.fromEntries(orders.map((order) => [order.id, {
+    orders: Object.fromEntries(orders2.map((order) => [order.id, {
       orderId: order.id,
       status: order.status,
       fulfillmentStatus: order.fulfillment_status,
-      restock: restockMode(order),
+      restock: restockMode({ status: order.status, paymentProvider: order.payment_provider }),
       disputes: disputes.filter((dispute) => dispute.order_id === order.id).map((dispute) => ({
         id: dispute.id,
         status: dispute.status,
@@ -161,9 +166,9 @@ function refusal(status) {
 async function restockOrder(env, actor, input) {
   const values = parseInput(restockSchema, input);
   if (!actor.trim()) throw new Error("Administrator identity is required");
-  const order = await env.DB.prepare(`SELECT status, payment_provider FROM _ecommerce_orders WHERE id = ?`).bind(values.orderId).first();
+  const order = await createDbClient(env).select({ status: orders.status, paymentProvider: orders.paymentProvider }).from(orders).where(eq(orders.id, values.orderId)).get();
   if (!order) throw new OrderAdjustmentRefusedError("Order not found");
-  if ((order.payment_provider ?? "stripe") === "admin_test") {
+  if ((order.paymentProvider ?? "stripe") === "admin_test") {
     throw new OrderAdjustmentRefusedError("Admin test orders take no stock to return");
   }
   const mode = restockMode(order);

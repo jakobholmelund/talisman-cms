@@ -1,6 +1,6 @@
 import {
   PURCHASED_ORDER_STATUSES
-} from "./chunk-NKZQB4F4.js";
+} from "./chunk-ARHHJKHE.js";
 import {
   creditLedger,
   customerAccounts,
@@ -198,7 +198,7 @@ async function releaseReferralAwards(options, run = {}) {
         continue;
       }
       if (dispute !== "none") {
-        await env.DB.prepare(`UPDATE _ecommerce_referrals SET updated_at = ? WHERE id = ? AND status = 'approved'`).bind(now, row.id).run();
+        await db.update(referrals).set({ updatedAt: new Date(now * 1e3) }).where(and(eq(referrals.id, row.id), eq(referrals.status, "approved")));
         results.push({ id: row.id, status: "referral_held" });
         continue;
       }
@@ -217,7 +217,7 @@ async function releaseReferralAwards(options, run = {}) {
       results.push({ id: row.id, status: released ? "referral_released" : current?.status === "void" ? "referral_void" : "unchanged" });
     } catch (error) {
       results.push({ id: row.id, status: "error", error: error instanceof Error ? error.message : "Referral release failed" });
-      await env.DB.prepare(`UPDATE _ecommerce_referrals SET updated_at = ? WHERE id = ?`).bind(now, row.id).run().catch(() => void 0);
+      await db.update(referrals).set({ updatedAt: new Date(now * 1e3) }).where(eq(referrals.id, row.id)).catch(() => void 0);
     }
   }
   return results;
