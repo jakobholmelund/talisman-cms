@@ -1,6 +1,9 @@
 import {
   PURCHASED_ORDER_STATUSES
-} from "./chunk-Y77MQPH2.js";
+} from "./chunk-2WZJA37J.js";
+import {
+  commerceDb
+} from "./chunk-DUYAQ7V4.js";
 import {
   creditLedger,
   customerAccounts,
@@ -8,11 +11,10 @@ import {
   referralCodes,
   referralSettings,
   referrals
-} from "./chunk-YQM6TC4O.js";
+} from "./chunk-NKJTK7MK.js";
 
 // src/referrals.ts
 import { and, desc, eq } from "drizzle-orm";
-import { createDbClient } from "talisman-cms/client";
 import { readSetting } from "talisman-cms/env";
 
 // src/email-identity.ts
@@ -102,7 +104,7 @@ function referralPolicy(env) {
   });
 }
 async function getReferralPolicy(env) {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const saved = await db.select().from(referralSettings).where(eq(referralSettings.id, "default")).get();
   if (!saved) return referralPolicy(env);
   return withTerms({
@@ -166,7 +168,7 @@ async function reverseReferralForOrder(env, orderId, options = {}) {
 }
 async function releaseReferralAwards(options, run = {}) {
   const { env, paymentAdapters = [] } = options;
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const now = Math.floor((run.now ?? /* @__PURE__ */ new Date()).getTime() / 1e3);
   const limit = Math.max(1, Math.min(50, Math.floor(run.limit ?? 10)));
   const policy = await getReferralPolicy(env);
@@ -227,7 +229,7 @@ function validReferralCode(code) {
 }
 async function findReferralCode(env, code) {
   if (!validReferralCode(code)) return null;
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const row = await db.select({
     code: referralCodes.code,
     accountId: referralCodes.accountId,
@@ -236,7 +238,7 @@ async function findReferralCode(env, code) {
   return row ?? null;
 }
 async function getOrCreateReferralCode(env, accountId) {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   let existing = await db.select({ code: referralCodes.code }).from(referralCodes).where(eq(referralCodes.accountId, accountId)).get();
   if (existing) return existing.code;
   const code = `REF-${Array.from(
@@ -249,7 +251,7 @@ async function getOrCreateReferralCode(env, accountId) {
   return existing.code;
 }
 async function getReferralDashboard(env, accountId) {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const account = await db.select({ creditBalance: customerAccounts.creditBalance }).from(customerAccounts).where(eq(customerAccounts.id, accountId)).get();
   if (!account) throw new Error("Shopper account not found");
   const policy = await getReferralPolicy(env);

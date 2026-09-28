@@ -5,12 +5,11 @@ import "../chunk-6L7TQXAW.js";
 import {
   bindCommerceApi,
   reconcileCommerce
-} from "../chunk-MMEDVRVI.js";
-import "../chunk-RVFZ32XF.js";
-import "../chunk-Z2C4AXU4.js";
+} from "../chunk-2HRMHYMK.js";
+import "../chunk-TPW5F2YY.js";
+import "../chunk-SWPC7XQH.js";
 import "../chunk-BGDJXEM5.js";
-import "../chunk-XVJD7KXQ.js";
-import "../chunk-WP5KVMJI.js";
+import "../chunk-6CXRXC6K.js";
 import {
   RECONCILE_FAILURE_MESSAGES,
   RECONCILE_TABLES,
@@ -21,16 +20,19 @@ import {
   isProviderError,
   reconcileFailure,
   uncheckedSessionRefusal
-} from "../chunk-57TAUBRV.js";
-import "../chunk-G46A3EJO.js";
+} from "../chunk-HOPUAWN7.js";
+import "../chunk-2XVZABM5.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
 } from "../chunk-GNU6N22K.js";
-import "../chunk-Y77MQPH2.js";
+import "../chunk-2WZJA37J.js";
+import {
+  commerceDb
+} from "../chunk-DUYAQ7V4.js";
 import {
   reconcileDecisions
-} from "../chunk-YQM6TC4O.js";
+} from "../chunk-NKJTK7MK.js";
 import "../chunk-NMGICNSV.js";
 import "../chunk-2UYSCNNW.js";
 
@@ -40,7 +42,6 @@ import { authorizeCmsRequest } from "talisman-cms/auth/guard";
 // src/reconcile-review.ts
 import { z } from "zod";
 import { eq } from "drizzle-orm";
-import { createDbClient } from "talisman-cms/client";
 var ReconcileInputError = class extends Error {
   name = "ReconcileInputError";
 };
@@ -138,7 +139,7 @@ async function releaseParkedCommerce(options, actor, input) {
       created_at FROM ${RECONCILE_TABLES[kind]} WHERE id = ? AND ${PARKED}`).bind(id).first();
   if (!row) throw new Error(notParked(kind));
   const otherMode = isOtherStripeModeSession(env, row.session_id);
-  const recorded = () => createDbClient(env).select({ paymentReturned: reconcileDecisions.paymentReturned }).from(reconcileDecisions).where(eq(reconcileDecisions.id, decision.id)).get();
+  const recorded = () => commerceDb(env).select({ paymentReturned: reconcileDecisions.paymentReturned }).from(reconcileDecisions).where(eq(reconcileDecisions.id, decision.id)).get();
   let paymentReturned = null;
   if (kind === "order") {
     try {

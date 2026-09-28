@@ -199,11 +199,11 @@ function canRead(actor, collection) {
 
 // src/db/client.ts
 import { drizzle } from "drizzle-orm/d1";
-function createDbClient(env) {
+function createDbClient(env, relations) {
   if (!env.DB) {
     throw new Error('Talisman CMS requires a D1 database bound to the "DB" environment variable.');
   }
-  return drizzle(env.DB);
+  return drizzle(env.DB, { relations });
 }
 var statusTarget = (status) => status === "published" || status === "archived" ? status : void 0;
 function getClient(env, ctx, options = {}) {

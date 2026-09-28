@@ -47,6 +47,7 @@ var carts = sqliteTable("_ecommerce_carts", {
   uniqueIndex("_ecommerce_carts_user_open_unique").on(table.userId).where(sql`${table.closed} = 0 AND ${table.userId} IS NOT NULL`)
 ]);
 var FULFILLMENT_STATUSES = ["unfulfilled", "partially_fulfilled", "fulfilled"];
+var TAX_BEHAVIORS = ["inclusive", "exclusive"];
 var orders = sqliteTable("_ecommerce_orders", {
   id: text("id").primaryKey(),
   cartId: text("cart_id").references(() => carts.id).unique(),
@@ -72,14 +73,14 @@ var orders = sqliteTable("_ecommerce_orders", {
   shippingLabel: text("shipping_label"),
   taxAmount: integer("tax_amount").notNull().default(0),
   /** `exclusive` tax is added to the amount due; `inclusive` tax is already inside the amounts and only recorded. */
-  taxBehavior: text("tax_behavior").$type(),
+  taxBehavior: text("tax_behavior", { enum: TAX_BEHAVIORS }),
   taxCalculationId: text("tax_calculation_id"),
   taxTransactionId: text("tax_transaction_id"),
   // Payment: draft, pending, paid, partially_refunded, refunded, disputed or cancelled. The legacy
   // 'fulfilled' is still read as paid.
   status: text("status").notNull().default("draft"),
   /** Shipping, kept apart from payment so that a refund never hides a shipment. */
-  fulfillmentStatus: text("fulfillment_status").$type().notNull().default("unfulfilled"),
+  fulfillmentStatus: text("fulfillment_status", { enum: FULFILLMENT_STATUSES }).notNull().default("unfulfilled"),
   items: text("items", { mode: "json" }).$type().notNull().default([]),
   totalAmount: integer("total_amount").notNull(),
   currency: text("currency").notNull().default("usd"),
@@ -112,7 +113,7 @@ var orders = sqliteTable("_ecommerce_orders", {
   check("orders_gift_card_refunded_within_applied", sql`${table.giftCardRefundedCents} >= 0 AND ${table.giftCardRefundedCents} <= ${table.giftCardApplied}`),
   check("orders_shipping_nonnegative", money(table.shippingAmount, "nonnegative")),
   check("orders_tax_nonnegative", money(table.taxAmount, "nonnegative")),
-  check("orders_tax_behavior", nullOrOneOf(table.taxBehavior, ["inclusive", "exclusive"])),
+  check("orders_tax_behavior", nullOrOneOf(table.taxBehavior, TAX_BEHAVIORS)),
   check("orders_fulfillment_status", oneOf(table.fulfillmentStatus, FULFILLMENT_STATUSES)),
   ...reconcileChecks("orders", table),
   ...taxSyncChecks("orders", table)
@@ -144,6 +145,8 @@ var providerRefunds = sqliteTable("_ecommerce_provider_refunds", {
   index("_ecommerce_provider_refunds_order_idx").on(table.orderId),
   check("provider_refund_amount_positive", money(table.amountCents, "positive"))
 ]);
+var PRODUCT_TYPES = ["standard", "digital", "subscription"];
+var PRODUCT_STATUSES = ["draft", "active", "archived"];
 var products = sqliteTable("_ecommerce_products", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -157,10 +160,8 @@ var products = sqliteTable("_ecommerce_products", {
   // In smallest currency unit (cents)
   isPhysical: integer("is_physical", { mode: "boolean" }).notNull().default(true),
   inventoryQuantity: integer("inventory_quantity").notNull().default(0),
-  type: text("type").notNull().default("standard"),
-  // standard, digital, subscription
-  status: text("status").notNull().default("draft"),
-  // draft, active, archived
+  type: text("type", { enum: PRODUCT_TYPES }).notNull().default("standard"),
+  status: text("status", { enum: PRODUCT_STATUSES }).notNull().default("draft"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
 });
@@ -229,16 +230,17 @@ var componentReservations = sqliteTable("_ecommerce_component_reservations", {
   uniqueIndex("component_reservation_unique").on(table.orderId, table.componentId),
   check("component_reservation_quantity_positive", money(table.quantity, "positive"))
 ]);
+var RESERVATION_TARGET_TYPES = ["product", "variant", "stock"];
 var inventoryReservations = sqliteTable("_ecommerce_inventory_reservations", {
   id: text("id").primaryKey(),
   orderId: text("order_id").notNull().references(() => orders.id),
-  targetType: text("target_type").$type().notNull(),
+  targetType: text("target_type", { enum: RESERVATION_TARGET_TYPES }).notNull(),
   targetId: text("target_id").notNull(),
   quantity: integer("quantity").notNull(),
   releasedAt: integer("released_at", { mode: "timestamp" })
 }, (table) => [
   uniqueIndex("inventory_reservation_unique").on(table.orderId, table.targetType, table.targetId),
-  check("inventory_reservation_target_type", oneOf(table.targetType, ["product", "variant", "stock"])),
+  check("inventory_reservation_target_type", oneOf(table.targetType, RESERVATION_TARGET_TYPES)),
   check("inventory_reservation_quantity_positive", money(table.quantity, "positive"))
 ]);
 var categories = sqliteTable("_ecommerce_categories", {
@@ -291,6 +293,7 @@ var customerAccounts = sqliteTable("_ecommerce_customer_accounts", {
 }, (table) => [
   uniqueIndex("_ecommerce_customer_accounts_cms_user_idx").on(table.cmsUserId).where(sql`${table.cmsUserId} IS NOT NULL`)
 ]);
+var CUSTOMER_SESSION_PURPOSES = ["session", "email_challenge"];
 var customerSessions = sqliteTable("_ecommerce_customer_sessions", {
   id: text("id").primaryKey(),
   accountId: text("account_id").notNull().references(() => customerAccounts.id, { onDelete: "cascade" }),
@@ -300,11 +303,11 @@ var customerSessions = sqliteTable("_ecommerce_customer_sessions", {
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   revokedAt: integer("revoked_at", { mode: "timestamp" }),
   /** `email_challenge` rows came from the sign-in links of earlier releases; links use `signInTokens`. */
-  purpose: text("purpose").$type().notNull().default("session")
+  purpose: text("purpose", { enum: CUSTOMER_SESSION_PURPOSES }).notNull().default("session")
 }, (table) => [
   index("_ecommerce_customer_sessions_account_idx").on(table.accountId),
   index("_ecommerce_customer_sessions_challenge_idx").on(table.accountId, table.purpose, table.createdAt),
-  check("customer_session_purpose", oneOf(table.purpose, ["session", "email_challenge"]))
+  check("customer_session_purpose", oneOf(table.purpose, CUSTOMER_SESSION_PURPOSES))
 ]);
 var signInTokens = sqliteTable("_ecommerce_sign_in_tokens", {
   tokenHash: text("token_hash").primaryKey(),
@@ -318,6 +321,7 @@ var rateLimits = sqliteTable("_ecommerce_rate_limits", {
   count: integer("count").notNull(),
   windowStart: integer("window_start").notNull()
 });
+var FULFILLMENT_KINDS = ["shipment", "correction"];
 var fulfillments = sqliteTable("_ecommerce_fulfillments", {
   id: text("id").primaryKey(),
   orderId: text("order_id").notNull().references(() => orders.id),
@@ -327,14 +331,14 @@ var fulfillments = sqliteTable("_ecommerce_fulfillments", {
   /** The shipment note, or the reason for a correction. */
   note: text("note").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
-  kind: text("kind").$type().notNull().default("shipment"),
+  kind: text("kind", { enum: FULFILLMENT_KINDS }).notNull().default("shipment"),
   /** The shipment a correction restates; null for a shipment. */
   correctsId: text("corrects_id").references(() => fulfillments.id),
   /** Whether a shipment completes its order; false for one parcel of a split shipment. */
   completesOrder: integer("completes_order", { mode: "boolean" }).notNull().default(true)
 }, (table) => [
   index("_ecommerce_fulfillments_order_idx").on(table.orderId, table.createdAt),
-  check("fulfillment_kind", oneOf(table.kind, ["shipment", "correction"])),
+  check("fulfillment_kind", oneOf(table.kind, FULFILLMENT_KINDS)),
   check("fulfillment_completes_order_flag", flag(table.completesOrder)),
   check("fulfillment_correction_names_shipment", sql`(${table.kind} = 'shipment') = (${table.correctsId} IS NULL)`),
   check("fulfillment_only_shipment_completes", sql`${table.kind} = 'shipment' OR ${table.completesOrder} = 0`)
@@ -345,6 +349,7 @@ var referralCodes = sqliteTable("_ecommerce_referral_codes", {
   active: integer("active", { mode: "boolean" }).notNull().default(true),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull()
 });
+var REFERRAL_STATUSES = ["approved", "void"];
 var referrals = sqliteTable("_ecommerce_referrals", {
   id: text("id").primaryKey(),
   code: text("code").notNull().references(() => referralCodes.code),
@@ -353,20 +358,20 @@ var referrals = sqliteTable("_ecommerce_referrals", {
   orderId: text("order_id").notNull().references(() => orders.id).unique(),
   rewardCents: integer("reward_cents").notNull(),
   currency: text("currency").notNull().default("usd"),
-  status: text("status").$type().notNull().default("approved"),
+  status: text("status", { enum: REFERRAL_STATUSES }).notNull().default("approved"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
 }, (table) => [
   index("_ecommerce_referrals_referrer_idx").on(table.referrerAccountId, table.createdAt),
   check("referral_reward_nonnegative", money(table.rewardCents, "nonnegative")),
-  check("referral_status", oneOf(table.status, ["approved", "void"]))
+  check("referral_status", oneOf(table.status, REFERRAL_STATUSES))
 ]);
 var CREDIT_LEDGER_KINDS = ["referral_award", "welcome_award", "checkout_reserve", "checkout_release", "purchase_credit_refund", "referral_reversal", "welcome_reversal"];
 var creditLedger = sqliteTable("_ecommerce_credit_ledger", {
   id: text("id").primaryKey(),
   accountId: text("account_id").notNull().references(() => customerAccounts.id),
   orderId: text("order_id").notNull().references(() => orders.id),
-  kind: text("kind").$type().notNull(),
+  kind: text("kind", { enum: CREDIT_LEDGER_KINDS }).notNull(),
   amountCents: integer("amount_cents").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull()
 }, (table) => [
@@ -389,10 +394,11 @@ var referralSettings = sqliteTable("_ecommerce_referral_settings", {
   check("referral_settings_min_order_range", sql`${table.minOrderCents} BETWEEN 1 AND 10000000`),
   check("referral_settings_attribution_range", sql`${table.attributionDays} BETWEEN 1 AND 90`)
 ]);
+var DISCOUNT_CODE_TYPES = ["credit", "amount", "percent"];
 var discountCodes = sqliteTable("_ecommerce_discount_codes", {
   code: text("code").primaryKey(),
   description: text("description"),
-  type: text("type").$type().notNull(),
+  type: text("type", { enum: DISCOUNT_CODE_TYPES }).notNull(),
   value: integer("value").notNull(),
   // Store currency minor units for credit/amount, basis points for percent.
   remainingCents: integer("remaining_cents"),
@@ -408,7 +414,7 @@ var discountCodes = sqliteTable("_ecommerce_discount_codes", {
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
 }, (table) => [
-  check("discount_code_type", oneOf(table.type, ["credit", "amount", "percent"])),
+  check("discount_code_type", oneOf(table.type, DISCOUNT_CODE_TYPES)),
   check("discount_code_value_positive", money(table.value, "positive")),
   check("discount_code_remaining_nonnegative", money(table.remainingCents, "nonnegative")),
   check("discount_code_max_discount_positive", money(table.maxDiscountCents, "positive")),
@@ -430,7 +436,7 @@ var discountRedemptions = sqliteTable("_ecommerce_discount_redemptions", {
   accountId: text("account_id").references(() => customerAccounts.id),
   emailNormalized: text("email_normalized").notNull(),
   amountCents: integer("amount_cents").notNull(),
-  status: text("status").$type().notNull().default("reserved"),
+  status: text("status", { enum: REDEMPTION_STATUSES }).notNull().default("reserved"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
 }, (table) => [
@@ -445,7 +451,7 @@ var giftCardPurchases = sqliteTable("_ecommerce_gift_card_purchases", {
   buyerEmail: text("buyer_email").notNull(),
   amountCents: integer("amount_cents").notNull(),
   currency: text("currency").notNull().default("usd"),
-  status: text("status").$type().notNull().default("pending"),
+  status: text("status", { enum: GIFT_CARD_PURCHASE_STATUSES }).notNull().default("pending"),
   providerSessionId: text("provider_session_id").unique(),
   paymentIntentId: text("payment_intent_id").unique(),
   providerRefundedCents: integer("provider_refunded_cents").notNull().default(0),
@@ -464,12 +470,14 @@ var giftCardPurchases = sqliteTable("_ecommerce_gift_card_purchases", {
   check("gift_card_purchase_refund_adjusted_within_refunded", sql`${table.refundAdjustedCents} >= 0 AND ${table.refundAdjustedCents} <= ${table.providerRefundedCents}`),
   ...reconcileChecks("gift_card_purchase", table)
 ]);
+var GIFT_CARD_SOURCES = ["purchase", "admin"];
+var GIFT_CARD_STATUSES = ["active", "suspended", "void"];
 var giftCards = sqliteTable("_ecommerce_gift_cards", {
   id: text("id").primaryKey(),
   codeHash: text("code_hash").notNull().unique(),
   codeSuffix: text("code_suffix").notNull(),
   encryptedCode: text("encrypted_code").notNull(),
-  source: text("source").$type().notNull(),
+  source: text("source", { enum: GIFT_CARD_SOURCES }).notNull(),
   purchaseId: text("purchase_id").references(() => giftCardPurchases.id).unique(),
   /** Set on an administrator-issued card that took over a purchase's value; a refund of that purchase holds it too. */
   replacesPurchaseId: text("replaces_purchase_id").references(() => giftCardPurchases.id),
@@ -480,16 +488,16 @@ var giftCards = sqliteTable("_ecommerce_gift_cards", {
   initialCents: integer("initial_cents").notNull(),
   balanceCents: integer("balance_cents").notNull().default(0),
   currency: text("currency").notNull().default("usd"),
-  status: text("status").$type().notNull().default("active"),
+  status: text("status", { enum: GIFT_CARD_STATUSES }).notNull().default("active"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
 }, (table) => [
   index("_ecommerce_gift_cards_replaces_purchase_idx").on(table.replacesPurchaseId).where(sql`${table.replacesPurchaseId} IS NOT NULL`),
-  check("gift_card_source", oneOf(table.source, ["purchase", "admin"])),
+  check("gift_card_source", oneOf(table.source, GIFT_CARD_SOURCES)),
   check("gift_card_initial_range", sql`${table.initialCents} BETWEEN 500 AND 100000`),
   check("gift_card_balance_within_initial", sql`${table.balanceCents} BETWEEN 0 AND ${table.initialCents}`),
   check("gift_card_currency_usd", sql`${table.currency} = 'usd'`),
-  check("gift_card_status", oneOf(table.status, ["active", "suspended", "void"])),
+  check("gift_card_status", oneOf(table.status, GIFT_CARD_STATUSES)),
   check("gift_card_replacement_by_admin", sql`${table.replacesPurchaseId} IS NULL OR ${table.source} = 'admin'`),
   check("gift_card_held_for_review_flag", flag(table.heldForReview)),
   // A purchased card names its purchase; an administrator's card names who issued it and why.
@@ -502,7 +510,7 @@ var giftCardLedger = sqliteTable("_ecommerce_gift_card_ledger", {
   cardId: text("card_id").notNull().references(() => giftCards.id),
   orderId: text("order_id").references(() => orders.id),
   purchaseId: text("purchase_id").references(() => giftCardPurchases.id),
-  kind: text("kind").$type().notNull(),
+  kind: text("kind", { enum: GIFT_CARD_LEDGER_KINDS }).notNull(),
   amountCents: integer("amount_cents").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull()
 }, (table) => [
@@ -518,7 +526,7 @@ var giftCardRedemptions = sqliteTable("_ecommerce_gift_card_redemptions", {
   cardId: text("card_id").notNull().references(() => giftCards.id),
   orderId: text("order_id").notNull().references(() => orders.id).unique(),
   amountCents: integer("amount_cents").notNull(),
-  status: text("status").$type().notNull().default("reserved"),
+  status: text("status", { enum: REDEMPTION_STATUSES }).notNull().default("reserved"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
 }, (table) => [
@@ -538,12 +546,13 @@ var giftCardRefunds = sqliteTable("_ecommerce_gift_card_refunds", {
   index("_ecommerce_gift_card_refunds_order_idx").on(table.orderId),
   check("gift_card_refund_amount_positive", money(table.amountCents, "positive"))
 ]);
+var GIFT_CARD_REVIEW_OUTCOMES = ["reinstate", "void"];
 var giftCardReviews = sqliteTable("_ecommerce_gift_card_reviews", {
   id: text("id").primaryKey(),
   purchaseId: text("purchase_id").notNull().references(() => giftCardPurchases.id),
   cardId: text("card_id").notNull().references(() => giftCards.id),
   // The card that held the purchase's value.
-  outcome: text("outcome").$type().notNull(),
+  outcome: text("outcome", { enum: GIFT_CARD_REVIEW_OUTCOMES }).notNull(),
   refundedCents: integer("refunded_cents").notNull(),
   // The provider refund total the decision covered.
   adjustmentCents: integer("adjustment_cents").notNull(),
@@ -553,7 +562,7 @@ var giftCardReviews = sqliteTable("_ecommerce_gift_card_reviews", {
   createdAt: integer("created_at", { mode: "timestamp" }).notNull()
 }, (table) => [
   index("_ecommerce_gift_card_reviews_purchase_idx").on(table.purchaseId, table.createdAt),
-  check("gift_card_review_outcome", oneOf(table.outcome, ["reinstate", "void"])),
+  check("gift_card_review_outcome", oneOf(table.outcome, GIFT_CARD_REVIEW_OUTCOMES)),
   check("gift_card_review_refunded_positive", money(table.refundedCents, "positive")),
   check("gift_card_review_adjustment_nonnegative", money(table.adjustmentCents, "nonnegative")),
   check("gift_card_review_admin_actor_filled", filled(table.adminActor)),
@@ -603,12 +612,14 @@ var disputes = sqliteTable("_ecommerce_disputes", {
   check("dispute_amount_nonnegative", money(table.amountCents, "nonnegative")),
   check("dispute_names_one_subject", sql`(${table.orderId} IS NULL) <> (${table.giftCardPurchaseId} IS NULL)`)
 ]);
+var RESTOCK_RESERVATION_TYPES = ["inventory", "component"];
+var RESTOCK_TARGET_TYPES = ["product", "variant", "stock", "component"];
 var restocks = sqliteTable("_ecommerce_restocks", {
   id: text("id").primaryKey(),
   orderId: text("order_id").notNull().references(() => orders.id),
-  reservationType: text("reservation_type").$type().notNull(),
+  reservationType: text("reservation_type", { enum: RESTOCK_RESERVATION_TYPES }).notNull(),
   reservationId: text("reservation_id").notNull(),
-  targetType: text("target_type").$type().notNull(),
+  targetType: text("target_type", { enum: RESTOCK_TARGET_TYPES }).notNull(),
   targetId: text("target_id").notNull(),
   quantity: integer("quantity").notNull(),
   adminActor: text("admin_actor").notNull(),
@@ -617,29 +628,31 @@ var restocks = sqliteTable("_ecommerce_restocks", {
 }, (table) => [
   uniqueIndex("_ecommerce_restocks_reservation_unique").on(table.reservationType, table.reservationId),
   index("_ecommerce_restocks_order_idx").on(table.orderId, table.createdAt),
-  check("restock_reservation_type", oneOf(table.reservationType, ["inventory", "component"])),
-  check("restock_target_type", oneOf(table.targetType, ["product", "variant", "stock", "component"])),
+  check("restock_reservation_type", oneOf(table.reservationType, RESTOCK_RESERVATION_TYPES)),
+  check("restock_target_type", oneOf(table.targetType, RESTOCK_TARGET_TYPES)),
   check("restock_quantity_positive", money(table.quantity, "positive")),
   check("restock_admin_actor_filled", filled(table.adminActor)),
   check("restock_reason_length", trimmed(table.reason, 8))
 ]);
+var RECONCILE_DECISION_ACTIONS = ["retry", "release"];
+var PAYMENT_RETURNED_KINDS = ["refunded", "dispute_lost", "confirmed"];
 var reconcileDecisions = sqliteTable("_ecommerce_reconcile_decisions", {
   id: text("id").primaryKey(),
   orderId: text("order_id").references(() => orders.id),
   purchaseId: text("purchase_id").references(() => giftCardPurchases.id),
-  action: text("action").$type().notNull(),
+  action: text("action", { enum: RECONCILE_DECISION_ACTIONS }).notNull(),
   failure: text("failure"),
   // The failure code the record was parked with.
   // How a released completed checkout's payment was shown to be returned; null for any other decision.
-  paymentReturned: text("payment_returned").$type(),
+  paymentReturned: text("payment_returned", { enum: PAYMENT_RETURNED_KINDS }),
   adminActor: text("admin_actor").notNull(),
   reason: text("reason").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull()
 }, (table) => [
   index("_ecommerce_reconcile_decisions_order_idx").on(table.orderId, table.createdAt),
   index("_ecommerce_reconcile_decisions_purchase_idx").on(table.purchaseId, table.createdAt),
-  check("reconcile_decision_action", oneOf(table.action, ["retry", "release"])),
-  check("reconcile_decision_payment_returned", nullOrOneOf(table.paymentReturned, ["refunded", "dispute_lost", "confirmed"])),
+  check("reconcile_decision_action", oneOf(table.action, RECONCILE_DECISION_ACTIONS)),
+  check("reconcile_decision_payment_returned", nullOrOneOf(table.paymentReturned, PAYMENT_RETURNED_KINDS)),
   check("reconcile_decision_admin_actor_filled", filled(table.adminActor)),
   check("reconcile_decision_reason_length", trimmed(table.reason, 8)),
   check("reconcile_decision_names_one_subject", sql`(${table.orderId} IS NULL) <> (${table.purchaseId} IS NULL)`),
@@ -649,10 +662,10 @@ var EMAIL_KINDS = ["order_confirmation", "shipment", "shipment_update", "gift_ca
 var EMAIL_STATUSES = ["pending", "sent", "failed", "cancelled"];
 var emailDeliveries = sqliteTable("_ecommerce_email_deliveries", {
   id: text("id").primaryKey(),
-  kind: text("kind").$type().notNull(),
+  kind: text("kind", { enum: EMAIL_KINDS }).notNull(),
   /** The order, the shipment or correction (fulfillment id), or the gift card purchase. */
   subjectId: text("subject_id").notNull(),
-  status: text("status").$type().notNull().default("pending"),
+  status: text("status", { enum: EMAIL_STATUSES }).notNull().default("pending"),
   attempts: integer("attempts").notNull().default(0),
   lastError: text("last_error"),
   nextAttemptAt: integer("next_attempt_at", { mode: "timestamp" }).notNull(),
@@ -730,55 +743,233 @@ var tables = {
   restocks,
   reconcileDecisions,
   emailDeliveries,
-  giftCardClaims
+  giftCardClaims,
+  cmsUsers
 };
 var relations = defineRelations(tables, (r) => ({
-  carts: { orders: r.many.orders() },
+  carts: {
+    /** The order a checkout placed from the cart; a cart is checked out once. */
+    order: r.one.orders({ from: r.carts.id, to: r.orders.cartId })
+  },
   orders: {
     cart: r.one.carts({ from: r.orders.cartId, to: r.carts.id }),
-    payments: r.many.payments()
+    /** The shopper account that placed the order (`userId`); null for a guest order. */
+    account: r.one.customerAccounts({ from: r.orders.userId, to: r.customerAccounts.id }),
+    /** The gift card the order spent (`giftCardId`). */
+    giftCard: r.one.giftCards({ from: r.orders.giftCardId, to: r.giftCards.id }),
+    payments: r.many.payments(),
+    providerRefunds: r.many.providerRefunds(),
+    componentReservations: r.many.componentReservations(),
+    inventoryReservations: r.many.inventoryReservations(),
+    fulfillments: r.many.fulfillments(),
+    referral: r.one.referrals({ from: r.orders.id, to: r.referrals.orderId }),
+    creditLedger: r.many.creditLedger(),
+    discountRedemption: r.one.discountRedemptions({ from: r.orders.id, to: r.discountRedemptions.orderId }),
+    giftCardRedemption: r.one.giftCardRedemptions({ from: r.orders.id, to: r.giftCardRedemptions.orderId }),
+    giftCardLedger: r.many.giftCardLedger(),
+    giftCardRefunds: r.many.giftCardRefunds(),
+    giftCardOrderRefund: r.one.giftCardOrderRefunds({ from: r.orders.id, to: r.giftCardOrderRefunds.orderId }),
+    taxReversals: r.many.taxReversals(),
+    disputes: r.many.disputes(),
+    restocks: r.many.restocks(),
+    reconcileDecisions: r.many.reconcileDecisions(),
+    /** The order-status sessions opened for the order. */
+    customerSessions: r.many.customerSessions()
   },
   payments: { order: r.one.orders({ from: r.payments.orderId, to: r.orders.id, optional: false }) },
+  providerRefunds: { order: r.one.orders({ from: r.providerRefunds.orderId, to: r.orders.id, optional: false }) },
   products: {
+    /** The product's variant groups. */
     variants: r.many.productVariants(),
-    categories: r.many.productCategories(),
-    tags: r.many.productTags()
+    categories: r.many.categories({
+      from: r.products.id.through(r.productCategories.productId),
+      to: r.categories.id.through(r.productCategories.categoryId)
+    }),
+    tags: r.many.tags({
+      from: r.products.id.through(r.productTags.productId),
+      to: r.tags.id.through(r.productTags.tagId)
+    }),
+    /** Checkout holds on the product's own stock. */
+    inventoryReservations: r.many.inventoryReservations({
+      from: r.products.id,
+      to: r.inventoryReservations.targetId,
+      where: { targetType: "product" }
+    })
   },
   variants: { productVariants: r.many.productVariants() },
   productVariants: {
     product: r.one.products({ from: r.productVariants.productId, to: r.products.id, optional: false }),
+    /** The variant definition the group is an instance of; null for a group named on its own. */
     variant: r.one.variants({ from: r.productVariants.variantId, to: r.variants.id }),
-    values: r.many.productVariantValues()
+    values: r.many.productVariantValues(),
+    /** Checkout holds on the group's own stock (a group sold without values). */
+    inventoryReservations: r.many.inventoryReservations({
+      from: r.productVariants.id,
+      to: r.inventoryReservations.targetId,
+      where: { targetType: "variant" }
+    })
   },
   productVariantValues: {
     productVariant: r.one.productVariants({ from: r.productVariantValues.productVariantId, to: r.productVariants.id, optional: false }),
-    stock: r.one.stocks({ from: r.productVariantValues.id, to: r.stocks.productVariantValueId })
+    stock: r.one.stocks({ from: r.productVariantValues.id, to: r.stocks.productVariantValueId }),
+    /** The value's bill of materials: each component with the quantity one unit needs. */
+    requirements: r.many.variantComponents()
   },
   stocks: {
-    productVariantValue: r.one.productVariantValues({ from: r.stocks.productVariantValueId, to: r.productVariantValues.id, optional: false })
+    productVariantValue: r.one.productVariantValues({ from: r.stocks.productVariantValueId, to: r.productVariantValues.id, optional: false }),
+    inventoryReservations: r.many.inventoryReservations({
+      from: r.stocks.id,
+      to: r.inventoryReservations.targetId,
+      where: { targetType: "stock" }
+    })
   },
-  tags: { products: r.many.productTags() },
-  productTags: {
-    product: r.one.products({ from: r.productTags.productId, to: r.products.id, optional: false }),
-    tag: r.one.tags({ from: r.productTags.tagId, to: r.tags.id, optional: false })
+  components: {
+    /** The variant values whose bill of materials names the component. */
+    requirements: r.many.variantComponents(),
+    reservations: r.many.componentReservations()
+  },
+  variantComponents: {
+    productVariantValue: r.one.productVariantValues({ from: r.variantComponents.productVariantValueId, to: r.productVariantValues.id, optional: false }),
+    component: r.one.components({ from: r.variantComponents.componentId, to: r.components.id, optional: false })
+  },
+  componentReservations: {
+    order: r.one.orders({ from: r.componentReservations.orderId, to: r.orders.id, optional: false }),
+    component: r.one.components({ from: r.componentReservations.componentId, to: r.components.id, optional: false }),
+    /** The restock that returned the reservation's stock, if one did. */
+    restock: r.one.restocks({ from: r.componentReservations.id, to: r.restocks.reservationId, where: { reservationType: "component" } })
+  },
+  inventoryReservations: {
+    order: r.one.orders({ from: r.inventoryReservations.orderId, to: r.orders.id, optional: false }),
+    // The target is one of three tables by targetType; ids never repeat across them, so each is
+    // joined by id alone and the reader picks the one the type names.
+    product: r.one.products({ from: r.inventoryReservations.targetId, to: r.products.id }),
+    productVariant: r.one.productVariants({ from: r.inventoryReservations.targetId, to: r.productVariants.id }),
+    stock: r.one.stocks({ from: r.inventoryReservations.targetId, to: r.stocks.id }),
+    restock: r.one.restocks({ from: r.inventoryReservations.id, to: r.restocks.reservationId, where: { reservationType: "inventory" } })
   },
   categories: {
     parent: r.one.categories({ from: r.categories.parentId, to: r.categories.id, alias: "category_hierarchy" }),
     children: r.many.categories({ alias: "category_hierarchy" }),
-    products: r.many.productCategories()
+    products: r.many.products()
   },
   productCategories: {
     product: r.one.products({ from: r.productCategories.productId, to: r.products.id, optional: false }),
     category: r.one.categories({ from: r.productCategories.categoryId, to: r.categories.id, optional: false })
-  }
+  },
+  tags: { products: r.many.products() },
+  productTags: {
+    product: r.one.products({ from: r.productTags.productId, to: r.products.id, optional: false }),
+    tag: r.one.tags({ from: r.productTags.tagId, to: r.tags.id, optional: false })
+  },
+  customerAccounts: {
+    /** The shared CMS user the shopper's verified email links to. */
+    cmsUser: r.one.cmsUsers({ from: r.customerAccounts.cmsUserId, to: r.cmsUsers.id }),
+    orders: r.many.orders({ from: r.customerAccounts.id, to: r.orders.userId }),
+    sessions: r.many.customerSessions(),
+    referralCode: r.one.referralCodes({ from: r.customerAccounts.id, to: r.referralCodes.accountId }),
+    /** The referrals the account's code earned. */
+    referralsMade: r.many.referrals({ from: r.customerAccounts.id, to: r.referrals.referrerAccountId }),
+    /** The referral that brought the account in, if one did. */
+    referredBy: r.one.referrals({ from: r.customerAccounts.id, to: r.referrals.referredAccountId }),
+    creditLedger: r.many.creditLedger(),
+    discountRedemptions: r.many.discountRedemptions()
+  },
+  customerSessions: {
+    account: r.one.customerAccounts({ from: r.customerSessions.accountId, to: r.customerAccounts.id, optional: false }),
+    /** The order an order-status session shows; null for an account session. */
+    order: r.one.orders({ from: r.customerSessions.orderId, to: r.orders.id })
+  },
+  fulfillments: {
+    order: r.one.orders({ from: r.fulfillments.orderId, to: r.orders.id, optional: false }),
+    /** The shipment a correction restates. */
+    corrects: r.one.fulfillments({ from: r.fulfillments.correctsId, to: r.fulfillments.id, alias: "fulfillment_corrections" }),
+    corrections: r.many.fulfillments({ alias: "fulfillment_corrections" })
+  },
+  referralCodes: {
+    account: r.one.customerAccounts({ from: r.referralCodes.accountId, to: r.customerAccounts.id, optional: false }),
+    referrals: r.many.referrals()
+  },
+  referrals: {
+    referralCode: r.one.referralCodes({ from: r.referrals.code, to: r.referralCodes.code, optional: false }),
+    referrer: r.one.customerAccounts({ from: r.referrals.referrerAccountId, to: r.customerAccounts.id, optional: false }),
+    referred: r.one.customerAccounts({ from: r.referrals.referredAccountId, to: r.customerAccounts.id, optional: false }),
+    order: r.one.orders({ from: r.referrals.orderId, to: r.orders.id, optional: false })
+  },
+  creditLedger: {
+    account: r.one.customerAccounts({ from: r.creditLedger.accountId, to: r.customerAccounts.id, optional: false }),
+    order: r.one.orders({ from: r.creditLedger.orderId, to: r.orders.id, optional: false })
+  },
+  discountCodes: { redemptions: r.many.discountRedemptions() },
+  discountRedemptions: {
+    discountCode: r.one.discountCodes({ from: r.discountRedemptions.code, to: r.discountCodes.code, optional: false }),
+    order: r.one.orders({ from: r.discountRedemptions.orderId, to: r.orders.id, optional: false }),
+    account: r.one.customerAccounts({ from: r.discountRedemptions.accountId, to: r.customerAccounts.id })
+  },
+  giftCardPurchases: {
+    /** The card the purchase issued. */
+    card: r.one.giftCards({ from: r.giftCardPurchases.id, to: r.giftCards.purchaseId }),
+    /** Administrator-issued cards that took over the purchase's value. */
+    replacementCards: r.many.giftCards({ from: r.giftCardPurchases.id, to: r.giftCards.replacesPurchaseId }),
+    ledger: r.many.giftCardLedger(),
+    reviews: r.many.giftCardReviews(),
+    claims: r.many.giftCardClaims(),
+    disputes: r.many.disputes(),
+    reconcileDecisions: r.many.reconcileDecisions()
+  },
+  giftCards: {
+    purchase: r.one.giftCardPurchases({ from: r.giftCards.purchaseId, to: r.giftCardPurchases.id }),
+    replacesPurchase: r.one.giftCardPurchases({ from: r.giftCards.replacesPurchaseId, to: r.giftCardPurchases.id }),
+    ledger: r.many.giftCardLedger(),
+    redemptions: r.many.giftCardRedemptions(),
+    refunds: r.many.giftCardRefunds(),
+    reviews: r.many.giftCardReviews(),
+    claims: r.many.giftCardClaims(),
+    orders: r.many.orders()
+  },
+  giftCardLedger: {
+    card: r.one.giftCards({ from: r.giftCardLedger.cardId, to: r.giftCards.id, optional: false }),
+    order: r.one.orders({ from: r.giftCardLedger.orderId, to: r.orders.id }),
+    purchase: r.one.giftCardPurchases({ from: r.giftCardLedger.purchaseId, to: r.giftCardPurchases.id })
+  },
+  giftCardRedemptions: {
+    card: r.one.giftCards({ from: r.giftCardRedemptions.cardId, to: r.giftCards.id, optional: false }),
+    order: r.one.orders({ from: r.giftCardRedemptions.orderId, to: r.orders.id, optional: false })
+  },
+  giftCardRefunds: {
+    card: r.one.giftCards({ from: r.giftCardRefunds.cardId, to: r.giftCards.id, optional: false }),
+    order: r.one.orders({ from: r.giftCardRefunds.orderId, to: r.orders.id, optional: false })
+  },
+  giftCardReviews: {
+    purchase: r.one.giftCardPurchases({ from: r.giftCardReviews.purchaseId, to: r.giftCardPurchases.id, optional: false }),
+    card: r.one.giftCards({ from: r.giftCardReviews.cardId, to: r.giftCards.id, optional: false })
+  },
+  giftCardOrderRefunds: { order: r.one.orders({ from: r.giftCardOrderRefunds.orderId, to: r.orders.id, optional: false }) },
+  taxReversals: { order: r.one.orders({ from: r.taxReversals.orderId, to: r.orders.id, optional: false }) },
+  disputes: {
+    order: r.one.orders({ from: r.disputes.orderId, to: r.orders.id }),
+    giftCardPurchase: r.one.giftCardPurchases({ from: r.disputes.giftCardPurchaseId, to: r.giftCardPurchases.id })
+  },
+  restocks: { order: r.one.orders({ from: r.restocks.orderId, to: r.orders.id, optional: false }) },
+  reconcileDecisions: {
+    order: r.one.orders({ from: r.reconcileDecisions.orderId, to: r.orders.id }),
+    purchase: r.one.giftCardPurchases({ from: r.reconcileDecisions.purchaseId, to: r.giftCardPurchases.id })
+  },
+  giftCardClaims: {
+    purchase: r.one.giftCardPurchases({ from: r.giftCardClaims.purchaseId, to: r.giftCardPurchases.id, optional: false }),
+    card: r.one.giftCards({ from: r.giftCardClaims.cardId, to: r.giftCards.id, optional: false })
+  },
+  cmsUsers: { customerAccount: r.one.customerAccounts({ from: r.cmsUsers.id, to: r.customerAccounts.cmsUserId }) }
 }));
 
 export {
   carts,
   FULFILLMENT_STATUSES,
+  TAX_BEHAVIORS,
   orders,
   payments,
   providerRefunds,
+  PRODUCT_TYPES,
+  PRODUCT_STATUSES,
   products,
   variants,
   productVariants,
@@ -787,6 +978,7 @@ export {
   components,
   variantComponents,
   componentReservations,
+  RESERVATION_TARGET_TYPES,
   inventoryReservations,
   categories,
   productCategories,
@@ -794,30 +986,41 @@ export {
   productTags,
   customers,
   customerAccounts,
+  CUSTOMER_SESSION_PURPOSES,
   customerSessions,
   signInTokens,
   rateLimits,
+  FULFILLMENT_KINDS,
   fulfillments,
   referralCodes,
+  REFERRAL_STATUSES,
   referrals,
   CREDIT_LEDGER_KINDS,
   creditLedger,
   referralSettings,
+  DISCOUNT_CODE_TYPES,
   discountCodes,
   REDEMPTION_STATUSES,
   discountRedemptions,
   GIFT_CARD_PURCHASE_STATUSES,
   giftCardPurchases,
+  GIFT_CARD_SOURCES,
+  GIFT_CARD_STATUSES,
   giftCards,
   GIFT_CARD_LEDGER_KINDS,
   giftCardLedger,
   giftCardRedemptions,
   giftCardRefunds,
+  GIFT_CARD_REVIEW_OUTCOMES,
   giftCardReviews,
   giftCardOrderRefunds,
   taxReversals,
   disputes,
+  RESTOCK_RESERVATION_TYPES,
+  RESTOCK_TARGET_TYPES,
   restocks,
+  RECONCILE_DECISION_ACTIONS,
+  PAYMENT_RETURNED_KINDS,
   reconcileDecisions,
   EMAIL_KINDS,
   EMAIL_STATUSES,

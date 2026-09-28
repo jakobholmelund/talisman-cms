@@ -11,27 +11,31 @@ import {
   bindCommerceApi,
   reconcileCommerce,
   shippingOptionsFor
-} from "./chunk-MMEDVRVI.js";
-import "./chunk-RVFZ32XF.js";
-import "./chunk-Z2C4AXU4.js";
+} from "./chunk-2HRMHYMK.js";
+import "./chunk-TPW5F2YY.js";
+import "./chunk-SWPC7XQH.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
 import {
   deliverPendingCommerceEmails
-} from "./chunk-XVJD7KXQ.js";
-import "./chunk-WP5KVMJI.js";
+} from "./chunk-6CXRXC6K.js";
 import {
   COUNTRY_CODES,
   StoreSettingsError,
   isCountryCode,
   readStoreCurrency,
   readStoreSettings
-} from "./chunk-57TAUBRV.js";
-import "./chunk-G46A3EJO.js";
+} from "./chunk-HOPUAWN7.js";
+import "./chunk-2XVZABM5.js";
 import "./chunk-GNU6N22K.js";
-import "./chunk-Y77MQPH2.js";
-import "./chunk-YQM6TC4O.js";
+import "./chunk-2WZJA37J.js";
+import "./chunk-DUYAQ7V4.js";
+import {
+  FULFILLMENT_STATUSES,
+  PRODUCT_STATUSES,
+  PRODUCT_TYPES
+} from "./chunk-NKJTK7MK.js";
 import "./chunk-NMGICNSV.js";
 import {
   SUPPORTED_CURRENCIES,
@@ -273,8 +277,8 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
           { name: "basePrice", label: "Base Price (smallest currency unit)", type: "number", required: true, defaultValue: 0 },
           { name: "isPhysical", label: "Is Physical Product", type: "boolean", defaultValue: true },
           { name: "inventoryQuantity", label: "Inventory Quantity", type: "number", defaultValue: 0 },
-          { name: "type", label: "Product Type", type: "select", options: ["standard", "digital", "subscription"], defaultValue: "standard", required: true },
-          { name: "status", label: "Status", type: "select", options: ["draft", "active", "archived"], defaultValue: "draft", required: true }
+          { name: "type", label: "Product Type", type: "select", options: [...PRODUCT_TYPES], defaultValue: "standard", required: true },
+          { name: "status", label: "Status", type: "select", options: [...PRODUCT_STATUSES], defaultValue: "draft", required: true }
         );
         collections.push({
           name: "Products",
@@ -794,9 +798,9 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
           { name: "cartId", label: "Cart", type: "relation", relationTo: "_ecommerce_carts" },
           { name: "checkoutSessionId", label: "Checkout Session ID", type: "text" },
           { name: "paymentProvider", label: "Payment Provider", type: "text" },
-          // 'fulfilled' stays an option for rows written before migration 0026 moved it to fulfillmentStatus.
+          // 'fulfilled' stays an option: the legacy payment status earlier releases wrote for a shipped order, read as paid.
           { name: "status", label: "Payment Status", type: "select", options: ["draft", "pending", "paid", "fulfilled", "cancelled", "partially_refunded", "refunded", "disputed"], required: true, defaultValue: "draft" },
-          { name: "fulfillmentStatus", label: "Fulfillment Status", type: "select", options: ["unfulfilled", "partially_fulfilled", "fulfilled"], required: true, defaultValue: "unfulfilled" },
+          { name: "fulfillmentStatus", label: "Fulfillment Status", type: "select", options: [...FULFILLMENT_STATUSES], required: true, defaultValue: "unfulfilled" },
           { name: "subtotalAmount", label: "Item Subtotal (smallest currency unit)", type: "number" },
           { name: "shippingLabel", label: "Shipping Option", type: "text" },
           { name: "shippingRateId", label: "Shipping Rate ID", type: "text" },

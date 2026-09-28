@@ -3,9 +3,11 @@ import {
   OrderAdjustmentRefusedError,
   getOrderAdjustmentsAdmin,
   restockOrder
-} from "../chunk-RVFZ32XF.js";
-import "../chunk-WP5KVMJI.js";
-import "../chunk-YQM6TC4O.js";
+} from "../chunk-TPW5F2YY.js";
+import {
+  errorText
+} from "../chunk-DUYAQ7V4.js";
+import "../chunk-NKJTK7MK.js";
 
 // src/routes/ecommerce-admin-orders.ts
 import { authorizeCmsRequest } from "talisman-cms/auth/guard";
@@ -48,7 +50,7 @@ var ALL = async ({ request }) => {
     const reading = action === "list";
     console.error(
       reading ? "[commerce] Order adjustments could not be read" : "[commerce] Restock failed",
-      error instanceof Error ? { name: error.name, message: error.message } : { name: typeof error }
+      error instanceof Error ? { name: error.name, message: errorText(error) } : { name: typeof error }
     );
     return Response.json({ error: reading ? "The orders could not be read. Check the server logs for details." : "The restock failed. Check the server logs for details." }, { status: 500, headers });
   }

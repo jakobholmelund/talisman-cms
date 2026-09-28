@@ -1,11 +1,4 @@
 import {
-  ORDER_AMOUNT_COLUMNS,
-  chunked,
-  describeOrderItems,
-  orderAmounts,
-  placeholders
-} from "./chunk-WP5KVMJI.js";
-import {
   COMMERCE_EMAIL_LEASE_SECONDS,
   COMMERCE_EMAIL_MAX_AGE_SECONDS,
   applyEmailTemplate,
@@ -17,10 +10,15 @@ import {
   runCommerceEmailDelivery,
   sendCommerceEmailNow,
   waitingEmailsResult
-} from "./chunk-57TAUBRV.js";
+} from "./chunk-HOPUAWN7.js";
+import {
+  batchGroups,
+  chunked,
+  commerceDb
+} from "./chunk-DUYAQ7V4.js";
 import {
   orders
-} from "./chunk-YQM6TC4O.js";
+} from "./chunk-NKJTK7MK.js";
 import {
   orderConfirmationEmail,
   shipmentEmail
@@ -29,11 +27,70 @@ import {
 // src/fulfillment.ts
 import { eq as eq2 } from "drizzle-orm";
 import { z } from "zod";
-import { createDbClient as createDbClient2 } from "talisman-cms/client";
+
+// src/order-items.ts
+var ORDER_AMOUNT_COLUMNS = `subtotal_amount, discount_code, discount_amount, credit_applied, shipping_amount,
+  shipping_label, tax_amount, tax_behavior, gift_card_applied, total_amount, provider_refunded_cents, gift_card_refunded_cents`;
+function orderAmounts(row) {
+  const amounts = [{ key: "itemsSubtotal", label: "Items subtotal", cents: row.subtotal_amount || row.total_amount }];
+  if (row.discount_amount > 0) {
+    amounts.push({ key: "discount", label: row.discount_code ? `Discount (${row.discount_code})` : "Discount", cents: -row.discount_amount });
+  }
+  if (row.credit_applied > 0) amounts.push({ key: "storeCredit", label: "Store credit", cents: -row.credit_applied });
+  if (row.shipping_amount > 0 || row.shipping_label) {
+    amounts.push({ key: "shipping", label: row.shipping_label ? `Shipping (${row.shipping_label})` : "Shipping", cents: row.shipping_amount });
+  }
+  if (row.tax_amount > 0) {
+    amounts.push(row.tax_behavior === "inclusive" ? { key: "taxIncluded", label: "Tax included in the prices", cents: row.tax_amount } : { key: "tax", label: "Tax", cents: row.tax_amount });
+  }
+  if (row.gift_card_applied > 0) amounts.push({ key: "giftCard", label: "Gift card", cents: -row.gift_card_applied });
+  amounts.push({ key: "charged", label: "Charged by the payment provider", cents: row.total_amount });
+  if (row.provider_refunded_cents > 0) {
+    amounts.push({ key: "providerRefunded", label: "Refunded by the payment provider", cents: row.provider_refunded_cents });
+  }
+  if (row.gift_card_refunded_cents > 0) {
+    amounts.push({ key: "giftCardRefunded", label: "Refunded to the gift card", cents: row.gift_card_refunded_cents });
+  }
+  return amounts;
+}
+async function describeOrderItems(env, items) {
+  const db = commerceDb(env);
+  const productIds = [...new Set(items.map((item) => item.productId))];
+  const variantIds = [...new Set(items.flatMap((item) => item.variantId ? [item.variantId] : []))];
+  const rows = await batchGroups(db, {
+    products: chunked(productIds).map((ids) => db.query.products.findMany({
+      columns: { id: true, name: true, sku: true },
+      where: { id: { in: ids } }
+    })),
+    values: chunked(variantIds).map((ids) => db.query.productVariantValues.findMany({
+      columns: { id: true, value: true, sku: true },
+      where: { id: { in: ids } },
+      with: { productVariant: { columns: { name: true, sku: true }, with: { variant: { columns: { name: true } } } } }
+    })),
+    // A variant group without values is sold as itself.
+    groups: chunked(variantIds).map((ids) => db.query.productVariants.findMany({
+      columns: { id: true, name: true, sku: true },
+      where: { id: { in: ids } }
+    }))
+  });
+  const products = new Map(rows.products.map((row) => [row.id, row]));
+  const values = new Map(rows.values.map((row) => [row.id, row]));
+  const groups = new Map(rows.groups.map((row) => [row.id, row]));
+  return items.map((item) => {
+    const product = products.get(item.productId);
+    const value = item.variantId ? values.get(item.variantId) : void 0;
+    const group = item.variantId && !value ? groups.get(item.variantId) : void 0;
+    return {
+      ...item,
+      productName: product?.name ?? null,
+      variantLabel: value ? `${value.productVariant.variant?.name ?? value.productVariant.name}: ${value.value}` : group?.name ?? null,
+      sku: (value ? value.sku || value.productVariant.sku : group?.sku) || product?.sku || null
+    };
+  });
+}
 
 // src/commerce-emails.ts
 import { eq } from "drizzle-orm";
-import { createDbClient } from "talisman-cms/client";
 var BUYER_AMOUNT_LABELS = {
   charged: "Amount charged",
   providerRefunded: "Refunded to your payment method",
@@ -94,7 +151,7 @@ function shipmentComposer(update) {
     if (index < 0) return { cancel: "not_found" };
     const shipment = rows[index];
     const current = rows.filter((row) => row.corrects_id === shipment.id).at(-1) ?? shipment;
-    const order = await createDbClient(env).select({
+    const order = await commerceDb(env).select({
       id: orders.id,
       customerEmail: orders.customerEmail,
       paymentProvider: orders.paymentProvider,
@@ -109,7 +166,7 @@ function shipmentComposer(update) {
       shipment: {
         id: shipment.id,
         shippedAt: new Date(shipment.created_at * 1e3),
-        // Shipments recorded before migration 0026 may hold an empty string where there is no value.
+        // A shipment row may hold an empty string where there is no value.
         carrier: current.carrier || null,
         trackingNumber: current.tracking_number || null,
         completesOrder: shipment.completes_order === 1,
@@ -236,42 +293,44 @@ function decodeCursor(view, cursor) {
   throw new FulfillmentInputError("The page cursor is invalid; reload the orders");
 }
 async function loadShipments(env, orderIds) {
-  const statements = chunked(orderIds).map((ids) => env.DB.prepare(`SELECT id, order_id, kind, corrects_id,
-      completes_order, admin_actor, carrier, tracking_number, note, created_at
-    FROM _ecommerce_fulfillments WHERE order_id IN (${placeholders(ids)})
-    ORDER BY rowid`).bind(...ids));
-  const rows = (statements.length ? await env.DB.batch(statements) : []).flatMap((result) => result.results ?? []);
+  const db = commerceDb(env);
+  const { rows } = await batchGroups(db, {
+    rows: chunked(orderIds).map((ids) => db.query.fulfillments.findMany({
+      where: { orderId: { in: ids } },
+      orderBy: (_table, { sql }) => sql`rowid`
+    }))
+  });
   const shipments = /* @__PURE__ */ new Map();
   const byOrder = /* @__PURE__ */ new Map();
   for (const row of rows) {
     if (row.kind === "shipment") {
       const shipment2 = {
         id: row.id,
-        createdAt: isoTime(row.created_at),
-        adminActor: row.admin_actor,
+        createdAt: row.createdAt.toISOString(),
+        adminActor: row.adminActor,
         note: row.note,
-        completesOrder: row.completes_order === 1,
+        completesOrder: row.completesOrder,
         carrier: row.carrier,
-        trackingNumber: row.tracking_number,
-        recorded: { carrier: row.carrier, trackingNumber: row.tracking_number },
+        trackingNumber: row.trackingNumber,
+        recorded: { carrier: row.carrier, trackingNumber: row.trackingNumber },
         corrections: []
       };
       shipments.set(row.id, shipment2);
-      byOrder.set(row.order_id, [...byOrder.get(row.order_id) ?? [], shipment2]);
+      byOrder.set(row.orderId, [...byOrder.get(row.orderId) ?? [], shipment2]);
       continue;
     }
-    const shipment = row.corrects_id ? shipments.get(row.corrects_id) : void 0;
+    const shipment = row.correctsId ? shipments.get(row.correctsId) : void 0;
     if (!shipment) continue;
     shipment.corrections.push({
       id: row.id,
-      createdAt: isoTime(row.created_at),
-      adminActor: row.admin_actor,
+      createdAt: row.createdAt.toISOString(),
+      adminActor: row.adminActor,
       carrier: row.carrier,
-      trackingNumber: row.tracking_number,
+      trackingNumber: row.trackingNumber,
       reason: row.note
     });
     shipment.carrier = row.carrier;
-    shipment.trackingNumber = row.tracking_number;
+    shipment.trackingNumber = row.trackingNumber;
   }
   return byOrder;
 }
@@ -347,7 +406,7 @@ function refusal(cause, message) {
 async function fulfillCommerceOrder(env, actor, input) {
   const values = parseInput(shipmentSchema, input);
   if (!actor.trim()) throw new Error("Administrator identity is required");
-  const db = createDbClient2(env);
+  const db = commerceDb(env);
   const order = await db.select({
     status: orders.status,
     fulfillmentStatus: orders.fulfillmentStatus,

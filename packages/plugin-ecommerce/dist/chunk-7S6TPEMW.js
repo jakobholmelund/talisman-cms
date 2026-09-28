@@ -1,14 +1,18 @@
 import {
+  commerceDb,
+  errorText
+} from "./chunk-DUYAQ7V4.js";
+import {
   productVariantValues,
   productVariants,
   stocks,
   variantComponents
-} from "./chunk-YQM6TC4O.js";
+} from "./chunk-NKJTK7MK.js";
 
 // src/variants.ts
 import { and, eq, exists, inArray, notExists, or, sql } from "drizzle-orm";
 import { z } from "zod";
-import { createDbClient, invalidateEntryCache } from "talisman-cms/client";
+import { invalidateEntryCache } from "talisman-cms/client";
 var VariantChangeError = class extends Error {
   status;
   /** `stale_record` when a loaded token no longer matches, which the admin recognises. */
@@ -68,13 +72,6 @@ function storedSeconds(token, record) {
   if (!Number.isSafeInteger(milliseconds) || milliseconds % 1e3 !== 0) throw staleRecord();
   return milliseconds / 1e3;
 }
-function errorText(error) {
-  const messages = [];
-  for (let current = error, depth = 0; current && depth < 5; current = current.cause, depth += 1) {
-    if (typeof current.message === "string") messages.push(current.message);
-  }
-  return messages.join("\n");
-}
 var returnedIds = (rows) => (rows ?? []).map((row) => row.id);
 async function clearCachedRows(env, written) {
   try {
@@ -104,7 +101,7 @@ async function saveVariantValue(env, input) {
   if (!value.id && stock?.id) throw new VariantChangeError(400, "A new variant value has no stock row yet");
   const now = Math.floor(Date.now() / 1e3);
   const valueId = value.id ?? `value_${crypto.randomUUID()}`;
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const one = { one: sql`1` };
   const conditions = [];
   if (value.id) {
@@ -163,7 +160,7 @@ async function saveVariantValue(env, input) {
   };
 }
 async function deleteVariantValue(env, valueId) {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const [parts, stockRows, values] = await runBatch(db, [
     db.delete(variantComponents).where(eq(variantComponents.productVariantValueId, valueId)).returning({ id: variantComponents.id }),
     db.delete(stocks).where(eq(stocks.productVariantValueId, valueId)).returning({ id: stocks.id }),
@@ -178,7 +175,7 @@ async function deleteVariantValue(env, valueId) {
   return { valueId, deleted: { values: 1, stockRows: stockRows.length, partRows: parts.length } };
 }
 async function deleteVariantGroup(env, groupId) {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const groupValues = db.select({ id: productVariantValues.id }).from(productVariantValues).where(eq(productVariantValues.productVariantId, groupId));
   const [parts, stockRows, values, groups] = await runBatch(db, [
     db.delete(variantComponents).where(inArray(variantComponents.productVariantValueId, groupValues)).returning({ id: variantComponents.id }),

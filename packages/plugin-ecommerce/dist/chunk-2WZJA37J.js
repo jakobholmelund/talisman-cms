@@ -1,21 +1,22 @@
 import {
+  commerceDb
+} from "./chunk-DUYAQ7V4.js";
+import {
   customerAccounts,
   customerSessions,
   orders,
   rateLimits,
   signInTokens
-} from "./chunk-YQM6TC4O.js";
+} from "./chunk-NKJTK7MK.js";
 
 // src/accounts.ts
 import { and as and2, count, eq as eq2, gt as gt2, isNotNull, isNull, sql } from "drizzle-orm";
-import { createDbClient as createDbClient2 } from "talisman-cms/client";
 import { ensureVerifiedEmailIdentity } from "talisman-cms/auth/identity";
 import { parseAddress } from "talisman-cms/email";
 import { readSetting as readSetting2 } from "talisman-cms/env";
 
 // src/rate-limits.ts
 import { and, eq, gt } from "drizzle-orm";
-import { createDbClient } from "talisman-cms/client";
 var MAX_RATE_LIMIT_WINDOW_SECONDS = 24 * 60 * 60;
 async function sha256Hex(value) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -48,7 +49,7 @@ async function countRequest(env, key, now, windowSeconds) {
   return limit?.count;
 }
 async function peekRequestCount(env, key, now, windowSeconds) {
-  const row = await createDbClient(env).select({ count: rateLimits.count }).from(rateLimits).where(and(eq(rateLimits.key, key), gt(rateLimits.windowStart, now - windowSeconds))).get();
+  const row = await commerceDb(env).select({ count: rateLimits.count }).from(rateLimits).where(and(eq(rateLimits.key, key), gt(rateLimits.windowStart, now - windowSeconds))).get();
   return row?.count ?? 0;
 }
 async function clientOverLimit(env, bucket, sourceIp, { limit, windowSeconds, now = Math.floor(Date.now() / 1e3) }) {
@@ -158,7 +159,7 @@ function maskEmailAddress(email) {
 }
 async function findCustomerSession(env, token) {
   if (!token || token.length > 128) return null;
-  const db = createDbClient2(env);
+  const db = commerceDb(env);
   const session = await db.select().from(customerSessions).where(and2(
     eq2(customerSessions.tokenHash, await hashToken(token)),
     gt2(customerSessions.expiresAt, /* @__PURE__ */ new Date()),
@@ -178,7 +179,7 @@ function customerEmailReservedDaily(env, dailyLimit) {
   return Number.isSafeInteger(configured) && configured >= 0 && configured < dailyLimit ? configured : Math.floor(dailyLimit / 4);
 }
 async function isExistingCustomer(env, email) {
-  const verified = await createDbClient2(env).select({ id: customerAccounts.id }).from(customerAccounts).where(and2(eq2(customerAccounts.emailNormalized, email), isNotNull(customerAccounts.emailVerifiedAt))).get();
+  const verified = await commerceDb(env).select({ id: customerAccounts.id }).from(customerAccounts).where(and2(eq2(customerAccounts.emailNormalized, email), isNotNull(customerAccounts.emailVerifiedAt))).get();
   return Boolean(verified) || await hasPurchaseHistory(env, { emails: [email] });
 }
 function shopperSignInBotCheck(env) {
@@ -217,7 +218,7 @@ async function requestCustomerEmailSignIn(env, email, linkForToken, sendLink, so
   if (await clientOverLimit(env, "shopper-email", sourceIp, { limit: REQUESTS_PER_SOURCE_PER_HOUR, windowSeconds: 3600, now })) {
     return dropped();
   }
-  const recent = await createDbClient2(env).select({ count: count() }).from(signInTokens).where(and2(eq2(signInTokens.emailNormalized, normalized), gt2(signInTokens.createdAt, at(now - ADDRESS_WINDOW_SECONDS)))).get();
+  const recent = await commerceDb(env).select({ count: count() }).from(signInTokens).where(and2(eq2(signInTokens.emailNormalized, normalized), gt2(signInTokens.createdAt, at(now - ADDRESS_WINDOW_SECONDS)))).get();
   if ((recent?.count ?? 0) >= REQUESTS_PER_ADDRESS) return dropped();
   const addressKey = await sha256Hex(normalized);
   if ((await countRequest(env, `shopper-email:address:${addressKey}`, now, ADDRESS_WINDOW_SECONDS) ?? REQUESTS_PER_ADDRESS + 1) > REQUESTS_PER_ADDRESS) return dropped();
@@ -242,7 +243,7 @@ async function requestCustomerEmailSignIn(env, email, linkForToken, sendLink, so
 async function sendSignInLink(env, email, now, linkForToken, sendLink) {
   const token = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   const tokenHash = await hashToken(token);
-  const db = createDbClient2(env);
+  const db = commerceDb(env);
   await db.insert(signInTokens).values({ tokenHash, emailNormalized: email, expiresAt: at(now + SIGN_IN_LINK_SECONDS), createdAt: at(now) });
   try {
     await sendLink(email, linkForToken(token));
@@ -257,7 +258,7 @@ async function previewCustomerEmailSignIn(env, token, sourceIp) {
     throw new CustomerRequestLimitError();
   }
   if (!isSignInToken(token)) return null;
-  const link = await createDbClient2(env).select({ emailNormalized: signInTokens.emailNormalized }).from(signInTokens).where(and2(
+  const link = await commerceDb(env).select({ emailNormalized: signInTokens.emailNormalized }).from(signInTokens).where(and2(
     eq2(signInTokens.tokenHash, await hashToken(token)),
     isNull(signInTokens.revokedAt),
     gt2(signInTokens.expiresAt, at(now))
@@ -268,7 +269,7 @@ async function previewCustomerEmailSignIn(env, token, sourceIp) {
 async function consumeCustomerEmailSignIn(env, token) {
   if (!isSignInToken(token)) return null;
   const now = Math.floor(Date.now() / 1e3);
-  const db = createDbClient2(env);
+  const db = commerceDb(env);
   const [claimed] = await db.update(signInTokens).set({ revokedAt: at(now) }).where(and2(
     eq2(signInTokens.tokenHash, await hashToken(token)),
     isNull(signInTokens.revokedAt),
@@ -303,11 +304,11 @@ async function consumeCustomerEmailSignIn(env, token) {
 }
 async function revokeCustomerSession(env, token) {
   if (!token || token.length > 128) return;
-  const db = createDbClient2(env);
+  const db = commerceDb(env);
   await db.update(customerSessions).set({ revokedAt: /* @__PURE__ */ new Date() }).where(eq2(customerSessions.tokenHash, await hashToken(token)));
 }
 async function listCustomerOrders(env, accountId) {
-  const db = createDbClient2(env);
+  const db = commerceDb(env);
   return db.select({
     id: orders.id,
     status: orders.status,

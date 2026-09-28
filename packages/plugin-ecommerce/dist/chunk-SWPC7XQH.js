@@ -1,28 +1,30 @@
 import {
   GiftCardRefusal,
   readStoreSettings
-} from "./chunk-57TAUBRV.js";
+} from "./chunk-HOPUAWN7.js";
 import {
   getReferralPolicy,
   referralTermsError
-} from "./chunk-G46A3EJO.js";
+} from "./chunk-2XVZABM5.js";
 import {
   hasPurchaseHistory
-} from "./chunk-Y77MQPH2.js";
+} from "./chunk-2WZJA37J.js";
+import {
+  commerceDb
+} from "./chunk-DUYAQ7V4.js";
 import {
   customerAccounts,
   discountCodes,
   discountRedemptions,
   referralCodes,
   referralSettings
-} from "./chunk-YQM6TC4O.js";
+} from "./chunk-NKJTK7MK.js";
 import {
   minimumChargeAmount
 } from "./chunk-2UYSCNNW.js";
 
 // src/promotions.ts
 import { and, count, eq, inArray } from "drizzle-orm";
-import { createDbClient } from "talisman-cms/client";
 import { z } from "zod";
 var optionalLimit = z.number().int().positive().max(1e6).nullable();
 var optionalDate = z.number().int().positive().nullable();
@@ -96,7 +98,7 @@ async function evaluateDiscountCode(env, input) {
   const { currency } = readStoreSettings(env);
   const normalizedCode = input.code.trim().toUpperCase();
   if (!/^[A-Z0-9][A-Z0-9_-]{2,31}$/.test(normalizedCode)) throw new DiscountCodeRefusal("format", "Invalid discount code");
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const code = await db.select().from(discountCodes).where(eq(discountCodes.code, normalizedCode)).get();
   if (!code) throw new DiscountCodeRefusal("unknown", "Discount code is unavailable");
   if (!code.active) throw new DiscountCodeRefusal("inactive", "Discount code is unavailable");
@@ -135,7 +137,7 @@ async function evaluateDiscountCode(env, input) {
   return { code: code.code, type: code.type, amount, emailNormalized, eligibleProductIds: code.eligibleProductIds };
 }
 async function getPromotionsAdmin(env) {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const codes = await db.select().from(discountCodes).orderBy(discountCodes.createdAt);
   const usage = await db.select({
     code: discountRedemptions.code,
@@ -153,7 +155,7 @@ async function setReferralCodeActive(env, code, active) {
   if (!/^REF-[A-F0-9]{20}$/.test(code) || typeof active !== "boolean") {
     throw new Error("Invalid referral code status");
   }
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const changed = await db.update(referralCodes).set({ active }).where(eq(referralCodes.code, code)).returning({ code: referralCodes.code });
   if (!changed.length) throw new Error("Referral code not found");
   return { code, active };
@@ -162,7 +164,7 @@ async function saveReferralSettings(env, input) {
   const parsed = referralSettingsSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues.map((issue) => issue.message).join("; "));
   const values = parsed.data;
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   await db.insert(referralSettings).values({ id: "default", ...values, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({ target: referralSettings.id, set: { ...values, updatedAt: /* @__PURE__ */ new Date() } });
   return getReferralPolicy(env);
 }
@@ -174,7 +176,7 @@ async function createDiscountCode(env, input) {
   ).join("").toUpperCase()}` : raw.code;
   const values = discountCodeSchema.parse({ ...raw, code: generatedCode });
   const now = /* @__PURE__ */ new Date();
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   await db.insert(discountCodes).values({
     ...values,
     remainingCents: values.type === "credit" ? values.value : null,
@@ -187,7 +189,7 @@ async function createDiscountCode(env, input) {
 }
 async function updateDiscountCode(env, code, input) {
   const values = discountCodeSchema.parse({ ...input, code });
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const current = await db.select().from(discountCodes).where(eq(discountCodes.code, values.code)).get();
   if (!current) throw new Error("Discount code not found");
   if (current.type !== values.type) throw new Error("Discount code type cannot be changed");

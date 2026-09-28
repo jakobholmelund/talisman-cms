@@ -1,18 +1,21 @@
 import {
   getReferralPolicy,
   referralReversalStatements
-} from "./chunk-G46A3EJO.js";
+} from "./chunk-2XVZABM5.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
 } from "./chunk-GNU6N22K.js";
+import {
+  commerceDb
+} from "./chunk-DUYAQ7V4.js";
 import {
   emailDeliveries,
   giftCardClaims,
   giftCardPurchases,
   giftCards,
   orders
-} from "./chunk-YQM6TC4O.js";
+} from "./chunk-NKJTK7MK.js";
 import {
   emailLink,
   giftCardClaimEmail
@@ -26,7 +29,6 @@ import {
 // src/gift-cards.ts
 import { and as and2, eq as eq2, gt, isNull as isNull2, sql as sql2 } from "drizzle-orm";
 import { z as z2 } from "zod";
-import { createDbClient as createDbClient2 } from "talisman-cms/client";
 import { readSetting as readSetting2 } from "talisman-cms/env";
 
 // src/store-settings.ts
@@ -589,7 +591,6 @@ async function reconcileAttempt(env, kind, id, now, attempt) {
 
 // src/email-deliveries.ts
 import { and, eq, isNull, lte, or, sql } from "drizzle-orm";
-import { createDbClient } from "talisman-cms/client";
 import { isEmailDeliveryError, parseAddress, resolveEmailProvider, sendEmail } from "talisman-cms/email";
 import { readSetting } from "talisman-cms/env";
 var COMMERCE_EMAIL_MAX_ATTEMPTS = 10;
@@ -750,7 +751,7 @@ function commerceEmailHeld(kind, subjectId, stamp) {
     WHERE kind = ? AND subject_id = ? AND status = 'pending' AND claimed_at = ?)`, params: [kind, subjectId, stamp] };
 }
 async function holdCommerceEmail(env, kind, subjectId, now) {
-  const db = createDbClient(env);
+  const db = commerceDb(env);
   const [held] = await db.update(emailDeliveries).set({ claimedAt: at(now) }).where(and(pendingEmail(kind, subjectId), unclaimedAt(now))).returning({ id: emailDeliveries.id });
   if (held) return now;
   const pending = await db.select({ id: emailDeliveries.id }).from(emailDeliveries).where(pendingEmail(kind, subjectId)).get();
@@ -786,7 +787,7 @@ async function runCommerceEmailDelivery(env, kind, subjectId, compose, options =
     const now = options.now ?? nowSeconds();
     const setup = options.setup ?? await commerceEmailSetup(env);
     const missing = missingEmailSettings(setup, kind);
-    const db = createDbClient(env);
+    const db = commerceDb(env);
     if (missing.length) {
       await db.update(emailDeliveries).set({ lastError: "not_configured" }).where(pendingEmail(kind, subjectId));
       return { id, status: "error", error: `${label} waits: email needs ${missing.join(", ")}` };
@@ -950,7 +951,7 @@ async function reencryptGiftCardCodes(env, input = {}) {
   const keys = await giftCardKeyring(env);
   const current = keys[0];
   const prefix = `v2:${current.id}:`;
-  const db = createDbClient2(env);
+  const db = commerceDb(env);
   const rows = await db.select({ id: giftCards.id, codeHash: giftCards.codeHash, encryptedCode: giftCards.encryptedCode }).from(giftCards).where(and2(sql2`substr(${giftCards.encryptedCode}, 1, ${prefix.length}) <> ${prefix}`, gt(giftCards.id, after))).orderBy(giftCards.id).limit(limit);
   const reencrypt = (row, encryptedCode) => db.update(giftCards).set({ encryptedCode }).where(and2(eq2(giftCards.id, row.id), eq2(giftCards.encryptedCode, row.encryptedCode))).returning({ id: giftCards.id });
   const statements = [];
@@ -1089,7 +1090,7 @@ function claimEmailView(value) {
   return { status: email.status, lastError: email.lastError, attempts: email.attempts };
 }
 async function getGiftCardsAdmin(env) {
-  const db = createDbClient2(env);
+  const db = commerceDb(env);
   return db.select({
     id: giftCards.id,
     codeSuffix: giftCards.codeSuffix,
@@ -1148,7 +1149,7 @@ async function getGiftCardReviewsAdmin(env) {
 }
 async function setGiftCardActive(env, id, active) {
   if (!/^gift_[0-9a-f-]{36}$/.test(id) || typeof active !== "boolean") throw new Error("Invalid gift card");
-  const db = createDbClient2(env);
+  const db = commerceDb(env);
   const card = await db.select().from(giftCards).where(eq2(giftCards.id, id)).get();
   if (!card || card.status === "void") throw new Error("Gift card is unavailable");
   const timestamp = Math.floor(Date.now() / 1e3);
@@ -1174,7 +1175,7 @@ async function evaluateGiftCard(env, code, amountDue) {
   const currency = giftCardCurrency(env);
   const normalized = code.trim().toUpperCase();
   if (!/^GIFT-[A-F0-9]{32}$/.test(normalized)) throw new GiftCardRefusal("format", "Invalid gift card code");
-  const db = createDbClient2(env);
+  const db = commerceDb(env);
   const card = await db.select().from(giftCards).where(eq2(giftCards.codeHash, await hashGiftCardSecret(normalized))).get();
   if (!card || card.status !== "active" || card.currency !== currency || card.balanceCents <= 0) {
     throw new GiftCardRefusal("unavailable", "Gift card is unavailable");
@@ -1187,7 +1188,7 @@ async function evaluateGiftCard(env, code, amountDue) {
 async function getGiftCardBalance(env, code) {
   const normalized = code.trim().toUpperCase();
   if (!/^GIFT-[A-F0-9]{32}$/.test(normalized)) throw new Error("Invalid gift card code");
-  const db = createDbClient2(env);
+  const db = commerceDb(env);
   const card = await db.select({
     balanceCents: giftCards.balanceCents,
     currency: giftCards.currency,
@@ -1204,7 +1205,7 @@ async function startGiftCardPurchase(env, adapter, input, urls) {
   const id = `gp_${crypto.randomUUID()}`;
   const accessToken = randomHex(32);
   const timestamp = Math.floor(Date.now() / 1e3);
-  const db = createDbClient2(env);
+  const db = commerceDb(env);
   const pending = and2(eq2(giftCardPurchases.id, id), eq2(giftCardPurchases.status, "pending"));
   await db.insert(giftCardPurchases).values({
     id,
@@ -1246,7 +1247,7 @@ async function startGiftCardPurchase(env, adapter, input, urls) {
 async function confirmGiftCardPurchase(env, session) {
   const id = session.metadata?.giftCardPurchaseId;
   if (!id) throw new Error("Gift card purchase ID is missing");
-  const db = createDbClient2(env);
+  const db = commerceDb(env);
   const purchase = await db.select().from(giftCardPurchases).where(eq2(giftCardPurchases.id, id)).get();
   if (!purchase || purchase.providerSessionId !== session.id || purchase.amountCents !== session.amount_total || session.currency?.toLowerCase() !== purchase.currency.toLowerCase() || session.payment_status !== "paid" || typeof session.payment_intent !== "string") {
     throw new WebhookMismatchError("purchase_mismatch", "Gift card payment does not match purchase");
@@ -1337,7 +1338,7 @@ var composeGiftCardClaimEmail = async (env, purchaseId, setup, now) => {
 async function claimGiftCardCode(env, token) {
   if (typeof token !== "string" || !CLAIM_TOKEN.test(token)) return null;
   const now = Math.floor(Date.now() / 1e3);
-  const claim = await createDbClient2(env).select({
+  const claim = await commerceDb(env).select({
     id: giftCardClaims.id,
     cardId: giftCardClaims.cardId,
     codeHash: giftCards.codeHash,
@@ -1414,14 +1415,14 @@ async function resendGiftCardClaimLink(env, actor, input) {
   return { purchaseId: values.purchaseId, claimId: link.id, expiresAt: new Date(link.expiresAt * 1e3).toISOString() };
 }
 async function expireGiftCardPurchase(env, id, sessionId) {
-  await createDbClient2(env).update(giftCardPurchases).set({ status: "cancelled", updatedAt: /* @__PURE__ */ new Date() }).where(and2(
+  await commerceDb(env).update(giftCardPurchases).set({ status: "cancelled", updatedAt: /* @__PURE__ */ new Date() }).where(and2(
     eq2(giftCardPurchases.id, id),
     eq2(giftCardPurchases.providerSessionId, sessionId),
     eq2(giftCardPurchases.status, "pending")
   ));
 }
 async function reconcileGiftCardPurchase(env, adapter, id) {
-  const db = createDbClient2(env);
+  const db = commerceDb(env);
   const purchase = await db.select().from(giftCardPurchases).where(eq2(giftCardPurchases.id, id)).get();
   if (!purchase || purchase.status !== "pending" || !purchase.providerSessionId) return null;
   if (purchase.reconcileReviewAt) return { status: "pending", review: true };
@@ -1454,7 +1455,7 @@ async function reconcileGiftCardPurchase(env, adapter, id) {
 }
 async function getPurchasedGiftCard(env, id, accessToken) {
   if (!/^gp_[0-9a-f-]{36}$/.test(id) || !accessToken) return null;
-  const db = createDbClient2(env);
+  const db = commerceDb(env);
   const purchase = await db.select().from(giftCardPurchases).where(eq2(giftCardPurchases.id, id)).get();
   if (!purchase || purchase.accessTokenHash !== await hashGiftCardSecret(accessToken)) return null;
   const card = await db.select().from(giftCards).where(eq2(giftCards.purchaseId, id)).get();
@@ -1521,7 +1522,7 @@ function giftCardPurchaseChargebackStatements(env, purchaseId, timestamp) {
   ];
 }
 async function recordGiftCardPurchaseRefund(env, params) {
-  const db = createDbClient2(env);
+  const db = commerceDb(env);
   const purchase = await db.select().from(giftCardPurchases).where(eq2(giftCardPurchases.paymentIntentId, params.paymentIntentId)).get();
   if (!purchase) return null;
   if (purchase.amountCents !== params.amount || params.currency.toLowerCase() !== purchase.currency.toLowerCase() || !Number.isSafeInteger(params.amountRefunded) || params.amountRefunded < 0 || params.amountRefunded > purchase.amountCents) {
@@ -1629,7 +1630,7 @@ var refundSchema = z2.object({
 async function refundGiftCardTender(env, actor, input) {
   const values = refundSchema.parse(input);
   if (!actor.trim()) throw new Error("Administrator identity is required");
-  const current = await createDbClient2(env).select({
+  const current = await commerceDb(env).select({
     giftCardId: orders.giftCardId,
     giftCardApplied: orders.giftCardApplied,
     giftCardRefundedCents: orders.giftCardRefundedCents,
@@ -1656,7 +1657,7 @@ async function refundGiftCardTender(env, actor, input) {
 async function refundGiftCardOnlyOrder(env, actor, input) {
   const values = refundSchema.parse(input);
   if (!actor.trim() || values.amountCents !== void 0) throw new Error("Invalid full refund request");
-  const order = await createDbClient2(env).select({
+  const order = await commerceDb(env).select({
     id: orders.id,
     giftCardId: orders.giftCardId,
     giftCardApplied: orders.giftCardApplied,

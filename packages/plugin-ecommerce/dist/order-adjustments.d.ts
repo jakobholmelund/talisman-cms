@@ -61,7 +61,7 @@ declare function getOrderAdjustmentsAdmin(env: TalismanEnv, input: unknown): Pro
         [k: string]: {
             orderId: string;
             status: string;
-            fulfillmentStatus: string;
+            fulfillmentStatus: "unfulfilled" | "partially_fulfilled" | "fulfilled";
             restock: "all" | "choose" | null;
             disputes: OrderDispute[];
             reservations: OrderReservation[];

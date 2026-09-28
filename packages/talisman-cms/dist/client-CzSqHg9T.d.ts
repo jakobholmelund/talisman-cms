@@ -1,5 +1,5 @@
 import * as drizzle_orm_d1 from 'drizzle-orm/d1';
-import * as drizzle_orm from 'drizzle-orm';
+import { AnyRelations, EmptyRelations } from 'drizzle-orm';
 import { A as Actor } from './actor-Daa_hmny.js';
 
 type CacheContext = Pick<ExecutionContext, 'waitUntil'>;
@@ -103,7 +103,12 @@ type TalismanEnv = {
     KV?: KVNamespace;
     [key: string]: unknown;
 };
-declare function createDbClient(env: TalismanEnv): drizzle_orm_d1.DrizzleD1Database<drizzle_orm.EmptyRelations> & {
+/**
+ * A Drizzle client on the site's `DB` binding. With a package's `relations` (built with
+ * `defineRelations`, as the ecommerce plugin's `schema` module exports) the client also has
+ * `db.query.<table>`, the relational query builder, for that package's tables.
+ */
+declare function createDbClient<TRelations extends AnyRelations = EmptyRelations>(env: TalismanEnv, relations?: TRelations): drizzle_orm_d1.DrizzleD1Database<TRelations> & {
     $client: D1Database;
 };
 interface ClientOptions {

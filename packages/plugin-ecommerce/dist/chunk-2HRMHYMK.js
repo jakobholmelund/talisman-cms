@@ -1,10 +1,10 @@
 import {
   INVENTORY_COLUMNS,
   fullRefundStatements
-} from "./chunk-RVFZ32XF.js";
+} from "./chunk-TPW5F2YY.js";
 import {
   evaluateDiscountCode
-} from "./chunk-Z2C4AXU4.js";
+} from "./chunk-SWPC7XQH.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
@@ -12,7 +12,7 @@ import {
   deliverCommerceEmail,
   deliverPendingCommerceEmails,
   fulfillCommerceOrder
-} from "./chunk-XVJD7KXQ.js";
+} from "./chunk-6CXRXC6K.js";
 import {
   RECONCILE_DUE,
   RECONCILE_ORDER,
@@ -41,7 +41,7 @@ import {
   recordGiftCardPurchaseRefund,
   sessionLookupFailure,
   uncheckedSessionRefusal
-} from "./chunk-57TAUBRV.js";
+} from "./chunk-HOPUAWN7.js";
 import {
   canonicalEmail,
   canonicalEmailSql,
@@ -53,12 +53,17 @@ import {
   hasCanonicalPurchase,
   referralReversalStatements,
   releaseReferralAwards
-} from "./chunk-G46A3EJO.js";
+} from "./chunk-2XVZABM5.js";
 import {
   PURCHASED_ORDER_STATUSES,
   claimInterval,
   hasPurchaseHistory
-} from "./chunk-Y77MQPH2.js";
+} from "./chunk-2WZJA37J.js";
+import {
+  batchGroups,
+  chunked,
+  commerceDb
+} from "./chunk-DUYAQ7V4.js";
 import {
   carts,
   componentReservations,
@@ -72,13 +77,12 @@ import {
   products,
   referralCodes,
   taxReversals
-} from "./chunk-YQM6TC4O.js";
+} from "./chunk-NKJTK7MK.js";
 import {
   minimumChargeAmount
 } from "./chunk-2UYSCNNW.js";
 
 // src/api.ts
-import { createDbClient as createDbClient3 } from "talisman-cms/client";
 import { and as and2, eq as eq3, inArray, isNotNull as isNotNull2, isNull as isNull2, lt, or, sql } from "drizzle-orm";
 
 // src/provider-checks.ts
@@ -194,7 +198,6 @@ function deliveryEstimate(rate) {
 
 // src/tax.ts
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
-import { createDbClient } from "talisman-cms/client";
 var SHIPPING_TAX_CODE = "txcd_92010001";
 var TaxCalculationError = class extends Error {
   constructor(options) {
@@ -308,7 +311,7 @@ async function recordOrderTax(env, adapters, orderId, now = unixNow()) {
       calculationId: order.tax_calculation_id,
       ...late ? { postedAt: order.paid_at } : {}
     });
-    const stored = await createDbClient(env).update(orders).set({ taxTransactionId: transactionId, ...TAX_SYNC_CLEARED }).where(and(eq(orders.id, order.id), isNull(orders.taxTransactionId))).run();
+    const stored = await commerceDb(env).update(orders).set({ taxTransactionId: transactionId, ...TAX_SYNC_CLEARED }).where(and(eq(orders.id, order.id), isNull(orders.taxTransactionId))).run();
     return Number(stored.meta?.changes ?? 0) > 0;
   } catch (error) {
     await countTaxFailure(env, "_ecommerce_orders", "id = ? AND tax_transaction_id IS NULL", order.id, error, now);
@@ -368,7 +371,7 @@ async function reverseOrderTax(env, adapters, orderId, now = unixNow()) {
   }
   if (!recorded) return null;
   try {
-    await createDbClient(env).update(orders).set(TAX_SYNC_CLEARED).where(and(eq(orders.id, orderId), isNotNull(orders.taxSyncLastAt)));
+    await commerceDb(env).update(orders).set(TAX_SYNC_CLEARED).where(and(eq(orders.id, orderId), isNotNull(orders.taxSyncLastAt)));
   } catch {
   }
   await sendTaxReversal(env, recorded.adapter, recorded.reversal, now);
@@ -380,7 +383,7 @@ async function sendTaxReversal(env, adapter, reversal, now) {
       throw new ReconcileFailure("provider_not_configured", "Payment provider cannot reverse tax");
     }
     const { reversalId } = await adapter.reverseTaxTransaction(reversal);
-    await createDbClient(env).update(taxReversals).set({ providerReversalId: reversalId, ...TAX_SYNC_CLEARED }).where(and(eq(taxReversals.reference, reversal.reference), eq(taxReversals.providerReversalId, "")));
+    await commerceDb(env).update(taxReversals).set({ providerReversalId: reversalId, ...TAX_SYNC_CLEARED }).where(and(eq(taxReversals.reference, reversal.reference), eq(taxReversals.providerReversalId, "")));
   } catch (error) {
     await countTaxFailure(
       env,
@@ -455,7 +458,6 @@ async function reverseUnreversedTax(env, adapters, now, limit) {
 
 // src/disputes.ts
 import { eq as eq2 } from "drizzle-orm";
-import { createDbClient as createDbClient2 } from "talisman-cms/client";
 function parseStripeDispute(data, eventTime) {
   const paymentIntentId = typeof data?.payment_intent === "string" ? data.payment_intent : data?.payment_intent?.id;
   if (typeof data?.id !== "string" || !data.id || typeof paymentIntentId !== "string" || !paymentIntentId) return null;
@@ -596,7 +598,7 @@ async function closePurchaseDispute(env, purchase, dispute, closedAt, now) {
       ...giftCardPurchaseHoldStatements(env, purchase.id, now),
       ...giftCardPurchaseChargebackStatements(env, purchase.id, now)
     ]);
-    const current = await createDbClient2(env).select({ status: giftCardPurchases.status }).from(giftCardPurchases).where(eq2(giftCardPurchases.id, purchase.id)).get();
+    const current = await commerceDb(env).select({ status: giftCardPurchases.status }).from(giftCardPurchases).where(eq2(giftCardPurchases.id, purchase.id)).get();
     if (current?.status === "review") {
       throw new WebhookRetryLaterError("A checkout in progress holds value on the disputed purchase's card; the lost dispute is applied once it completes or expires");
     }
@@ -618,7 +620,7 @@ async function closePurchaseDispute(env, purchase, dispute, closedAt, now) {
   ]);
 }
 async function applyStripeDispute(env, dispute, options) {
-  const db = createDbClient2(env);
+  const db = commerceDb(env);
   const now = options.now ?? Math.floor(Date.now() / 1e3);
   const order = await db.select({ id: orders.id, currency: orders.currency, referralCode: orders.referralCode }).from(orders).where(eq2(orders.paymentIntentId, dispute.paymentIntentId)).get();
   if (order) {
@@ -638,13 +640,7 @@ async function applyStripeDispute(env, dispute, options) {
 var PARKED_CHECKOUT_MESSAGE = "The store is reviewing the payment for this checkout. Contact the store to release it.";
 var RESERVATION_ROWS = `SELECT json_extract(value, '$.target') AS target, json_extract(value, '$.amount') AS amount
   FROM json_each(?)`;
-var QUERY_ID_CHUNK = 90;
 var at = (seconds) => new Date(seconds * 1e3);
-function chunked(values, size = QUERY_ID_CHUNK) {
-  const chunks = [];
-  for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size));
-  return chunks;
-}
 var CART_MAX_LINES = 50;
 var CART_MAX_LINE_QUANTITY = 99;
 var CART_ID_MAX_LENGTH = 128;
@@ -678,7 +674,7 @@ function aggregateComponentDemand(items) {
 }
 function bindCommerceApi(options) {
   const { env, paymentAdapters = [] } = options;
-  const db = createDbClient3(env);
+  const db = commerceDb(env);
   async function discardCheckoutDiscount(adapter, orderId) {
     if (!adapter?.discardCheckoutDiscount) return;
     try {
@@ -694,29 +690,35 @@ function bindCommerceApi(options) {
   async function loadBasketCatalog(items) {
     const productIds = [...new Set(items.map((item) => String(item.productId)))];
     const variantIds = [...new Set(items.flatMap((item) => item.variantId ? [String(item.variantId)] : []))];
-    const slots = (ids) => ids.map(() => "?").join(", ");
-    const queries = [];
-    for (const ids of chunked(productIds)) {
-      queries.push({ kind: "products", statement: env.DB.prepare(`SELECT id, name, status, type, base_price,
-        inventory_quantity, is_physical FROM _ecommerce_products WHERE id IN (${slots(ids)})`).bind(...ids) });
-      queries.push({ kind: "groups", statement: env.DB.prepare(`SELECT g.id, g.product_id, g.name, g.price_override,
-        g.inventory_quantity, d.name AS definition_name
-        FROM _ecommerce_product_variants g LEFT JOIN _ecommerce_variants d ON d.id = g.variant_id
-        WHERE g.product_id IN (${slots(ids)})`).bind(...ids) });
-    }
-    for (const ids of chunked(variantIds)) {
-      queries.push({ kind: "values", statement: env.DB.prepare(`SELECT v.id, v.product_variant_id, v.value,
-        v.price_override, s.id AS stock_id, s.quantity AS stock_quantity
-        FROM _ecommerce_product_variant_values v LEFT JOIN _ecommerce_stocks s ON s.product_variant_value_id = v.id
-        WHERE v.id IN (${slots(ids)})`).bind(...ids) });
-      queries.push({ kind: "requirements", statement: env.DB.prepare(`SELECT r.product_variant_value_id, r.component_id,
-        r.quantity, c.id AS found_component_id, c.name AS component_name, c.quantity AS component_quantity
-        FROM _ecommerce_variant_components r LEFT JOIN _ecommerce_components c ON c.id = r.component_id
-        WHERE r.product_variant_value_id IN (${slots(ids)})
-        ORDER BY r.product_variant_value_id, r.component_id`).bind(...ids) });
-      queries.push({ kind: "groupsWithValues", statement: env.DB.prepare(`SELECT DISTINCT product_variant_id
-        FROM _ecommerce_product_variant_values WHERE product_variant_id IN (${slots(ids)})`).bind(...ids) });
-    }
+    const rows = await batchGroups(db, {
+      // Each product with its variant groups, and each group with the name of its definition.
+      products: chunked(productIds).map((ids) => db.query.products.findMany({
+        columns: { id: true, name: true, status: true, type: true, basePrice: true, inventoryQuantity: true, isPhysical: true },
+        where: { id: { in: ids } },
+        with: { variants: {
+          columns: { id: true, productId: true, name: true, priceOverride: true, inventoryQuantity: true },
+          with: { variant: { columns: { name: true } } }
+        } }
+      })),
+      // Each value with its stock row and its bill of materials, in component id order.
+      values: chunked(variantIds).map((ids) => db.query.productVariantValues.findMany({
+        columns: { id: true, productVariantId: true, value: true, priceOverride: true },
+        where: { id: { in: ids } },
+        with: {
+          stock: { columns: { id: true, quantity: true } },
+          requirements: {
+            columns: { componentId: true, quantity: true },
+            orderBy: { componentId: "asc" },
+            with: { component: { columns: { id: true, name: true, quantity: true } } }
+          }
+        }
+      })),
+      // A line's variant id may name a legacy group instead of a value; such a group must have no values.
+      groupsWithValues: chunked(variantIds).map((ids) => db.query.productVariants.findMany({
+        columns: { id: true },
+        where: { id: { in: ids }, values: true }
+      }))
+    });
     const catalog = {
       products: /* @__PURE__ */ new Map(),
       groups: /* @__PURE__ */ new Map(),
@@ -725,51 +727,43 @@ function bindCommerceApi(options) {
       values: /* @__PURE__ */ new Map(),
       requirements: /* @__PURE__ */ new Map()
     };
-    if (!queries.length) return catalog;
-    const results = await env.DB.batch(queries.map((query) => query.statement));
-    queries.forEach(({ kind }, index) => {
-      for (const row of results[index]?.results ?? []) {
-        if (kind === "products") {
-          catalog.products.set(row.id, {
-            id: row.id,
-            name: row.name,
-            status: row.status,
-            type: row.type,
-            basePrice: row.base_price,
-            inventoryQuantity: row.inventory_quantity,
-            isPhysical: Number(row.is_physical) === 1
-          });
-        } else if (kind === "groups") {
-          catalog.groups.set(row.id, {
-            id: row.id,
-            productId: row.product_id,
-            name: row.name,
-            definitionName: row.definition_name ?? null,
-            priceOverride: row.price_override ?? null,
-            inventoryQuantity: row.inventory_quantity
-          });
-          catalog.productsWithGroups.add(row.product_id);
-        } else if (kind === "values") {
-          catalog.values.set(row.id, {
-            id: row.id,
-            groupId: row.product_variant_id,
-            value: row.value,
-            priceOverride: row.price_override ?? null,
-            stock: row.stock_id === null || row.stock_id === void 0 ? null : { id: row.stock_id, quantity: row.stock_quantity }
-          });
-        } else if (kind === "requirements") {
-          const list = catalog.requirements.get(row.product_variant_value_id) ?? [];
-          list.push({
-            componentId: row.component_id,
-            quantity: row.quantity,
-            component: row.found_component_id === null || row.found_component_id === void 0 ? null : { id: row.found_component_id, name: row.component_name, quantity: row.component_quantity }
-          });
-          catalog.requirements.set(row.product_variant_value_id, list);
-        } else {
-          catalog.groupsWithValues.add(row.product_variant_id);
-        }
+    for (const product of rows.products) {
+      catalog.products.set(product.id, {
+        id: product.id,
+        name: product.name,
+        status: product.status,
+        type: product.type,
+        basePrice: product.basePrice,
+        inventoryQuantity: product.inventoryQuantity,
+        isPhysical: product.isPhysical
+      });
+      for (const group of product.variants) {
+        catalog.groups.set(group.id, {
+          id: group.id,
+          productId: group.productId,
+          name: group.name,
+          definitionName: group.variant?.name ?? null,
+          priceOverride: group.priceOverride,
+          inventoryQuantity: group.inventoryQuantity
+        });
+        catalog.productsWithGroups.add(group.productId);
       }
-    });
+    }
+    for (const value of rows.values) {
+      catalog.values.set(value.id, {
+        id: value.id,
+        groupId: value.productVariantId,
+        value: value.value,
+        priceOverride: value.priceOverride,
+        stock: value.stock && { id: value.stock.id, quantity: value.stock.quantity }
+      });
+      catalog.requirements.set(value.id, value.requirements.map((requirement) => ({
+        componentId: requirement.componentId,
+        quantity: requirement.quantity,
+        component: requirement.component
+      })));
+    }
+    for (const group of rows.groupsWithValues) catalog.groupsWithValues.add(group.id);
     return catalog;
   }
   function resolveSelectedVariant(catalog, product, variantId) {
@@ -1946,7 +1940,7 @@ async function reconcileCommerce(options, limit = 10) {
   const { env } = options;
   const api = bindCommerceApi(options);
   const now = Math.floor(Date.now() / 1e3);
-  const db = createDbClient3(env);
+  const db = commerceDb(env);
   const preparations = await env.DB.prepare(`SELECT id FROM _ecommerce_carts
     WHERE checkout_session_id >= 'preparing:' AND checkout_session_id < 'preparing;' AND updated_at < ?
     ORDER BY updated_at LIMIT ?`).bind(now - 35 * 60, count).all();
@@ -2051,7 +2045,7 @@ async function purgeStaleCommerceData(options) {
       WHERE user_id IS NULL AND closed = 0 AND checkout_session_id IS NULL AND updated_at < ?
         AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders WHERE cart_id = _ecommerce_carts.id)
       LIMIT ?)`, [now - 30 * day]],
-    // Shopper sessions, and sign-in links sent before migration 0024, a day after they expired, were used or signed out.
+    // Shopper sessions, and the `email_challenge` rows of earlier releases, a day after they expired, were used or signed out.
     ["customerSessions", `DELETE FROM _ecommerce_customer_sessions WHERE id IN (SELECT id
       FROM _ecommerce_customer_sessions WHERE expires_at < ? OR revoked_at < ? LIMIT ?)`, [now - day, now - day]],
     // Sign-in links, with the address they were sent to, a day after they expired or were used.
@@ -2075,7 +2069,7 @@ async function purgeStaleCommerceData(options) {
       WHERE window_start < ? LIMIT ?)`, [now - day]],
     ["authSessions", `DELETE FROM galaxy_auth_session WHERE id IN (SELECT id FROM galaxy_auth_session
       WHERE expires_at < ? LIMIT ?)`, [now]],
-    // better-auth records milliseconds. Shopper counters written in seconds before migration 0024 may remain.
+    // better-auth records milliseconds. Shopper counters written in seconds by earlier releases may remain.
     ["authRateLimits", `DELETE FROM galaxy_auth_rate_limit WHERE id IN (SELECT id FROM galaxy_auth_rate_limit
       WHERE CASE WHEN last_request >= 100000000000 THEN last_request / 1000 ELSE last_request END < ?
       LIMIT ?)`, [now - day]]

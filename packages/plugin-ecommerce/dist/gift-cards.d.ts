@@ -46,7 +46,7 @@ declare function getGiftCardsAdmin(env: TalismanEnv): Promise<{
     initialCents: number;
     balanceCents: number;
     currency: string;
-    status: "void" | "active" | "suspended";
+    status: "active" | "void" | "suspended";
     inReview: boolean;
     claimLink: {
         createdAt: string | null;
@@ -110,7 +110,7 @@ declare function evaluateGiftCard(env: TalismanEnv, code: string, amountDue: num
 declare function getGiftCardBalance(env: TalismanEnv, code: string): Promise<{
     balanceCents: number;
     currency: string;
-    status: "void" | "active" | "suspended";
+    status: "active" | "void" | "suspended";
 }>;
 declare function startGiftCardPurchase(env: TalismanEnv, adapter: PaymentProviderAdapter, input: unknown, urls: {
     successUrl: string;
@@ -190,7 +190,7 @@ declare function reconcileGiftCardPurchase(env: TalismanEnv, adapter: PaymentPro
     review?: undefined;
 } | null>;
 declare function getPurchasedGiftCard(env: TalismanEnv, id: string, accessToken: string | undefined): Promise<{
-    status: "paid" | "pending" | "cancelled" | "review" | "partially_refunded" | "refunded";
+    status: "cancelled" | "refunded" | "pending" | "paid" | "partially_refunded" | "review";
     amountCents: number;
     code: string | null;
     balanceCents: number | null;
@@ -231,7 +231,7 @@ declare function recordGiftCardPurchaseRefund(env: TalismanEnv, params: {
 } | {
     success: boolean;
     purchaseId: string;
-    status: "paid" | "pending" | "cancelled" | "review" | "partially_refunded" | "refunded";
+    status: "cancelled" | "refunded" | "pending" | "paid" | "partially_refunded" | "review";
     duplicate?: undefined;
 } | null>;
 /**

@@ -1,4 +1,27 @@
+import {
+  commerceDb
+} from "./chunk-DUYAQ7V4.js";
+import "./chunk-NKJTK7MK.js";
+
 // src/catalog.ts
+var byCreation = { createdAt: "asc", id: "asc" };
+function readCatalog(env, options = {}) {
+  return commerceDb(env).query.products.findMany({
+    where: options.status ? { status: { in: [...options.status] } } : void 0,
+    orderBy: byCreation,
+    with: {
+      categories: { orderBy: { name: "asc" } },
+      tags: { orderBy: { name: "asc" } },
+      variants: { orderBy: byCreation, with: {
+        variant: true,
+        values: { orderBy: byCreation, with: {
+          stock: true,
+          requirements: { orderBy: { componentId: "asc" }, with: { component: true } }
+        } }
+      } }
+    }
+  });
+}
 function commerceContentCollection(config) {
   return { ...config, adminSection: "commerce" };
 }
@@ -128,5 +151,6 @@ function createCommerceCatalogSeedSql(seed) {
 }
 export {
   commerceContentCollection,
-  createCommerceCatalogSeedSql
+  createCommerceCatalogSeedSql,
+  readCatalog
 };
