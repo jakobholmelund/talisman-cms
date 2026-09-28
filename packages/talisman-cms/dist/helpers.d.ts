@@ -1,7 +1,8 @@
-import { R as RelationReference, B as BlockDefinition } from './types-D6sn2KlA.js';
+import { R as RelationReference, B as BlockDefinition } from './types-ClMgmp2X.js';
 import './actor-BAnSg_qp.js';
 import './types-B9Ys5hZL.js';
 import 'astro';
+import './types-CqOBvOgc.js';
 
 interface CollectionRepeaterBlockOptions {
     slug: string;

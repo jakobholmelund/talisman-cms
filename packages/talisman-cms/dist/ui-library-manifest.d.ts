@@ -1,7 +1,8 @@
-import { m as UiLibraryRequirement, F as FieldDefinition, n as AdvancedAdapterDefinition, U as UiComponentPresetDefinition, g as ComponentSlotDefinition, l as UiLibraryDefinition, j as UiLibraryBlockAdapter, k as UiLibraryComponentAdapter } from './types-D6sn2KlA.js';
+import { n as UiLibraryRequirement, F as FieldDefinition, o as AdvancedAdapterDefinition, U as UiComponentPresetDefinition, g as ComponentSlotDefinition, m as UiLibraryDefinition, k as UiLibraryBlockAdapter, l as UiLibraryComponentAdapter } from './types-ClMgmp2X.js';
 import './actor-BAnSg_qp.js';
 import './types-B9Ys5hZL.js';
 import 'astro';
+import './types-CqOBvOgc.js';
 
 type UiLibraryCatalogItemKind = 'block' | 'component';
 type UiLibraryCoverageStatus = 'complete' | 'partial' | 'unsupported';

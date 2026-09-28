@@ -56,6 +56,42 @@ function assertDevAuthAllowed(authAdapter, command, serverHost) {
     throw new Error("[talisman-cms] DevAuthAdapter signs every request in as an admin, so the dev server must listen on loopback only. Remove --host (server.host) or configure LocalAuthAdapter.");
   }
 }
+var PLACEHOLDER_ORIGIN = "https://talisman-cms.invalid";
+function resolveAdminPath(value, adminPathPrefix, pluginName, what) {
+  const fail = (reason) => {
+    throw new Error(`[talisman-cms] ${pluginName}: ${what} ${JSON.stringify(value)} ${reason}`);
+  };
+  if (typeof value !== "string" || !value.trim()) fail('is empty; give a path such as "extensions/reviews" (relative to the admin path) or "/reviews".');
+  const trimmed = value.trim();
+  if (trimmed.includes("\\")) fail("contains a backslash.");
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) || trimmed.startsWith("//")) fail("is not a path on this site; links and pages stay on the site's origin.");
+  const resolved = trimmed.startsWith("/") ? trimmed : `${adminPathPrefix}/${trimmed}`;
+  let url = null;
+  try {
+    url = new URL(resolved, PLACEHOLDER_ORIGIN);
+  } catch {
+  }
+  if (!url || url.origin !== PLACEHOLDER_ORIGIN) fail("is not a path on this site; links and pages stay on the site's origin.");
+  return resolved;
+}
+function withResolvedAdminPaths(plugin, adminPathPrefix) {
+  if (!plugin.adminLinks && !plugin.routes) return plugin;
+  return {
+    ...plugin,
+    ...plugin.adminLinks && {
+      adminLinks: plugin.adminLinks.map((link) => ({
+        ...link,
+        href: resolveAdminPath(link?.href, adminPathPrefix, plugin.name, `the admin link ${JSON.stringify(link?.label)} href`)
+      }))
+    },
+    ...plugin.routes && {
+      routes: plugin.routes.map((route) => ({
+        ...route,
+        path: resolveAdminPath(route?.path, adminPathPrefix, plugin.name, "the route path")
+      }))
+    }
+  };
+}
 function routePatternKey(pattern) {
   return `/${pattern.split("/").filter(Boolean).join("/")}`;
 }
@@ -83,6 +119,7 @@ var ADMIN_SECTION_ID = /^[a-z][a-z0-9-]*$/;
 var ADMIN_SETTING_NAME = /^[A-Z][A-Z0-9_]*$/;
 var SECRET_LOOKING_SETTING = /SECRET|KEY|TOKEN|PASSWORD/;
 var EDITOR_PANEL_PLACEMENTS = /* @__PURE__ */ new Set(["before-fields", "after-form"]);
+var JS_IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
 function validateAdminExtensions(plugins) {
   const sectionOwners = /* @__PURE__ */ new Map();
   for (const plugin of plugins) {
@@ -131,6 +168,15 @@ function validateAdminExtensions(plugins) {
       } catch {
       }
       if (!isDirectory) fail(`the adminStyleSources directory ${dir} does not exist.`);
+    }
+    if (plugin.scheduled !== void 0) {
+      const { moduleId, exportName } = plugin.scheduled ?? {};
+      if (typeof moduleId !== "string" || !moduleId.trim()) {
+        fail("scheduled.moduleId names the server module that exports the scheduled job; it cannot be empty.");
+      }
+      if (exportName !== void 0 && (typeof exportName !== "string" || !JS_IDENTIFIER.test(exportName))) {
+        fail(`scheduled.exportName is the name of the export that holds the scheduled job (default "scheduled"), not ${JSON.stringify(exportName)}.`);
+      }
     }
   }
 }
@@ -384,12 +430,43 @@ function buildCollectionHooksVirtualModule(collections) {
     export const collectionHooks = { ${entries.join(",\n")} };
   `;
 }
+function buildScheduledVirtualModule(plugins) {
+  const imports = [];
+  const entries = [];
+  plugins.forEach((plugin, index) => {
+    if (!plugin.scheduled) return;
+    const importName = `scheduled_${index}`;
+    const exportName = plugin.scheduled.exportName || "scheduled";
+    imports.push(`import { ${exportName} as ${importName} } from ${JSON.stringify(plugin.scheduled.moduleId)};`);
+    entries.push(`{ plugin: ${JSON.stringify(plugin.name)}, job: ${importName} }`);
+  });
+  return `
+    ${imports.join("\n")}
+    export const scheduledJobs = [${entries.join(", ")}];
+  `;
+}
 var DEFAULT_MIGRATIONS_DIR = "node_modules/.talisman-cms/migrations";
 var WRANGLER_CONFIG_FILES = ["wrangler.toml", "wrangler.json", "wrangler.jsonc"];
 var coreMigrationsDir = fileURLToPath(new URL("../drizzle/", import.meta.url));
 function samePath(a, b) {
   const real = (path) => existsSync(path) ? realpathSync(path) : resolve(path);
   return real(a) === real(b);
+}
+function readWranglerConfig(configPath, isToml) {
+  const raw = readFileSync(configPath, "utf8");
+  return isToml ? raw.replace(/^\s*#.*$/gm, "") : raw.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+}
+function checkWranglerCronTrigger(projectRoot, plugins) {
+  const names = plugins.filter((plugin) => plugin.scheduled).map((plugin) => plugin.name);
+  if (!names.length) return;
+  for (const fileName of WRANGLER_CONFIG_FILES) {
+    const configPath = join(projectRoot, fileName);
+    if (!existsSync(configPath)) continue;
+    const isToml = fileName.endsWith(".toml");
+    const text = readWranglerConfig(configPath, isToml);
+    if (isToml ? /\bcrons\s*=\s*\[\s*["']/.test(text) : /"crons"\s*:\s*\[\s*["']/.test(text)) return;
+  }
+  console.warn(`[talisman-cms] ${names.join(", ")} ${names.length === 1 ? "declares" : "declare"} scheduled jobs, but no wrangler config has a cron trigger. Add [triggers] crons = ["*/10 * * * *"] and export the handler from talisman-cms/worker in the Worker entry (see the core README).`);
 }
 function checkWranglerMigrationsDir(projectRoot, outDir, displayDir, pluginsShipMigrations) {
   const found = [];
@@ -398,8 +475,7 @@ function checkWranglerMigrationsDir(projectRoot, outDir, displayDir, pluginsShip
     const configPath = join(projectRoot, fileName);
     if (!existsSync(configPath)) continue;
     const isToml = fileName.endsWith(".toml");
-    const raw = readFileSync(configPath, "utf8");
-    const text = isToml ? raw.replace(/^\s*#.*$/gm, "") : raw.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    const text = readWranglerConfig(configPath, isToml);
     for (const match of text.matchAll(/["']?migrations_dir["']?\s*[=:]\s*(?:"([^"]*)"|'([^']*)')/g)) {
       const value = match[1] ?? match[2] ?? "";
       const dir = resolve(projectRoot, value);
@@ -430,12 +506,16 @@ function writeProjectMigrations(options, plugins, projectRoot) {
   console.log(`[talisman-cms] Wrote ${files.length} migrations to ${displayDir} (${counts.join(", ")})`);
 }
 function talismanCms(options) {
-  let finalOptions = { ...options };
-  if (options?.plugins) {
-    for (const plugin of options.plugins) {
-      if (plugin.onInit) {
-        finalOptions = plugin.onInit(finalOptions);
-      }
+  let finalOptions = {
+    ...options,
+    adminPath: normalizeAdminPath(options?.adminPath),
+    collections: [...options?.collections || []],
+    globals: [...options?.globals || []],
+    plugins: [...options?.plugins || []]
+  };
+  for (const plugin of options?.plugins || []) {
+    if (typeof plugin.onInit === "function") {
+      finalOptions = plugin.onInit(finalOptions) ?? finalOptions;
     }
   }
   finalOptions.plugins = finalOptions.plugins || [];
@@ -463,6 +543,7 @@ function talismanCms(options) {
   }
   const adminPath = normalizeAdminPath(finalOptions?.adminPath);
   const adminPathPrefix = adminPath === "/" ? "" : adminPath;
+  finalOptions.plugins = finalOptions.plugins.map((plugin) => withResolvedAdminPaths(plugin, adminPathPrefix));
   const protectedPluginRoutes = collectProtectedPluginRoutes(finalOptions.plugins, adminPath, adminPathPrefix);
   validateAdminExtensions(finalOptions.plugins);
   const adminRoutePath = fileURLToPath(new URL("../src/routes/admin.astro", import.meta.url));
@@ -483,7 +564,10 @@ function talismanCms(options) {
     hooks: {
       "astro:config:setup": ({ injectRoute, updateConfig, addDevToolbarApp, addMiddleware, command, config }) => {
         assertDevAuthAllowed(finalOptions.auth, command, config?.server?.host);
-        if (config?.root) writeProjectMigrations(finalOptions, finalOptions.plugins || [], fileURLToPath(config.root));
+        if (config?.root) {
+          writeProjectMigrations(finalOptions, finalOptions.plugins || [], fileURLToPath(config.root));
+          checkWranglerCronTrigger(fileURLToPath(config.root), finalOptions.plugins || []);
+        }
         console.log("[talisman-cms] Injecting admin route from:", adminRoutePath);
         let toolbarAppPath = fileURLToPath(new URL("./toolbar/app.js", import.meta.url));
         if (!existsSync(toolbarAppPath)) {
@@ -656,6 +740,15 @@ function talismanCms(options) {
                   if (id === "\0virtual:talisman-cms/collection-hooks") {
                     return buildCollectionHooksVirtualModule(finalOptions.collections || []);
                   }
+                }
+              },
+              {
+                name: "vite-plugin-talisman-cms-scheduled",
+                resolveId(id) {
+                  if (id === "virtual:talisman-cms/scheduled") return "\0virtual:talisman-cms/scheduled";
+                },
+                load(id) {
+                  if (id === "\0virtual:talisman-cms/scheduled") return buildScheduledVirtualModule(finalOptions.plugins || []);
                 }
               },
               {

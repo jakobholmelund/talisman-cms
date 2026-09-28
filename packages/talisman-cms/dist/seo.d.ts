@@ -1,7 +1,8 @@
-import { F as FieldDefinition, G as GlobalConfig } from './types-D6sn2KlA.js';
+import { F as FieldDefinition, G as GlobalConfig } from './types-ClMgmp2X.js';
 import './actor-BAnSg_qp.js';
 import './types-B9Ys5hZL.js';
 import 'astro';
+import './types-CqOBvOgc.js';
 
 interface SeoSiteSettings {
     siteName?: string;

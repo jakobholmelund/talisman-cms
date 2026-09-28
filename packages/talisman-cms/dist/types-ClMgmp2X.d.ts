@@ -1,4 +1,6 @@
 import { A as Actor } from './actor-BAnSg_qp.js';
+import { T as TalismanAuthAdapter } from './types-B9Ys5hZL.js';
+import { E as EmailRuntimeDescriptor } from './types-CqOBvOgc.js';
 
 type FieldType = 'text' | 'number' | 'boolean' | 'date' | 'textarea' | 'richtext' | 'relationship' | 'array' | 'blocks' | 'select' | 'relation' | 'group' | 'color' | 'media';
 /**
@@ -223,10 +225,77 @@ interface AdminEditorPanelDefinition {
 interface AdminEntryDescriberDefinition {
     modulePath: string;
 }
+interface TalismanCmsOptions {
+    /**
+     * The base path where the CMS admin dashboard will be served.
+     * @default '/admin'
+     */
+    adminPath?: string;
+    /**
+     * The authentication provider used to protect the CMS routes.
+     * Required for production.
+     */
+    auth?: TalismanAuthAdapter;
+    /**
+     * Schemas defining the data collections managed by Talisman CMS.
+     */
+    collections?: CollectionConfig[];
+    /**
+     * Schemas defining singleton global documents managed by Talisman CMS.
+     */
+    globals?: GlobalConfig[];
+    /**
+     * Plugins to extend Talisman CMS functionality
+     */
+    plugins?: Plugin[];
+    /**
+     * A custom email provider, loaded in the Worker from `customEmail({ moduleId, exportName, args })`
+     * (`talisman-cms/email`). It is used when `TALISMAN_EMAIL_PROVIDER` is unset or `custom`.
+     * Without it, email goes through the `[[send_email]]` binding named `EMAIL`.
+     */
+    email?: EmailRuntimeDescriptor;
+    /**
+     * The folder, relative to the project root, into which the core's and every plugin's D1 migrations
+     * are copied on each config setup. Point the `DB` binding's `migrations_dir` at it.
+     * @default 'node_modules/.talisman-cms/migrations'
+     */
+    migrationsDir?: string;
+    /**
+     * Optional Cloudflare Workflow binding used for publish/archive transitions.
+     */
+    publishing?: {
+        /**
+         * Workflow binding available on the Worker environment.
+         * @default 'TALISMAN_PUBLISH_WORKFLOW'
+         */
+        workflowBinding?: string;
+    };
+}
+/**
+ * The site's options as a plugin's `onInit` sees them: `collections`, `globals` and `plugins` are
+ * always arrays, and `adminPath` is normalized (`/admin` by default, `/` for a root admin, otherwise
+ * a leading slash and no trailing one).
+ */
+interface PluginConfig extends Omit<TalismanCmsOptions, 'adminPath' | 'collections' | 'globals' | 'plugins'> {
+    adminPath: string;
+    collections: CollectionConfig[];
+    globals: GlobalConfig[];
+    plugins: Plugin[];
+}
 interface Plugin {
     name: string;
-    onInit: (config: any) => any;
-    /** Task-oriented links shown in the matching admin workspace. */
+    /**
+     * Runs once, in registration order, when `talismanCms()` is called. A plugin adds or changes
+     * collections, globals and runtime hooks here, and may read what the plugins before it registered.
+     * Mutate `config` and return nothing, or return a new config.
+     */
+    onInit?: (config: PluginConfig) => PluginConfig | void;
+    /**
+     * Task-oriented links shown in the matching admin workspace. An `href` without a leading slash is
+     * relative to the admin path (`extensions/orders` is `/admin/extensions/orders` under the default
+     * admin path); one with a leading slash is used as given. Anything that is not a path on the site,
+     * such as a URL with a scheme or host, fails the build.
+     */
     adminLinks?: {
         section: AdminSection;
         label: string;
@@ -239,8 +308,10 @@ interface Plugin {
         public?: boolean;
     }[];
     /**
-     * Pages under the admin path need a CMS session unless `public` is true; pages elsewhere are
-     * always public. An admin-path page that needs a session cannot be prerendered.
+     * Pages the plugin adds. A `path` without a leading slash is relative to the admin path; one with a
+     * leading slash is used as given. Pages under the admin path need a CMS session unless `public` is
+     * true; pages elsewhere are always public. An admin-path page that needs a session cannot be
+     * prerendered.
      */
     routes?: {
         path: string;
@@ -286,6 +357,18 @@ interface Plugin {
     migrations?: {
         dir: string;
     };
+    /**
+     * A job the Worker's scheduled handler runs on every cron tick. `moduleId` names a server module and
+     * `exportName` the export that holds the job, a `ScheduledJob` from `talisman-cms/worker`;
+     * `exportName` defaults to `scheduled`. It is a module reference rather than a function for the same
+     * reason as `runtimeHooks`: the plugin object lives in `astro.config` and does not survive the server
+     * build. The site exports `scheduled` from `talisman-cms/worker` in its Worker entry and sets a cron
+     * trigger in its wrangler config.
+     */
+    scheduled?: {
+        moduleId: string;
+        exportName?: string;
+    };
 }
 interface FieldValidationIssue {
     path: PropertyKey[];
@@ -294,4 +377,4 @@ interface FieldValidationIssue {
     received?: unknown;
 }
 
-export type { AdminEditorPanelDefinition as A, BlockDefinition as B, CollectionConfig as C, FieldDefinition as F, GlobalConfig as G, Plugin as P, RelationReference as R, UiComponentPresetDefinition as U, AdminEntryDescriberDefinition as a, AdminSection as b, AdminSectionDefinition as c, CollectionHookArgs as d, CollectionHooks as e, ComponentDefinition as f, ComponentSlotDefinition as g, FieldType as h, RuntimeCollectionHooks as i, UiLibraryBlockAdapter as j, UiLibraryComponentAdapter as k, UiLibraryDefinition as l, UiLibraryRequirement as m, AdvancedAdapterDefinition as n, FieldValidationIssue as o };
+export type { AdminEditorPanelDefinition as A, BlockDefinition as B, CollectionConfig as C, FieldDefinition as F, GlobalConfig as G, Plugin as P, RelationReference as R, TalismanCmsOptions as T, UiComponentPresetDefinition as U, AdminEntryDescriberDefinition as a, AdminSection as b, AdminSectionDefinition as c, CollectionHookArgs as d, CollectionHooks as e, ComponentDefinition as f, ComponentSlotDefinition as g, FieldType as h, PluginConfig as i, RuntimeCollectionHooks as j, UiLibraryBlockAdapter as k, UiLibraryComponentAdapter as l, UiLibraryDefinition as m, UiLibraryRequirement as n, AdvancedAdapterDefinition as o, FieldValidationIssue as p };

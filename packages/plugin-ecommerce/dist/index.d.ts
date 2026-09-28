@@ -121,7 +121,12 @@ interface EcommercePluginConfig {
      * @default true
      */
     injectCollections?: boolean;
-    /** Optional same-origin link overrides for stores with specialized admin workflows. */
+    /**
+     * Overrides for the Orders, Promotions, Gift cards and Test checkout links in the Commerce
+     * section, for stores with specialized admin workflows. Each is a path relative to the admin path,
+     * such as `extensions/orders`, or an absolute path on the site, such as `/orders`. The integration
+     * refuses anything that is not a path on the site, such as a full URL, at config time.
+     */
     adminPages?: Partial<Record<'orders' | 'promotions' | 'giftCards' | 'testCheckout', string>>;
     /**
      * Adds the admin-only Test checkout screen and `/admin/api/ecommerce/test-checkout`, which place

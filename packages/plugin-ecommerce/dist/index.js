@@ -179,10 +179,15 @@ var ecommercePlugin = (config) => {
   return {
     name: "@talisman-cms/plugin-ecommerce",
     migrations: { dir: resolveMigrationsDir() },
-    adminLinks: adminPageDefinitions.flatMap((page) => {
-      const href = config?.adminPages?.[page.key] || `/admin/extensions/${page.path}`;
-      return href?.startsWith("/") && !href.startsWith("//") ? [{ section: "commerce", label: page.label, description: page.description, href }] : [];
-    }),
+    scheduled: { moduleId: "@talisman-cms/plugin-ecommerce/scheduled" },
+    // The hrefs are relative to the admin path; the integration resolves them and refuses a value
+    // that is not a path on the site, so an `adminPages` override is passed through as given.
+    adminLinks: adminPageDefinitions.map((page) => ({
+      section: "commerce",
+      label: page.label,
+      description: page.description,
+      href: config?.adminPages?.[page.key] || `extensions/${page.path}`
+    })),
     adminUi: adminPageDefinitions.map((page) => ({
       path: page.path,
       label: page.label,
@@ -219,7 +224,10 @@ var ecommercePlugin = (config) => {
           if (id === ADMIN_OPTIONS_MODULE) return `\0${ADMIN_OPTIONS_MODULE}`;
         },
         load(id) {
-          if (id === `\0${ADMIN_OPTIONS_MODULE}`) return `export const adminTestCheckout = ${adminTestCheckout};`;
+          if (id === `\0${ADMIN_OPTIONS_MODULE}`) {
+            return `export const adminTestCheckout = ${adminTestCheckout};
+export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
+          }
         }
       }, {
         name: "talisman-cms-ecommerce-email-templates",

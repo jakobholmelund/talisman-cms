@@ -1487,7 +1487,7 @@ function daisyUiPlugin2() {
   return {
     ...base,
     onInit: (config) => {
-      let updatedConfig = base.onInit ? base.onInit(config) : config;
+      const updatedConfig = base.onInit?.(config) ?? config;
       const themeGlobal = {
         name: "DaisyUI Theme Settings",
         slug: "daisyui-theme",
@@ -1510,9 +1510,10 @@ function daisyUiPlugin2() {
         componentPath: "@talisman-cms/plugin-ui-daisyui/admin/ThemeBuilder"
       }
     ],
+    // Relative to the admin path: the integration mounts it at `<adminPath>/daisyui-preview`.
     routes: [
       {
-        path: "/admin/daisyui-preview",
+        path: "daisyui-preview",
         entrypoint: routeEntrypoint("preview.astro"),
         prerender: false
       }
