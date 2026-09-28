@@ -548,6 +548,8 @@ Depends on the service layer merge.
 
 #### Typed `onInit`, scheduled and migration hooks
 
+**Status:** the migrations hook is done on `main`. `Plugin.migrations: { dir }` names a folder of numbered SQL files; the integration copies the core's and every plugin's files into `node_modules/.talisman-cms/migrations` (the `migrationsDir` option moves it) on every `astro:config:setup`, so `astro sync` and every build refresh the folder a site's `migrations_dir` points at; one sequence of numbers runs across the core and every plugin, the assembler refuses a shared name or number, and the build fails while a `migrations_dir` still names the core package's own folder. `talisman-cms/migrations` exports `listMigrationSources` and `assembleMigrations`. Remaining: the typed `onInit`, the `scheduled` hook and the "Build a plugin" guide; per-plugin number ranges for third-party plugins are a follow-up.
+
 **Why:** `onInit` is typed as `(config: any) => any`, sites wire the ecommerce plugin's reconciliation and retention jobs into their own `scheduled` handler by hand, and plugins cannot ship migrations.
 
 **Approach:** Type the plugin contract, add a `scheduled` hook that the integration calls from the Worker's scheduled handler, and a `migrations` hook that contributes numbered SQL files to one assembled `migrations_dir`. Write a "Build a plugin" guide.
@@ -581,6 +583,8 @@ Depends on the service layer merge.
 Depends on Plugin API v2.
 
 #### Move commerce migrations and admin screens into the ecommerce plugin
+
+**Status:** done on `main`. The core's migrations end at `0024`, the 0.1 baseline, which still creates the commerce tables of its time because `0019` changes CMS and commerce tables in one file and an applied file name never changes; `0025` to `0030` ship unchanged from `@talisman-cms/plugin-ecommerce/drizzle`, and `packages/plugin-ecommerce/test/migrations.test.mjs` applies the assembled sequence as wrangler does to a fresh database and to a seeded one recorded at `0024`. The admin's sections, editor panels, record describers, exposed settings and stylesheet sources are plugin hooks (`adminSections`, `adminEditorPanels`, `adminEntryDescribers`, `adminSettings`, `adminStyleSources`), `FieldDefinition.saveOnlyIfChanged` replaced the inventory special case, and the Commerce workspace, the product editor's options panel with its storefront preview, the model guide and the commerce record labels live in the plugin's `src/admin/`; the routes became `/$section/...`, so `/admin/commerce/...` URLs are unchanged, and the field normalizer had no commerce special case left. Follow-ups: the products slug is still assumed by the workspace groups and the describer when `productsCollectionSlug` differs; the Commerce entry shows even with `injectCollections: false`, because the section has a workspace; and the plugin admin screens still guess the admin base path (see [An admin SDK for plugin screens](#an-admin-sdk-for-plugin-screens)).
 
 **Why:** The core ships the commerce tables in its own migrations, and the admin hard-codes the commerce section, the variant configurator and commerce models. Sites without commerce still get its tables, and the plugin cannot evolve its schema on its own.
 

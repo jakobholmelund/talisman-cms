@@ -38,7 +38,7 @@ export default defineConfig({
 | Option | Default | Effect |
 | --- | --- | --- |
 | `productsCollectionSlug` | `'products'` | The collection shown as Products. The plugin creates it, mapped to the native `_ecommerce_products` table, unless the site defines one with this slug. Baskets and checkout always read `_ecommerce_products`. |
-| `injectCollections` | `true` | Registers the native commerce tables (variants, stock, carts, orders, shoppers, promotions, gift cards) as admin-only collections under **Commerce**. With `false` the tables still exist but are hidden from the admin. |
+| `injectCollections` | `true` | Registers the native commerce tables (variants, stock, carts, orders, shoppers, promotions, gift cards) as admin-only collections under **Commerce**, the admin section this plugin provides. With `false` the tables still exist but are hidden from the admin; the section, its workspace and the product editor's options panel stay. |
 | `adminPages` | none | Same-origin overrides for the Orders, Promotions, Gift cards and Test checkout links. |
 | `adminTestCheckout` | `false` | Adds the admin-only **Test checkout** screen and `/admin/api/ecommerce/test-checkout`, which place orders with a simulated payment. See [Admin test checkout](#admin-test-checkout). |
 | `emailTemplates` | none | A module, as a package specifier or an absolute path, that replaces the order confirmation, shipment and gift card claim emails. See [Order emails](#order-emails). |
@@ -47,14 +47,15 @@ export default defineConfig({
 
 The plugin uses the CMS's Worker bindings (see the Talisman CMS README): `DB` (D1, required) holds the commerce tables, and `EMAIL` (a `[[send_email]]` binding) sends shopper sign-in links and order emails. It adds no binding of its own.
 
-The commerce tables are created by the migrations that ship in `talisman-cms`, not in this package. With `migrations_dir = "node_modules/talisman-cms/drizzle"` on the `DB` binding, apply every migration in that folder before deploying the Worker:
+The plugin ships its D1 migrations in its `drizzle/` folder, from `0025_order_shipping_and_tax.sql` onwards; the earlier commerce tables come from the core's `0004` to `0024`, which stay in `talisman-cms`. Registering the plugin makes the integration copy both sets into the one folder the `DB` binding's `migrations_dir` points at, `node_modules/.talisman-cms/migrations`, on every `astro dev`, `astro build`, `astro sync` or `astro check`. Run `astro sync` (or a build) first, then apply every migration before deploying the Worker:
 
 ```bash
+pnpm exec astro sync
 pnpm exec wrangler d1 migrations apply DB --local   # local development
 pnpm exec wrangler d1 migrations apply DB --remote  # production database
 ```
 
-The plugin needs at least `0030_commerce_order_emails.sql`: shopper account reads fail without `0019`, shopper sign-in fails without `0024`, every order read fails without `0025`, `0026` and `0029`, whose columns the plugin's `orders` table names, gift card reads fail without `0027` and `0029`, order refund and dispute webhooks without `0028`, and payment confirmation, shipments and gift card purchases without `0030`. Run the duplicate checks under [Hosted Stripe checkout](#hosted-stripe-checkout) first when upgrading an existing database.
+The plugin needs at least `0030_commerce_order_emails.sql`: shopper account reads fail without `0019`, shopper sign-in fails without `0024`, every order read fails without `0025`, `0026` and `0029`, whose columns the plugin's `orders` table names, gift card reads fail without `0027` and `0029`, order refund and dispute webhooks without `0028`, and payment confirmation, shipments and gift card purchases without `0030`. Run the duplicate checks under [Hosted Stripe checkout](#hosted-stripe-checkout) first when upgrading an existing database. A database that applied `0025` to `0030` from the core's folder before this release has nothing new to apply: the files keep their names. New commerce migrations continue the shared sequence (`0031` next), whichever package adds them.
 
 ### 4. Worker settings
 
@@ -162,7 +163,9 @@ Product image URLs are stored as a string array. The Commerce editor presents ea
 
 ## Commerce admin workspace
 
-The plugin groups native records under **Commerce**: products and catalog setup, shoppers and carts, promotions and referrals, gift card activity, and audit records. It also provides task-focused screens inside the Talisman CMS admin shell: orders and fulfillment, promotions, and gift cards. Registering `ecommercePlugin()` adds them to the Commerce workspace; `ecommercePlugin({ adminTestCheckout: true })` adds the Test checkout screen as well. The site still provides its public storefront, basket, checkout, and account pages.
+The plugin provides the admin's **Commerce** section (`Plugin.adminSections`): the sidebar entry, the routes `/admin/commerce`, `/admin/commerce/<slug>` and `/admin/commerce/<slug>/<id>`, and the workspace page, which groups the native records into products and catalog setup, shoppers and carts, promotions and referrals, gift card activity, and audit records. Every plugin collection is tagged with `adminSection: 'commerce'`, a site-defined products collection included. The section is admin-only: editors do not see the workspace, and get the commerce collections they may read under Collections. The plugin also provides the product editor's **Options & stock** panel and the storefront preview (`adminEditorPanels`), the model guide shown on the other catalog records, and the labels of commerce records in relation pickers and summaries (`adminEntryDescribers`); without the plugin the admin has no Commerce section. Prices in the admin show in the store currency, which the admin page exposes to the screens from `TALISMAN_COMMERCE_CURRENCY` (`adminSettings`).
+
+It also provides task-focused screens inside the Talisman CMS admin shell: orders and fulfillment, promotions, and gift cards. Registering `ecommercePlugin()` adds them to the Commerce workspace; `ecommercePlugin({ adminTestCheckout: true })` adds the Test checkout screen as well. The site still provides its public storefront, basket, checkout, and account pages.
 
 ```js
 ecommercePlugin()
@@ -188,7 +191,7 @@ Every write to a stock column, by checkout reservations and releases, restocks a
 
 `ecommercePlugin()` provides the cart, checkout, order status, and Stripe webhook routes. An app only needs to register the plugin and render its own cart and checkout pages. The separate `plugin-stripe` package handles Stripe resource sync and is not required for payments.
 
-Apply Talisman CMS migrations through `0030_commerce_order_emails.sql` before deploying the plugin's Worker; [Bindings and migrations](#3-bindings-and-migrations) lists what fails without each. `0025` to `0030` need no check. On an existing database, these checks must return no rows first. The first guards `0018`'s unique revision index, the second `0019`, which allows one CMS user per email regardless of letter case, and the third `0023`, which allows one published entry per slug in a collection:
+Apply the migrations through `0030_commerce_order_emails.sql` (the core's through `0024`, then the plugin's, from the assembled folder) before deploying the plugin's Worker; [Bindings and migrations](#3-bindings-and-migrations) lists what fails without each. `0025` to `0030` need no check. On an existing database, these checks must return no rows first. The first guards `0018`'s unique revision index, the second `0019`, which allows one CMS user per email regardless of letter case, and the third `0023`, which allows one published entry per slug in a collection:
 
 ```sql
 SELECT entry_id, revision_number, COUNT(*) AS copies

@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+- `migrations_dir` no longer points at the core package's `drizzle` folder. The integration copies the core's migrations and every registered plugin's into one folder, `node_modules/.talisman-cms/migrations` by default (the `migrationsDir` integration option moves it), on every `astro sync`, `astro dev`, `astro build` and `astro check`. Point the `DB` binding's `migrations_dir` there and run `pnpm exec astro sync` or a build before `wrangler d1 migrations apply`. A build fails with the fix while a plugin ships migrations and a `migrations_dir` still names the core folder. Existing databases have nothing new to apply: every file keeps its name, and wrangler ignores applied names that are no longer in the folder.
+- The ecommerce plugin ships its own migrations from `0025_order_shipping_and_tax.sql` on, in `@talisman-cms/plugin-ecommerce/drizzle`. The core's `drizzle/` folder ends at `0024` and stays as the 0.1 baseline: it still creates the commerce tables of that time, because `0019` changes CMS and commerce tables in one file and applied names cannot change. A site without the ecommerce plugin gets those tables and never the later ones. Tests that read migrations from the core folder by name resolve `0025` to `0030` from the plugin's folder.
+- `AdminSection` is a string. The admin's `commerce` section exists only when a plugin registers it (`ecommercePlugin()` does), collections are grouped by their `adminSection` alone (the `_ecommerce_` prefix and the plugin schema path are no longer inferred, and a collection whose section is not registered is listed under Collections), and `<meta name="talisman-commerce-currency">` is replaced by `<meta name="talisman-setting-commerce-currency">`, one of the settings a plugin declares with `adminSettings`; its content is the raw setting, empty when unset.
+
+### Plugins
+
+- `Plugin.migrations: { dir }` contributes numbered SQL files, and `talisman-cms/migrations` exports `listMigrationSources`, `assembleMigrations` and `compareMigrationNames`. One sequence of numbers runs across the core and every plugin; a shared name or number fails the build. The assembled folder carries a `sources.json` naming each file's package, and the assembler replaces or removes only files it wrote itself: a `.sql` file it did not write fails the build instead of being deleted, so a site's own migrations belong in another folder.
+- Plugins register admin sections (`adminSections`: a sidebar entry, the routes `/<id>`, `/<id>/<slug>` and `/<id>/<slug>/<entryId>`, an optional workspace page, and `adminOnly` for sections whose tools need the admin role), editor panels (`adminEditorPanels`, rendered before the fields or after the form for the collections they match), record labels for relation pickers and summaries (`adminEntryDescribers`), settings exposed to the admin page (`adminSettings`; the page is served before sign-in, so only display settings belong there, a name that looks like a secret is refused at config time and a value that reads like a key is left out) and folders Tailwind scans for the admin stylesheet (`adminStyleSources`). Fields with `saveOnlyIfChanged` are sent only when the user changed them. The core README's "Plugin admin extension points" section describes the contracts.
+
+### Admin
+
+- Native records with a `name` show it in the editor heading, list rows without a naming field read `<Collection name> <id tail>`, a collection opened under a section it does not belong to shows "Collection Not Found" inside the admin, an unknown top-level path shows "Section Not Found", and editors who open an admin-only section's URL see "Admin access required". The products list and editor use the generic record wording; the product-specific labels and the details/options anchor navigation are gone.
+
+### Ecommerce plugin
+
+- The Commerce workspace, the product editor's **Options & stock** panel with its storefront preview, the model guide of the catalog collections, the labels of commerce records in relation pickers and the store currency reader now come from the plugin (`src/admin/`). URLs, headings and controls are unchanged; the panels load when first shown. Every plugin collection is tagged `adminSection: 'commerce'`, and the four inventory fields carry `saveOnlyIfChanged`.
+- The plugin's `test/migrations.test.mjs` assembles the core's and the plugin's migrations, checks that the sequence `0000` to `0030` is unchanged, applies it as wrangler does to a fresh database and to a seeded one recorded at `0024`, and holds the tests of `0025` to `0030` that lived in the core.
+
 ## Release candidate: talisman-cms 0.1.0 and plugins 0.0.1
 
 - Initial publishable Talisman CMS packages for Astro and Cloudflare D1, with optional R2 media and KV caching.

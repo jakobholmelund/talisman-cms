@@ -59,7 +59,7 @@ compatibility_flags = ["nodejs_compat"]
 binding = "DB"
 database_name = "my-site-db"
 database_id = "<D1 database ID>"
-migrations_dir = "node_modules/talisman-cms/drizzle"
+migrations_dir = "node_modules/.talisman-cms/migrations"
 
 [[r2_buckets]]
 binding = "STORAGE"
@@ -203,12 +203,17 @@ talismanCms({
 
 ### Database migrations
 
-`migrations_dir` points at the SQL migrations shipped in the installed package, relative to `wrangler.toml`. The folder holds one numbered set for the whole CMS: besides the CMS tables it creates the tables and triggers of `@talisman-cms/plugin-ecommerce`, which ships no migrations of its own, and `0019` links CMS users to ecommerce shoppers. Apply all of it, even if the site does not register that plugin. Before deploying a new version of the package, apply every migration that version ships to the D1 database:
+The CMS and its plugins ship their D1 migrations as numbered `.sql` files. Wrangler applies one folder per binding, so on every config setup (`astro dev`, `astro build`, `astro sync` and `astro check`) the integration copies the core's files and those of every registered plugin into one folder in the project, `node_modules/.talisman-cms/migrations` by default, and logs what it wrote. `migrations_dir` points at that folder, relative to `wrangler.toml`. Run `pnpm exec astro sync` (or a build) first, then apply the migrations before deploying the Worker that needs them:
 
 ```sh
+pnpm exec astro sync
 pnpm exec wrangler d1 migrations apply DB --local   # local development
 pnpm exec wrangler d1 migrations apply DB --remote  # production database
 ```
+
+The folder is written by the build, so it is not committed. The assembled set depends on the plugins registered in `astro.config`: `talisman-cms` ships `0000` to `0024`, and `@talisman-cms/plugin-ecommerce` ships `0025` onwards. The core files through `0024` also create the commerce tables of their time and `0019` changes both the CMS user tables and the shopper accounts, so those files stay in the core even for a site without the plugin; wrangler records each file by name, and a file name never changes once a database has applied it. A `sources.json` beside the files names the package each one comes from. The integration fails the build when a `migrations_dir` in `wrangler.toml`, `wrangler.json` or `wrangler.jsonc` still points at the core package's own `drizzle` folder while a plugin ships migrations, and warns when no binding points at the assembled folder. The `migrationsDir` integration option moves the folder; keep `migrations_dir` in step with it.
+
+Sites that used `migrations_dir = "node_modules/talisman-cms/drizzle"` change it to the assembled folder and run `astro sync` or a build before the next `wrangler d1 migrations apply`. A database that already applied `0000` to `0030` has nothing new to apply; the files keep their names when they move between packages.
 
 Wrangler reads one `migrations_dir` per binding. If the site has its own migrations, add a second `[[d1_databases]]` entry for the same database with another binding name, the app's folder, and its own `migrations_table`. Then apply each set by binding name (`DB`, then `APP_DB`). Keep the CMS on the `DB` binding and the default `d1_migrations` table; moving it to another table on an existing database would re-run migrations that were already applied.
 
@@ -244,9 +249,28 @@ GROUP BY collection_id, slug
 HAVING COUNT(*) > 1;
 ```
 
-Version 0.1.0 adds `0019_shared_customer_identity.sql` through `0030_commerce_order_emails.sql`. Migration `0019` adds the session column the local and hybrid adapters now read, so their sign-ins fail until it is applied. It also lowercases stored CMS emails and links verified ecommerce shoppers to the shared user identity described below. Migration `0020` needs no check: it records a baseline revision for entries that have none, such as seeded rows, and unwraps globals stored as double-encoded JSON. `0021` adds the draft slug column that every entry read and save needs. `0022` keeps global data that is not a JSON object, such as a list, under a `value` key, so code that reads such a global reads `data.value`. For each slug the `0023` check lists, rename all but one of the entries and publish them again, or unpublish them. `0024` adds the ecommerce plugin's sign-in link and rate-limit tables; shopper sign-in fails without it. `0025` needs no check: it adds the shipping and tax columns of ecommerce orders and a table for tax reversals, and recreates the discount and gift card redemption guards so that an order's totals include its shipping and exclusive tax. Existing orders balance as before, and the previous Worker keeps working after it; the ecommerce plugin's order reads fail without it. `0026` to `0030` need no check either: each keeps every existing row, and the previous Worker keeps working after it. `0026` records fulfillment apart from payment: it adds `_ecommerce_orders.fulfillment_status`, moves the old `fulfilled` order status there, and rebuilds `_ecommerce_fulfillments` so that an order can ship in several parcels and a shipment can be corrected. `0027` adds the columns and table for resolving gift card purchases held for review and for replacement cards. `0028` adds tables for dated provider refunds, payment disputes and restocks. `0029` adds reconciliation and tax attempt columns, a table of administrator decisions on parked checkouts, and indexes for reconciliation, the tax passes and webhook lookups. `0030` adds the delivery log of the ecommerce plugin's order emails and the gift card claim links. The ecommerce plugin's order reads fail without `0026` and `0029`, its gift card reads without `0027` and `0029`, its order refund and dispute webhooks without `0028`, and payment confirmation, shipments and gift card purchases without `0030`. The [release checklist](https://github.com/jakobholmelund/talisman-cms/blob/main/RELEASE.md#deployment-gate) describes each migration.
+Version 0.1.0 adds `0019_shared_customer_identity.sql` through `0030_commerce_order_emails.sql`; `0025` to `0030` ship in `@talisman-cms/plugin-ecommerce`. Migration `0019` adds the session column the local and hybrid adapters now read, so their sign-ins fail until it is applied. It also lowercases stored CMS emails and links verified ecommerce shoppers to the shared user identity described below. Migration `0020` needs no check: it records a baseline revision for entries that have none, such as seeded rows, and unwraps globals stored as double-encoded JSON. `0021` adds the draft slug column that every entry read and save needs. `0022` keeps global data that is not a JSON object, such as a list, under a `value` key, so code that reads such a global reads `data.value`. For each slug the `0023` check lists, rename all but one of the entries and publish them again, or unpublish them. `0024` adds the ecommerce plugin's sign-in link and rate-limit tables; shopper sign-in fails without it. `0025` needs no check: it adds the shipping and tax columns of ecommerce orders and a table for tax reversals, and recreates the discount and gift card redemption guards so that an order's totals include its shipping and exclusive tax. Existing orders balance as before, and the previous Worker keeps working after it; the ecommerce plugin's order reads fail without it. `0026` to `0030` need no check either: each keeps every existing row, and the previous Worker keeps working after it. `0026` records fulfillment apart from payment: it adds `_ecommerce_orders.fulfillment_status`, moves the old `fulfilled` order status there, and rebuilds `_ecommerce_fulfillments` so that an order can ship in several parcels and a shipment can be corrected. `0027` adds the columns and table for resolving gift card purchases held for review and for replacement cards. `0028` adds tables for dated provider refunds, payment disputes and restocks. `0029` adds reconciliation and tax attempt columns, a table of administrator decisions on parked checkouts, and indexes for reconciliation, the tax passes and webhook lookups. `0030` adds the delivery log of the ecommerce plugin's order emails and the gift card claim links. The ecommerce plugin's order reads fail without `0026` and `0029`, its gift card reads without `0027` and `0029`, its order refund and dispute webhooks without `0028`, and payment confirmation, shipments and gift card purchases without `0030`. The [release checklist](https://github.com/jakobholmelund/talisman-cms/blob/main/RELEASE.md#deployment-gate) describes each migration.
 
-The migrations are hand-written SQL; the package does not use `drizzle-kit` to generate them. The Drizzle table definitions in the core and the ecommerce plugin describe the columns the runtime queries, not the triggers, CHECK constraints or partial indexes, so they cannot produce a migration. To change the schema in this repository, add the next numbered `.sql` file to `drizzle/` and its entry to `drizzle/meta/_journal.json`; never edit a migration that has shipped. `test/migrations.test.mjs` applies the whole chain to an empty database and to one holding data from earlier releases, and checks the resulting schema.
+The migrations are hand-written SQL; the packages do not use `drizzle-kit` to generate them. The Drizzle table definitions in the core and the ecommerce plugin describe the columns the runtime queries, not the triggers, CHECK constraints or partial indexes, so they cannot produce a migration. To change the schema in this repository, add the next numbered `.sql` file to the `drizzle/` folder of the package that owns the change and its entry to that package's `drizzle/meta/_journal.json`; never edit a migration that has shipped. One sequence of numbers runs across the core and every plugin, so the next migration anywhere takes the number after the highest one in use (`0031` after this release), and the assembler refuses two files with the same name or the same number. The core's `test/migrations.test.mjs` applies its chain to an empty database and to one holding data from earlier releases; the ecommerce plugin's `test/migrations.test.mjs` assembles both sets, applies them as wrangler does to a fresh database and to a seeded one at `0024`, and checks that the result matches.
+
+#### Plugin migrations
+
+A plugin ships migrations by naming its folder:
+
+```ts
+import { fileURLToPath } from 'node:url';
+
+export function myPlugin(): Plugin {
+  return {
+    name: 'my-plugin',
+    // NNNN_name.sql files, with a drizzle/meta/_journal.json like the core's.
+    migrations: { dir: fileURLToPath(new URL('../drizzle/', import.meta.url)) },
+    // ...
+  };
+}
+```
+
+The integration lists the core's folder first, then each plugin's in registration order, and copies them all into the assembled folder. The numbers must continue the shared sequence: a plugin cannot renumber or replace a core file, and two plugins cannot share a number. The same tools are exported from `talisman-cms/migrations` for tests and scripts: `listMigrationSources(sources)` returns the files of several `{ name, dir }` sources in wrangler's order and throws on a shared name or number, and `assembleMigrations({ sources, outDir })` writes them into a folder, removing `.sql` files no source ships any more.
 
 ### Secrets and first admin
 
@@ -270,6 +294,32 @@ The [admin coverage audit](https://github.com/jakobholmelund/talisman-cms/blob/m
 For direct admin API clients, versioned entry updates, publish/archive actions, and revision restores require `expectedRevisionId` in the JSON body. Read the current `latestRevisionId` from the entry GET response before changing it, or from the response of the write that came before: create, update, publish, archive and restore all answer with the revision they made. A stale revision returns HTTP 409 and a missing revision ID returns HTTP 428. The admin editor supplies this automatically.
 
 Entry lists take `where`, `sort` and `offset`: `GET .../entries?where[productId]=<id>&where[status][in]=draft,published&sort=-createdAt&limit=50&offset=50`. A field is a configured field or one of `id`, `slug`, `status`, `createdAt`, `updatedAt` and `publishedAt`; the operators are `eq` (the default), `ne`, `in`, `lt`, `lte`, `gt`, `gte` (numbers and dates), `contains` (a relationship with `hasMany` or an array) and `isNull`. An unknown field or a comparison the field's type does not take answers 400 with the field in `fieldErrors`. With `sort` or `offset` the list pages by offset and returns no `nextCursor`.
+
+### Plugin admin extension points
+
+A plugin adds screens to the admin through fields of its `Plugin` object. Every component path is a module specifier the site's build can resolve, such as a package export, and the components load lazily when first shown; the `@talisman-cms/plugin-ecommerce` package is the reference implementation.
+
+- `adminSections`: sections next to Collections, each with a sidebar entry and the routes `/<id>`, `/<id>/<slug>` and `/<id>/<slug>/<entryId>`. A collection joins a section by naming its `id` in `adminSection`; a collection whose section is not registered is listed under Collections. `adminOnly` keeps the workspace and its tools for admins, while editors get the section's readable collections under Collections. `componentPath` names a workspace page (default export, `AdminSectionWorkspaceProps` from `talisman-cms/ui/lib/admin-sections`: the section, its collections with item counts, its `adminLinks`, the admin base path and the user); without one the section shows the generic collection table. Ids are lowercase slugs, unique across plugins, and cannot be a built-in route (`collections`, `globals`, `media`, `users`, `account`, `extensions`, `api`).
+- `adminEditorPanels`: panels the entry editor renders for matching collections, at `before-fields` (in the form card, above the fields) or `after-form` (below the form and its actions). A panel matches by `sections` (the collection's section) or `slugs`; with neither list it matches every collection. The default export receives `AdminEditorPanelProps` (from `talisman-cms/ui/components/editor/panels`): the collection, the saved entry (null before a new record's first save), the form values as they change, the loaded related records, `refreshSupportEntries(slugs)` to load related collections again, the admin base path, the section and the user.
+- `adminEntryDescribers`: modules that label records in relation pickers and summaries. `describeEntry(slug, entry, entriesBySlug, ctx)` returns `{ title, subtitle, details }` for a record the plugin knows and null for any other; `supportCollections(slug, relationTargets)` names extra collections the editor of `slug` loads so those labels can name related records. The first describer that answers wins; without one the admin uses the record's `name`, `title`, `value`, `label`, `slug` or id. `ctx.readSetting(name)` reads a setting exposed with `adminSettings`.
+- `adminSettings`: names of `TALISMAN_*` settings, without the prefix, that the admin page exposes as `<meta name="talisman-setting-<name in kebab case>" content="...">` for the plugin's screens. The admin page is served before sign-in, so the values are visible to anyone who can load it: name display settings only, such as a currency, never allowlists or credentials. A name that looks like a secret (SECRET, KEY, TOKEN, PASSWORD, CREDENTIAL, PRIVATE_KEY, API_KEY) is refused at config time, and a value that reads like an API key or signing secret is left out of the page.
+- `adminStyleSources`: absolute directories Tailwind scans for the admin stylesheet, so plugin screens can use utility classes.
+- `FieldDefinition.saveOnlyIfChanged`: the editor sends the field of a native record only when the user changed it, for values that server code moves in place (a stock count).
+
+```js
+const plugin = {
+  name: 'my-plugin',
+  onInit: (config) => config,
+  adminSections: [{ id: 'reviews', label: 'Reviews', icon: 'chart', adminOnly: true,
+    componentPath: 'my-plugin/admin/ReviewsWorkspace' }],
+  adminEditorPanels: [{ id: 'review-preview', placement: 'after-form', slugs: ['reviews'],
+    componentPath: 'my-plugin/admin/ReviewPreviewPanel' }],
+  adminEntryDescribers: [{ modulePath: 'my-plugin/admin/describe' }],
+  adminSettings: ['REVIEWS_LOCALE'],
+};
+```
+
+Plugin admin code may import the admin's own building blocks through the `talisman-cms/ui/*` export, for example `talisman-cms/ui/components/ui/button` and `talisman-cms/ui/lib/admin-api`. The Commerce section, the product editor's options panel and the commerce record labels come from the ecommerce plugin this way; without it the admin has no Commerce section.
 
 ### Server SDK, actors and hooks
 
