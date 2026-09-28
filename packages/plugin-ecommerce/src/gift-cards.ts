@@ -142,26 +142,27 @@ export async function reencryptGiftCardCodes(env: TalismanEnv, input: unknown = 
   const keys = await giftCardKeyring(env);
   const current = keys[0];
   const prefix = `v2:${current.id}:`;
-  const page = await env.DB.prepare(`SELECT id,code_hash,encrypted_code FROM _ecommerce_gift_cards
-    WHERE substr(encrypted_code,1,?) <> ? AND id > ? ORDER BY id LIMIT ?`)
-    .bind(prefix.length, prefix, after, limit)
-    .all<{ id: string; code_hash: string; encrypted_code: string }>();
-  const rows = page.results ?? [];
-  const statements: D1PreparedStatement[] = [];
+  const db = createDbClient(env);
+  const rows = await db.select({ id: giftCards.id, codeHash: giftCards.codeHash, encryptedCode: giftCards.encryptedCode })
+    .from(giftCards)
+    .where(and(sql`substr(${giftCards.encryptedCode}, 1, ${prefix.length}) <> ${prefix}`, gt(giftCards.id, after)))
+    .orderBy(giftCards.id).limit(limit);
+  // Only while the stored ciphertext is still the one decrypted here.
+  const reencrypt = (row: typeof rows[number], encryptedCode: string) => db.update(giftCards).set({ encryptedCode })
+    .where(and(eq(giftCards.id, row.id), eq(giftCards.encryptedCode, row.encryptedCode))).returning({ id: giftCards.id });
+  type Reencrypt = ReturnType<typeof reencrypt>;
+  const statements: Reencrypt[] = [];
   const failed: string[] = [];
   for (const row of rows) {
     try {
-      const code = await decryptCardSecret(keys, { id: row.id, codeHash: row.code_hash, encryptedCode: row.encrypted_code });
-      // Only while the stored ciphertext is still the one decrypted here.
-      statements.push(env.DB.prepare(`UPDATE _ecommerce_gift_cards SET encrypted_code = ?
-        WHERE id = ? AND encrypted_code = ? RETURNING id`)
-        .bind(await encryptCardSecret(current, row.id, code), row.id, row.encrypted_code));
+      const code = await decryptCardSecret(keys, row);
+      statements.push(reencrypt(row, await encryptCardSecret(current, row.id, code)));
     } catch {
       failed.push(row.id);
     }
   }
-  const results = statements.length ? await env.DB.batch(statements) : [];
-  return { keyId: current.id, reencrypted: results.reduce((sum, result) => sum + (result.results?.length ?? 0), 0),
+  const results = statements.length ? await db.batch(statements as [Reencrypt, ...Reencrypt[]]) : [];
+  return { keyId: current.id, reencrypted: results.reduce((sum, updated) => sum + updated.length, 0),
     failed, next: rows.length === limit ? rows[rows.length - 1].id : null };
 }
 

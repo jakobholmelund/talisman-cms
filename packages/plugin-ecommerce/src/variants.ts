@@ -1,11 +1,14 @@
+import { and, eq, exists, inArray, notExists, or, sql, type AnyColumn, type SQL } from 'drizzle-orm';
+import type { BatchItem } from 'drizzle-orm/batch';
 import { z } from 'zod';
-import { invalidateEntryCache, type TalismanEnv } from 'talisman-cms/client';
+import { createDbClient, invalidateEntryCache, type TalismanEnv } from 'talisman-cms/client';
+import { productVariantValues, productVariants, stocks, variantComponents } from './schema';
 
 /**
  * Changes the product editor's variant configurator makes: save a variant value together with its
  * stock row, delete a value, or delete a group with its values. Each change is one D1 batch, so a
- * failure leaves nothing half-saved and a retry cannot create a second value. The batches write D1
- * directly, so no collection hooks run; the core's cached reads of the rows are cleared afterwards.
+ * failure leaves nothing half-saved and a retry cannot create a second value. The batches write the
+ * tables directly, so no collection hooks run; the core's cached reads of the rows are cleared afterwards.
  */
 
 /** A refused change, with the HTTP status and message the admin route answers. */
@@ -31,8 +34,15 @@ const staleRecord = () => new VariantChangeError(409,
 // This JSON path is invalid, so json_extract fails, and SQLite evaluates it only when the condition
 // holds: the first statement of a batch then aborts the whole batch.
 const STALE_MARKER = 'stale_record';
-const staleGuard = (condition: string) =>
-  `SELECT CASE WHEN ${condition} THEN json_extract('{}', '$${STALE_MARKER}') END AS conflict`;
+const staleGuard = (db: Db, condition: SQL) =>
+  db.get(sql`SELECT CASE WHEN ${condition} THEN ${sql.raw(`json_extract('{}', '$${STALE_MARKER}')`)} END AS conflict`);
+
+type Db = ReturnType<typeof createDbClient>;
+type Batch = readonly [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]];
+/** A time in Unix seconds as the schema's timestamp columns take it. */
+const at = (seconds: number) => new Date(seconds * 1000);
+/** The updated_at a write stores: at least one second past the stored value, so a stale save is detected within a second. */
+const movedUpdatedAt = (column: AnyColumn, now: number) => sql`MAX(${column} + 1, ${now})`;
 
 const recordId = z.string().min(1).max(128);
 // The row's updatedAt as the editor loaded it: an ISO date, or milliseconds.
@@ -91,7 +101,6 @@ function storedSeconds(token: string | number | undefined, record: string) {
   return milliseconds / 1000;
 }
 
-const loadedTimestamp = (seconds: number) => new Date(seconds * 1000).toISOString();
 
 function errorText(error: unknown) {
   const messages: string[] = [];
@@ -102,8 +111,7 @@ function errorText(error: unknown) {
 }
 
 /** The ids a statement's RETURNING clause gave back. */
-const returnedIds = (result: D1Result<Record<string, any>> | undefined) =>
-  (result?.results ?? []).map((row) => String(row.id));
+const returnedIds = (rows: Array<{ id: string }> | undefined) => (rows ?? []).map((row) => row.id);
 
 /**
  * Drop the cached reads of the rows a committed change wrote, keyed by collection slug, as the core
@@ -121,9 +129,9 @@ async function clearCachedRows(env: TalismanEnv, written: Record<string, string[
   }
 }
 
-async function runBatch(env: TalismanEnv, statements: D1PreparedStatement[]) {
+async function runBatch<T extends Batch>(db: Db, statements: T) {
   try {
-    return await env.DB.batch<Record<string, any>>(statements);
+    return await db.batch(statements);
   } catch (error) {
     const text = errorText(error);
     if (text.includes(STALE_MARKER)) throw staleRecord();
@@ -150,60 +158,59 @@ export async function saveVariantValue(env: TalismanEnv, input: SaveVariantValue
   if (!value.id && stock?.id) throw new VariantChangeError(400, 'A new variant value has no stock row yet');
   const now = Math.floor(Date.now() / 1000);
   const valueId = value.id ?? `value_${crypto.randomUUID()}`;
-  const conditions: string[] = [];
-  const params: unknown[] = [];
+  const db = createDbClient(env);
+  const one = { one: sql`1` };
+  const conditions: SQL[] = [];
   if (value.id) {
-    conditions.push(`NOT EXISTS (SELECT 1 FROM _ecommerce_product_variant_values
-      WHERE id = ? AND product_variant_id = ? AND updated_at = ?)`);
-    params.push(valueId, groupId, storedSeconds(value.expectedUpdatedAt, 'variant value'));
+    conditions.push(notExists(db.select(one).from(productVariantValues).where(and(eq(productVariantValues.id, valueId),
+      eq(productVariantValues.productVariantId, groupId),
+      eq(productVariantValues.updatedAt, at(storedSeconds(value.expectedUpdatedAt, 'variant value')))))));
   } else {
-    conditions.push('NOT EXISTS (SELECT 1 FROM _ecommerce_product_variants WHERE id = ?)');
-    params.push(groupId);
+    conditions.push(notExists(db.select(one).from(productVariants).where(eq(productVariants.id, groupId))));
   }
   if (stock?.id) {
-    conditions.push(`NOT EXISTS (SELECT 1 FROM _ecommerce_stocks
-      WHERE id = ? AND product_variant_value_id = ? AND updated_at = ?)`);
-    params.push(stock.id, valueId, storedSeconds(stock.expectedUpdatedAt, 'stock row'));
+    conditions.push(notExists(db.select(one).from(stocks).where(and(eq(stocks.id, stock.id),
+      eq(stocks.productVariantValueId, valueId), eq(stocks.updatedAt, at(storedSeconds(stock.expectedUpdatedAt, 'stock row')))))));
   } else if (stock && value.id) {
-    conditions.push('EXISTS (SELECT 1 FROM _ecommerce_stocks WHERE product_variant_value_id = ?)');
-    params.push(valueId);
+    conditions.push(exists(db.select(one).from(stocks).where(eq(stocks.productVariantValueId, valueId))));
   }
 
-  const statements = [env.DB.prepare(staleGuard(conditions.join(' OR '))).bind(...params)];
-  statements.push(value.id
-    ? env.DB.prepare(`UPDATE _ecommerce_product_variant_values
-        SET value = ?, sku = ?, image = ?, price_override = ?, updated_at = MAX(updated_at + 1, ?)
-        WHERE id = ? RETURNING id, updated_at`)
-      .bind(value.value, value.sku, value.image, value.priceOverride, now, valueId)
-    : env.DB.prepare(`INSERT INTO _ecommerce_product_variant_values
-        (id, product_variant_id, value, sku, image, price_override, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, updated_at`)
-      .bind(valueId, groupId, value.value, value.sku, value.image, value.priceOverride, now, now));
-  // A new value always gets its stock row.
-  if (stock?.id) {
-    // Like checkout's reservations, a stock write always moves updated_at, even within one second.
-    statements.push(env.DB.prepare(`UPDATE _ecommerce_stocks
-      SET quantity = ?, updated_at = MAX(updated_at + 1, ?) WHERE id = ? RETURNING id, quantity, updated_at`)
-      .bind(stock.quantity, now, stock.id));
-  } else if (stock || !value.id) {
-    statements.push(env.DB.prepare(`INSERT INTO _ecommerce_stocks
-      (id, product_variant_value_id, quantity, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
-      RETURNING id, quantity, updated_at`)
-      .bind(`stock_${crypto.randomUUID()}`, valueId, stock?.quantity ?? 0, now, now));
-  }
+  const guard = staleGuard(db, or(...conditions) ?? conditions[0]);
+  const valueWrite = value.id
+    ? db.update(productVariantValues)
+      .set({ value: value.value, sku: value.sku, image: value.image, priceOverride: value.priceOverride,
+        updatedAt: movedUpdatedAt(productVariantValues.updatedAt, now) })
+      .where(eq(productVariantValues.id, valueId))
+      .returning({ id: productVariantValues.id, updatedAt: productVariantValues.updatedAt })
+    : db.insert(productVariantValues)
+      .values({ id: valueId, productVariantId: groupId, value: value.value, sku: value.sku, image: value.image,
+        priceOverride: value.priceOverride, createdAt: at(now), updatedAt: at(now) })
+      .returning({ id: productVariantValues.id, updatedAt: productVariantValues.updatedAt });
+  // A new value always gets its stock row. Like checkout's reservations, a stock write always moves
+  // updated_at, even within one second.
+  const stockWrite = stock?.id
+    ? db.update(stocks).set({ quantity: stock.quantity, updatedAt: movedUpdatedAt(stocks.updatedAt, now) })
+      .where(eq(stocks.id, stock.id)).returning({ id: stocks.id, quantity: stocks.quantity, updatedAt: stocks.updatedAt })
+    : stock || !value.id
+      ? db.insert(stocks)
+        .values({ id: `stock_${crypto.randomUUID()}`, productVariantValueId: valueId, quantity: stock?.quantity ?? 0,
+          createdAt: at(now), updatedAt: at(now) })
+        .returning({ id: stocks.id, quantity: stocks.quantity, updatedAt: stocks.updatedAt })
+      : null;
 
-  const results = await runBatch(env, statements);
-  const savedValue = results[1]?.results?.[0];
-  const savedStock = results[2]?.results?.[0];
+  const [, savedValues, savedStocks] = stockWrite
+    ? await runBatch(db, [guard, valueWrite, stockWrite])
+    : [...await runBatch(db, [guard, valueWrite]), undefined];
+  const savedValue = savedValues[0];
+  const savedStock = savedStocks?.[0];
   if (!savedValue) throw staleRecord();
   await clearCachedRows(env, {
-    _ecommerce_product_variant_values: returnedIds(results[1]),
-    _ecommerce_stocks: returnedIds(results[2]),
+    _ecommerce_product_variant_values: returnedIds(savedValues),
+    _ecommerce_stocks: returnedIds(savedStocks),
   });
   return {
-    value: { id: String(savedValue.id), updatedAt: loadedTimestamp(Number(savedValue.updated_at)) },
-    stock: savedStock ? { id: String(savedStock.id), quantity: Number(savedStock.quantity),
-      updatedAt: loadedTimestamp(Number(savedStock.updated_at)) } : null,
+    value: { id: savedValue.id, updatedAt: savedValue.updatedAt.toISOString() },
+    stock: savedStock ? { id: savedStock.id, quantity: savedStock.quantity, updatedAt: savedStock.updatedAt.toISOString() } : null,
   };
 }
 
@@ -212,41 +219,40 @@ export async function saveVariantValue(env: TalismanEnv, input: SaveVariantValue
  * The shared components themselves stay.
  */
 export async function deleteVariantValue(env: TalismanEnv, valueId: string) {
-  const results = await runBatch(env, [
-    env.DB.prepare('DELETE FROM _ecommerce_variant_components WHERE product_variant_value_id = ? RETURNING id').bind(valueId),
-    env.DB.prepare('DELETE FROM _ecommerce_stocks WHERE product_variant_value_id = ? RETURNING id').bind(valueId),
-    env.DB.prepare('DELETE FROM _ecommerce_product_variant_values WHERE id = ? RETURNING id').bind(valueId),
+  const db = createDbClient(env);
+  const [parts, stockRows, values] = await runBatch(db, [
+    db.delete(variantComponents).where(eq(variantComponents.productVariantValueId, valueId)).returning({ id: variantComponents.id }),
+    db.delete(stocks).where(eq(stocks.productVariantValueId, valueId)).returning({ id: stocks.id }),
+    db.delete(productVariantValues).where(eq(productVariantValues.id, valueId)).returning({ id: productVariantValues.id }),
   ]);
-  if (!results[2]?.results?.length) throw new VariantChangeError(404, 'Variant value not found');
+  if (!values.length) throw new VariantChangeError(404, 'Variant value not found');
   await clearCachedRows(env, {
-    _ecommerce_variant_components: returnedIds(results[0]),
-    _ecommerce_stocks: returnedIds(results[1]),
-    _ecommerce_product_variant_values: returnedIds(results[2]),
+    _ecommerce_variant_components: returnedIds(parts),
+    _ecommerce_stocks: returnedIds(stockRows),
+    _ecommerce_product_variant_values: returnedIds(values),
   });
-  return { valueId, deleted: { values: 1, stockRows: results[1]?.results?.length ?? 0,
-    partRows: results[0]?.results?.length ?? 0 } };
+  return { valueId, deleted: { values: 1, stockRows: stockRows.length, partRows: parts.length } };
 }
 
 /** Delete a group with every value it has, their stock rows and their parts lists. */
 export async function deleteVariantGroup(env: TalismanEnv, groupId: string) {
-  const groupValues = 'SELECT id FROM _ecommerce_product_variant_values WHERE product_variant_id = ?';
-  const results = await runBatch(env, [
-    env.DB.prepare(`DELETE FROM _ecommerce_variant_components WHERE product_variant_value_id IN (${groupValues})
-      RETURNING id`).bind(groupId),
-    env.DB.prepare(`DELETE FROM _ecommerce_stocks WHERE product_variant_value_id IN (${groupValues})
-      RETURNING id`).bind(groupId),
-    env.DB.prepare('DELETE FROM _ecommerce_product_variant_values WHERE product_variant_id = ? RETURNING id').bind(groupId),
-    env.DB.prepare('DELETE FROM _ecommerce_product_variants WHERE id = ? RETURNING id').bind(groupId),
+  const db = createDbClient(env);
+  const groupValues = db.select({ id: productVariantValues.id }).from(productVariantValues)
+    .where(eq(productVariantValues.productVariantId, groupId));
+  const [parts, stockRows, values, groups] = await runBatch(db, [
+    db.delete(variantComponents).where(inArray(variantComponents.productVariantValueId, groupValues)).returning({ id: variantComponents.id }),
+    db.delete(stocks).where(inArray(stocks.productVariantValueId, groupValues)).returning({ id: stocks.id }),
+    db.delete(productVariantValues).where(eq(productVariantValues.productVariantId, groupId)).returning({ id: productVariantValues.id }),
+    db.delete(productVariants).where(eq(productVariants.id, groupId)).returning({ id: productVariants.id }),
   ]);
-  if (!results[3]?.results?.length) throw new VariantChangeError(404, 'Variant group not found');
+  if (!groups.length) throw new VariantChangeError(404, 'Variant group not found');
   await clearCachedRows(env, {
-    _ecommerce_variant_components: returnedIds(results[0]),
-    _ecommerce_stocks: returnedIds(results[1]),
-    _ecommerce_product_variant_values: returnedIds(results[2]),
-    _ecommerce_product_variants: returnedIds(results[3]),
+    _ecommerce_variant_components: returnedIds(parts),
+    _ecommerce_stocks: returnedIds(stockRows),
+    _ecommerce_product_variant_values: returnedIds(values),
+    _ecommerce_product_variants: returnedIds(groups),
   });
-  return { groupId, deleted: { values: results[2]?.results?.length ?? 0,
-    stockRows: results[1]?.results?.length ?? 0, partRows: results[0]?.results?.length ?? 0 } };
+  return { groupId, deleted: { values: values.length, stockRows: stockRows.length, partRows: parts.length } };
 }
 
 /** Validate an admin request body and run the change it names. */
