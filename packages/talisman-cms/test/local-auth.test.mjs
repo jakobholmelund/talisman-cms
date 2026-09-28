@@ -17,6 +17,7 @@ registerHooks({
 });
 const { LocalAuthAdapter, signInCloudflareAdmin } = await import('../dist/auth/local.js');
 const { HybridAuthAdapter } = await import('../dist/auth/hybrid.js');
+const { cloudflareAccessSignIn } = await import('../dist/auth/cloudflare-access.js');
 const { ensureVerifiedEmailIdentity } = await import('../dist/auth/identity.js');
 const { authorizeCmsRequestWithAdapter } = await import('../dist/auth/authorize.js');
 
@@ -154,7 +155,9 @@ test('sign-in rate limits are keyed by CF-Connecting-IP and cannot block Cloudfl
   } finally { sqlite.close(); }
 });
 
-test('Cloudflare SSO fails closed without a valid Access JWT and replaces sessions only after success', async () => {
+const credentialsOf = (sqlite, userId) => sqlite.prepare(`SELECT id FROM galaxy_auth_account WHERE user_id = ? AND provider_id = 'credential'`).all(userId);
+
+test('Cloudflare SSO fails closed without a valid Access JWT and mints a session without a password', async () => {
   const sqlite = setup();
   try {
     const adapter = HybridAuthAdapter('/admin');
@@ -167,6 +170,9 @@ test('Cloudflare SSO fails closed without a valid Access JWT and replaces sessio
     assert.equal(admin?.email, ADMIN_EMAIL);
     assert.deepEqual(sessionsOf(sqlite, admin.id).map(({ auth_method, ip_address }) => ({ auth_method, ip_address })),
       [{ auth_method: 'cloudflare', ip_address: '203.0.113.20' }]);
+    assert.equal(sqlite.prepare(`SELECT user_agent FROM galaxy_auth_session WHERE user_id = ?`).get(admin.id).user_agent, 'talisman-test');
+    assert.equal(credentialsOf(sqlite, admin.id).length, 0, 'an SSO admin has no password credential');
+    assert.equal(sqlite.prepare(`SELECT email_verified FROM galaxy_auth_user WHERE id = ?`).get(admin.id).email_verified, 1);
 
     const rejected = [
       undefined,
@@ -176,9 +182,20 @@ test('Cloudflare SSO fails closed without a valid Access JWT and replaces sessio
       await accessToken({ issuer: 'https://attacker.cloudflareaccess.com' }),
       await accessToken({ expires: Math.floor(Date.now() / 1000) - 60 }),
       await accessToken({ email: 'editor@example.test' }),
+      await new SignJWT({}).setProtectedHeader({ alg: 'RS256', kid: 'access-key' }).setIssuer(TEAM_DOMAIN).setAudience(AUDIENCE)
+        .setIssuedAt().setExpirationTime('5m').sign(accessKey.privateKey),
+      await new SignJWT({ email: ADMIN_EMAIL }).setProtectedHeader({ alg: 'HS256', kid: 'access-key' }).setIssuer(TEAM_DOMAIN)
+        .setAudience(AUDIENCE).setIssuedAt().setExpirationTime('5m').sign(new TextEncoder().encode('a-shared-secret-of-32-characters!')),
+      await new SignJWT({ email: ADMIN_EMAIL }).setProtectedHeader({ alg: 'RS256', kid: 'access-key' }).setIssuer(TEAM_DOMAIN)
+        .setAudience(AUDIENCE).setIssuedAt().setNotBefore('1h').setExpirationTime('2h').sign(accessKey.privateKey),
     ];
-    for (const token of rejected) assert.equal((await sso(token)).status, 403);
+    for (const token of rejected) {
+      const refused = await sso(token);
+      assert.equal(refused.status, 403);
+      assert.deepEqual(refused.headers.getSetCookie(), []);
+    }
     assert.equal(sessionsOf(sqlite, admin.id).length, 1);
+    assert.equal(sqlite.prepare(`SELECT COUNT(*) AS n FROM galaxy_auth_user`).get().n, 1, 'a refused sign-in creates no row');
     assert.equal((await cmsUser(adapter, firstCookie))?.id, admin.id);
 
     // A verified sign-in that cannot issue its new session must not sign the admin out elsewhere.
@@ -187,21 +204,115 @@ test('Cloudflare SSO fails closed without a valid Access JWT and replaces sessio
     sqlite.exec('DROP TRIGGER block_session');
     assert.equal((await cmsUser(adapter, firstCookie))?.id, admin.id);
 
-    const credential = () => sqlite.prepare(`SELECT password FROM galaxy_auth_account WHERE user_id = ?`).get(admin.id).password;
-    const storedCredential = credential();
+    // A second sign-in, from another browser, adds a session and leaves the first one working.
     const second = await sso(await accessToken());
     assert.equal(second.status, 303);
-    assert.equal(credential(), storedCredential, 'a valid stored SSO credential is reused, not re-hashed');
-    assert.equal(await cmsUser(adapter, firstCookie), null, 'older admin sessions are revoked after a new SSO sign-in');
+    assert.equal((await cmsUser(adapter, firstCookie))?.id, admin.id, 'other sessions survive a new SSO sign-in');
     assert.equal((await cmsUser(adapter, cookieOf(second)))?.id, admin.id);
-    assert.equal(sessionsOf(sqlite, admin.id).length, 1);
+    assert.equal(sessionsOf(sqlite, admin.id).length, 2);
+    assert.equal(credentialsOf(sqlite, admin.id).length, 0);
 
-    sqlite.prepare(`UPDATE galaxy_auth_account SET password = ? WHERE user_id = ?`).run(await hashPassword('password-set-elsewhere'), admin.id);
-    const repaired = await sso(await accessToken());
-    assert.equal(repaired.status, 303);
-    assert.notEqual(credential(), storedCredential);
-    assert.equal((await cmsUser(adapter, cookieOf(repaired)))?.role, 'admin');
-    assert.equal((await signIn(LocalAuthAdapter('/admin', { requireAccess: false }), ADMIN_EMAIL, 'password-set-elsewhere')).status, 401);
+    // The minted cookie carries the same attributes as a password session's.
+    const attributesOf = (response) => response.headers.getSetCookie().map((cookie) => cookie.split(';').map((part) => part.trim()))
+      .find((parts) => parts[0].startsWith('__Secure-talisman-cms.session_token=')).slice(1).sort();
+    await addUser(sqlite, { id: 'editor-1', email: 'editor@example.test', role: 'editor', password: EDITOR_PASSWORD });
+    assert.deepEqual(attributesOf(second), attributesOf(await signIn(adapter, 'editor@example.test', EDITOR_PASSWORD)));
+    assert.deepEqual(attributesOf(second), ['HttpOnly', 'Max-Age=43200', 'Path=/', 'SameSite=Lax', 'Secure']);
+
+    // A disabled admin is refused, and the sessions it has stop working; a ban that has expired does not count.
+    sqlite.prepare(`UPDATE galaxy_auth_user SET banned = 1 WHERE id = ?`).run(admin.id);
+    assert.equal((await sso(await accessToken())).status, 403);
+    assert.equal(await cmsUser(adapter, firstCookie), null);
+    sqlite.prepare(`UPDATE galaxy_auth_user SET ban_expires = ? WHERE id = ?`).run(Math.floor(Date.now() / 1000) - 60, admin.id);
+    assert.equal((await sso(await accessToken())).status, 303);
+    sqlite.prepare(`UPDATE galaxy_auth_user SET banned = 0, ban_expires = NULL WHERE id = ?`).run(admin.id);
+    assert.equal((await cmsUser(adapter, firstCookie))?.id, admin.id);
+
+    // Sessions that have expired or passed the age cap are pruned at sign-in; live ones stay.
+    const [oldest] = sessionsOf(sqlite, admin.id);
+    sqlite.prepare(`UPDATE galaxy_auth_session SET expires_at = ? WHERE token = ?`).run(Math.floor(Date.now() / 1000) - 60, oldest.token);
+    const [, aged] = sessionsOf(sqlite, admin.id);
+    sqlite.prepare(`UPDATE galaxy_auth_session SET created_at = ? WHERE token = ?`).run(Math.floor(Date.now() / 1000) - 8 * 24 * 60 * 60, aged.token);
+    const before = sessionsOf(sqlite, admin.id).length;
+    assert.equal((await sso(await accessToken())).status, 303);
+    const remaining = sessionsOf(sqlite, admin.id).map((session) => session.token);
+    assert.equal(remaining.length, before - 1, 'two stale sessions gone, one new one added');
+    assert.ok(!remaining.includes(oldest.token) && !remaining.includes(aged.token));
+  } finally { sqlite.close(); }
+});
+
+test('two first sign-ins at once create one admin row, and the endpoint is server-only in better-auth', async () => {
+  const sqlite = setup();
+  try {
+    const adapter = HybridAuthAdapter('/admin');
+    const [first, second] = await Promise.all([sso(await accessToken()), sso(await accessToken())]);
+    assert.deepEqual([first.status, second.status], [303, 303]);
+    assert.equal(sqlite.prepare(`SELECT COUNT(*) AS n FROM galaxy_auth_user`).get().n, 1);
+    const admin = await cmsUser(adapter, cookieOf(first));
+    assert.equal((await cmsUser(adapter, cookieOf(second)))?.id, admin.id);
+    assert.equal(sessionsOf(sqlite, admin.id).length, 2);
+    assert.equal(credentialsOf(sqlite, admin.id).length, 0);
+
+    const plugin = cloudflareAccessSignIn({ verify: async () => null, allowed: () => new Set(), maxSessionAgeMs: 1 });
+    assert.equal(plugin.endpoints.signInCloudflareAccess.options.metadata.SERVER_ONLY, true, 'better-auth\'s own router never serves it');
+    assert.equal(plugin.endpoints.signInCloudflareAccess.path, '/sign-in/cloudflare-access');
+  } finally { sqlite.close(); }
+});
+
+test('a password credential left by the earlier SSO flow is removed, and never signs the admin in', async () => {
+  const sqlite = setup();
+  try {
+    const adapter = HybridAuthAdapter('/admin');
+    // The earlier flow stored a password derived from the auth secret on the admin row.
+    await addUser(sqlite, { id: 'sso-admin', email: ADMIN_EMAIL, role: 'admin', password: 'derived-from-the-secret' });
+    assert.equal(credentialsOf(sqlite, 'sso-admin').length, 1);
+    const password = await signIn(adapter, ADMIN_EMAIL, 'derived-from-the-secret');
+    assert.equal(password.status, 401, 'hybrid mode never issues a password session for an admin row');
+    assert.equal(sessionsOf(sqlite, 'sso-admin').length, 0);
+
+    const signedIn = await sso(await accessToken());
+    assert.equal(signedIn.status, 303);
+    assert.equal((await cmsUser(adapter, cookieOf(signedIn)))?.id, 'sso-admin', 'the existing row is reused');
+    assert.equal(credentialsOf(sqlite, 'sso-admin').length, 0, 'the leftover credential is deleted on the next SSO sign-in');
+    assert.equal(sqlite.prepare(`SELECT COUNT(*) AS n FROM galaxy_auth_user`).get().n, 1);
+
+    // Without a credential the row cannot sign in with a password in any mode.
+    const local = LocalAuthAdapter('/admin', { requireAccess: false });
+    assert.equal((await signIn(local, ADMIN_EMAIL, 'derived-from-the-secret')).status, 401);
+    assert.equal(sessionsOf(sqlite, 'sso-admin').length, 1);
+
+    // An allowlisted email that is only a shopper or an editor becomes an admin on its SSO sign-in.
+    env.TALISMAN_ACCESS_ADMIN_EMAILS = `${ADMIN_EMAIL}, promoted@example.test`;
+    await addUser(sqlite, { id: 'promoted', email: 'promoted@example.test', role: 'editor', password: 'editor-password-123' });
+    const promoted = await sso(await accessToken({ email: 'promoted@example.test' }));
+    assert.equal(promoted.status, 303);
+    assert.equal((await cmsUser(adapter, cookieOf(promoted)))?.role, 'admin');
+    assert.equal(sqlite.prepare(`SELECT role FROM galaxy_auth_user WHERE id = 'promoted'`).get().role, 'admin');
+    assert.equal(credentialsOf(sqlite, 'promoted').length, 0, 'its editor password is gone: admins sign in through Cloudflare');
+  } finally { sqlite.close(); }
+});
+
+test('the SSO endpoint is unreachable through the auth proxy and takes no email from a body', async () => {
+  const sqlite = setup();
+  try {
+    const adapter = HybridAuthAdapter('/admin');
+    const viaProxy = await adapter.handle(new Request(`${ORIGIN}/admin/api/auth/sign-in/cloudflare-access`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: ORIGIN, 'cf-access-jwt-assertion': await accessToken() },
+      body: '{}',
+    }));
+    assert.equal(viaProxy.status, 404);
+    assert.equal(sqlite.prepare(`SELECT COUNT(*) AS n FROM galaxy_auth_session`).get().n, 0);
+    assert.equal(sqlite.prepare(`SELECT COUNT(*) AS n FROM galaxy_auth_user`).get().n, 0);
+
+    // A body naming another email changes nothing: the verified token decides.
+    const response = await signInCloudflareAdmin(new Request(`${ORIGIN}/admin/sso`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'cf-access-jwt-assertion': await accessToken() },
+      body: JSON.stringify({ email: 'attacker@example.test', role: 'admin' }),
+    }), '/admin');
+    assert.equal(response.status, 303);
+    assert.deepEqual(sqlite.prepare(`SELECT email, role FROM galaxy_auth_user`).all().map(row => ({ ...row })), [{ email: ADMIN_EMAIL, role: 'admin' }]);
   } finally { sqlite.close(); }
 });
 

@@ -48,7 +48,10 @@ test('development auth grants access only under the Vite dev server and on local
 
 test('local auth preserves its runtime path and requires both Access settings', async () => {
   const request = new Request('https://example.test/cms');
-  assert.deepEqual(LocalAuthAdapter('/cms/').__talismanAuthRuntime.args, ['/cms']);
+  // The integration passes its admin path at runtime; a path given here is only recorded for the mismatch check.
+  assert.deepEqual(LocalAuthAdapter('/cms/').__talismanAuthRuntime, { moduleId: 'talisman-cms/auth/local', exportName: 'LocalAuthAdapter', type: 'factory', args: [], adminPath: true, configuredAdminPath: '/cms' });
+  assert.deepEqual(LocalAuthAdapter(undefined, { requireAccess: false }).__talismanAuthRuntime.args, [{ requireAccess: false }]);
+  assert.equal(LocalAuthAdapter().__talismanAuthRuntime.configuredAdminPath, undefined);
   assert.equal(await getAccessEmail(request, {}), undefined);
   assert.equal(await getAccessEmail(request, { TALISMAN_ACCESS_TEAM_DOMAIN: 'https://team.cloudflareaccess.com' }), null);
   // Pre-rename GALAXY_* names are still read, and blank values count as unset.
@@ -62,8 +65,8 @@ test('local auth preserves its runtime path and requires both Access settings', 
 
 test('hybrid auth exposes its reusable adapter and Cloudflare SSO fails closed without a verified token', async () => {
   const adapter = HybridAuthAdapter('/cms/');
-  assert.deepEqual(adapter.__talismanAuthRuntime.args, ['/cms']);
-  assert.equal(adapter.__talismanAuthRuntime.moduleId, 'talisman-cms/auth/hybrid');
+  assert.deepEqual(adapter.__talismanAuthRuntime, { moduleId: 'talisman-cms/auth/hybrid', exportName: 'HybridAuthAdapter', type: 'factory', args: [], adminPath: true, configuredAdminPath: '/cms' });
+  assert.equal(HybridAuthAdapter().__talismanAuthRuntime.configuredAdminPath, undefined);
   const response = await signInCloudflareAdmin(new Request('https://example.test/cms/sso'), '/cms');
   assert.equal(response.status, 403);
 });
@@ -73,7 +76,7 @@ test('Cloudflare Access auth fails closed without verified identity and an allow
   const request = new Request('https://example.test/cms', {
     headers: { 'cf-access-jwt-assertion': 'not-a-valid-jwt' },
   });
-  assert.deepEqual(adapter.__talismanAuthRuntime.args, ['/cms']);
+  assert.deepEqual(adapter.__talismanAuthRuntime, { moduleId: 'talisman-cms/auth/access', exportName: 'AccessAuthAdapter', type: 'factory', args: [], adminPath: true, configuredAdminPath: '/cms' });
   assert.equal(await adapter.getUser(request), null);
 
   const previous = {

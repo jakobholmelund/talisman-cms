@@ -61,14 +61,17 @@ function buildAuthVirtualModule(
   authAdapter: TalismanAuthAdapter | null | undefined,
   authAdapterKey: string,
   runtimeConfigPath: string,
+  adminPath: string,
 ) {
   const runtimeDescriptor = authAdapter?.__talismanAuthRuntime;
 
   if (runtimeDescriptor?.moduleId && runtimeDescriptor.exportName) {
     const importName = '__talismanCmsRuntimeAuthAdapter';
+    // An adapter that declares `adminPath` gets the integration's own path first, so the two never disagree.
+    const factoryArgs = runtimeDescriptor.adminPath ? [adminPath, ...(runtimeDescriptor.args || [])] : (runtimeDescriptor.args || []);
     const authExpression = runtimeDescriptor.type === 'value'
       ? importName
-      : `${importName}(...${JSON.stringify(runtimeDescriptor.args || [])})`;
+      : `${importName}(...${JSON.stringify(factoryArgs)})`;
 
     return `
       import { ${runtimeDescriptor.exportName} as ${importName} } from ${JSON.stringify(runtimeDescriptor.moduleId)};
@@ -711,6 +714,10 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
     runtimeConfigPath = fileURLToPath(new URL('../src/runtime-config.ts', import.meta.url));
   }
 
+  const authRuntime = finalOptions.auth?.__talismanAuthRuntime;
+  if (authRuntime?.configuredAdminPath !== undefined && authRuntime.configuredAdminPath !== adminPath) {
+    throw new Error(`[talisman-cms] ${authRuntime.exportName}(${JSON.stringify(authRuntime.configuredAdminPath)}) does not match adminPath ${JSON.stringify(adminPath)}. Drop the argument: the integration passes its admin path to the adapter.`);
+  }
   const authAdapterKey = `talisman-cms:${adminPath}`;
   registerAuthAdapter(authAdapterKey, finalOptions?.auth ?? null);
 
@@ -877,7 +884,7 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
                 },
                 load(id) {
                   if (id === '\0virtual:talisman-cms/auth') {
-                    return buildAuthVirtualModule(finalOptions?.auth, authAdapterKey, runtimeConfigPath);
+                    return buildAuthVirtualModule(finalOptions?.auth, authAdapterKey, runtimeConfigPath, adminPath);
                   }
                 }
               },

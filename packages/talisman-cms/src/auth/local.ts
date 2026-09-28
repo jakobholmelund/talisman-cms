@@ -1,13 +1,13 @@
 import { betterAuth } from 'better-auth/minimal';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
 import { admin } from 'better-auth/plugins/admin';
-import { hashPassword } from 'better-auth/crypto';
 import { drizzle } from 'drizzle-orm/d1';
-import { and, eq, ne, count, sql } from 'drizzle-orm';
+import { and, eq, count, sql } from 'drizzle-orm';
 import type { TalismanAuthAdapter, TalismanUser } from './types';
 import type { TalismanEnv } from '../db/client';
 import * as schema from './local-schema';
 import { getAccessEmail } from './access';
+import { cloudflareAccessSignIn } from './cloudflare-access';
 import { readSetting } from '../env';
 
 export { getAccessEmail } from './access';
@@ -50,14 +50,28 @@ function createLocalAuth(request: Request, env: LocalEnv, adminPath = '/admin') 
       provider: 'sqlite',
       schema,
     }),
-    session: { expiresIn: 60 * 60 * 12, updateAge: 60 * 60 },
+    session: {
+      expiresIn: 60 * 60 * 12,
+      updateAge: 60 * 60,
+      // How the session was issued: `cloudflare` for an Access sign-in. Set at creation, never by a client.
+      additionalFields: { authMethod: { type: 'string', required: false, input: false } },
+    },
     emailAndPassword: {
       enabled: true,
       disableSignUp: true,
       minPasswordLength: 12,
       maxPasswordLength: 128,
     },
-    plugins: [admin({ defaultRole: 'editor', adminRoles: ['admin'] })],
+    plugins: [
+      // A user created without a role is a shopper: the table holds shopper identities too, and only an
+      // explicit admin or editor role grants CMS access.
+      admin({ defaultRole: 'customer', adminRoles: ['admin'] }),
+      cloudflareAccessSignIn({
+        verify: (headers) => getAccessEmail(new Request(origin, { headers }), env),
+        allowed: () => allowlistedAdmins(env),
+        maxSessionAgeMs: MAX_SESSION_AGE_MS,
+      }),
+    ],
     rateLimit: {
       enabled: true,
       storage: 'database',
@@ -75,74 +89,43 @@ function createLocalAuth(request: Request, env: LocalEnv, adminPath = '/admin') 
   });
 }
 
-async function ssoPassword(email: string, secret: string): Promise<string> {
-  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const digest = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`talisman-cms-cloudflare-sso:${email}`)));
-  const hex = Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
-  return hex;
+/** The lower-cased emails of TALISMAN_ACCESS_ADMIN_EMAILS. */
+function allowlistedAdmins(env: LocalEnv): Set<string> {
+  return new Set((readSetting(env, 'ACCESS_ADMIN_EMAILS') || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
 }
 
-/** Exchange a verified Cloudflare Access admin identity for a local CMS session. */
+/**
+ * Exchange a verified Cloudflare Access admin identity for a CMS session. The session is minted by the
+ * `cloudflareAccessSignIn` endpoint, which verifies the Access JWT from the forwarded headers itself,
+ * so no password is involved and the auth secret signs cookies and nothing else. Only the JWT, the
+ * client IP and the user agent are forwarded: the endpoint takes no body.
+ */
 export async function signInCloudflareAdmin(request: Request, adminPath = '/admin'): Promise<Response> {
   const env = await getLocalAuthEnv();
+  // Refuse an unverified caller before anything else is set up; the endpoint verifies the token again.
   const email = await getAccessEmail(request, env);
-  const allowed = new Set((readSetting(env, 'ACCESS_ADMIN_EMAILS') || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !allowed.has(email)) {
+  if (!email || !allowlistedAdmins(env).has(email)) {
     return Response.json({ error: 'Cloudflare admin access required' }, { status: 403 });
   }
   const normalizedPath = adminPath === '/' ? '/' : `/${adminPath.replace(/^\/+|\/+$/g, '')}`;
   const auth = createLocalAuth(request, env, normalizedPath);
-  const password = await ssoPassword(email, readSetting(env, 'AUTH_SECRET')!);
-  const db = drizzle(env.DB, { schema });
-  let account = await db.query.user.findFirst({ where: sql`lower(${schema.user.email}) = ${email}` });
-  if (!account) {
-    try {
-      await auth.api.createUser({ body: { email, name: email, password, role: 'admin' } });
-    } catch {
-      // Another verified sign-in may have created the account concurrently.
-    }
-    account = await db.query.user.findFirst({ where: sql`lower(${schema.user.email}) = ${email}` });
-  }
-  if (!account || account.banned) {
-    return Response.json({ error: 'Cloudflare admin account is unavailable' }, { status: 403 });
-  }
-  if (account.email !== email) {
-    await db.update(schema.user).set({ email, updatedAt: new Date() }).where(eq(schema.user.id, account.id));
-  }
-  if (account.role !== 'admin') {
-    await db.update(schema.user).set({ role: 'admin', emailVerified: true, updatedAt: new Date() }).where(eq(schema.user.id, account.id));
-  }
-  // Carry the admin's client IP and user agent onto the session. The direct API call skips the HTTP
-  // router's per-IP sign-in rate limit, so other clients' failed attempts cannot block a verified admin.
-  const signInHeaders = new Headers({ 'Content-Type': 'application/json' });
-  for (const name of ['cf-connecting-ip', 'user-agent']) {
+  const forwarded = new Headers();
+  for (const name of ['cf-access-jwt-assertion', 'cf-connecting-ip', 'user-agent']) {
     const value = request.headers.get(name);
-    if (value) signInHeaders.set(name, value);
+    if (value) forwarded.set(name, value);
   }
-  const signInAdmin = () => auth.api.signInEmail({ body: { email, password }, headers: signInHeaders, asResponse: true });
-  let signIn = await signInAdmin();
-  if (signIn.status === 401) {
-    // The derived credential is missing or stale (for example after a secret rotation); store it and retry once.
-    const credential = await db.query.account.findFirst({ where: and(eq(schema.account.userId, account.id), eq(schema.account.providerId, 'credential')) });
-    const hashed = await hashPassword(password);
-    if (credential) {
-      await db.update(schema.account).set({ password: hashed, updatedAt: new Date() }).where(eq(schema.account.id, credential.id));
-    } else {
-      await db.insert(schema.account).values({ id: crypto.randomUUID(), accountId: account.id,
-        providerId: 'credential', userId: account.id, password: hashed, createdAt: new Date(), updatedAt: new Date() });
-    }
-    signIn = await signInAdmin();
+  let signIn: Response;
+  try {
+    signIn = await auth.api.signInCloudflareAccess({ headers: forwarded, asResponse: true });
+  } catch (error) {
+    console.error('[talisman-cms] Cloudflare admin sign-in failed', error);
+    return Response.json({ error: 'Cloudflare admin sign-in failed' }, { status: 503 });
+  }
+  if (signIn.status === 403) {
+    const body = await signIn.json().catch(() => null) as { message?: unknown } | null;
+    return Response.json({ error: typeof body?.message === 'string' ? body.message : 'Cloudflare admin access required' }, { status: 403 });
   }
   if (!signIn.ok) return Response.json({ error: 'Cloudflare admin sign-in failed' }, { status: 503 });
-  const signedIn = await signIn.clone().json().catch(() => null) as { token?: unknown } | null;
-  if (typeof signedIn?.token !== 'string') return Response.json({ error: 'Cloudflare admin session failed' }, { status: 503 });
-  await db.update(schema.session).set({ authMethod: 'cloudflare' }).where(eq(schema.session.token, signedIn.token));
-  const issuedSession = await db.query.session.findFirst({ where: eq(schema.session.token, signedIn.token) });
-  if (issuedSession?.authMethod !== 'cloudflare' || issuedSession.userId !== account.id) {
-    return Response.json({ error: 'Cloudflare admin session failed' }, { status: 503 });
-  }
-  // Revoke the admin's other sessions only once the replacement session exists.
-  await db.delete(schema.session).where(and(eq(schema.session.userId, account.id), ne(schema.session.token, signedIn.token)));
   const headers = new Headers({ Location: normalizedPath, 'Cache-Control': 'no-store' });
   for (const cookie of signIn.headers.getSetCookie()) headers.append('Set-Cookie', cookie);
   return new Response(null, { status: 303, headers });
@@ -204,8 +187,12 @@ async function endSessionsBeforeGrant(auth: ReturnType<typeof createLocalAuth>, 
   }
 }
 
-export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?: boolean; editorOnly?: boolean } = {}): TalismanAuthAdapter {
-  const normalizedPath = adminPath === '/' ? '/' : `/${adminPath.replace(/^\/+|\/+$/g, '')}`;
+/**
+ * Local CMS accounts on D1. The integration passes its admin path when it loads the adapter in the
+ * Worker, so `adminPath` is optional; one that differs from the integration's fails the build.
+ */
+export function LocalAuthAdapter(adminPath?: string, options: { requireAccess?: boolean; editorOnly?: boolean } = {}): TalismanAuthAdapter {
+  const normalizedPath = normalizeAuthAdminPath(adminPath);
   const adapter: TalismanAuthAdapter = {
     async getUser(request) {
       const env = await getLocalAuthEnv();
@@ -225,8 +212,7 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
       if (rawUser.banned && !(rawUser.banExpires && new Date(rawUser.banExpires).getTime() < Date.now())) return null;
       if (rawUser.role !== 'admin' && rawUser.role !== 'editor') return null;
       if (options.editorOnly && rawUser.role === 'admin') {
-        const admins = (readSetting(env, 'ACCESS_ADMIN_EMAILS') || '').split(',').map(value => value.trim().toLowerCase());
-        if (!admins.includes(rawUser.email.toLowerCase()) || !result?.session?.id) return null;
+        if (!allowlistedAdmins(env).has(rawUser.email.toLowerCase()) || !result?.session?.id) return null;
         const cmsSession = await drizzle(env.DB, { schema }).query.session.findFirst({ where: eq(schema.session.id, result.session.id) });
         if (cmsSession?.authMethod !== 'cloudflare') return null;
       }
@@ -441,10 +427,20 @@ export function LocalAuthAdapter(adminPath = '/admin', options: { requireAccess?
       moduleId: 'talisman-cms/auth/local',
       exportName: 'LocalAuthAdapter',
       type: 'factory',
-      args: Object.keys(options).length ? [normalizedPath, options] : [normalizedPath],
+      args: Object.keys(options).length ? [options] : [],
+      adminPath: true,
+      ...(adminPath === undefined ? {} : { configuredAdminPath: normalizedPath }),
     },
     enumerable: false,
     configurable: true,
   });
   return adapter;
+}
+
+/** `/admin` when unset, `/` for a root admin, otherwise a leading slash and no trailing one. */
+export function normalizeAuthAdminPath(adminPath?: string): string {
+  const trimmed = adminPath?.trim();
+  if (!trimmed) return '/admin';
+  if (trimmed === '/') return '/';
+  return `/${trimmed.replace(/^\/+|\/+$/g, '')}`;
 }

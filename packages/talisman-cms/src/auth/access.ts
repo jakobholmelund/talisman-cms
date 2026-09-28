@@ -48,9 +48,14 @@ function allowedEmails(value: string | undefined): Set<string> {
   return new Set((value || '').split(',').map(email => email.trim().toLowerCase()).filter(Boolean));
 }
 
-/** Authenticate CMS users using a verified Cloudflare Access identity. */
-export function AccessAuthAdapter(adminPath = '/admin'): TalismanAuthAdapter {
-  const normalizedPath = adminPath === '/' ? '/' : `/${adminPath.replace(/^\/+|\/+$/g, '')}`;
+/**
+ * Authenticate CMS users using a verified Cloudflare Access identity. The integration passes its admin
+ * path when it loads the adapter in the Worker, so `adminPath` is optional; one that differs from the
+ * integration's fails the build.
+ */
+export function AccessAuthAdapter(adminPath?: string): TalismanAuthAdapter {
+  const trimmed = adminPath?.trim();
+  const normalizedPath = !trimmed ? '/admin' : trimmed === '/' ? '/' : `/${trimmed.replace(/^\/+|\/+$/g, '')}`;
   const adapter: TalismanAuthAdapter = {
     async getUser(request) {
       const env = await getAccessEnv();
@@ -78,7 +83,9 @@ export function AccessAuthAdapter(adminPath = '/admin'): TalismanAuthAdapter {
       moduleId: 'talisman-cms/auth/access',
       exportName: 'AccessAuthAdapter',
       type: 'factory',
-      args: [normalizedPath],
+      args: [],
+      adminPath: true,
+      ...(adminPath === undefined ? {} : { configuredAdminPath: normalizedPath }),
     },
     enumerable: false,
   });

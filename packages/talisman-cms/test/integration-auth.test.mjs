@@ -4,6 +4,7 @@ import test from 'node:test';
 const { default: talismanCms } = await import('../dist/integration.js');
 const { DevAuthAdapter } = await import('../dist/auth/dev.js');
 const { LocalAuthAdapter } = await import('../dist/auth/local.js');
+const { HybridAuthAdapter } = await import('../dist/auth/hybrid.js');
 
 /** Run astro:config:setup with stand-ins for Astro's helpers and return what the integration registered. */
 function setup(options, { command = 'dev', host = false } = {}) {
@@ -139,4 +140,25 @@ test('DevAuthAdapter is refused for builds and for a dev server exposed on the n
   }
   assert.doesNotThrow(() => setup(options, { command: 'sync' }));
   assert.doesNotThrow(() => setup({ auth: LocalAuthAdapter() }, { command: 'build', host: true }));
+});
+
+test('the auth virtual module passes the integration admin path to the adapter, and a different argument fails the build', (t) => {
+  t.mock.method(console, 'log', () => {});
+  const authModule = (options, command) => loadVirtual(setup(options, command ? { command } : {}), 'auth', { ssr: true });
+
+  const hybrid = authModule({ adminPath: 'cms', auth: HybridAuthAdapter() });
+  assert.match(hybrid, /import \{ HybridAuthAdapter as __talismanCmsRuntimeAuthAdapter \} from "talisman-cms\/auth\/hybrid"/);
+  assert.match(hybrid, /__talismanCmsRuntimeAuthAdapter\(\.\.\.\["\/cms"\]\)/);
+  assert.match(authModule({ auth: HybridAuthAdapter() }), /\(\.\.\.\["\/admin"\]\)/);
+  assert.match(authModule({ adminPath: '/', auth: HybridAuthAdapter() }), /\(\.\.\.\["\/"\]\)/);
+  // The adapter's own options follow the path.
+  assert.match(authModule({ adminPath: 'cms', auth: LocalAuthAdapter(undefined, { requireAccess: false }) }), /\(\.\.\.\["\/cms",\{"requireAccess":false\}\]\)/);
+  // A path the site still passes to the adapter is accepted when it matches and refused when it does not.
+  assert.match(authModule({ adminPath: 'cms', auth: HybridAuthAdapter('cms/') }), /\(\.\.\.\["\/cms"\]\)/);
+  assert.match(authModule({ adminPath: '/', auth: HybridAuthAdapter('/') }), /\(\.\.\.\["\/"\]\)/);
+  assert.throws(() => setup({ adminPath: 'cms', auth: HybridAuthAdapter('/admin') }),
+    /\[talisman-cms\] HybridAuthAdapter\("\/admin"\) does not match adminPath "\/cms"\. Drop the argument/);
+  assert.throws(() => setup({ auth: LocalAuthAdapter('/cms') }), /LocalAuthAdapter\("\/cms"\) does not match adminPath "\/admin"/);
+  // DevAuthAdapter declares no admin path and is called without one.
+  assert.match(authModule({ auth: DevAuthAdapter() }, 'dev'), /__talismanCmsRuntimeAuthAdapter\(\.\.\.\[\]\)/);
 });

@@ -26,6 +26,16 @@ export interface TalismanAuthRuntimeDescriptor {
   type?: 'factory' | 'value';
   /** JSON-serializable arguments for a runtime factory. */
   args?: unknown[];
+  /**
+   * When true, the integration passes its normalized admin path as the factory's first argument, before
+   * `args`, so the adapter and the integration always agree on it.
+   */
+  adminPath?: boolean;
+  /**
+   * The admin path the site passed to the factory itself, normalized, when it passed one. The
+   * integration fails the build when it differs from its own `adminPath` option.
+   */
+  configuredAdminPath?: string;
 }
 
 export interface TalismanAuthAdapter {
