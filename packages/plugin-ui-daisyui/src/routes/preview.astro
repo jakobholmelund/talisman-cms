@@ -46,7 +46,7 @@ try {
   <LayoutComponent title="Theme Preview">
     <DaisyUiThemeInjector />
     <div class="py-12 w-full max-w-7xl mx-auto px-4">
-      <DaisyUiPreviewContent showAdminButton={true} />
+      <DaisyUiPreviewContent showAdminButton={true} adminPath={adminPath} />
     </div>
   </LayoutComponent>
 )}
@@ -62,7 +62,7 @@ try {
   </head>
   <body class="bg-base-100 text-base-content min-h-screen p-8 transition-colors duration-200">
     <p>No layout was found in <code>src/layouts</code>, so this preview has no site CSS. Add a layout that loads your Tailwind and daisyUI styles to see the theme applied.</p>
-    <DaisyUiPreviewContent showAdminButton={true} />
+    <DaisyUiPreviewContent showAdminButton={true} adminPath={adminPath} />
   </body>
   </html>
 )}

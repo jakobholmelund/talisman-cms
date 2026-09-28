@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { adminApiUrl, adminUrl } from 'talisman-cms/ui/sdk';
 import { DAISYUI_THEME_DEFAULTS } from './themeDefaults';
 import {
   DAISYUI_THEME_ADVANCED,
@@ -54,14 +55,8 @@ export default function ThemeBuilder() {
   };
 
   useEffect(() => {
-    // Determine admin base path from URL pattern /admin/...
-    const pathParts = window.location.pathname.split('/');
-    const basePath = pathParts[1] === 'extensions' ? '' : `/${pathParts[1]}`;
-    const apiPath = `${basePath}/api/daisyui/theme`;
-    const layoutsApiPath = `${basePath}/api/daisyui/layouts`;
-
     Promise.all([
-      fetch(apiPath)
+      fetch(adminApiUrl('daisyui/theme'))
         .then(async (res) => {
           if (!res.ok) throw new Error(`the server answered ${res.status}`);
           return res.json();
@@ -71,7 +66,7 @@ export default function ThemeBuilder() {
           setLoadError(`Could not load the saved theme (${err instanceof Error ? err.message : 'network error'}). Reload the page to try again; saving is disabled so the saved theme is not overwritten.`);
           return {};
         }),
-      fetch(layoutsApiPath).then((res) => res.json()).catch(() => ({ layouts: [] }))
+      fetch(adminApiUrl('daisyui/layouts')).then((res) => res.json()).catch(() => ({ layouts: [] }))
     ])
       .then(([data, layoutsData]) => {
         // Only saved overrides are loaded. Everything else shows the base theme's daisyUI values and
@@ -134,11 +129,7 @@ export default function ThemeBuilder() {
     setSuccess(false);
 
     try {
-      const pathParts = window.location.pathname.split('/');
-      const basePath = pathParts[1] === 'extensions' ? '' : `/${pathParts[1]}`;
-      const apiPath = `${basePath}/api/daisyui/theme`;
-
-      const res = await fetch(apiPath, {
+      const res = await fetch(adminApiUrl('daisyui/theme'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload()),
@@ -174,7 +165,7 @@ export default function ThemeBuilder() {
 
   const handleOpenPreview = () => {
     sessionStorage.setItem('daisyui-preview-state', JSON.stringify(payload()));
-    const url = `/admin/daisyui-preview?mode=${previewMode}${selectedLayout ? `&layout=${encodeURIComponent(selectedLayout)}` : ''}`;
+    const url = `${adminUrl('daisyui-preview')}?mode=${previewMode}${selectedLayout ? `&layout=${encodeURIComponent(selectedLayout)}` : ''}`;
     window.open(url, '_blank');
   };
 

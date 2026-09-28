@@ -1,8 +1,10 @@
 ---
 export interface Props {
+  /** Shows the "Return to Admin" link; `adminPath` is the site's admin path (from `virtual:talisman-cms/config`). */
   showAdminButton?: boolean;
+  adminPath?: string;
 }
-const { showAdminButton = false } = Astro.props;
+const { showAdminButton = false, adminPath } = Astro.props;
 ---
 <script>
   import { buildThemeCss } from './theme-css';
@@ -36,7 +38,7 @@ const { showAdminButton = false } = Astro.props;
     <h1 class="text-5xl font-black tracking-tight">Theme Preview</h1>
     <p class="text-xl opacity-70 max-w-2xl mx-auto">This page demonstrates the custom DaisyUI variables injected from the Talisman CMS Theme Builder.</p>
     <div class="flex justify-center gap-4 pt-4">
-       {showAdminButton && <a class="btn btn-outline" href="/admin">Return to Admin</a>}
+       {showAdminButton && adminPath && <a class="btn btn-outline" href={adminPath}>Return to Admin</a>}
        <button class="btn btn-primary" onclick="window.location.reload()">Refresh Styling</button>
     </div>
   </header>

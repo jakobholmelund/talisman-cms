@@ -8,7 +8,10 @@
     "jsx": "react-jsx",
     "skipLibCheck": true,
     "declaration": true,
-    "types": ["node", "@cloudflare/workers-types"]
+    "types": ["node", "@cloudflare/workers-types"],
+    "paths": {
+      "talisman-cms/ui/*": ["./node_modules/talisman-cms/ui/*"]
+    }
   },
   "include": ["src"]
 }

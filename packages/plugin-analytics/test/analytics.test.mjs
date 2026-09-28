@@ -259,7 +259,8 @@ test('analytics plugin adds Commerce only when ecommerce is registered', () => {
   analytics.onInit({ plugins: [analytics, ecommerce] });
   assert.equal(analytics.adminUi.length, 2);
   assert.equal(analytics.endpoints.length, 2);
-  assert.equal(analytics.adminLinks[0].href, '/admin/extensions/commerce-analytics');
+  // Relative to the admin path; the integration resolves it, so it holds for any adminPath.
+  assert.equal(analytics.adminLinks[0].href, 'extensions/commerce-analytics');
   const disabled = analyticsPlugin({ commerce: false });
   disabled.onInit({ plugins: [disabled, ecommerce] });
   assert.equal(disabled.adminUi.length, 1);
@@ -267,7 +268,7 @@ test('analytics plugin adds Commerce only when ecommerce is registered', () => {
   ask.onInit({ plugins: [ask, ecommerce] });
   assert.equal(ask.adminUi.length, 3);
   assert.ok(ask.endpoints.some(endpoint => endpoint.path === '/analytics/ask'));
-  assert.ok(ask.adminLinks.some(link => link.href === '/admin/extensions/ask-analytics'));
+  assert.ok(ask.adminLinks.some(link => link.href === 'extensions/ask-analytics'));
 });
 
 test('Cloudflare traffic and vitals responses become separate dashboard metrics', async () => {

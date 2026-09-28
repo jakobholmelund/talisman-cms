@@ -10,7 +10,10 @@
     "skipLibCheck": true,
     "declaration": true,
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    "paths": {
+      "talisman-cms/ui/*": ["./node_modules/talisman-cms/ui/*"]
+    }
   },
   "include": ["src"]
 }

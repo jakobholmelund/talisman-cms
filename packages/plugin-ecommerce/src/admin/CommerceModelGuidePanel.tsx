@@ -1,5 +1,6 @@
 import React from 'react';
 import type { AdminEditorPanelProps } from 'talisman-cms/ui/components/editor/panels';
+import { productsCollectionSlug } from 'virtual:talisman-cms/ecommerce-admin';
 import { getCommerceFlowSummary, getCommerceModelGuide } from './commerce-models';
 
 /**
@@ -8,7 +9,7 @@ import { getCommerceFlowSummary, getCommerceModelGuide } from './commerce-models
  * Products get the Options & stock panel instead of a guide.
  */
 export default function CommerceModelGuidePanel({ collection, values, relationSupportEntries }: AdminEditorPanelProps) {
-  if (collection.nativeSchemaMapping?.exportName === 'products') return null;
+  if (collection.slug === productsCollectionSlug || collection.nativeSchemaMapping?.exportName === 'products') return null;
   const guide = getCommerceModelGuide(collection.slug);
   const flowSummary = getCommerceFlowSummary(collection.slug, values, relationSupportEntries);
 

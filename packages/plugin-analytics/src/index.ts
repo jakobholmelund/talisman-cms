@@ -31,13 +31,13 @@ export function analyticsPlugin(options: AnalyticsPluginOptions = {}): Plugin {
       const hasCommerce = options.commerce !== false &&
         config.plugins?.some(item => item.name === '@talisman-cms/plugin-ecommerce');
       const hasAsk = Boolean(hasCommerce && options.ask);
-      const adminPath = `/${(config.adminPath || 'admin').replace(/^\/+|\/+$/g, '')}`;
       plugin.adminUi = hasCommerce ? (hasAsk ? [overview, commerce, ask] : [overview, commerce]) : [overview];
+      // Link hrefs are relative to the admin path; the integration resolves them.
       plugin.adminLinks = hasCommerce ? [{
         section: 'commerce', label: 'Analytics', description: 'Review orders, sales, refunds, and top products.',
-        href: `${adminPath === '/' ? '' : adminPath}/extensions/commerce-analytics`
+        href: 'extensions/commerce-analytics'
       }, ...(hasAsk ? [{ section: 'commerce' as const, label: 'Ask Analytics', description: 'Ask a question and get a report from approved metrics.',
-        href: `${adminPath === '/' ? '' : adminPath}/extensions/ask-analytics` }] : [])] : [];
+        href: 'extensions/ask-analytics' }] : [])] : [];
       plugin.endpoints = hasCommerce ? (hasAsk ? [baseEndpoint, commerceEndpoint, askEndpoint] : [baseEndpoint, commerceEndpoint]) : [baseEndpoint];
       return config;
     }

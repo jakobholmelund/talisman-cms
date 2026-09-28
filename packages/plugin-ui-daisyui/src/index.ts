@@ -61,9 +61,10 @@ export function daisyUiPlugin(): Plugin {
         componentPath: '@talisman-cms/plugin-ui-daisyui/admin/ThemeBuilder'
       }
     ],
+    // Relative to the admin path: the integration mounts it at `<adminPath>/daisyui-preview`.
     routes: [
       {
-        path: '/admin/daisyui-preview',
+        path: 'daisyui-preview',
         entrypoint: routeEntrypoint('preview.astro'),
         prerender: false
       }

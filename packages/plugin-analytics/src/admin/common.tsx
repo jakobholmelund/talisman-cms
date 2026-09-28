@@ -1,19 +1,11 @@
 import React, { type ReactNode } from 'react';
+import { adminRequest } from 'talisman-cms/ui/sdk';
 import { formatMoney } from './money';
 import './analytics.css';
 
-export function adminBase() {
-  if (typeof window === 'undefined') return '/admin';
-  const marker = '/extensions/';
-  const index = window.location.pathname.indexOf(marker);
-  return index > 0 ? window.location.pathname.slice(0, index) : '/admin';
-}
-
-export async function analyticsRequest<T>(area: 'overview' | 'commerce', days: 7 | 30, signal: AbortSignal): Promise<T> {
-  const response = await fetch(`${adminBase()}/api/analytics/${area}?days=${days}`, { credentials: 'same-origin', signal });
-  const result = await response.json() as T & { error?: string };
-  if (!response.ok) throw new Error(result.error || 'Analytics request failed');
-  return result;
+/** Reads a dashboard from the plugin's admin route `<adminPath>/api/analytics/<area>` for the period. */
+export function analyticsRequest<T>(area: 'overview' | 'commerce', days: 7 | 30, signal: AbortSignal): Promise<T> {
+  return adminRequest<T>(`analytics/${area}?days=${days}`, { signal });
 }
 
 export const number = (value: number) => new Intl.NumberFormat().format(value);

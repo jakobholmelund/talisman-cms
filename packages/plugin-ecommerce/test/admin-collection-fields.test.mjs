@@ -129,22 +129,25 @@ function readConfiguratorWrites() {
   return writes;
 }
 
-/** The collections the admin opens in the commerce product flow (COMMERCE_FLOW_SLUGS). */
+/**
+ * The collections the admin opens in the commerce product flow: the products collection under its
+ * default slug, then the plugin's own tables (COMMERCE_FLOW_NATIVE_SLUGS in commerce-models.ts).
+ */
 function readCommerceFlowSlugs() {
   const sourceFile = parseAdminSource(commerceModelsPath);
   let slugs;
   const visit = (node) => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'COMMERCE_FLOW_SLUGS') {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'COMMERCE_FLOW_NATIVE_SLUGS') {
       const list = unwrap(node.initializer);
       assert.ok(ts.isArrayLiteralExpression(list) && list.elements.every(ts.isStringLiteralLike),
-        `${where(sourceFile, node)}: COMMERCE_FLOW_SLUGS is not a list of string literals`);
+        `${where(sourceFile, node)}: COMMERCE_FLOW_NATIVE_SLUGS is not a list of string literals`);
       slugs = list.elements.map((element) => element.text);
     }
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
-  assert.ok(slugs, `${commerceModelsPath.pathname} no longer declares COMMERCE_FLOW_SLUGS`);
-  return slugs;
+  assert.ok(slugs, `${commerceModelsPath.pathname} no longer declares COMMERCE_FLOW_NATIVE_SLUGS`);
+  return ['products', ...slugs];
 }
 
 /** buildDefaultValues from the admin source: the values the collection form starts a new record with. */
@@ -229,7 +232,7 @@ test('every change the variant editor sends to the variants endpoint has the key
 test('the commerce collections the admin edits configure every column the server does not set', () => {
   const slugs = readCommerceFlowSlugs();
   for (const slug of ['products', '_ecommerce_variants', '_ecommerce_product_variants', '_ecommerce_product_variant_values', '_ecommerce_stocks']) {
-    assert.ok(slugs.includes(slug), `COMMERCE_FLOW_SLUGS no longer lists ${slug}`);
+    assert.ok(slugs.includes(slug), `the commerce flow no longer lists ${slug}`);
   }
 
   for (const slug of slugs) {

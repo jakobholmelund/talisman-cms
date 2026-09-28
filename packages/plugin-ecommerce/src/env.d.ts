@@ -7,6 +7,8 @@ declare module 'astro:actions' {
 /** Provided by ecommercePlugin() to its admin screens. */
 declare module 'virtual:talisman-cms/ecommerce-admin' {
   export const adminTestCheckout: boolean;
+  /** The slug of the collection shown as Products (`productsCollectionSlug`, `products` by default). */
+  export const productsCollectionSlug: string;
 }
 
 /** Provided by ecommercePlugin() to server code: the exports of its `emailTemplates` module, or null. */

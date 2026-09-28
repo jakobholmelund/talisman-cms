@@ -29,7 +29,12 @@ export interface EcommercePluginConfig {
    * @default true
    */
   injectCollections?: boolean;
-  /** Optional same-origin link overrides for stores with specialized admin workflows. */
+  /**
+   * Overrides for the Orders, Promotions, Gift cards and Test checkout links in the Commerce
+   * section, for stores with specialized admin workflows. Each is a path relative to the admin path,
+   * such as `extensions/orders`, or an absolute path on the site, such as `/orders`. The integration
+   * refuses anything that is not a path on the site, such as a full URL, at config time.
+   */
   adminPages?: Partial<Record<'orders' | 'promotions' | 'giftCards' | 'testCheckout', string>>;
   /**
    * Adds the admin-only Test checkout screen and `/admin/api/ecommerce/test-checkout`, which place
@@ -48,7 +53,7 @@ export interface EcommercePluginConfig {
   emailTemplates?: string;
 }
 
-/** Tells the shared admin screens which optional tools this site registered. */
+/** Tells the shared admin screens which optional tools this site registered and the products collection's slug. */
 const ADMIN_OPTIONS_MODULE = 'virtual:talisman-cms/ecommerce-admin';
 /** Gives server code the store's email templates; `emailTemplates: null` without them. */
 const EMAIL_TEMPLATES_MODULE = 'virtual:talisman-cms/ecommerce-emails';
@@ -215,12 +220,12 @@ export const ecommercePlugin = (
     name: '@talisman-cms/plugin-ecommerce',
     migrations: { dir: resolveMigrationsDir() },
     scheduled: { moduleId: '@talisman-cms/plugin-ecommerce/scheduled' },
-    adminLinks: adminPageDefinitions.flatMap(page => {
-      const href = config?.adminPages?.[page.key] || `/admin/extensions/${page.path}`;
-      return href?.startsWith('/') && !href.startsWith('//')
-        ? [{ section: 'commerce' as const, label: page.label, description: page.description, href }]
-        : [];
-    }),
+    // The hrefs are relative to the admin path; the integration resolves them and refuses a value
+    // that is not a path on the site, so an `adminPages` override is passed through as given.
+    adminLinks: adminPageDefinitions.map(page => ({
+      section: 'commerce' as const, label: page.label, description: page.description,
+      href: config?.adminPages?.[page.key] || `extensions/${page.path}`
+    })),
     adminUi: adminPageDefinitions.map(page => ({
       path: page.path, label: page.label, section: 'commerce' as const,
       componentPath: `@talisman-cms/plugin-ecommerce/admin/${page.component}`
@@ -255,7 +260,9 @@ export const ecommercePlugin = (
           if (id === ADMIN_OPTIONS_MODULE) return `\0${ADMIN_OPTIONS_MODULE}`;
         },
         load(id: string) {
-          if (id === `\0${ADMIN_OPTIONS_MODULE}`) return `export const adminTestCheckout = ${adminTestCheckout};`;
+          if (id === `\0${ADMIN_OPTIONS_MODULE}`) {
+            return `export const adminTestCheckout = ${adminTestCheckout};\nexport const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
+          }
         }
       }, {
         name: 'talisman-cms-ecommerce-email-templates',

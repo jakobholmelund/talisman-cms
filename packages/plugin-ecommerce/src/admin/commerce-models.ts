@@ -2,11 +2,11 @@
 // values, stock and components in relation pickers and summaries, which related tables the editor
 // loads for them, and the model guide the editor panel shows. Prices show in the store currency.
 import type { EntriesBySlug, EntryDescriberContext, EntryDescription, EntryLike } from 'talisman-cms/ui/lib/entry-labels';
+import { productsCollectionSlug } from 'virtual:talisman-cms/ecommerce-admin';
 import { normalizeCurrency, storeCurrency } from './currency';
 
-/** The collections of the product flow, loaded together so each record can name the others. */
-export const COMMERCE_FLOW_SLUGS = [
-  'products',
+/** The plugin's own tables in the product flow. The products collection comes first, under the slug the site configured. */
+export const COMMERCE_FLOW_NATIVE_SLUGS = [
   '_ecommerce_variants',
   '_ecommerce_product_variants',
   '_ecommerce_product_variant_values',
@@ -15,16 +15,21 @@ export const COMMERCE_FLOW_SLUGS = [
   '_ecommerce_variant_components',
 ] as const;
 
+/** The collections of the product flow, loaded together so each record can name the others. */
+export function commerceFlowSlugs(): string[] {
+  return [productsCollectionSlug, ...COMMERCE_FLOW_NATIVE_SLUGS];
+}
+
 export type CommerceEntry = EntryLike;
 export type CommerceSupportEntries = EntriesBySlug;
 
 export function isCommerceFlowSlug(slug: string) {
-  return COMMERCE_FLOW_SLUGS.includes(slug as (typeof COMMERCE_FLOW_SLUGS)[number]);
+  return commerceFlowSlugs().includes(slug);
 }
 
 /** Describer export: the extra collections the editor of a product-flow record loads. */
 export function supportCollections(collectionSlug: string, _relationTargets: string[] = []) {
-  return isCommerceFlowSlug(collectionSlug) ? [...COMMERCE_FLOW_SLUGS] : [];
+  return isCommerceFlowSlug(collectionSlug) ? commerceFlowSlugs() : [];
 }
 
 export function getEntryData(entry: CommerceEntry | null | undefined): Record<string, any> {
@@ -63,7 +68,7 @@ function getVariantDefinitionName(entry: CommerceEntry | null | undefined) {
 
 function getProductVariantContext(entry: CommerceEntry | null | undefined, entriesBySlug: CommerceSupportEntries) {
   const data = getEntryData(entry);
-  const product = findEntry(entriesBySlug, 'products', data.productId);
+  const product = findEntry(entriesBySlug, productsCollectionSlug, data.productId);
   const variantDefinition = findEntry(entriesBySlug, '_ecommerce_variants', data.variantId);
 
   return {
@@ -99,22 +104,22 @@ export function describeCommerceEntry(
   if (!entry) return null;
   const data = getEntryData(entry);
 
+  if (collectionSlug === productsCollectionSlug) {
+    return {
+      title: data.name || entry.slug || entry.id,
+      subtitle: compact([
+        data.slug ? `/${data.slug}` : null,
+        data.sku ? `SKU ${data.sku}` : null,
+        formatMoney(data.basePrice, currency),
+      ]).join(' • '),
+      details: compact([
+        data.type ? `Type: ${data.type}` : null,
+        data.status ? `Status: ${data.status}` : null,
+      ]),
+    };
+  }
+
   switch (collectionSlug) {
-    case 'products': {
-      const title = data.name || entry.slug || entry.id;
-      return {
-        title,
-        subtitle: compact([
-          data.slug ? `/${data.slug}` : null,
-          data.sku ? `SKU ${data.sku}` : null,
-          formatMoney(data.basePrice, currency),
-        ]).join(' • '),
-        details: compact([
-          data.type ? `Type: ${data.type}` : null,
-          data.status ? `Status: ${data.status}` : null,
-        ]),
-      };
-    }
     case '_ecommerce_variants': {
       const title = data.name || entry.id;
       return {
@@ -217,13 +222,14 @@ export function getRelationOptionLabel(
 }
 
 export function getCommerceModelGuide(collectionSlug: string) {
+  if (collectionSlug === productsCollectionSlug) {
+    return {
+      title: 'Variant Flow',
+      body: 'Products are the root of the catalog. Variant groups attach to a product, values attach to a group, and stock attaches to each value.',
+      steps: ['Product', 'Variant group', 'Variant value', 'Stock row'],
+    };
+  }
   switch (collectionSlug) {
-    case 'products':
-      return {
-        title: 'Variant Flow',
-        body: 'Products are the root of the catalog. Variant groups attach to a product, values attach to a group, and stock attaches to each value.',
-        steps: ['Product', 'Variant group', 'Variant value', 'Stock row'],
-      };
     case '_ecommerce_variants':
       return {
         title: 'Option Definition',
@@ -275,14 +281,14 @@ export function getCommerceFlowSummary(
 ) {
   if (!isCommerceFlowSlug(collectionSlug)) return [];
 
-  const product = collectionSlug === 'products'
+  const product = collectionSlug === productsCollectionSlug
     ? { id: values.id || 'new', data: values }
     : collectionSlug === '_ecommerce_product_variants'
-      ? findEntry(entriesBySlug, 'products', values.productId)
+      ? findEntry(entriesBySlug, productsCollectionSlug, values.productId)
       : collectionSlug === '_ecommerce_product_variant_values'
-        ? findEntry(entriesBySlug, 'products', getEntryData(findEntry(entriesBySlug, '_ecommerce_product_variants', values.productVariantId)).productId)
+        ? findEntry(entriesBySlug, productsCollectionSlug, getEntryData(findEntry(entriesBySlug, '_ecommerce_product_variants', values.productVariantId)).productId)
         : collectionSlug === '_ecommerce_stocks'
-          ? findEntry(entriesBySlug, 'products', getEntryData(findEntry(entriesBySlug, '_ecommerce_product_variants', getEntryData(findEntry(entriesBySlug, '_ecommerce_product_variant_values', values.productVariantValueId)).productVariantId)).productId)
+          ? findEntry(entriesBySlug, productsCollectionSlug, getEntryData(findEntry(entriesBySlug, '_ecommerce_product_variants', getEntryData(findEntry(entriesBySlug, '_ecommerce_product_variant_values', values.productVariantValueId)).productVariantId)).productId)
           : null;
 
   const variantDefinition = collectionSlug === '_ecommerce_variants'
@@ -310,7 +316,7 @@ export function getCommerceFlowSummary(
       : null;
 
   return [
-    product ? { label: 'Product', value: titleOf('products', product, entriesBySlug) } : null,
+    product ? { label: 'Product', value: titleOf(productsCollectionSlug, product, entriesBySlug) } : null,
     variantDefinition ? { label: 'Option', value: titleOf('_ecommerce_variants', variantDefinition, entriesBySlug) } : null,
     group ? { label: 'Group', value: titleOf('_ecommerce_product_variants', group, entriesBySlug) } : null,
     value ? { label: 'Value', value: titleOf('_ecommerce_product_variant_values', value, entriesBySlug) } : null,

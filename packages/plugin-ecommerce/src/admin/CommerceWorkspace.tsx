@@ -2,52 +2,20 @@ import React from 'react';
 import { Link } from '@tanstack/react-router';
 import type { AdminSectionWorkspaceProps } from 'talisman-cms/ui/lib/admin-sections';
 import { ArrowRight, Boxes, CircleDollarSign, Gift, Package, Plus, ShoppingBag, Sparkles, Truck } from './icons';
+import { extensionPathOf, groupCommerceModels, modelHelp, type CommerceModel as Model } from './workspace-models';
 
 // The Commerce section's index page (AdminSectionDefinition.componentPath): the store's models in
 // groups, the plugin tools registered as adminLinks, and the highlights with their record counts.
+// The grouping itself is in workspace-models.ts.
 
-type Model = AdminSectionWorkspaceProps['collections'][number];
 type Tool = AdminSectionWorkspaceProps['adminLinks'][number];
 
-const catalogSlugs = new Set([
-  '_ecommerce_categories', '_ecommerce_tags', '_ecommerce_variants',
-  '_ecommerce_product_variants', '_ecommerce_product_variant_values',
-  '_ecommerce_stocks', '_ecommerce_components', '_ecommerce_variant_components'
-]);
-const shopperSlugs = new Set(['_ecommerce_customers', '_ecommerce_customer_accounts', '_ecommerce_carts']);
-const promotionSlugs = new Set([
-  '_ecommerce_referral_codes', '_ecommerce_referrals', '_ecommerce_referral_settings',
-  '_ecommerce_discount_redemptions', '_ecommerce_credit_ledger'
-]);
-const giftSlugs = new Set([
-  '_ecommerce_gift_card_purchases', '_ecommerce_gift_card_ledger',
-  '_ecommerce_gift_card_redemptions', '_ecommerce_gift_card_refunds',
-  '_ecommerce_gift_card_order_refunds', '_ecommerce_gift_card_reviews'
-]);
-const featuredSlugs = new Set(['products', '_ecommerce_orders', '_ecommerce_discount_codes', '_ecommerce_gift_cards']);
-
-const help: Record<string, string> = {
-  products: 'Images, prices, options, and availability',
-  _ecommerce_orders: 'Payments and fulfillment',
-  _ecommerce_discount_codes: 'Offers and promotional credit',
-  _ecommerce_gift_cards: 'Issued cards and balances',
-  _ecommerce_categories: 'Organize what shoppers browse',
-  _ecommerce_product_variant_values: 'Shopper choices, images, and prices',
-  _ecommerce_stocks: 'Stock available for each option',
-  _ecommerce_components: 'Shared physical parts and supplies'
-};
-
 function count(model?: Model) { return model?.itemCount == null ? '—' : model.itemCount.toLocaleString(); }
-
-/** The extension path an admin link points at, when it links to a plugin admin page. */
-function extensionPathOf(href: string) {
-  return /^\/(?:[^/?#]+\/)*extensions\/([^/?#]+)$/.exec(href)?.[1];
-}
 
 function ModelLink({ model, section }: { model: Model; section: string }) {
   return <Link to={`/${section}/${model.slug}`} className="group flex min-w-0 items-center gap-4 rounded-xl border border-white/10 bg-white/[0.025] px-4 py-4 transition-colors hover:border-indigo-400/40 hover:bg-indigo-400/[0.07]">
     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/5 text-indigo-300"><Boxes size={18} /></span>
-    <span className="min-w-0 flex-1"><span className="block truncate font-medium text-zinc-100">{model.name}</span><span className="mt-0.5 block truncate text-xs text-zinc-500">{help[model.slug] || model.description || 'Manage records'}</span></span>
+    <span className="min-w-0 flex-1"><span className="block truncate font-medium text-zinc-100">{model.name}</span><span className="mt-0.5 block truncate text-xs text-zinc-500">{modelHelp(model)}</span></span>
     <span className="rounded-full bg-white/5 px-2.5 py-1 text-xs tabular-nums text-zinc-300">{count(model)}</span>
     <ArrowRight size={15} className="shrink-0 text-zinc-600 group-hover:text-indigo-300" />
   </Link>;
@@ -60,19 +28,12 @@ function Group({ title, description, models, section }: { title: string; descrip
 
 export default function CommerceWorkspace({ section, collections: models, adminLinks: tools }: AdminSectionWorkspaceProps) {
   const sectionId = section.id;
-  const bySlug = new Map(models.map(model => [model.slug, model]));
-  const products = models.find(model => model.nativeSchemaMapping?.exportName === 'products') || bySlug.get('products');
-  const content = models.filter(model => !model.slug.startsWith('_ecommerce_') && model.slug !== products?.slug);
-  const catalog = models.filter(model => catalogSlugs.has(model.slug));
-  const shoppers = models.filter(model => shopperSlugs.has(model.slug));
-  const promotions = models.filter(model => promotionSlugs.has(model.slug));
-  const giftRecords = models.filter(model => giftSlugs.has(model.slug));
-  const advanced = models.filter(model => model.slug !== products?.slug && !featuredSlugs.has(model.slug) && !catalogSlugs.has(model.slug) && !shopperSlugs.has(model.slug) && !promotionSlugs.has(model.slug) && !giftSlugs.has(model.slug) && !content.includes(model));
+  const { products, orders, discountCodes, giftCards, content, catalog, shoppers, promotions, giftRecords, advanced } = groupCommerceModels(models);
   const highlights = [
     { model: products, label: 'Products', icon: Package },
-    { model: bySlug.get('_ecommerce_orders'), label: 'Orders', icon: ShoppingBag },
-    { model: bySlug.get('_ecommerce_discount_codes'), label: 'Discount codes', icon: CircleDollarSign },
-    { model: bySlug.get('_ecommerce_gift_cards'), label: 'Gift cards', icon: Gift }
+    { model: orders, label: 'Orders', icon: ShoppingBag },
+    { model: discountCodes, label: 'Discount codes', icon: CircleDollarSign },
+    { model: giftCards, label: 'Gift cards', icon: Gift }
   ].filter(item => item.model);
 
   return <div className="mx-auto max-w-7xl space-y-10 pb-10">

@@ -1,5 +1,6 @@
 import React, { type ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
+import { adminRequest as requestAdminApi } from 'talisman-cms/ui/sdk';
 import { adminTestCheckout } from 'virtual:talisman-cms/ecommerce-admin';
 import { formatMoney, fromMinorUnits, toMinorUnits } from '@talisman-cms/plugin-ecommerce/money';
 import { storeCurrency } from './currency';
@@ -9,23 +10,9 @@ export { storeCurrency };
 
 export type CommerceTool = 'orders' | 'promotions' | 'gift-cards' | 'test-checkout';
 
-export function adminBase() {
-  if (typeof window === 'undefined') return '/admin';
-  const marker = '/extensions/';
-  const index = window.location.pathname.indexOf(marker);
-  return index > 0 ? window.location.pathname.slice(0, index) : '/admin';
-}
-
-export async function adminRequest<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(`${adminBase()}/api/ecommerce/${path}`, {
-    method: body === undefined ? 'GET' : 'POST',
-    credentials: 'same-origin',
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const result = await response.json() as T & { error?: string };
-  if (!response.ok) throw new Error(result.error || 'Commerce request failed');
-  return result;
+/** A JSON request to one of the plugin's admin routes, `<adminPath>/api/ecommerce/<path>`: GET without a body, POST with one. */
+export function adminRequest<T>(path: string, body?: unknown): Promise<T> {
+  return requestAdminApi<T>(`ecommerce/${path}`, body === undefined ? {} : { body });
 }
 
 export function errorText(error: unknown) {

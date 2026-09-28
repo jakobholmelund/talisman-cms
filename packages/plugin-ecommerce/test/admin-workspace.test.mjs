@@ -4,6 +4,7 @@ import { readFileSync, statSync } from 'node:fs';
 import ts from 'typescript';
 import { ecommercePlugin } from '../dist/index.js';
 
+/** The source of the plugin's admin options module (virtual:talisman-cms/ecommerce-admin) for this site. */
 const adminOptions = async (plugin) => {
   const [vitePlugin] = plugin.vite.plugins;
   const id = vitePlugin.resolveId('virtual:talisman-cms/ecommerce-admin');
@@ -33,35 +34,42 @@ const entrySaveUrl = compileModule(new URL('lib/entry-save.ts', coreUi));
 const currencyUrl = compileModule(new URL('currency.ts', pluginAdmin));
 const { getVariantChangeRecovery, describeVariantChangeFailure } =
   await import(compileModule(new URL('variant-recovery.ts', pluginAdmin), { 'talisman-cms/ui/lib/entry-save': entrySaveUrl }));
-const { describeEntry, describeCommerceEntry, formatMoney, getRelationOptionLabel, supportCollections, COMMERCE_FLOW_SLUGS } =
-  await import(compileModule(new URL('commerce-models.ts', pluginAdmin), { './currency': currencyUrl }));
+/** The admin modules as the site's build gives them to a plugin registered with this products slug. */
+const adminModulesFor = async (productsCollectionSlug) => {
+  const options = { 'virtual:talisman-cms/ecommerce-admin': `data:text/javascript,${encodeURIComponent(await adminOptions(ecommercePlugin({ productsCollectionSlug })))}` };
+  return {
+    models: await import(compileModule(new URL('commerce-models.ts', pluginAdmin), { './currency': currencyUrl, ...options })),
+    workspace: await import(compileModule(new URL('workspace-models.ts', pluginAdmin), options)),
+  };
+};
+const { describeEntry, describeCommerceEntry, formatMoney, getRelationOptionLabel, supportCollections, commerceFlowSlugs } =
+  (await adminModulesFor('products')).models;
 const { normalizeCurrency, storeCurrency } = await import(currencyUrl);
 
-test('commerce tools render inside the CMS by default and reject external link overrides', () => {
+test('commerce tools link relative to the admin path and pass adminPages overrides through', () => {
   const defaults = ecommercePlugin();
+  // The integration resolves these under the site's admin path, so they hold for any adminPath.
   assert.deepEqual(defaults.adminLinks?.map(link => link.href), [
-    '/admin/extensions/commerce-orders',
-    '/admin/extensions/commerce-promotions',
-    '/admin/extensions/commerce-gift-cards'
+    'extensions/commerce-orders',
+    'extensions/commerce-promotions',
+    'extensions/commerce-gift-cards'
   ]);
   assert.deepEqual(defaults.adminUi?.map(page => [page.path, page.section]), [
     ['commerce-orders', 'commerce'], ['commerce-promotions', 'commerce'],
     ['commerce-gift-cards', 'commerce']
   ]);
 
+  // An override is given to the integration as written, relative or absolute; it refuses a value
+  // that is not a path on the site (a full URL, a host) at config time.
   const plugin = ecommercePlugin({
     adminTestCheckout: true,
-    adminPages: {
-      orders: '/admin/orders',
-      promotions: '/admin/promotions',
-      giftCards: 'https://external.example/cards',
-      testCheckout: '//external.example/checkout'
-    }
+    adminPages: { orders: '/orders', promotions: 'extensions/promotions', giftCards: 'https://external.example/cards' }
   });
-
   assert.deepEqual(plugin.adminLinks?.map(link => [link.section, link.label, link.href]), [
-    ['commerce', 'Orders & fulfillment', '/admin/orders'],
-    ['commerce', 'Promotions & referrals', '/admin/promotions']
+    ['commerce', 'Orders & fulfillment', '/orders'],
+    ['commerce', 'Promotions & referrals', 'extensions/promotions'],
+    ['commerce', 'Gift cards', 'https://external.example/cards'],
+    ['commerce', 'Test checkout', 'extensions/commerce-test-checkout']
   ]);
 });
 
@@ -71,7 +79,7 @@ test('the admin test checkout is opt-in: no screen, route or simulated provider 
     assert.ok(!endpointPaths(plugin).includes('/ecommerce/test-checkout'));
     assert.ok(!plugin.adminUi.some(page => page.path === 'commerce-test-checkout'));
     assert.ok(!plugin.adminLinks.some(link => link.href.endsWith('commerce-test-checkout')));
-    assert.equal(await adminOptions(plugin), 'export const adminTestCheckout = false;');
+    assert.equal(await adminOptions(plugin), 'export const adminTestCheckout = false;\nexport const productsCollectionSlug = "products";');
   }
   // Cart, checkout, order and webhook routes stay registered either way.
   assert.ok(['/ecommerce/cart', '/ecommerce/checkout', '/ecommerce/order', '/ecommerce/webhooks/stripe']
@@ -84,8 +92,11 @@ test('the admin test checkout is opt-in: no screen, route or simulated provider 
   assert.match(testCheckout.entrypoint, /ecommerce-admin-test-checkout\.(js|ts)$/);
   assert.deepEqual(enabled.adminUi.at(-1), { path: 'commerce-test-checkout', label: 'Test checkout',
     section: 'commerce', componentPath: '@talisman-cms/plugin-ecommerce/admin/TestCheckout' });
-  assert.equal(enabled.adminLinks.at(-1).href, '/admin/extensions/commerce-test-checkout');
-  assert.equal(await adminOptions(enabled), 'export const adminTestCheckout = true;');
+  assert.equal(enabled.adminLinks.at(-1).href, 'extensions/commerce-test-checkout');
+  assert.equal(await adminOptions(enabled), 'export const adminTestCheckout = true;\nexport const productsCollectionSlug = "products";');
+  // The admin screens read the configured products slug from the same module.
+  assert.equal(await adminOptions(ecommercePlugin({ productsCollectionSlug: 'frames' })),
+    'export const adminTestCheckout = false;\nexport const productsCollectionSlug = "frames";');
 });
 
 test('the plugin registers the Commerce section, the editor panels, the describer and the store currency', () => {
@@ -193,8 +204,62 @@ test('commerce records are described with prices in the store currency, scaled b
   assert.deepEqual(describeEntry('_ecommerce_stocks', { id: 's1', data: { productVariantValueId: 'v1', quantity: 3 } }, entries, context),
     { title: 'Stock for Large', subtitle: 'Product: Poster • Option: Size • Value: Large', details: ['Quantity 3'] });
   // The editor of a product-flow record loads the whole flow; other editors load only their relation targets.
-  assert.deepEqual(supportCollections('_ecommerce_stocks', ['x']), [...COMMERCE_FLOW_SLUGS]);
+  assert.deepEqual(supportCollections('_ecommerce_stocks', ['x']), commerceFlowSlugs());
+  assert.equal(commerceFlowSlugs()[0], 'products');
   assert.deepEqual(supportCollections('posts', ['authors']), []);
+});
+
+test('the commerce admin follows a configured products slug in labels, the flow and the workspace', async () => {
+  const { models, workspace } = await adminModulesFor('frames');
+  const context = { readSetting: () => 'usd' };
+  const product = { id: 'p1', data: { name: 'Poster', slug: 'poster', basePrice: 1250 } };
+  const entries = {
+    frames: [product],
+    _ecommerce_variants: [{ id: 'd1', data: { name: 'Size' } }],
+    _ecommerce_product_variants: [{ id: 'g1', data: { productId: 'p1', variantId: 'd1', name: 'Sizes' } }],
+    _ecommerce_product_variant_values: [{ id: 'v1', data: { productVariantId: 'g1', value: 'Large' } }],
+  };
+  // The products collection is described under its slug, and 'products' is now an unknown collection.
+  assert.equal(models.describeEntry('frames', product, entries, context).title, 'Poster');
+  assert.equal(models.describeEntry('products', product, entries, context), null);
+  // A variant group, a value and a stock row name their product from the collection under its slug.
+  assert.equal(models.describeEntry('_ecommerce_product_variants', entries._ecommerce_product_variants[0], entries, context).subtitle,
+    'Product: Poster • Option: Size');
+  assert.equal(models.describeEntry('_ecommerce_product_variant_values', entries._ecommerce_product_variant_values[0], entries, context).subtitle,
+    'Group: Sizes • Product: Poster • Option: Size');
+  assert.deepEqual(models.describeEntry('_ecommerce_stocks', { id: 's1', data: { productVariantValueId: 'v1', quantity: 3 } }, entries, context),
+    { title: 'Stock for Large', subtitle: 'Product: Poster • Option: Size • Value: Large', details: ['Quantity 3'] });
+  // The editor loads the flow under the configured slug, and the guide and flow summary know it.
+  assert.deepEqual(models.commerceFlowSlugs().slice(0, 2), ['frames', '_ecommerce_variants']);
+  assert.deepEqual(models.supportCollections('frames'), models.commerceFlowSlugs());
+  assert.deepEqual(models.supportCollections('products'), []);
+  assert.equal(models.getCommerceModelGuide('frames').title, 'Variant Flow');
+  assert.equal(models.getCommerceModelGuide('products'), null);
+  assert.deepEqual(models.getCommerceFlowSummary('_ecommerce_product_variants', { name: 'Sizes', productId: 'p1', variantId: 'd1' }, entries).map(item => [item.label, item.value]),
+    [['Product', 'Poster'], ['Option', 'Size'], ['Group', 'Sizes']]);
+
+  // The workspace lists the site's products collection under its slug, as a highlight and not as store content.
+  const model = (slug, extra = {}) => ({ slug, name: slug, itemCount: 1, ...extra });
+  const site = [model('frames'), model('posts'), model('_ecommerce_orders'), model('_ecommerce_stocks'), model('_ecommerce_payments')];
+  const groups = workspace.groupCommerceModels(site);
+  assert.equal(groups.products?.slug, 'frames');
+  assert.deepEqual(groups.content.map(item => item.slug), ['posts']);
+  assert.deepEqual(groups.catalog.map(item => item.slug), ['_ecommerce_stocks']);
+  assert.deepEqual(groups.advanced.map(item => item.slug), ['_ecommerce_payments']);
+  assert.equal(groups.orders?.slug, '_ecommerce_orders');
+  assert.equal(workspace.modelHelp(model('frames')), 'Images, prices, options, and availability');
+  assert.equal(workspace.modelHelp(model('posts', { description: 'Stories' })), 'Stories');
+  // A collection mapped to the plugin's products table is the products collection whatever its slug.
+  const mapped = model('shop_items', { nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'products', idColumn: 'id' } });
+  assert.equal(workspace.groupCommerceModels([model('posts'), mapped]).products, mapped);
+  // Under the default slug a 'frames' collection is store content.
+  const defaults = (await adminModulesFor('products')).workspace.groupCommerceModels(site);
+  assert.equal(defaults.products, undefined);
+  assert.deepEqual(defaults.content.map(item => item.slug), ['frames', 'posts']);
+  // Tool links resolved under any admin path open the plugin page inside the SPA.
+  assert.equal(workspace.extensionPathOf('/console/extensions/commerce-orders'), 'commerce-orders');
+  assert.equal(workspace.extensionPathOf('/extensions/commerce-orders'), 'commerce-orders');
+  assert.equal(workspace.extensionPathOf('/orders'), undefined);
 });
 
 test('the admin reads the store currency from the page meta tag, and USD without a usable one', () => {

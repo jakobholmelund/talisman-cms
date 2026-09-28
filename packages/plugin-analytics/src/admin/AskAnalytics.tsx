@@ -1,7 +1,8 @@
 import React, { useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import type { AskReport } from '../ask';
-import { adminBase, Metric, money, number, Panel, refundWording, Trend } from './common';
+import { adminRequest } from 'talisman-cms/ui/sdk';
+import { Metric, money, number, Panel, refundWording, Trend } from './common';
 import { formatRange } from './dates';
 
 const suggestions = [
@@ -31,13 +32,7 @@ export default function AskAnalytics() {
     controller.current = active;
     setLoading(true); setError(''); setReport(null); setQuestion(trimmed);
     try {
-      const response = await fetch(`${adminBase()}/api/analytics/ask`, {
-        method: 'POST', credentials: 'same-origin', signal: active.signal,
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: trimmed }),
-      });
-      const body = await response.json() as AskReport & { error?: string };
-      if (!response.ok) throw new Error(body.error || 'Could not create the report.');
-      setReport(body);
+      setReport(await adminRequest<AskReport>('analytics/ask', { body: { question: trimmed }, signal: active.signal }));
     } catch (cause) {
       if (!active.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not create the report.');
     } finally {
