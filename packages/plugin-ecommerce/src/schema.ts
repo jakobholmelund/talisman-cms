@@ -67,6 +67,7 @@ export const carts = sqliteTable('_ecommerce_carts', {
 ]);
 
 export const FULFILLMENT_STATUSES = ['unfulfilled', 'partially_fulfilled', 'fulfilled'] as const;
+export const TAX_BEHAVIORS = ['inclusive', 'exclusive'] as const;
 
 export const orders = sqliteTable('_ecommerce_orders', {
   id: text('id').primaryKey(),
@@ -90,14 +91,14 @@ export const orders = sqliteTable('_ecommerce_orders', {
   shippingLabel: text('shipping_label'),
   taxAmount: integer('tax_amount').notNull().default(0),
   /** `exclusive` tax is added to the amount due; `inclusive` tax is already inside the amounts and only recorded. */
-  taxBehavior: text('tax_behavior').$type<'inclusive' | 'exclusive'>(),
+  taxBehavior: text('tax_behavior', { enum: TAX_BEHAVIORS }),
   taxCalculationId: text('tax_calculation_id'),
   taxTransactionId: text('tax_transaction_id'),
   // Payment: draft, pending, paid, partially_refunded, refunded, disputed or cancelled. The legacy
   // 'fulfilled' is still read as paid.
   status: text('status').notNull().default('draft'),
   /** Shipping, kept apart from payment so that a refund never hides a shipment. */
-  fulfillmentStatus: text('fulfillment_status').$type<'unfulfilled' | 'partially_fulfilled' | 'fulfilled'>().notNull().default('unfulfilled'),
+  fulfillmentStatus: text('fulfillment_status', { enum: FULFILLMENT_STATUSES }).notNull().default('unfulfilled'),
   items: text('items', { mode: 'json' }).$type<Array<{ productId: string, variantId?: string, quantity: number, priceAtPurchase: number, usesComponents?: boolean }>>().notNull().default([]),
   totalAmount: integer('total_amount').notNull(),
   currency: text('currency').notNull().default('usd'),
@@ -134,7 +135,7 @@ export const orders = sqliteTable('_ecommerce_orders', {
   check('orders_gift_card_refunded_within_applied', sql`${table.giftCardRefundedCents} >= 0 AND ${table.giftCardRefundedCents} <= ${table.giftCardApplied}`),
   check('orders_shipping_nonnegative', money(table.shippingAmount, 'nonnegative')),
   check('orders_tax_nonnegative', money(table.taxAmount, 'nonnegative')),
-  check('orders_tax_behavior', nullOrOneOf(table.taxBehavior, ['inclusive', 'exclusive'])),
+  check('orders_tax_behavior', nullOrOneOf(table.taxBehavior, TAX_BEHAVIORS)),
   check('orders_fulfillment_status', oneOf(table.fulfillmentStatus, FULFILLMENT_STATUSES)),
   ...reconcileChecks('orders', table),
   ...taxSyncChecks('orders', table),
@@ -171,6 +172,9 @@ export const providerRefunds = sqliteTable('_ecommerce_provider_refunds', {
   check('provider_refund_amount_positive', money(table.amountCents, 'positive')),
 ]);
 
+export const PRODUCT_TYPES = ['standard', 'digital', 'subscription'] as const;
+export const PRODUCT_STATUSES = ['draft', 'active', 'archived'] as const;
+
 export const products = sqliteTable('_ecommerce_products', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
@@ -183,8 +187,8 @@ export const products = sqliteTable('_ecommerce_products', {
   basePrice: integer('base_price').notNull().default(0), // In smallest currency unit (cents)
   isPhysical: integer('is_physical', { mode: 'boolean' }).notNull().default(true),
   inventoryQuantity: integer('inventory_quantity').notNull().default(0),
-  type: text('type').notNull().default('standard'), // standard, digital, subscription
-  status: text('status').notNull().default('draft'), // draft, active, archived
+  type: text('type', { enum: PRODUCT_TYPES }).notNull().default('standard'),
+  status: text('status', { enum: PRODUCT_STATUSES }).notNull().default('draft'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull()
 });
@@ -262,17 +266,19 @@ export const componentReservations = sqliteTable('_ecommerce_component_reservati
   check('component_reservation_quantity_positive', money(table.quantity, 'positive'))
 ]);
 
+export const RESERVATION_TARGET_TYPES = ['product', 'variant', 'stock'] as const;
+
 /** Ordinary product, variant, and variant-value stock held during checkout. */
 export const inventoryReservations = sqliteTable('_ecommerce_inventory_reservations', {
   id: text('id').primaryKey(),
   orderId: text('order_id').notNull().references(() => orders.id),
-  targetType: text('target_type').$type<'product' | 'variant' | 'stock'>().notNull(),
+  targetType: text('target_type', { enum: RESERVATION_TARGET_TYPES }).notNull(),
   targetId: text('target_id').notNull(),
   quantity: integer('quantity').notNull(),
   releasedAt: integer('released_at', { mode: 'timestamp' })
 }, (table) => [
   uniqueIndex('inventory_reservation_unique').on(table.orderId, table.targetType, table.targetId),
-  check('inventory_reservation_target_type', oneOf(table.targetType, ['product', 'variant', 'stock'])),
+  check('inventory_reservation_target_type', oneOf(table.targetType, RESERVATION_TARGET_TYPES)),
   check('inventory_reservation_quantity_positive', money(table.quantity, 'positive'))
 ]);
 
@@ -333,6 +339,8 @@ export const customerAccounts = sqliteTable('_ecommerce_customer_accounts', {
   uniqueIndex('_ecommerce_customer_accounts_cms_user_idx').on(table.cmsUserId).where(sql`${table.cmsUserId} IS NOT NULL`),
 ]);
 
+export const CUSTOMER_SESSION_PURPOSES = ['session', 'email_challenge'] as const;
+
 export const customerSessions = sqliteTable('_ecommerce_customer_sessions', {
   id: text('id').primaryKey(),
   accountId: text('account_id').notNull().references(() => customerAccounts.id, { onDelete: 'cascade' }),
@@ -342,11 +350,11 @@ export const customerSessions = sqliteTable('_ecommerce_customer_sessions', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   revokedAt: integer('revoked_at', { mode: 'timestamp' }),
   /** `email_challenge` rows came from the sign-in links of earlier releases; links use `signInTokens`. */
-  purpose: text('purpose').$type<'session' | 'email_challenge'>().notNull().default('session'),
+  purpose: text('purpose', { enum: CUSTOMER_SESSION_PURPOSES }).notNull().default('session'),
 }, (table) => [
   index('_ecommerce_customer_sessions_account_idx').on(table.accountId),
   index('_ecommerce_customer_sessions_challenge_idx').on(table.accountId, table.purpose, table.createdAt),
-  check('customer_session_purpose', oneOf(table.purpose, ['session', 'email_challenge'])),
+  check('customer_session_purpose', oneOf(table.purpose, CUSTOMER_SESSION_PURPOSES)),
 ]);
 
 /** One-time sign-in links. The account for the address is created or linked only when a link is used. */
@@ -369,6 +377,8 @@ export const rateLimits = sqliteTable('_ecommerce_rate_limits', {
  * Shipments, several per order when it ships in parcels, and corrections that restate a shipment's
  * carrier and tracking number. Rows are never changed; the latest correction of a shipment is in force.
  */
+export const FULFILLMENT_KINDS = ['shipment', 'correction'] as const;
+
 export const fulfillments = sqliteTable('_ecommerce_fulfillments', {
   id: text('id').primaryKey(),
   orderId: text('order_id').notNull().references(() => orders.id),
@@ -378,14 +388,14 @@ export const fulfillments = sqliteTable('_ecommerce_fulfillments', {
   /** The shipment note, or the reason for a correction. */
   note: text('note').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
-  kind: text('kind').$type<'shipment' | 'correction'>().notNull().default('shipment'),
+  kind: text('kind', { enum: FULFILLMENT_KINDS }).notNull().default('shipment'),
   /** The shipment a correction restates; null for a shipment. */
   correctsId: text('corrects_id').references((): AnySQLiteColumn => fulfillments.id),
   /** Whether a shipment completes its order; false for one parcel of a split shipment. */
   completesOrder: integer('completes_order', { mode: 'boolean' }).notNull().default(true),
 }, (table) => [
   index('_ecommerce_fulfillments_order_idx').on(table.orderId, table.createdAt),
-  check('fulfillment_kind', oneOf(table.kind, ['shipment', 'correction'])),
+  check('fulfillment_kind', oneOf(table.kind, FULFILLMENT_KINDS)),
   check('fulfillment_completes_order_flag', flag(table.completesOrder)),
   check('fulfillment_correction_names_shipment', sql`(${table.kind} = 'shipment') = (${table.correctsId} IS NULL)`),
   check('fulfillment_only_shipment_completes', sql`${table.kind} = 'shipment' OR ${table.completesOrder} = 0`),
@@ -399,6 +409,8 @@ export const referralCodes = sqliteTable('_ecommerce_referral_codes', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 
+export const REFERRAL_STATUSES = ['approved', 'void'] as const;
+
 /** A qualified first purchase is recorded once, regardless of webhook retries. */
 export const referrals = sqliteTable('_ecommerce_referrals', {
   id: text('id').primaryKey(),
@@ -408,13 +420,13 @@ export const referrals = sqliteTable('_ecommerce_referrals', {
   orderId: text('order_id').notNull().references(() => orders.id).unique(),
   rewardCents: integer('reward_cents').notNull(),
   currency: text('currency').notNull().default('usd'),
-  status: text('status').$type<'approved' | 'void'>().notNull().default('approved'),
+  status: text('status', { enum: REFERRAL_STATUSES }).notNull().default('approved'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [
   index('_ecommerce_referrals_referrer_idx').on(table.referrerAccountId, table.createdAt),
   check('referral_reward_nonnegative', money(table.rewardCents, 'nonnegative')),
-  check('referral_status', oneOf(table.status, ['approved', 'void'])),
+  check('referral_status', oneOf(table.status, REFERRAL_STATUSES)),
 ]);
 
 export const CREDIT_LEDGER_KINDS = ['referral_award', 'welcome_award', 'checkout_reserve', 'checkout_release', 'purchase_credit_refund', 'referral_reversal', 'welcome_reversal'] as const;
@@ -424,7 +436,7 @@ export const creditLedger = sqliteTable('_ecommerce_credit_ledger', {
   id: text('id').primaryKey(),
   accountId: text('account_id').notNull().references(() => customerAccounts.id),
   orderId: text('order_id').notNull().references(() => orders.id),
-  kind: text('kind').$type<typeof CREDIT_LEDGER_KINDS[number]>().notNull(),
+  kind: text('kind', { enum: CREDIT_LEDGER_KINDS }).notNull(),
   amountCents: integer('amount_cents').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [
@@ -450,11 +462,13 @@ export const referralSettings = sqliteTable('_ecommerce_referral_settings', {
   check('referral_settings_attribution_range', sql`${table.attributionDays} BETWEEN 1 AND 90`),
 ]);
 
+export const DISCOUNT_CODE_TYPES = ['credit', 'amount', 'percent'] as const;
+
 /** Credit vouchers carry a dwindling balance; amount and percent codes are reusable offers. */
 export const discountCodes = sqliteTable('_ecommerce_discount_codes', {
   code: text('code').primaryKey(),
   description: text('description'),
-  type: text('type').$type<'credit' | 'amount' | 'percent'>().notNull(),
+  type: text('type', { enum: DISCOUNT_CODE_TYPES }).notNull(),
   value: integer('value').notNull(), // Store currency minor units for credit/amount, basis points for percent.
   remainingCents: integer('remaining_cents'),
   maxDiscountCents: integer('max_discount_cents'),
@@ -469,7 +483,7 @@ export const discountCodes = sqliteTable('_ecommerce_discount_codes', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [
-  check('discount_code_type', oneOf(table.type, ['credit', 'amount', 'percent'])),
+  check('discount_code_type', oneOf(table.type, DISCOUNT_CODE_TYPES)),
   check('discount_code_value_positive', money(table.value, 'positive')),
   check('discount_code_remaining_nonnegative', money(table.remainingCents, 'nonnegative')),
   check('discount_code_max_discount_positive', money(table.maxDiscountCents, 'positive')),
@@ -494,7 +508,7 @@ export const discountRedemptions = sqliteTable('_ecommerce_discount_redemptions'
   accountId: text('account_id').references(() => customerAccounts.id),
   emailNormalized: text('email_normalized').notNull(),
   amountCents: integer('amount_cents').notNull(),
-  status: text('status').$type<typeof REDEMPTION_STATUSES[number]>().notNull().default('reserved'),
+  status: text('status', { enum: REDEMPTION_STATUSES }).notNull().default('reserved'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [
@@ -512,7 +526,7 @@ export const giftCardPurchases = sqliteTable('_ecommerce_gift_card_purchases', {
   buyerEmail: text('buyer_email').notNull(),
   amountCents: integer('amount_cents').notNull(),
   currency: text('currency').notNull().default('usd'),
-  status: text('status').$type<typeof GIFT_CARD_PURCHASE_STATUSES[number]>().notNull().default('pending'),
+  status: text('status', { enum: GIFT_CARD_PURCHASE_STATUSES }).notNull().default('pending'),
   providerSessionId: text('provider_session_id').unique(),
   paymentIntentId: text('payment_intent_id').unique(),
   providerRefundedCents: integer('provider_refunded_cents').notNull().default(0),
@@ -532,13 +546,16 @@ export const giftCardPurchases = sqliteTable('_ecommerce_gift_card_purchases', {
   ...reconcileChecks('gift_card_purchase', table),
 ]);
 
+export const GIFT_CARD_SOURCES = ['purchase', 'admin'] as const;
+export const GIFT_CARD_STATUSES = ['active', 'suspended', 'void'] as const;
+
 /** Gift card codes are bearer secrets; only hashes and encrypted copies are stored. */
 export const giftCards = sqliteTable('_ecommerce_gift_cards', {
   id: text('id').primaryKey(),
   codeHash: text('code_hash').notNull().unique(),
   codeSuffix: text('code_suffix').notNull(),
   encryptedCode: text('encrypted_code').notNull(),
-  source: text('source').$type<'purchase' | 'admin'>().notNull(),
+  source: text('source', { enum: GIFT_CARD_SOURCES }).notNull(),
   purchaseId: text('purchase_id').references(() => giftCardPurchases.id).unique(),
   /** Set on an administrator-issued card that took over a purchase's value; a refund of that purchase holds it too. */
   replacesPurchaseId: text('replaces_purchase_id').references(() => giftCardPurchases.id),
@@ -549,16 +566,16 @@ export const giftCards = sqliteTable('_ecommerce_gift_cards', {
   initialCents: integer('initial_cents').notNull(),
   balanceCents: integer('balance_cents').notNull().default(0),
   currency: text('currency').notNull().default('usd'),
-  status: text('status').$type<'active' | 'suspended' | 'void'>().notNull().default('active'),
+  status: text('status', { enum: GIFT_CARD_STATUSES }).notNull().default('active'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [
   index('_ecommerce_gift_cards_replaces_purchase_idx').on(table.replacesPurchaseId).where(sql`${table.replacesPurchaseId} IS NOT NULL`),
-  check('gift_card_source', oneOf(table.source, ['purchase', 'admin'])),
+  check('gift_card_source', oneOf(table.source, GIFT_CARD_SOURCES)),
   check('gift_card_initial_range', sql`${table.initialCents} BETWEEN 500 AND 100000`),
   check('gift_card_balance_within_initial', sql`${table.balanceCents} BETWEEN 0 AND ${table.initialCents}`),
   check('gift_card_currency_usd', sql`${table.currency} = 'usd'`),
-  check('gift_card_status', oneOf(table.status, ['active', 'suspended', 'void'])),
+  check('gift_card_status', oneOf(table.status, GIFT_CARD_STATUSES)),
   check('gift_card_replacement_by_admin', sql`${table.replacesPurchaseId} IS NULL OR ${table.source} = 'admin'`),
   check('gift_card_held_for_review_flag', flag(table.heldForReview)),
   // A purchased card names its purchase; an administrator's card names who issued it and why.
@@ -573,7 +590,7 @@ export const giftCardLedger = sqliteTable('_ecommerce_gift_card_ledger', {
   cardId: text('card_id').notNull().references(() => giftCards.id),
   orderId: text('order_id').references(() => orders.id),
   purchaseId: text('purchase_id').references(() => giftCardPurchases.id),
-  kind: text('kind').$type<typeof GIFT_CARD_LEDGER_KINDS[number]>().notNull(),
+  kind: text('kind', { enum: GIFT_CARD_LEDGER_KINDS }).notNull(),
   amountCents: integer('amount_cents').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [
@@ -590,7 +607,7 @@ export const giftCardRedemptions = sqliteTable('_ecommerce_gift_card_redemptions
   cardId: text('card_id').notNull().references(() => giftCards.id),
   orderId: text('order_id').notNull().references(() => orders.id).unique(),
   amountCents: integer('amount_cents').notNull(),
-  status: text('status').$type<typeof REDEMPTION_STATUSES[number]>().notNull().default('reserved'),
+  status: text('status', { enum: REDEMPTION_STATUSES }).notNull().default('reserved'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [
@@ -612,12 +629,14 @@ export const giftCardRefunds = sqliteTable('_ecommerce_gift_card_refunds', {
   check('gift_card_refund_amount_positive', money(table.amountCents, 'positive')),
 ]);
 
+export const GIFT_CARD_REVIEW_OUTCOMES = ['reinstate', 'void'] as const;
+
 /** Administrator decisions on purchases held for review after a provider refund. */
 export const giftCardReviews = sqliteTable('_ecommerce_gift_card_reviews', {
   id: text('id').primaryKey(),
   purchaseId: text('purchase_id').notNull().references(() => giftCardPurchases.id),
   cardId: text('card_id').notNull().references(() => giftCards.id), // The card that held the purchase's value.
-  outcome: text('outcome').$type<'reinstate' | 'void'>().notNull(),
+  outcome: text('outcome', { enum: GIFT_CARD_REVIEW_OUTCOMES }).notNull(),
   refundedCents: integer('refunded_cents').notNull(), // The provider refund total the decision covered.
   adjustmentCents: integer('adjustment_cents').notNull(), // Taken off the purchase's cards.
   adminActor: text('admin_actor').notNull(),
@@ -625,7 +644,7 @@ export const giftCardReviews = sqliteTable('_ecommerce_gift_card_reviews', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [
   index('_ecommerce_gift_card_reviews_purchase_idx').on(table.purchaseId, table.createdAt),
-  check('gift_card_review_outcome', oneOf(table.outcome, ['reinstate', 'void'])),
+  check('gift_card_review_outcome', oneOf(table.outcome, GIFT_CARD_REVIEW_OUTCOMES)),
   check('gift_card_review_refunded_positive', money(table.refundedCents, 'positive')),
   check('gift_card_review_adjustment_nonnegative', money(table.adjustmentCents, 'nonnegative')),
   check('gift_card_review_admin_actor_filled', filled(table.adminActor)),
@@ -680,13 +699,16 @@ export const disputes = sqliteTable('_ecommerce_disputes', {
   check('dispute_names_one_subject', sql`(${table.orderId} IS NULL) <> (${table.giftCardPurchaseId} IS NULL)`),
 ]);
 
+export const RESTOCK_RESERVATION_TYPES = ['inventory', 'component'] as const;
+export const RESTOCK_TARGET_TYPES = ['product', 'variant', 'stock', 'component'] as const;
+
 /** Reservation rows of refunded orders that an administrator returned to stock, each once, with the reason. */
 export const restocks = sqliteTable('_ecommerce_restocks', {
   id: text('id').primaryKey(),
   orderId: text('order_id').notNull().references(() => orders.id),
-  reservationType: text('reservation_type').$type<'inventory' | 'component'>().notNull(),
+  reservationType: text('reservation_type', { enum: RESTOCK_RESERVATION_TYPES }).notNull(),
   reservationId: text('reservation_id').notNull(),
-  targetType: text('target_type').$type<'product' | 'variant' | 'stock' | 'component'>().notNull(),
+  targetType: text('target_type', { enum: RESTOCK_TARGET_TYPES }).notNull(),
   targetId: text('target_id').notNull(),
   quantity: integer('quantity').notNull(),
   adminActor: text('admin_actor').notNull(),
@@ -695,8 +717,8 @@ export const restocks = sqliteTable('_ecommerce_restocks', {
 }, (table) => [
   uniqueIndex('_ecommerce_restocks_reservation_unique').on(table.reservationType, table.reservationId),
   index('_ecommerce_restocks_order_idx').on(table.orderId, table.createdAt),
-  check('restock_reservation_type', oneOf(table.reservationType, ['inventory', 'component'])),
-  check('restock_target_type', oneOf(table.targetType, ['product', 'variant', 'stock', 'component'])),
+  check('restock_reservation_type', oneOf(table.reservationType, RESTOCK_RESERVATION_TYPES)),
+  check('restock_target_type', oneOf(table.targetType, RESTOCK_TARGET_TYPES)),
   check('restock_quantity_positive', money(table.quantity, 'positive')),
   check('restock_admin_actor_filled', filled(table.adminActor)),
   check('restock_reason_length', trimmed(table.reason, 8)),
@@ -706,22 +728,25 @@ export const restocks = sqliteTable('_ecommerce_restocks', {
  * Administrator decisions on orders and gift card purchases parked for review, each recorded with the
  * retry or release it carried out. Exactly one of orderId and purchaseId is set.
  */
+export const RECONCILE_DECISION_ACTIONS = ['retry', 'release'] as const;
+export const PAYMENT_RETURNED_KINDS = ['refunded', 'dispute_lost', 'confirmed'] as const;
+
 export const reconcileDecisions = sqliteTable('_ecommerce_reconcile_decisions', {
   id: text('id').primaryKey(),
   orderId: text('order_id').references(() => orders.id),
   purchaseId: text('purchase_id').references(() => giftCardPurchases.id),
-  action: text('action').$type<'retry' | 'release'>().notNull(),
+  action: text('action', { enum: RECONCILE_DECISION_ACTIONS }).notNull(),
   failure: text('failure'), // The failure code the record was parked with.
   // How a released completed checkout's payment was shown to be returned; null for any other decision.
-  paymentReturned: text('payment_returned').$type<'refunded' | 'dispute_lost' | 'confirmed'>(),
+  paymentReturned: text('payment_returned', { enum: PAYMENT_RETURNED_KINDS }),
   adminActor: text('admin_actor').notNull(),
   reason: text('reason').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [
   index('_ecommerce_reconcile_decisions_order_idx').on(table.orderId, table.createdAt),
   index('_ecommerce_reconcile_decisions_purchase_idx').on(table.purchaseId, table.createdAt),
-  check('reconcile_decision_action', oneOf(table.action, ['retry', 'release'])),
-  check('reconcile_decision_payment_returned', nullOrOneOf(table.paymentReturned, ['refunded', 'dispute_lost', 'confirmed'])),
+  check('reconcile_decision_action', oneOf(table.action, RECONCILE_DECISION_ACTIONS)),
+  check('reconcile_decision_payment_returned', nullOrOneOf(table.paymentReturned, PAYMENT_RETURNED_KINDS)),
   check('reconcile_decision_admin_actor_filled', filled(table.adminActor)),
   check('reconcile_decision_reason_length', trimmed(table.reason, 8)),
   check('reconcile_decision_names_one_subject', sql`(${table.orderId} IS NULL) <> (${table.purchaseId} IS NULL)`),
@@ -737,10 +762,10 @@ export const EMAIL_STATUSES = ['pending', 'sent', 'failed', 'cancelled'] as cons
  */
 export const emailDeliveries = sqliteTable('_ecommerce_email_deliveries', {
   id: text('id').primaryKey(),
-  kind: text('kind').$type<typeof EMAIL_KINDS[number]>().notNull(),
+  kind: text('kind', { enum: EMAIL_KINDS }).notNull(),
   /** The order, the shipment or correction (fulfillment id), or the gift card purchase. */
   subjectId: text('subject_id').notNull(),
-  status: text('status').$type<typeof EMAIL_STATUSES[number]>().notNull().default('pending'),
+  status: text('status', { enum: EMAIL_STATUSES }).notNull().default('pending'),
   attempts: integer('attempts').notNull().default(0),
   lastError: text('last_error'),
   nextAttemptAt: integer('next_attempt_at', { mode: 'timestamp' }).notNull(),
