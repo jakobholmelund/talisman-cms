@@ -27,8 +27,15 @@ export function isCommerceFlowSlug(slug: string) {
   return commerceFlowSlugs().includes(slug);
 }
 
-/** Describer export: the extra collections the editor of a product-flow record loads. */
+/**
+ * Describer export: the extra collections the editor of a product-flow record loads. The editor of
+ * a variant group, value, stock or component record loads the whole flow, so the record can name
+ * its product, option and group. The product editor asks for nothing beyond its relation targets:
+ * its Options & stock panel reads the product's own rows, scoped to the product (product-rows.ts),
+ * and its labels need none of the flow tables.
+ */
 export function supportCollections(collectionSlug: string, _relationTargets: string[] = []) {
+  if (collectionSlug === productsCollectionSlug) return [];
   return isCommerceFlowSlug(collectionSlug) ? commerceFlowSlugs() : [];
 }
 

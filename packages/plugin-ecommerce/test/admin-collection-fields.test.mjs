@@ -6,6 +6,7 @@ import ts from 'typescript';
 import { ecommercePlugin } from '../dist/index.js';
 import * as schema from '../dist/schema.js';
 import { variantChangeSchema } from '../dist/variants.js';
+import { compileModule } from './helpers/admin-source.mjs';
 
 // The core refuses a native write to a table column that is not a configured field, so every key
 // the admin sends to a commerce collection must be one. Variant values and their stock go to the
@@ -268,4 +269,27 @@ test('a new commerce record from the collection form starts its optional fields 
     { sku: null, priceOverride: null, inventoryQuantity: 0 });
   const values = buildDefaultValues(injectedCollection('_ecommerce_product_variant_values').collection.fields);
   assert.deepEqual({ sku: values.sku, priceOverride: values.priceOverride }, { sku: null, priceOverride: null });
+});
+
+test('the product editor reads its rows through columns of the tables it reads', async () => {
+  // The Options & stock panel reads one product's rows with the entries API's `where` filter
+  // (product-rows.ts). The API resolves a filter name against the table's columns, so each name must
+  // be one, and a configured field, or the panel would get a 400 instead of the product's rows.
+  const adminApiUrl = compileModule(new URL('lib/admin-api.ts', coreUi));
+  const { PRODUCT_FLOW_FILTERS, PRODUCT_ROW_SLUGS } = await import(
+    compileModule(new URL('product-rows.ts', pluginAdmin), { 'talisman-cms/ui/lib/admin-api': adminApiUrl })
+  );
+  for (const slug of PRODUCT_ROW_SLUGS) injectedCollection(slug);
+  for (const [slug, column] of Object.entries(PRODUCT_FLOW_FILTERS)) {
+    const { collection, columns, isField } = injectedCollection(slug);
+    assert.ok(Object.hasOwn(columns, column), `${slug}.${column} is not a table column, so the entries API refuses the filter`);
+    assert.ok(isField(column), `${slug}.${column} is not a configured field of ${collection.name}`);
+  }
+  // Each filter is the column that points at the level above: the product, a group or a value.
+  assert.deepEqual(PRODUCT_FLOW_FILTERS, {
+    _ecommerce_product_variants: 'productId',
+    _ecommerce_product_variant_values: 'productVariantId',
+    _ecommerce_stocks: 'productVariantValueId',
+    _ecommerce_variant_components: 'productVariantValueId',
+  });
 });

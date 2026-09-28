@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, statSync } from 'node:fs';
-import ts from 'typescript';
+import { statSync } from 'node:fs';
 import { ecommercePlugin } from '../dist/index.js';
+import { compileModule, coreUi, pluginAdmin } from './helpers/admin-source.mjs';
 
 /** The source of the plugin's admin options module (virtual:talisman-cms/ecommerce-admin) for this site. */
 const adminOptions = async (plugin) => {
@@ -11,25 +11,8 @@ const adminOptions = async (plugin) => {
   return vitePlugin.load(id);
 };
 
-/**
- * The admin screens ship as TypeScript source (src/admin), so a helper module is compiled here and
- * loaded from a data URL. `links` maps the specifiers it imports to modules loaded the same way, so
- * a helper may import the core's own UI helpers; type-only imports are erased by the compiler.
- */
-const coreUi = new URL('../../talisman-cms/ui/', import.meta.url);
-const pluginAdmin = new URL('../src/admin/', import.meta.url);
-
-function compileModule(url, links = {}) {
-  let { outputText } = ts.transpileModule(readFileSync(url, 'utf8'), {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-  });
-  for (const [specifier, linked] of Object.entries(links)) {
-    outputText = outputText.replaceAll(`from '${specifier}'`, `from '${linked}'`).replaceAll(`from "${specifier}"`, `from "${linked}"`);
-  }
-  assert.doesNotMatch(outputText, /^import\s.*\bfrom\s+['"](?!data:)/m, `${url.pathname} imports a module this test does not link`);
-  return `data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`;
-}
-
+// The admin screens ship as TypeScript source (src/admin), so each helper module is compiled and
+// loaded from a data URL (helpers/admin-source.mjs), with the core helpers it imports linked the same way.
 const entrySaveUrl = compileModule(new URL('lib/entry-save.ts', coreUi));
 const currencyUrl = compileModule(new URL('currency.ts', pluginAdmin));
 const { getVariantChangeRecovery, describeVariantChangeFailure } =
@@ -203,10 +186,15 @@ test('commerce records are described with prices in the store currency, scaled b
   };
   assert.deepEqual(describeEntry('_ecommerce_stocks', { id: 's1', data: { productVariantValueId: 'v1', quantity: 3 } }, entries, context),
     { title: 'Stock for Large', subtitle: 'Product: Poster • Option: Size • Value: Large', details: ['Quantity 3'] });
-  // The editor of a product-flow record loads the whole flow; other editors load only their relation targets.
+  // The editor of a variant group, value, stock or component record loads the whole flow, so the
+  // record can name its product, option and group; other editors load only their relation targets.
   assert.deepEqual(supportCollections('_ecommerce_stocks', ['x']), commerceFlowSlugs());
+  assert.deepEqual(supportCollections('_ecommerce_product_variants', []), commerceFlowSlugs());
   assert.equal(commerceFlowSlugs()[0], 'products');
   assert.deepEqual(supportCollections('posts', ['authors']), []);
+  // The product editor asks for none of the flow tables: its Options & stock panel reads the
+  // product's own rows (product-rows.ts), and the core loads its relation targets as before.
+  assert.deepEqual(supportCollections('products', ['_ecommerce_categories', '_ecommerce_tags']), []);
 });
 
 test('the commerce admin follows a configured products slug in labels, the flow and the workspace', async () => {
@@ -229,9 +217,12 @@ test('the commerce admin follows a configured products slug in labels, the flow 
     'Group: Sizes • Product: Poster • Option: Size');
   assert.deepEqual(models.describeEntry('_ecommerce_stocks', { id: 's1', data: { productVariantValueId: 'v1', quantity: 3 } }, entries, context),
     { title: 'Stock for Large', subtitle: 'Product: Poster • Option: Size • Value: Large', details: ['Quantity 3'] });
-  // The editor loads the flow under the configured slug, and the guide and flow summary know it.
+  // The flow lists the products collection under the configured slug; the editors of the flow's
+  // other records load it, the product editor under that slug asks for none of it, and the guide
+  // and flow summary know the slug.
   assert.deepEqual(models.commerceFlowSlugs().slice(0, 2), ['frames', '_ecommerce_variants']);
-  assert.deepEqual(models.supportCollections('frames'), models.commerceFlowSlugs());
+  assert.deepEqual(models.supportCollections('_ecommerce_product_variant_values'), models.commerceFlowSlugs());
+  assert.deepEqual(models.supportCollections('frames'), []);
   assert.deepEqual(models.supportCollections('products'), []);
   assert.equal(models.getCommerceModelGuide('frames').title, 'Variant Flow');
   assert.equal(models.getCommerceModelGuide('products'), null);

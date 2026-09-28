@@ -1,7 +1,6 @@
 import React, { useEffect, useId, useState } from 'react';
 import { Button } from 'talisman-cms/ui/components/ui/button';
 import { MediaFieldInput } from 'talisman-cms/ui/components/MediaFieldInput';
-import type { RelationSupportEntries } from 'talisman-cms/ui/components/fields/relations';
 import type { AdminEditorPanelProps } from 'talisman-cms/ui/components/editor/panels';
 import {
   describeRequestError,
@@ -11,20 +10,15 @@ import {
 } from 'talisman-cms/ui/lib/entry-editor-data';
 import { describeCommerceEntry, formatMoney, getEntryData } from './commerce-models';
 import { storeCurrency } from './currency';
+import { loadProductRows, type ProductRows } from './product-rows';
 import { describeVariantChangeFailure, getVariantChangeRecovery } from './variant-recovery';
 
 // The product editor's Options & stock panel (Plugin.adminEditorPanels, after the form): the variant
 // groups, their values with stock, the option definitions and a storefront preview of the result.
-// Groups and definitions are written through the generic collections API; values with their stock
-// rows, and deletes, go to the plugin's variants endpoint, which applies each change in one batch.
-
-/** The tables the panel reads and writes; it reloads these after each change. */
-const PRODUCT_CONFIGURATOR_SLUGS = [
-  '_ecommerce_variants',
-  '_ecommerce_product_variants',
-  '_ecommerce_product_variant_values',
-  '_ecommerce_stocks',
-];
+// The panel reads its own rows, scoped to the product (product-rows.ts), and reads them again after
+// each change it saves. Groups and definitions are written through the generic collections API;
+// values with their stock rows, and deletes, go to the plugin's variants endpoint, which applies
+// each change in one batch.
 
 /** The native row's updatedAt as loaded, sent back so the server can refuse stale writes. */
 function getLoadedUpdatedAt(entry: any) {
@@ -32,8 +26,8 @@ function getLoadedUpdatedAt(entry: any) {
   return typeof updatedAt === 'string' || typeof updatedAt === 'number' ? updatedAt : null;
 }
 
-function definitionTitle(definition: any, relationSupportEntries: RelationSupportEntries) {
-  return describeCommerceEntry('_ecommerce_variants', definition, relationSupportEntries)?.title ?? definition.id;
+function definitionTitle(definition: any, rows: ProductRows) {
+  return describeCommerceEntry('_ecommerce_variants', definition, rows)?.title ?? definition.id;
 }
 
 type ProductVariantValueDraft = {
@@ -84,9 +78,10 @@ function toRequiredNumber(value: string, fallback = 0) {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
-function buildProductVariantDrafts(productId: string, relationSupportEntries: RelationSupportEntries): ProductVariantGroupDraft[] {
+/** The drafts of the product's saved groups, with their values and stock, from the rows loaded for the product. */
+function buildProductVariantDrafts(rows: ProductRows): ProductVariantGroupDraft[] {
   const stocksByValueId = new Map<string, any>();
-  for (const stockEntry of relationSupportEntries._ecommerce_stocks || []) {
+  for (const stockEntry of rows._ecommerce_stocks || []) {
     const stockData = getEntryData(stockEntry);
     if (stockData.productVariantValueId) {
       stocksByValueId.set(stockData.productVariantValueId, stockEntry);
@@ -94,7 +89,7 @@ function buildProductVariantDrafts(productId: string, relationSupportEntries: Re
   }
 
   const valuesByGroupId = new Map<string, ProductVariantValueDraft[]>();
-  for (const valueEntry of relationSupportEntries._ecommerce_product_variant_values || []) {
+  for (const valueEntry of rows._ecommerce_product_variant_values || []) {
     const valueData = getEntryData(valueEntry);
     if (!valueData.productVariantId) continue;
 
@@ -119,8 +114,8 @@ function buildProductVariantDrafts(productId: string, relationSupportEntries: Re
     valuesByGroupId.set(valueData.productVariantId, current);
   }
 
-  return (relationSupportEntries._ecommerce_product_variants || [])
-    .filter((entry) => getEntryData(entry).productId === productId)
+  // The groups were read by the product's id, so every one of them belongs to this product.
+  return (rows._ecommerce_product_variants || [])
     .map((entry) => {
       const data = getEntryData(entry);
       const values = valuesByGroupId.get(entry.id) || [];
@@ -179,16 +174,16 @@ function getProductPrimaryImageUrl(productValues: Record<string, any>) {
 function buildPreviewVariantGroups(
   productValues: Record<string, any>,
   draftGroups: ProductVariantGroupDraft[],
-  relationSupportEntries: RelationSupportEntries
+  rows: ProductRows
 ): PreviewVariantGroup[] {
   const basePrice = typeof productValues.basePrice === 'number' ? productValues.basePrice : 0;
   const definitionsById = new Map(
-    (relationSupportEntries._ecommerce_variants || []).map((entry) => [entry.id, entry])
+    (rows._ecommerce_variants || []).map((entry) => [entry.id, entry])
   );
 
   return draftGroups.map((group) => {
     const definition = group.variantId ? definitionsById.get(group.variantId) : null;
-    const label = definition ? definitionTitle(definition, relationSupportEntries) : (group.name || 'Option group');
+    const label = definition ? definitionTitle(definition, rows) : (group.name || 'Option group');
 
     return {
       id: group.localId,
@@ -208,14 +203,14 @@ function buildPreviewVariantGroups(
 function ProductStorefrontPreview({
   productValues,
   draftGroups,
-  relationSupportEntries,
+  rows,
 }: {
   productValues: Record<string, any>;
   draftGroups: ProductVariantGroupDraft[];
-  relationSupportEntries: RelationSupportEntries;
+  rows: ProductRows;
 }) {
   const imageUrls = getProductImageUrls(productValues);
-  const variantGroups = buildPreviewVariantGroups(productValues, draftGroups, relationSupportEntries);
+  const variantGroups = buildPreviewVariantGroups(productValues, draftGroups, rows);
   const defaultVariant = variantGroups
     .flatMap((group) => group.values.map((value) => ({ ...value, groupLabel: group.label })))
     .find((value) => value.quantity > 0) || null;
@@ -359,14 +354,16 @@ function ProductStorefrontPreview({
 
 function ProductVariantConfigurator({
   productId,
-  relationSupportEntries,
+  rows,
   basePath,
   onRefresh,
   productValues,
 }: {
   productId: string | null;
-  relationSupportEntries: RelationSupportEntries;
+  /** The product's rows as last loaded (product-rows.ts); the drafts are rebuilt from every new value. */
+  rows: ProductRows;
   basePath: string;
+  /** Reads the product's rows again and replaces `rows`; rejects when a read is refused. */
   onRefresh: () => Promise<void>;
   productValues: Record<string, any>;
 }) {
@@ -397,10 +394,10 @@ function ProductVariantConfigurator({
       return;
     }
 
-    setDraftGroups(buildProductVariantDrafts(productId, relationSupportEntries));
-  }, [productId, relationSupportEntries]);
+    setDraftGroups(buildProductVariantDrafts(rows));
+  }, [productId, rows]);
 
-  const variantDefinitions = relationSupportEntries._ecommerce_variants || [];
+  const variantDefinitions = rows._ecommerce_variants || [];
 
   const requestCollection = async (collectionSlug: string, method: 'POST' | 'PUT', payload: Record<string, any>, id?: string) => {
     const url = id
@@ -763,7 +760,7 @@ function ProductVariantConfigurator({
           ) : (
             variantDefinitions.map((definition) => (
               <span key={definition.id} className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-zinc-200">
-                {definitionTitle(definition, relationSupportEntries)}
+                {definitionTitle(definition, rows)}
               </span>
             ))
           )}
@@ -786,7 +783,7 @@ function ProductVariantConfigurator({
       <ProductStorefrontPreview
         productValues={productValues}
         draftGroups={draftGroups}
-        relationSupportEntries={relationSupportEntries}
+        rows={rows}
       />
 
       {draftGroups.length === 0 ? (
@@ -824,7 +821,7 @@ function ProductVariantConfigurator({
                     <option value="">Select an option definition...</option>
                     {variantDefinitions.map((definition) => (
                       <option key={definition.id} value={definition.id}>
-                        {definitionTitle(definition, relationSupportEntries)}
+                        {definitionTitle(definition, rows)}
                       </option>
                     ))}
                   </select>
@@ -985,26 +982,41 @@ function ProductVariantConfigurator({
   );
 }
 
+/** The rows shown, with the product they were read for; a read for another product is not shown. */
+type LoadedProductRows = { productId: string; rows: ProductRows };
+
 /**
- * Products get this panel below the form. The related tables normally arrive with the editor's load
- * (the describer's supportCollections); a panel that finds one missing loads them itself.
+ * Products get this panel below the form. It reads the product's own rows (product-rows.ts) rather
+ * than the whole variant, value and stock tables; the editor's relationSupportEntries hold the form's
+ * relation targets and are not needed here. A new product, without an id yet, gets only the
+ * definition tables. A refused read shows as an error, never as an empty product.
  */
-export default function ProductOptionsPanel({ entry, values, relationSupportEntries, refreshSupportEntries, basePath }: AdminEditorPanelProps) {
+export default function ProductOptionsPanel({ entry, values, basePath }: AdminEditorPanelProps) {
+  const productId = entry?.id || '';
+  const [loaded, setLoaded] = useState<LoadedProductRows | null>(null);
   const [loadError, setLoadError] = useState('');
-  const missingTables = PRODUCT_CONFIGURATOR_SLUGS.some((slug) => !(slug in relationSupportEntries));
 
   useEffect(() => {
-    if (!missingTables) return;
     let cancelled = false;
-    refreshSupportEntries(PRODUCT_CONFIGURATOR_SLUGS).catch((error) => {
-      if (!cancelled) setLoadError(describeRequestError(error));
-    });
+    setLoadError('');
+    loadProductRows(basePath, productId).then(
+      (rows) => { if (!cancelled) setLoaded({ productId, rows }); },
+      (error) => { if (!cancelled) setLoadError(describeRequestError(error)); }
+    );
     return () => {
       cancelled = true;
     };
-  }, [missingTables]);
+  }, [basePath, productId]);
 
-  if (missingTables) {
+  // After a change: the rows are read again and replace the shown ones, as long as the panel still
+  // shows this product. A refused read rejects, and the configurator reports it and keeps its rows.
+  const refreshRows = async () => {
+    const rows = await loadProductRows(basePath, productId);
+    setLoaded((current) => (current?.productId === productId ? { productId, rows } : current));
+  };
+
+  const rows = loaded && loaded.productId === productId ? loaded.rows : null;
+  if (!rows) {
     return loadError
       ? <p role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">{loadError}</p>
       : <p className="text-sm text-zinc-400">Loading options and stock...</p>;
@@ -1012,10 +1024,10 @@ export default function ProductOptionsPanel({ entry, values, relationSupportEntr
 
   return (
     <ProductVariantConfigurator
-      productId={entry?.id || null}
-      relationSupportEntries={relationSupportEntries}
+      productId={productId || null}
+      rows={rows}
       basePath={basePath}
-      onRefresh={() => refreshSupportEntries(PRODUCT_CONFIGURATOR_SLUGS)}
+      onRefresh={refreshRows}
       productValues={values}
     />
   );
