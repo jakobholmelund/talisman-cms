@@ -85,6 +85,10 @@
       "types": "./dist/workflows.d.ts",
       "import": "./dist/workflows.js"
     },
+    "./worker": {
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/worker.js"
+    },
     "./migrations": {
       "types": "./dist/migrations.d.ts",
       "import": "./dist/migrations.js"

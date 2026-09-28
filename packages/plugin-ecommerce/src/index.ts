@@ -214,6 +214,7 @@ export const ecommercePlugin = (
   return {
     name: '@talisman-cms/plugin-ecommerce',
     migrations: { dir: resolveMigrationsDir() },
+    scheduled: { moduleId: '@talisman-cms/plugin-ecommerce/scheduled' },
     adminLinks: adminPageDefinitions.flatMap(page => {
       const href = config?.adminPages?.[page.key] || `/admin/extensions/${page.path}`;
       return href?.startsWith('/') && !href.startsWith('//')

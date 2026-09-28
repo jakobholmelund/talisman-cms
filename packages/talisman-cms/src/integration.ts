@@ -184,6 +184,7 @@ const ADMIN_SECTION_ID = /^[a-z][a-z0-9-]*$/;
 const ADMIN_SETTING_NAME = /^[A-Z][A-Z0-9_]*$/;
 const SECRET_LOOKING_SETTING = /SECRET|KEY|TOKEN|PASSWORD/;
 const EDITOR_PANEL_PLACEMENTS = new Set(['before-fields', 'after-form']);
+const JS_IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
 
 /**
  * Checks the admin extension points a plugin declares at config time, so a typo fails the build with
@@ -238,6 +239,15 @@ function validateAdminExtensions(plugins: Plugin[]) {
         // Reported below.
       }
       if (!isDirectory) fail(`the adminStyleSources directory ${dir} does not exist.`);
+    }
+    if (plugin.scheduled !== undefined) {
+      const { moduleId, exportName } = plugin.scheduled ?? {};
+      if (typeof moduleId !== 'string' || !moduleId.trim()) {
+        fail('scheduled.moduleId names the server module that exports the scheduled job; it cannot be empty.');
+      }
+      if (exportName !== undefined && (typeof exportName !== 'string' || !JS_IDENTIFIER.test(exportName))) {
+        fail(`scheduled.exportName is the name of the export that holds the scheduled job (default "scheduled"), not ${JSON.stringify(exportName)}.`);
+      }
     }
   }
 }
@@ -533,6 +543,27 @@ function buildCollectionHooksVirtualModule(collections: CollectionConfig[]) {
   `;
 }
 
+/**
+ * The Worker's scheduled jobs: one import per plugin that declares `scheduled`, in registration order.
+ * The module is imported by reference, like collection hooks, because the plugin object lives in the
+ * site's astro.config and does not survive the server build. `talisman-cms/worker` runs the list.
+ */
+function buildScheduledVirtualModule(plugins: Plugin[]) {
+  const imports: string[] = [];
+  const entries: string[] = [];
+  plugins.forEach((plugin, index) => {
+    if (!plugin.scheduled) return;
+    const importName = `scheduled_${index}`;
+    const exportName = plugin.scheduled.exportName || 'scheduled';
+    imports.push(`import { ${exportName} as ${importName} } from ${JSON.stringify(plugin.scheduled.moduleId)};`);
+    entries.push(`{ plugin: ${JSON.stringify(plugin.name)}, job: ${importName} }`);
+  });
+  return `
+    ${imports.join('\n')}
+    export const scheduledJobs = [${entries.join(', ')}];
+  `;
+}
+
 const DEFAULT_MIGRATIONS_DIR = 'node_modules/.talisman-cms/migrations';
 const WRANGLER_CONFIG_FILES = ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc'];
 // Resolves from dist/ and from src/ alike.
@@ -541,6 +572,30 @@ const coreMigrationsDir = fileURLToPath(new URL('../drizzle/', import.meta.url))
 function samePath(a: string, b: string) {
   const real = (path: string) => (existsSync(path) ? realpathSync(path) : resolve(path));
   return real(a) === real(b);
+}
+
+/** The text of a wrangler config file without its comments; no TOML or JSONC parser is used. */
+function readWranglerConfig(configPath: string, isToml: boolean) {
+  const raw = readFileSync(configPath, 'utf8');
+  return isToml ? raw.replace(/^\s*#.*$/gm, '') : raw.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+/**
+ * Warns when a plugin declares a scheduled job and none of the wrangler config files names a cron
+ * trigger, because the job would never run. A warning only: a site may keep its triggers in a config
+ * the integration cannot see.
+ */
+function checkWranglerCronTrigger(projectRoot: string, plugins: Plugin[]) {
+  const names = plugins.filter((plugin) => plugin.scheduled).map((plugin) => plugin.name);
+  if (!names.length) return;
+  for (const fileName of WRANGLER_CONFIG_FILES) {
+    const configPath = join(projectRoot, fileName);
+    if (!existsSync(configPath)) continue;
+    const isToml = fileName.endsWith('.toml');
+    const text = readWranglerConfig(configPath, isToml);
+    if (isToml ? /\bcrons\s*=\s*\[\s*["']/.test(text) : /"crons"\s*:\s*\[\s*["']/.test(text)) return;
+  }
+  console.warn(`[talisman-cms] ${names.join(', ')} ${names.length === 1 ? 'declares' : 'declare'} scheduled jobs, but no wrangler config has a cron trigger. Add [triggers] crons = ["*/10 * * * *"] and export the handler from talisman-cms/worker in the Worker entry (see the core README).`);
 }
 
 /**
@@ -556,8 +611,7 @@ function checkWranglerMigrationsDir(projectRoot: string, outDir: string, display
     const configPath = join(projectRoot, fileName);
     if (!existsSync(configPath)) continue;
     const isToml = fileName.endsWith('.toml');
-    const raw = readFileSync(configPath, 'utf8');
-    const text = isToml ? raw.replace(/^\s*#.*$/gm, '') : raw.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const text = readWranglerConfig(configPath, isToml);
     for (const match of text.matchAll(/["']?migrations_dir["']?\s*[=:]\s*(?:"([^"]*)"|'([^']*)')/g)) {
       const value = match[1] ?? match[2] ?? '';
       const dir = resolve(projectRoot, value);
@@ -666,7 +720,10 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
       'astro:config:setup': ({ injectRoute, updateConfig, addDevToolbarApp, addMiddleware, command, config }) => {
         assertDevAuthAllowed(finalOptions.auth, command, config?.server?.host);
         // Astro always passes config.root; the stand-ins in unit tests do not, and then there is no project to write into.
-        if (config?.root) writeProjectMigrations(finalOptions, finalOptions.plugins || [], fileURLToPath(config.root));
+        if (config?.root) {
+          writeProjectMigrations(finalOptions, finalOptions.plugins || [], fileURLToPath(config.root));
+          checkWranglerCronTrigger(fileURLToPath(config.root), finalOptions.plugins || []);
+        }
 
         console.log('[talisman-cms] Injecting admin route from:', adminRoutePath);
 
@@ -872,6 +929,15 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
                   if (id === '\0virtual:talisman-cms/collection-hooks') {
                     return buildCollectionHooksVirtualModule(finalOptions.collections || []);
                   }
+                }
+              },
+              {
+                name: 'vite-plugin-talisman-cms-scheduled',
+                resolveId(id) {
+                  if (id === 'virtual:talisman-cms/scheduled') return '\0virtual:talisman-cms/scheduled';
+                },
+                load(id) {
+                  if (id === '\0virtual:talisman-cms/scheduled') return buildScheduledVirtualModule(finalOptions.plugins || []);
                 }
               },
               {

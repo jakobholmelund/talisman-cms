@@ -88,6 +88,12 @@ declare module 'virtual:talisman-cms/collection-hooks' {
   export const collectionHooks: Record<string, CollectionHooks>;
 }
 
+/** Server only: the job of every plugin that declares `scheduled`, in registration order. */
+declare module 'virtual:talisman-cms/scheduled' {
+  import type { ScheduledJob } from './worker';
+  export const scheduledJobs: Array<{ plugin: string; job: ScheduledJob }>;
+}
+
 declare module 'virtual:talisman-cms/block-renderers' {
   export const blockRenderers: Record<string, any>;
   export const blockRenderersMeta: Record<string, { plugin: string; library: string }>;

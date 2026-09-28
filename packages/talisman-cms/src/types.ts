@@ -388,6 +388,15 @@ export interface Plugin {
    * plugin, and a file name never changes once a database has applied it.
    */
   migrations?: { dir: string };
+  /**
+   * A job the Worker's scheduled handler runs on every cron tick. `moduleId` names a server module and
+   * `exportName` the export that holds the job, a `ScheduledJob` from `talisman-cms/worker`;
+   * `exportName` defaults to `scheduled`. It is a module reference rather than a function for the same
+   * reason as `runtimeHooks`: the plugin object lives in `astro.config` and does not survive the server
+   * build. The site exports `scheduled` from `talisman-cms/worker` in its Worker entry and sets a cron
+   * trigger in its wrangler config.
+   */
+  scheduled?: { moduleId: string; exportName?: string };
 }
 
 const DEFAULT_BLOCK_SETTINGS_FIELD_NAME = '_settings';
