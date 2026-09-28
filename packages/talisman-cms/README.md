@@ -19,11 +19,11 @@ Drop in a beautifully designed, premium React dashboard directly into your Astro
 ## Installation
 
 ```bash
-pnpm add talisman-cms @astrojs/cloudflare react react-dom
+pnpm add talisman-cms @astrojs/cloudflare react react-dom drizzle-orm@1.0.0-rc.4
 pnpm add -D wrangler
 ```
 
-`react` and `react-dom` are peer dependencies: the admin dashboard uses the app's copies, so install them in the app even if it has no React components of its own.
+`react`, `react-dom` and `drizzle-orm` are peer dependencies. The admin dashboard uses the app's copies of React, so install them in the app even if it has no React components of its own. The packages are built on Drizzle ORM 1.0, so install the `1.0.0-rc.4` release candidate they name; a bare `drizzle-orm` would install the 0.45 release, which they no longer work with. With pnpm, a site that imports `drizzle-orm` itself next to the packages' tables should also depend on `zod@^3.25`: Drizzle 1.0 lists zod as an optional peer, and pnpm otherwise installs a second `drizzle-orm` copy against the newest zod for the site, whose types do not mix with the packages' copy.
 
 ## Basic Setup
 

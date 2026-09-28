@@ -7,11 +7,11 @@ Commerce for Talisman CMS: a product catalog in D1, a cookie-keyed basket, hoste
 ### 1. Install
 
 ```bash
-pnpm add talisman-cms @talisman-cms/plugin-ecommerce @astrojs/cloudflare react react-dom @tanstack/react-router drizzle-orm
+pnpm add talisman-cms @talisman-cms/plugin-ecommerce @astrojs/cloudflare react react-dom @tanstack/react-router drizzle-orm@1.0.0-rc.4
 pnpm add -D wrangler
 ```
 
-`react`, `react-dom`, `@tanstack/react-router` and `drizzle-orm` are peer dependencies. The commerce admin screens run inside the CMS admin with the app's copies, so list them in the app's own `package.json`.
+`react`, `react-dom`, `@tanstack/react-router` and `drizzle-orm` are peer dependencies. The commerce admin screens run inside the CMS admin with the app's copies, so list them in the app's own `package.json`. `drizzle-orm` is the `1.0.0-rc.4` release candidate the packages are built on; a bare `drizzle-orm` would install the 0.45 release, which they no longer work with. With pnpm, a site that imports `drizzle-orm` itself next to the packages' tables should also depend on `zod@^3.25`: Drizzle 1.0 lists zod as an optional peer, and pnpm otherwise installs a second `drizzle-orm` copy against the newest zod for the site, whose types do not mix with the packages' copy.
 
 ### 2. Register the plugin
 
