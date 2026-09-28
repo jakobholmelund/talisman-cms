@@ -55,7 +55,7 @@ Talisman provides a comprehensive set of highly customizable fields designed for
 The admin dashboard is a blazing fast, intuitively designed React Single Page Application injected directly into your project. Utilizing `@tanstack/react-form` and exhaustive Zod type validation, the editing experience is buttery-smooth, type-safe, and incredibly reliable.
 
 ### 🔌 Extensible Plugin Architecture
-Go beyond content. Talisman features a robust plugin ecosystem allowing you to bundle custom routes, schemas, and backend logic.
+Go beyond content. Talisman features a robust plugin ecosystem allowing you to bundle custom routes, schemas, and backend logic. A plugin is one typed object: `onInit` shapes the collections and globals, and the other fields add endpoints, pages, admin sections and screens, migrations and scheduled jobs; plugin screens build their URLs with `talisman-cms/ui/sdk`, so they follow a custom `adminPath`. [Build a plugin](packages/talisman-cms/docs/build-a-plugin.md) walks through the contract.
 * **E-commerce Plugin (`@talisman-cms/plugin-ecommerce`)**: First-class e-commerce capabilities featuring dynamic automated Cart APIs, Product Management, Order tracking, inventory logic, and seamless Stripe Integration—all manageable directly from the CMS.
 
 Checkout routes and actions are disabled by default. Enabling them requires `TALISMAN_COMMERCE_CHECKOUT_ENABLED=true` in the Worker environment and a working payment provider. Inventory reservations use D1 transactions, but live payment and store operations still need end-to-end verification before accepting orders. See the [commerce readiness review](packages/plugin-ecommerce/PRODUCTION_READINESS.md).

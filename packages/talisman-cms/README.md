@@ -272,6 +272,27 @@ export function myPlugin(): Plugin {
 
 The integration lists the core's folder first, then each plugin's in registration order, and copies them all into the assembled folder. The numbers must continue the shared sequence: a plugin cannot renumber or replace a core file, and two plugins cannot share a number. The same tools are exported from `talisman-cms/migrations` for tests and scripts: `listMigrationSources(sources)` returns the files of several `{ name, dir }` sources in wrangler's order and throws on a shared name or number, and `assembleMigrations({ sources, outDir })` writes them into a folder, removing `.sql` files no source ships any more.
 
+### Scheduled jobs
+
+A plugin that needs a cron job declares one with `scheduled: { moduleId, exportName }` (`exportName` defaults to `scheduled`); the export is a `ScheduledJob` from `talisman-cms/worker`, a function of `{ cron, scheduledTime, env, waitUntil }`. The Cloudflare adapter's default Worker entry has no scheduled handler, so the site names its own entry in `wrangler.toml` and adds a cron trigger. The entry exports Astro's fetch handler next to the CMS's scheduled handler:
+
+```ts
+// src/worker.ts
+import { handle } from '@astrojs/cloudflare/handler';
+import { scheduled } from 'talisman-cms/worker';
+
+export default { fetch: handle, scheduled };
+```
+
+```toml
+main = "./src/worker.ts"
+
+[triggers]
+crons = ["*/10 * * * *"]
+```
+
+On every tick the handler runs the job of every plugin that declares one, in registration order. A job that throws is logged as `[talisman-cms] <plugin> scheduled job failed: <message>` and never skips the next one, and after the run one error naming the failed plugins is thrown, so the invocation is recorded as failed. The integration warns at build time when a plugin declares a job and no wrangler config names a cron trigger. A site with jobs of its own runs them through `runScheduledJobs`, also exported from `talisman-cms/worker`. The ecommerce plugin registers its checkout reconciliation and retention purge this way; its README says what they do.
+
 ### Secrets and first admin
 
 The local adapter needs two distinct Worker secrets: `TALISMAN_AUTH_SECRET` (at least 32 random characters, retained for sessions) and `TALISMAN_AUTH_SETUP_TOKEN` (at least 32 random characters, needed only for first-admin setup). For local development, put them in `.dev.vars` and keep that file out of version control:
@@ -297,7 +318,7 @@ Entry lists take `where`, `sort` and `offset`: `GET .../entries?where[productId]
 
 ### Plugin admin extension points
 
-A plugin adds screens to the admin through fields of its `Plugin` object. Every component path is a module specifier the site's build can resolve, such as a package export, and the components load lazily when first shown; the `@talisman-cms/plugin-ecommerce` package is the reference implementation.
+A plugin adds screens to the admin through fields of its `Plugin` object. Every component path is a module specifier the site's build can resolve, such as a package export, and the components load lazily when first shown; the `@talisman-cms/plugin-ecommerce` package is the reference implementation, and [Build a plugin](docs/build-a-plugin.md) walks through the whole plugin contract, from `onInit` to migrations and scheduled jobs.
 
 - `adminSections`: sections next to Collections, each with a sidebar entry and the routes `/<id>`, `/<id>/<slug>` and `/<id>/<slug>/<entryId>`. A collection joins a section by naming its `id` in `adminSection`; a collection whose section is not registered is listed under Collections. `adminOnly` keeps the workspace and its tools for admins, while editors get the section's readable collections under Collections. `componentPath` names a workspace page (default export, `AdminSectionWorkspaceProps` from `talisman-cms/ui/lib/admin-sections`: the section, its collections with item counts, its `adminLinks`, the admin base path and the user); without one the section shows the generic collection table. Ids are lowercase slugs, unique across plugins, and cannot be a built-in route (`collections`, `globals`, `media`, `users`, `account`, `extensions`, `api`).
 - `adminEditorPanels`: panels the entry editor renders for matching collections, at `before-fields` (in the form card, above the fields) or `after-form` (below the form and its actions). A panel matches by `sections` (the collection's section) or `slugs`; with neither list it matches every collection. The default export receives `AdminEditorPanelProps` (from `talisman-cms/ui/components/editor/panels`): the collection, the saved entry (null before a new record's first save), the form values as they change, the loaded related records, `refreshSupportEntries(slugs)` to load related collections again, the admin base path, the section and the user.
@@ -305,6 +326,7 @@ A plugin adds screens to the admin through fields of its `Plugin` object. Every 
 - `adminSettings`: names of `TALISMAN_*` settings, without the prefix, that the admin page exposes as `<meta name="talisman-setting-<name in kebab case>" content="...">` for the plugin's screens. The admin page is served before sign-in, so the values are visible to anyone who can load it: name display settings only, such as a currency, never allowlists or credentials. A name that looks like a secret (SECRET, KEY, TOKEN, PASSWORD, CREDENTIAL, PRIVATE_KEY, API_KEY) is refused at config time, and a value that reads like an API key or signing secret is left out of the page.
 - `adminStyleSources`: absolute directories Tailwind scans for the admin stylesheet, so plugin screens can use utility classes.
 - `FieldDefinition.saveOnlyIfChanged`: the editor sends the field of a native record only when the user changed it, for values that server code moves in place (a stock count).
+- `adminLinks` and `routes`: an `adminLinks[].href` or `routes[].path` without a leading slash is relative to the admin path and resolved at config time, so `extensions/orders` is `/admin/extensions/orders` under the default admin path and `/extensions/orders` for an admin at the site root. A path with a leading slash is kept as given. A full URL, a `//host` form, a backslash or an empty value fails the build with the plugin's name, so a plugin link never leaves the site's origin.
 
 ```js
 const plugin = {
@@ -319,7 +341,7 @@ const plugin = {
 };
 ```
 
-Plugin admin code may import the admin's own building blocks through the `talisman-cms/ui/*` export, for example `talisman-cms/ui/components/ui/button` and `talisman-cms/ui/lib/admin-api`. The Commerce section, the product editor's options panel and the commerce record labels come from the ecommerce plugin this way; without it the admin has no Commerce section.
+Plugin admin code gets the admin's paths and session from `talisman-cms/ui/sdk` and never reads the admin path from `window.location`: `adminPath` is the configured admin path (`/admin` by default, `/` at the site root); `adminUrl(path?)` is a URL under it (`adminUrl('extensions/orders')`); `adminApiUrl(path)` is an endpoint under it (`adminApiUrl('reviews/list')` is `<adminPath>/api/reviews/list`); `adminRequest(path, { method?, body?, signal?, headers? })` makes a JSON request to that endpoint with the CMS session, GET without a body and POST with one, and throws the answer's `error` text, or "Request failed"; `readAdminSetting(name)` reads a setting exposed with `adminSettings`; and `useAdminUser()` is the signed-in user's `role` and `email`, or null. Plugin admin code may also import the admin's own building blocks through the `talisman-cms/ui/*` export, for example `talisman-cms/ui/components/ui/button`. The Commerce section, the product editor's options panel and the commerce record labels come from the ecommerce plugin this way; without it the admin has no Commerce section.
 
 ### Server SDK, actors and hooks
 
