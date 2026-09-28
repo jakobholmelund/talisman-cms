@@ -2,11 +2,13 @@ import {
   LocalAuthAdapter,
   createInitialAdmin,
   getLocalAuthEnv,
+  normalizeAuthAdminPath,
   signInCloudflareAdmin
-} from "../chunk-5GPCN2YJ.js";
+} from "../chunk-TNPS2YHV.js";
+import "../chunk-BUMDQFAO.js";
 import {
   getAccessEmail
-} from "../chunk-PG2TJYKE.js";
+} from "../chunk-FEIHHCEJ.js";
 import "../chunk-GAOPNFAO.js";
 import "../chunk-MLKGABMK.js";
 export {
@@ -14,5 +16,6 @@ export {
   createInitialAdmin,
   getAccessEmail,
   getLocalAuthEnv,
+  normalizeAuthAdminPath,
   signInCloudflareAdmin
 };

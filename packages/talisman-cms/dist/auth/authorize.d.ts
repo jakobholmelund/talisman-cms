@@ -1,4 +1,4 @@
-import { a as TalismanUser, T as TalismanAuthAdapter } from '../types-B9Ys5hZL.js';
+import { a as TalismanUser, T as TalismanAuthAdapter } from '../types-C5a-hx5D.js';
 import 'astro';
 
 type CmsAuthorization = {

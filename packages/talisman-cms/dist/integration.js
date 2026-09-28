@@ -28,11 +28,12 @@ function normalizeAdminPath(adminPath) {
   if (trimmed === "/") return "/";
   return `/${trimmed.replace(/^\/+/, "").replace(/\/+$/, "")}`;
 }
-function buildAuthVirtualModule(authAdapter, authAdapterKey, runtimeConfigPath) {
+function buildAuthVirtualModule(authAdapter, authAdapterKey, runtimeConfigPath, adminPath) {
   const runtimeDescriptor = authAdapter?.__talismanAuthRuntime;
   if (runtimeDescriptor?.moduleId && runtimeDescriptor.exportName) {
     const importName = "__talismanCmsRuntimeAuthAdapter";
-    const authExpression = runtimeDescriptor.type === "value" ? importName : `${importName}(...${JSON.stringify(runtimeDescriptor.args || [])})`;
+    const factoryArgs = runtimeDescriptor.adminPath ? [adminPath, ...runtimeDescriptor.args || []] : runtimeDescriptor.args || [];
+    const authExpression = runtimeDescriptor.type === "value" ? importName : `${importName}(...${JSON.stringify(factoryArgs)})`;
     return `
       import { ${runtimeDescriptor.exportName} as ${importName} } from ${JSON.stringify(runtimeDescriptor.moduleId)};
       export const authConfigured = ${JSON.stringify(Boolean(authAdapter))};
@@ -557,6 +558,10 @@ function talismanCms(options) {
   if (!existsSync(runtimeConfigPath)) {
     runtimeConfigPath = fileURLToPath(new URL("../src/runtime-config.ts", import.meta.url));
   }
+  const authRuntime = finalOptions.auth?.__talismanAuthRuntime;
+  if (authRuntime?.configuredAdminPath !== void 0 && authRuntime.configuredAdminPath !== adminPath) {
+    throw new Error(`[talisman-cms] ${authRuntime.exportName}(${JSON.stringify(authRuntime.configuredAdminPath)}) does not match adminPath ${JSON.stringify(adminPath)}. Drop the argument: the integration passes its admin path to the adapter.`);
+  }
   const authAdapterKey = `talisman-cms:${adminPath}`;
   registerAuthAdapter(authAdapterKey, finalOptions?.auth ?? null);
   return {
@@ -691,7 +696,7 @@ function talismanCms(options) {
                 },
                 load(id) {
                   if (id === "\0virtual:talisman-cms/auth") {
-                    return buildAuthVirtualModule(finalOptions?.auth, authAdapterKey, runtimeConfigPath);
+                    return buildAuthVirtualModule(finalOptions?.auth, authAdapterKey, runtimeConfigPath, adminPath);
                   }
                 }
               },

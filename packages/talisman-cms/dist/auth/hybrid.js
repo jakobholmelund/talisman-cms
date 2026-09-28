@@ -1,20 +1,24 @@
 import {
-  LocalAuthAdapter
-} from "../chunk-5GPCN2YJ.js";
-import "../chunk-PG2TJYKE.js";
+  LocalAuthAdapter,
+  normalizeAuthAdminPath
+} from "../chunk-TNPS2YHV.js";
+import "../chunk-BUMDQFAO.js";
+import "../chunk-FEIHHCEJ.js";
 import "../chunk-GAOPNFAO.js";
 import "../chunk-MLKGABMK.js";
 
 // src/auth/hybrid.ts
-function HybridAuthAdapter(adminPath = "/admin") {
-  const normalizedPath = adminPath === "/" ? "/" : `/${adminPath.replace(/^\/+|\/+$/g, "")}`;
+function HybridAuthAdapter(adminPath) {
+  const normalizedPath = normalizeAuthAdminPath(adminPath);
   const adapter = LocalAuthAdapter(normalizedPath, { requireAccess: false, editorOnly: true });
   Object.defineProperty(adapter, "__talismanAuthRuntime", {
     value: {
       moduleId: "talisman-cms/auth/hybrid",
       exportName: "HybridAuthAdapter",
       type: "factory",
-      args: [normalizedPath]
+      args: [],
+      adminPath: true,
+      ...adminPath === void 0 ? {} : { configuredAdminPath: normalizedPath }
     },
     enumerable: false,
     configurable: true

@@ -36,8 +36,9 @@ async function getAccessEmail(request, env) {
 function allowedEmails(value) {
   return new Set((value || "").split(",").map((email) => email.trim().toLowerCase()).filter(Boolean));
 }
-function AccessAuthAdapter(adminPath = "/admin") {
-  const normalizedPath = adminPath === "/" ? "/" : `/${adminPath.replace(/^\/+|\/+$/g, "")}`;
+function AccessAuthAdapter(adminPath) {
+  const trimmed = adminPath?.trim();
+  const normalizedPath = !trimmed ? "/admin" : trimmed === "/" ? "/" : `/${trimmed.replace(/^\/+|\/+$/g, "")}`;
   const adapter = {
     async getUser(request) {
       const env = await getAccessEnv();
@@ -62,7 +63,9 @@ function AccessAuthAdapter(adminPath = "/admin") {
       moduleId: "talisman-cms/auth/access",
       exportName: "AccessAuthAdapter",
       type: "factory",
-      args: [normalizedPath]
+      args: [],
+      adminPath: true,
+      ...adminPath === void 0 ? {} : { configuredAdminPath: normalizedPath }
     },
     enumerable: false
   });

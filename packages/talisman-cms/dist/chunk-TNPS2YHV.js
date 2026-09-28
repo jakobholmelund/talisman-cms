@@ -1,6 +1,9 @@
 import {
+  cloudflareAccessSignIn
+} from "./chunk-BUMDQFAO.js";
+import {
   getAccessEmail
-} from "./chunk-PG2TJYKE.js";
+} from "./chunk-FEIHHCEJ.js";
 import {
   readSetting
 } from "./chunk-GAOPNFAO.js";
@@ -12,9 +15,8 @@ import {
 import { betterAuth } from "better-auth/minimal";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { admin } from "better-auth/plugins/admin";
-import { hashPassword } from "better-auth/crypto";
 import { drizzle } from "drizzle-orm/d1";
-import { and, eq, ne, count, sql } from "drizzle-orm";
+import { and, eq, count, sql } from "drizzle-orm";
 
 // src/auth/local-schema.ts
 var local_schema_exports = {};
@@ -108,14 +110,28 @@ function createLocalAuth(request, env, adminPath = "/admin") {
       provider: "sqlite",
       schema: local_schema_exports
     }),
-    session: { expiresIn: 60 * 60 * 12, updateAge: 60 * 60 },
+    session: {
+      expiresIn: 60 * 60 * 12,
+      updateAge: 60 * 60,
+      // How the session was issued: `cloudflare` for an Access sign-in. Set at creation, never by a client.
+      additionalFields: { authMethod: { type: "string", required: false, input: false } }
+    },
     emailAndPassword: {
       enabled: true,
       disableSignUp: true,
       minPasswordLength: 12,
       maxPasswordLength: 128
     },
-    plugins: [admin({ defaultRole: "editor", adminRoles: ["admin"] })],
+    plugins: [
+      // A user created without a role is a shopper: the table holds shopper identities too, and only an
+      // explicit admin or editor role grants CMS access.
+      admin({ defaultRole: "customer", adminRoles: ["admin"] }),
+      cloudflareAccessSignIn({
+        verify: (headers) => getAccessEmail(new Request(origin, { headers }), env),
+        allowed: () => allowlistedAdmins(env),
+        maxSessionAgeMs: MAX_SESSION_AGE_MS
+      })
+    ],
     rateLimit: {
       enabled: true,
       storage: "database",
@@ -132,74 +148,34 @@ function createLocalAuth(request, env, adminPath = "/admin") {
     }
   });
 }
-async function ssoPassword(email, secret) {
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const digest = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`talisman-cms-cloudflare-sso:${email}`)));
-  const hex = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
-  return hex;
+function allowlistedAdmins(env) {
+  return new Set((readSetting(env, "ACCESS_ADMIN_EMAILS") || "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean));
 }
 async function signInCloudflareAdmin(request, adminPath = "/admin") {
   const env = await getLocalAuthEnv();
   const email = await getAccessEmail(request, env);
-  const allowed = new Set((readSetting(env, "ACCESS_ADMIN_EMAILS") || "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean));
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !allowed.has(email)) {
+  if (!email || !allowlistedAdmins(env).has(email)) {
     return Response.json({ error: "Cloudflare admin access required" }, { status: 403 });
   }
   const normalizedPath = adminPath === "/" ? "/" : `/${adminPath.replace(/^\/+|\/+$/g, "")}`;
   const auth = createLocalAuth(request, env, normalizedPath);
-  const password = await ssoPassword(email, readSetting(env, "AUTH_SECRET"));
-  const db = drizzle(env.DB, { schema: local_schema_exports });
-  let account2 = await db.query.user.findFirst({ where: sql`lower(${user.email}) = ${email}` });
-  if (!account2) {
-    try {
-      await auth.api.createUser({ body: { email, name: email, password, role: "admin" } });
-    } catch {
-    }
-    account2 = await db.query.user.findFirst({ where: sql`lower(${user.email}) = ${email}` });
-  }
-  if (!account2 || account2.banned) {
-    return Response.json({ error: "Cloudflare admin account is unavailable" }, { status: 403 });
-  }
-  if (account2.email !== email) {
-    await db.update(user).set({ email, updatedAt: /* @__PURE__ */ new Date() }).where(eq(user.id, account2.id));
-  }
-  if (account2.role !== "admin") {
-    await db.update(user).set({ role: "admin", emailVerified: true, updatedAt: /* @__PURE__ */ new Date() }).where(eq(user.id, account2.id));
-  }
-  const signInHeaders = new Headers({ "Content-Type": "application/json" });
-  for (const name of ["cf-connecting-ip", "user-agent"]) {
+  const forwarded = new Headers();
+  for (const name of ["cf-access-jwt-assertion", "cf-connecting-ip", "user-agent"]) {
     const value = request.headers.get(name);
-    if (value) signInHeaders.set(name, value);
+    if (value) forwarded.set(name, value);
   }
-  const signInAdmin = () => auth.api.signInEmail({ body: { email, password }, headers: signInHeaders, asResponse: true });
-  let signIn = await signInAdmin();
-  if (signIn.status === 401) {
-    const credential = await db.query.account.findFirst({ where: and(eq(account.userId, account2.id), eq(account.providerId, "credential")) });
-    const hashed = await hashPassword(password);
-    if (credential) {
-      await db.update(account).set({ password: hashed, updatedAt: /* @__PURE__ */ new Date() }).where(eq(account.id, credential.id));
-    } else {
-      await db.insert(account).values({
-        id: crypto.randomUUID(),
-        accountId: account2.id,
-        providerId: "credential",
-        userId: account2.id,
-        password: hashed,
-        createdAt: /* @__PURE__ */ new Date(),
-        updatedAt: /* @__PURE__ */ new Date()
-      });
-    }
-    signIn = await signInAdmin();
+  let signIn;
+  try {
+    signIn = await auth.api.signInCloudflareAccess({ headers: forwarded, asResponse: true });
+  } catch (error) {
+    console.error("[talisman-cms] Cloudflare admin sign-in failed", error);
+    return Response.json({ error: "Cloudflare admin sign-in failed" }, { status: 503 });
+  }
+  if (signIn.status === 403) {
+    const body = await signIn.json().catch(() => null);
+    return Response.json({ error: typeof body?.message === "string" ? body.message : "Cloudflare admin access required" }, { status: 403 });
   }
   if (!signIn.ok) return Response.json({ error: "Cloudflare admin sign-in failed" }, { status: 503 });
-  const signedIn = await signIn.clone().json().catch(() => null);
-  if (typeof signedIn?.token !== "string") return Response.json({ error: "Cloudflare admin session failed" }, { status: 503 });
-  await db.update(session).set({ authMethod: "cloudflare" }).where(eq(session.token, signedIn.token));
-  const issuedSession = await db.query.session.findFirst({ where: eq(session.token, signedIn.token) });
-  if (issuedSession?.authMethod !== "cloudflare" || issuedSession.userId !== account2.id) {
-    return Response.json({ error: "Cloudflare admin session failed" }, { status: 503 });
-  }
-  await db.delete(session).where(and(eq(session.userId, account2.id), ne(session.token, signedIn.token)));
   const headers = new Headers({ Location: normalizedPath, "Cache-Control": "no-store" });
   for (const cookie of signIn.headers.getSetCookie()) headers.append("Set-Cookie", cookie);
   return new Response(null, { status: 303, headers });
@@ -240,8 +216,8 @@ async function endSessionsBeforeGrant(auth, userId, headers) {
     return Response.json({ error: GRANT_NOT_SAVED }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
 }
-function LocalAuthAdapter(adminPath = "/admin", options = {}) {
-  const normalizedPath = adminPath === "/" ? "/" : `/${adminPath.replace(/^\/+|\/+$/g, "")}`;
+function LocalAuthAdapter(adminPath, options = {}) {
+  const normalizedPath = normalizeAuthAdminPath(adminPath);
   const adapter = {
     async getUser(request) {
       const env = await getLocalAuthEnv();
@@ -258,8 +234,7 @@ function LocalAuthAdapter(adminPath = "/admin", options = {}) {
       if (rawUser.banned && !(rawUser.banExpires && new Date(rawUser.banExpires).getTime() < Date.now())) return null;
       if (rawUser.role !== "admin" && rawUser.role !== "editor") return null;
       if (options.editorOnly && rawUser.role === "admin") {
-        const admins = (readSetting(env, "ACCESS_ADMIN_EMAILS") || "").split(",").map((value) => value.trim().toLowerCase());
-        if (!admins.includes(rawUser.email.toLowerCase()) || !result?.session?.id) return null;
+        if (!allowlistedAdmins(env).has(rawUser.email.toLowerCase()) || !result?.session?.id) return null;
         const cmsSession = await drizzle(env.DB, { schema: local_schema_exports }).query.session.findFirst({ where: eq(session.id, result.session.id) });
         if (cmsSession?.authMethod !== "cloudflare") return null;
       }
@@ -452,17 +427,26 @@ function LocalAuthAdapter(adminPath = "/admin", options = {}) {
       moduleId: "talisman-cms/auth/local",
       exportName: "LocalAuthAdapter",
       type: "factory",
-      args: Object.keys(options).length ? [normalizedPath, options] : [normalizedPath]
+      args: Object.keys(options).length ? [options] : [],
+      adminPath: true,
+      ...adminPath === void 0 ? {} : { configuredAdminPath: normalizedPath }
     },
     enumerable: false,
     configurable: true
   });
   return adapter;
 }
+function normalizeAuthAdminPath(adminPath) {
+  const trimmed = adminPath?.trim();
+  if (!trimmed) return "/admin";
+  if (trimmed === "/") return "/";
+  return `/${trimmed.replace(/^\/+|\/+$/g, "")}`;
+}
 
 export {
   getLocalAuthEnv,
   signInCloudflareAdmin,
   createInitialAdmin,
-  LocalAuthAdapter
+  LocalAuthAdapter,
+  normalizeAuthAdminPath
 };
