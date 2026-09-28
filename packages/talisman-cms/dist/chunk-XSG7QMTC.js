@@ -20,13 +20,12 @@ import {
   toEditableEntry,
   triggerPublishingWorkflow,
   writeCache
-} from "./chunk-O5JSH6E5.js";
+} from "./chunk-ZHVNEAET.js";
 import {
   collections,
   entries,
-  globals,
-  schema_exports
-} from "./chunk-VOL6BL52.js";
+  globals
+} from "./chunk-IOIVRQZ4.js";
 import {
   deleteStoredMedia,
   isMediaCollection
@@ -34,6 +33,7 @@ import {
 import {
   buildZodSchemaForCollection,
   buildZodSchemaForFields,
+  columnKind,
   decodeGlobalData,
   describeInvalidEntryId,
   describeInvalidEntrySlug,
@@ -49,7 +49,7 @@ import {
   nextNativeUpdatedAt,
   normalizeBlankNativeValues,
   pickConfiguredNativeFields
-} from "./chunk-6DE4JXMX.js";
+} from "./chunk-SRVHUFKL.js";
 
 // src/service/config.ts
 function configFromModules(modules) {
@@ -203,7 +203,7 @@ function createDbClient(env) {
   if (!env.DB) {
     throw new Error('Talisman CMS requires a D1 database bound to the "DB" environment variable.');
   }
-  return drizzle(env.DB, { schema: schema_exports });
+  return drizzle(env.DB);
 }
 var statusTarget = (status) => status === "published" || status === "archived" ? status : void 0;
 function getClient(env, ctx, options = {}) {
@@ -369,7 +369,7 @@ function collectionsService(ctx) {
         if (hit) return hit;
       }
       await syncCollectionDefinitions(db, env, ctx.config);
-      const rows = await db.query.collections.findMany();
+      const rows = await db.select().from(collections);
       if (useCache) await writeCache(env.KV, cacheKeys.collections(), rows, ctx.ctx);
       return rows;
     }
@@ -377,7 +377,7 @@ function collectionsService(ctx) {
 }
 
 // src/service/entries.ts
-import { and as and2, desc as desc2, eq as eq3, getTableColumns as getTableColumns2, isNull as isNull2, lt as lt2, or, sql as sql2 } from "drizzle-orm";
+import { and as and3, desc as desc2, eq as eq4, getTableColumns as getTableColumns2, isNull as isNull2, lt as lt2, or, sql as sql2 } from "drizzle-orm";
 
 // src/service/hooks.ts
 async function runHooks(hooks, phase, args, options = {}) {
@@ -443,7 +443,8 @@ function resolveField(target, name) {
   if (!property) return refuse(name, "Not a field of this collection");
   const column = columns[property];
   const field = target.fields.find((candidate) => candidate.name === property || candidate.name === column.name);
-  const type = field?.type ?? (column.dataType === "date" ? "timestamp" : column.dataType === "number" ? "number" : column.dataType === "boolean" ? "boolean" : "text");
+  const kind = columnKind(column);
+  const type = field?.type ?? (kind === "date" ? "timestamp" : kind === "number" ? "number" : kind === "boolean" ? "boolean" : "text");
   return { name, type, json: false, list: false, expression: column, parameters: 0 };
 }
 function castValue(field, value) {
@@ -549,6 +550,7 @@ function compileQuery(target, query) {
 }
 
 // src/service/relations.ts
+import { and as and2, eq as eq3, inArray as inArray2 } from "drizzle-orm";
 function isRelationshipFieldType(type) {
   return type === "relationship" || type === "relation";
 }
@@ -710,9 +712,11 @@ async function findRelatedEntries(ctx, targetCollectionId, ids, versionMode) {
   for (let index = 0; index < ids.length; index += RELATION_ID_CHUNK_SIZE) {
     chunks.push(ids.slice(index, index + RELATION_ID_CHUNK_SIZE));
   }
-  const results = await Promise.all(chunks.map((chunk) => ctx.db.query.entries.findMany({
-    where: (e, operators) => versionMode === "published" ? operators.and(operators.eq(e.collectionId, targetCollectionId), operators.inArray(e.id, chunk), operators.eq(e.status, "published")) : operators.and(operators.eq(e.collectionId, targetCollectionId), operators.inArray(e.id, chunk))
-  })));
+  const results = await Promise.all(chunks.map((chunk) => ctx.db.select().from(entries).where(and2(
+    eq3(entries.collectionId, targetCollectionId),
+    inArray2(entries.id, chunk),
+    ...versionMode === "published" ? [eq3(entries.status, "published")] : []
+  ))));
   return results.flat();
 }
 async function resolveRelationships(ctx, entriesToResolve, collection, depth = 1, versionMode = "published") {
@@ -870,7 +874,7 @@ function prepareNativeWrite(collection, data, options) {
   for (const key of nativeSystemColumns(collection)) {
     if (payload[key] === "") delete payload[key];
   }
-  const dateColumn = (key) => columns[key]?.dataType === "date";
+  const dateColumn = (key) => columnKind(columns[key]) === "date";
   const blank = (key) => payload[key] === void 0 || payload[key] === null;
   if (options.mode === "update") {
     delete payload[idColumn];
@@ -882,7 +886,7 @@ function prepareNativeWrite(collection, data, options) {
   }
   const idField = collection.activeFields.find((field) => field.name === idColumn);
   const column = columns[idColumn];
-  if (blank(idColumn) && idField?.type !== "number" && column?.dataType !== "number" && !(column?.hasDefault || column?.defaultFn)) {
+  if (blank(idColumn) && idField?.type !== "number" && columnKind(column) !== "number" && !(column?.hasDefault || column?.defaultFn)) {
     payload[idColumn] = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   }
   const now = /* @__PURE__ */ new Date();
@@ -1050,14 +1054,11 @@ function writeInput(ctx, collection) {
 }
 async function nativeRow(ctx, collection, id) {
   const { nativeTable, nativeIdCol } = collection;
-  const rows = await ctx.db.select().from(nativeTable).where(eq3(nativeTable[nativeIdCol], id));
+  const rows = await ctx.db.select().from(nativeTable).where(eq4(nativeTable[nativeIdCol], id));
   return rows[0];
 }
 async function entryRow(ctx, collection, id) {
-  return ctx.db.query.entries.findFirst({
-    // @ts-ignore
-    where: (e, { eq: eq5, and: and4 }) => and4(eq5(e.collectionId, collection.record.id), eq5(e.id, id))
-  });
+  return ctx.db.select().from(entries).where(and3(eq4(entries.collectionId, collection.record.id), eq4(entries.id, id))).get();
 }
 function assertPublishable(collection, entry) {
   const draftData = typeof entry.data === "string" ? JSON.parse(entry.data) : entry.data;
@@ -1095,7 +1096,7 @@ function entriesService(ctx) {
         return rows2.map((row) => mapNativeEntry(row, collection.record.id, collection.nativeIdCol));
       }
       const entries2 = entries;
-      const rows = await db.select().from(entries2).where(and2(eq3(entries2.collectionId, collection.record.id), compiled.where)).orderBy(...compiled.orderBy.length > 0 ? compiled.orderBy : [desc2(entries2.createdAt)]);
+      const rows = await db.select().from(entries2).where(and3(eq4(entries2.collectionId, collection.record.id), compiled.where)).orderBy(...compiled.orderBy.length > 0 ? compiled.orderBy : [desc2(entries2.createdAt)]);
       return rows.map(toEditableEntry);
     },
     /**
@@ -1120,7 +1121,7 @@ function entriesService(ctx) {
         const rowid = sql2`rowid`;
         const after2 = cursor === null ? void 0 : decodeCursor(cursor)[0];
         if (after2 !== void 0 && !Number.isSafeInteger(after2)) throw new InvalidInputError("The cursor is not valid.");
-        const rows2 = await db.select({ ...getTableColumns2(nativeTable), __rowid: rowid }).from(nativeTable).where(and2(after2 === void 0 ? void 0 : lt2(rowid, after2), compiled.where)).orderBy(...compiled.orderBy.length > 0 ? compiled.orderBy : [desc2(rowid)]).limit(limit + 1).offset(offset);
+        const rows2 = await db.select({ ...getTableColumns2(nativeTable), __rowid: rowid }).from(nativeTable).where(and3(after2 === void 0 ? void 0 : lt2(rowid, after2), compiled.where)).orderBy(...compiled.orderBy.length > 0 ? compiled.orderBy : [desc2(rowid)]).limit(limit + 1).offset(offset);
         const pageRows2 = rows2.slice(0, limit);
         const nextCursor2 = rows2.length > limit && !offsetPaging ? encodeCursor([pageRows2[pageRows2.length - 1].__rowid]) : null;
         return { docs: pageRows2.map(({ __rowid, ...row }) => mapNativeEntry(row, collection.record.id, collection.nativeIdCol)), nextCursor: nextCursor2 };
@@ -1133,9 +1134,9 @@ function entriesService(ctx) {
           throw new InvalidInputError("The cursor is not valid.");
         }
         const createdAt = new Date(createdAtMs);
-        after = or(lt2(entries2.createdAt, createdAt), and2(eq3(entries2.createdAt, createdAt), lt2(entries2.id, afterId)));
+        after = or(lt2(entries2.createdAt, createdAt), and3(eq4(entries2.createdAt, createdAt), lt2(entries2.id, afterId)));
       }
-      const rows = await db.select().from(entries2).where(and2(eq3(entries2.collectionId, collection.record.id), after, compiled.where)).orderBy(...compiled.orderBy.length > 0 ? [...compiled.orderBy, desc2(entries2.id)] : [desc2(entries2.createdAt), desc2(entries2.id)]).limit(limit + 1).offset(offset);
+      const rows = await db.select().from(entries2).where(and3(eq4(entries2.collectionId, collection.record.id), after, compiled.where)).orderBy(...compiled.orderBy.length > 0 ? [...compiled.orderBy, desc2(entries2.id)] : [desc2(entries2.createdAt), desc2(entries2.id)]).limit(limit + 1).offset(offset);
       const pageRows = rows.slice(0, limit);
       const last = pageRows[pageRows.length - 1];
       const nextCursor = rows.length > limit && !offsetPaging ? encodeCursor([last.createdAt.getTime(), last.id]) : null;
@@ -1196,8 +1197,8 @@ function entriesService(ctx) {
         const updatePayload = prepared2.nativePayload ?? {};
         let storedRow = stored2;
         if (Object.keys(updatePayload).length > 0) {
-          const unchanged = !checksUpdatedAt ? void 0 : stored2.updatedAt == null ? isNull2(nativeTable.updatedAt) : eq3(nativeTable.updatedAt, stored2.updatedAt);
-          const updatedRows = await db.update(nativeTable).set(updatePayload).where(and2(eq3(nativeTable[nativeIdCol], id), unchanged)).returning();
+          const unchanged = !checksUpdatedAt ? void 0 : stored2.updatedAt == null ? isNull2(nativeTable.updatedAt) : eq4(nativeTable.updatedAt, stored2.updatedAt);
+          const updatedRows = await db.update(nativeTable).set(updatePayload).where(and3(eq4(nativeTable[nativeIdCol], id), unchanged)).returning();
           const updatedRow = updatedRows[0];
           if (!updatedRow && checksUpdatedAt) throw new NativeRecordConflictError();
           storedRow = updatedRow ?? { ...stored2, ...updatePayload };
@@ -1243,9 +1244,9 @@ function entriesService(ctx) {
       await runHooks(collection.hooks, "beforeDelete", { ...hooks, operation: "delete", originalDoc }, { log: ctx.log });
       if (collection.nativeTable) {
         if (isMediaCollection(collection.config)) await deleteStoredMedia(env, id, options.origin);
-        await db.delete(collection.nativeTable).where(eq3(collection.nativeTable[collection.nativeIdCol], id));
+        await db.delete(collection.nativeTable).where(eq4(collection.nativeTable[collection.nativeIdCol], id));
       } else {
-        await db.delete(entries).where(and2(eq3(entries.collectionId, collection.record.id), eq3(entries.id, id)));
+        await db.delete(entries).where(and3(eq4(entries.collectionId, collection.record.id), eq4(entries.id, id)));
       }
       await invalidateEntryCache(env, slug, id);
       await runHooks(collection.hooks, "afterDelete", { ...hooks, operation: "delete", originalDoc, doc: originalDoc }, { log: ctx.log });
@@ -1284,16 +1285,16 @@ function entriesService(ctx) {
         data = (await query).map((row) => mapNativeEntry(row, collection.record.id, collection.nativeIdCol));
       } else {
         const entries2 = entries;
-        let query = db.select().from(entries2).where(and2(eq3(entries2.collectionId, collection.record.id), versionMode === "published" ? eq3(entries2.status, "published") : void 0, compiled.where)).orderBy(...compiled.orderBy.length > 0 ? [...compiled.orderBy, desc2(entries2.id)] : [desc2(entries2.createdAt)]).$dynamic();
+        let query = db.select().from(entries2).where(and3(eq4(entries2.collectionId, collection.record.id), versionMode === "published" ? eq4(entries2.status, "published") : void 0, compiled.where)).orderBy(...compiled.orderBy.length > 0 ? [...compiled.orderBy, desc2(entries2.id)] : [desc2(entries2.createdAt)]).$dynamic();
         if (limit !== void 0) query = query.limit(limit).offset(compiled.offset ?? 0);
         data = (await query).map((entry) => normalizeEntryDataForRead(entry, versionMode));
       }
       data = await resolveRelationships(ctx, data, collection, depth, versionMode);
       if (useCache) {
-        const inCollection = eq3(entries.collectionId, collection.record.id);
+        const inCollection = eq4(entries.collectionId, collection.record.id);
         await writeCache(env.KV, cacheKey, data, ctx.ctx, native ? { ttl: NATIVE_CACHE_TTL_SECONDS } : {
           changedSinceRead: rowsUpdatedSince(db, entries, readStartedAt, inCollection, {
-            where: versionMode === "published" ? and2(inCollection, eq3(entries.status, "published")) : inCollection,
+            where: versionMode === "published" ? and3(inCollection, eq4(entries.status, "published")) : inCollection,
             count: data.length
           })
         });
@@ -1321,17 +1322,18 @@ function entriesService(ctx) {
         const row = await nativeRow(ctx, collection, id);
         if (row) data = mapNativeEntry(row, collection.record.id, collection.nativeIdCol);
       } else {
-        const entry = await db.query.entries.findFirst({
-          // @ts-ignore
-          where: (e, operators) => versionMode === "published" ? operators.and(operators.eq(e.collectionId, collection.record.id), operators.eq(e.id, id), operators.eq(e.status, "published")) : operators.and(operators.eq(e.collectionId, collection.record.id), operators.eq(e.id, id))
-        });
+        const entry = await db.select().from(entries).where(and3(
+          eq4(entries.collectionId, collection.record.id),
+          eq4(entries.id, id),
+          ...versionMode === "published" ? [eq4(entries.status, "published")] : []
+        )).get();
         if (entry) data = normalizeEntryDataForRead(entry, versionMode);
       }
       if (!data) return null;
       [data] = await resolveRelationships(ctx, [data], collection, depth, versionMode);
       if (useCache) {
         await writeCache(env.KV, cacheKey, data, ctx.ctx, native ? { ttl: NATIVE_CACHE_TTL_SECONDS } : {
-          changedSinceRead: rowsUpdatedSince(db, entries, readStartedAt, eq3(entries.id, id), { where: eq3(entries.id, id), count: 1 })
+          changedSinceRead: rowsUpdatedSince(db, entries, readStartedAt, eq4(entries.id, id), { where: eq4(entries.id, id), count: 1 })
         });
       }
       return data;
@@ -1349,17 +1351,17 @@ function entriesService(ctx) {
       if (collection.nativeTable) {
         const nativeTable = collection.nativeTable;
         const slugColumn = nativeTable.slug || nativeTable[collection.nativeIdCol];
-        const rows = await db.select().from(nativeTable).where(eq3(slugColumn, entrySlug)).limit(1);
+        const rows = await db.select().from(nativeTable).where(eq4(slugColumn, entrySlug)).limit(1);
         if (rows[0]) data = mapNativeEntry(rows[0], collection.record.id, collection.nativeIdCol);
       } else {
-        const entry = await db.query.entries.findFirst({
-          // @ts-ignore
-          where: (e, operators) => versionMode === "published" ? operators.and(operators.eq(e.collectionId, collection.record.id), operators.eq(e.status, "published"), operators.eq(e.slug, entrySlug)) : operators.and(operators.eq(e.collectionId, collection.record.id), operators.or(
-            operators.eq(e.draftSlug, entrySlug),
-            operators.and(operators.isNull(e.draftSlug), operators.eq(e.slug, entrySlug))
-          )),
-          orderBy: (e, { desc: desc3 }) => [desc3(e.createdAt)]
-        });
+        const entry = await db.select().from(entries).where(versionMode === "published" ? and3(
+          eq4(entries.collectionId, collection.record.id),
+          eq4(entries.status, "published"),
+          eq4(entries.slug, entrySlug)
+        ) : and3(eq4(entries.collectionId, collection.record.id), or(
+          eq4(entries.draftSlug, entrySlug),
+          and3(isNull2(entries.draftSlug), eq4(entries.slug, entrySlug))
+        ))).orderBy(desc2(entries.createdAt)).get();
         if (entry) data = normalizeEntryDataForRead(entry, versionMode);
       }
       if (!data) return null;
@@ -1380,7 +1382,7 @@ function entriesService(ctx) {
 }
 
 // src/service/globals.ts
-import { and as and3, eq as eq4, sql as sql3 } from "drizzle-orm";
+import { and as and4, eq as eq5, sql as sql3 } from "drizzle-orm";
 var DATA_MESSAGE = "Global data must be a JSON object";
 var STALE_GLOBAL_MESSAGE = "This global changed since it was opened. Load the latest version before saving.";
 var globalSyncs = /* @__PURE__ */ new WeakMap();
@@ -1397,10 +1399,7 @@ function withDecodedData(record) {
   return record ? { ...record, data: decodeGlobalData(record.data) } : record;
 }
 async function findGlobal(ctx, slug) {
-  return ctx.db.query.globals.findFirst({
-    // @ts-ignore
-    where: (g, { eq: eq5 }) => eq5(g.slug, slug)
-  });
+  return ctx.db.select().from(globals).where(eq5(globals.slug, slug)).get();
 }
 async function writeConfiguredGlobals(ctx) {
   for (const globalConfig of ctx.config.globals) {
@@ -1420,7 +1419,7 @@ async function writeConfiguredGlobals(ctx) {
     }
     const nextDescription = globalConfig.description || null;
     if (existing.name !== globalConfig.name || (existing.description || null) !== nextDescription) {
-      await ctx.db.update(globals).set({ name: globalConfig.name, description: nextDescription }).where(eq4(globals.id, existing.id));
+      await ctx.db.update(globals).set({ name: globalConfig.name, description: nextDescription }).where(eq5(globals.id, existing.id));
     }
   }
 }
@@ -1445,7 +1444,7 @@ async function resolveGlobal(ctx, slug) {
   } else if (record && globalConfig) {
     const nextDescription = globalConfig.description || null;
     if (record.name !== globalConfig.name || (record.description || null) !== nextDescription) {
-      await ctx.db.update(globals).set({ name: globalConfig.name, description: nextDescription }).where(eq4(globals.id, record.id));
+      await ctx.db.update(globals).set({ name: globalConfig.name, description: nextDescription }).where(eq5(globals.id, record.id));
       record = { ...record, name: globalConfig.name, description: nextDescription };
     }
   }
@@ -1475,7 +1474,7 @@ function globalsService(ctx) {
       }
       const readStartedAt = /* @__PURE__ */ new Date();
       await syncConfiguredGlobals(ctx);
-      const list = ordered(config.globals, await db.query.globals.findMany());
+      const list = ordered(config.globals, await db.select().from(globals));
       if (useCache) {
         await writeCache(env.KV, cacheKeys.globals(), list, ctx.ctx, { changedSinceRead: rowsUpdatedSince(db, globals, readStartedAt) });
       }
@@ -1497,7 +1496,7 @@ function globalsService(ctx) {
           cacheKeys.global(slug),
           data,
           ctx.ctx,
-          { changedSinceRead: rowsUpdatedSince(db, globals, readStartedAt, eq4(globals.slug, slug)) }
+          { changedSinceRead: rowsUpdatedSince(db, globals, readStartedAt, eq5(globals.slug, slug)) }
         );
       }
       return data;
@@ -1551,8 +1550,8 @@ function globalsService(ctx) {
       const nextVersion = sql3`${globals.version} + 1`;
       let updated;
       if (existing) {
-        const stillLoaded = expectedVersion === null ? void 0 : eq4(globals.version, expectedVersion);
-        [updated] = await db.update(globals).set({ name, description, data: saved, updatedAt: now, version: nextVersion }).where(and3(eq4(globals.id, existing.id), stillLoaded)).returning();
+        const stillLoaded = expectedVersion === null ? void 0 : eq5(globals.version, expectedVersion);
+        [updated] = await db.update(globals).set({ name, description, data: saved, updatedAt: now, version: nextVersion }).where(and4(eq5(globals.id, existing.id), stillLoaded)).returning();
       }
       if (!updated) {
         if (expectedVersion !== null) {

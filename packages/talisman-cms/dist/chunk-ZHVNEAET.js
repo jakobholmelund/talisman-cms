@@ -1,8 +1,8 @@
 import {
+  collections,
   entries,
-  entryRevisions,
-  schema_exports
-} from "./chunk-VOL6BL52.js";
+  entryRevisions
+} from "./chunk-IOIVRQZ4.js";
 import {
   readBinding
 } from "./chunk-GAOPNFAO.js";
@@ -141,23 +141,17 @@ function toEditableEntry(entry) {
   };
 }
 function createVersioningDb(env) {
-  return drizzle(env.DB, { schema: schema_exports });
+  return drizzle(env.DB);
 }
 async function getCollectionBySlug(db, collectionSlug) {
-  const collection = await db.query.collections.findFirst({
-    // @ts-ignore
-    where: (c, { eq: eq2 }) => eq2(c.slug, collectionSlug)
-  });
+  const collection = await db.select().from(collections).where(eq(collections.slug, collectionSlug)).get();
   if (!collection) {
     throw new Error(`Collection ${collectionSlug} not found`);
   }
   return collection;
 }
 async function getVersionedEntry(db, collectionId, entryId) {
-  const entry = await db.query.entries.findFirst({
-    // @ts-ignore
-    where: (e, { and: and3, eq: eq2 }) => and3(eq2(e.collectionId, collectionId), eq2(e.id, entryId))
-  });
+  const entry = await db.select().from(entries).where(and2(eq(entries.collectionId, collectionId), eq(entries.id, entryId))).get();
   if (!entry) {
     throw new EntryNotFoundError(`Entry ${entryId} not found`);
   }
@@ -166,7 +160,7 @@ async function getVersionedEntry(db, collectionId, entryId) {
 async function listEntryRevisions(db, collectionId, entryId, opts = {}) {
   const revisions = entryRevisions;
   if (opts.includeData === false) {
-    const query = db.select({
+    const query2 = db.select({
       id: revisions.id,
       entryId: revisions.entryId,
       collectionId: revisions.collectionId,
@@ -175,21 +169,18 @@ async function listEntryRevisions(db, collectionId, entryId, opts = {}) {
       status: revisions.status,
       createdAt: revisions.createdAt
     }).from(revisions).where(and2(eq(revisions.collectionId, collectionId), eq(revisions.entryId, entryId))).orderBy(desc(revisions.revisionNumber), desc(revisions.createdAt));
-    return opts.limit === void 0 ? query : query.limit(opts.limit);
+    return opts.limit === void 0 ? query2 : query2.limit(opts.limit);
   }
-  return db.query.entryRevisions.findMany({
-    // @ts-ignore
-    where: (r, { and: and3, eq: eq2 }) => and3(eq2(r.collectionId, collectionId), eq2(r.entryId, entryId)),
-    // @ts-ignore
-    orderBy: (r, { desc: desc2 }) => [desc2(r.revisionNumber), desc2(r.createdAt)],
-    ...opts.limit === void 0 ? {} : { limit: opts.limit }
-  });
+  const query = db.select().from(revisions).where(and2(eq(revisions.collectionId, collectionId), eq(revisions.entryId, entryId))).orderBy(desc(revisions.revisionNumber), desc(revisions.createdAt));
+  const rows = await (opts.limit === void 0 ? query : query.limit(opts.limit));
+  return rows;
 }
 async function getEntryRevision(db, collectionId, entryId, revisionId) {
-  const revision = await db.query.entryRevisions.findFirst({
-    // @ts-ignore
-    where: (r, { and: and3, eq: eq2 }) => and3(eq2(r.collectionId, collectionId), eq2(r.entryId, entryId), eq2(r.id, revisionId))
-  });
+  const revision = await db.select().from(entryRevisions).where(and2(
+    eq(entryRevisions.collectionId, collectionId),
+    eq(entryRevisions.entryId, entryId),
+    eq(entryRevisions.id, revisionId)
+  )).get();
   if (!revision) {
     throw new EntryNotFoundError(`Revision ${revisionId} not found for entry ${entryId}`);
   }

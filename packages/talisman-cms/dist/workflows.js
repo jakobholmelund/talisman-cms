@@ -2,8 +2,8 @@ import {
   invalidateEntryCache,
   isPermanentPublishError,
   runPublishingTransition
-} from "./chunk-O5JSH6E5.js";
-import "./chunk-VOL6BL52.js";
+} from "./chunk-ZHVNEAET.js";
+import "./chunk-IOIVRQZ4.js";
 import "./chunk-GAOPNFAO.js";
 import "./chunk-MLKGABMK.js";
 
@@ -20,7 +20,7 @@ var TalismanPublishWorkflow = class extends WorkflowEntrypoint {
         if (isPermanentPublishError(error)) {
           return { ok: false, error: { name: error.name, message: error.message } };
         }
-        throw error;
+        throw error instanceof Error && error.name === "DrizzleQueryError" && error.cause instanceof Error ? error.cause : error;
       }
     });
     if (!result.ok) return result;

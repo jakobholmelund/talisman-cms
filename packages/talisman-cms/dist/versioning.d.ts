@@ -1,7 +1,8 @@
 import * as drizzle_orm_d1 from 'drizzle-orm/d1';
-import { s as schema, c as collections, e as entries } from './media-CIuK48g5.js';
-import { T as TalismanEnv } from './client-BYOu0i3b.js';
-export { i as invalidateEntryCache } from './client-BYOu0i3b.js';
+import * as drizzle_orm from 'drizzle-orm';
+import { collections, entries } from './db/schema.js';
+import { T as TalismanEnv } from './client-Ccx_f4Il.js';
+export { i as invalidateEntryCache } from './client-Ccx_f4Il.js';
 import 'drizzle-orm/sqlite-core';
 import './actor-Daa_hmny.js';
 import './types-C5a-hx5D.js';
@@ -51,28 +52,28 @@ declare function toEditableEntry<T extends {
     slug: string;
     publishedSlug: string | null;
 };
-declare function createVersioningDb(env: TalismanEnv): drizzle_orm_d1.DrizzleD1Database<typeof schema> & {
+declare function createVersioningDb(env: TalismanEnv): drizzle_orm_d1.DrizzleD1Database<drizzle_orm.EmptyRelations> & {
     $client: D1Database;
 };
 declare function getCollectionBySlug(db: ReturnType<typeof createVersioningDb>, collectionSlug: string): Promise<{
-    id: string;
     name: string;
+    fields: unknown;
     slug: string;
     description: string | null;
-    fields: unknown;
+    id: string;
     createdAt: Date;
 }>;
 declare function getVersionedEntry(db: ReturnType<typeof createVersioningDb>, collectionId: string, entryId: string): Promise<{
-    id: string;
-    slug: string;
     data: unknown;
+    status: "draft" | "published" | "archived";
+    slug: string;
+    id: string;
     createdAt: Date;
+    updatedAt: Date;
     collectionId: string;
     draftSlug: string | null;
-    status: "draft" | "published" | "archived";
     publishedData: unknown;
     publishedRevisionId: string | null;
-    updatedAt: Date;
     publishedAt: Date | null;
     archivedAt: Date | null;
 }>;
@@ -88,19 +89,19 @@ declare function listEntryRevisions(db: ReturnType<typeof createVersioningDb>, c
     entryId: string;
     collectionId: string;
     revisionNumber: number;
-    type: "draft_save" | "publish" | "archive" | "restore";
+    type: "publish" | "archive" | "restore" | "draft_save";
     status: "draft" | "published" | "archived";
     createdAt: Date;
 }[]>;
 declare function getEntryRevision(db: ReturnType<typeof createVersioningDb>, collectionId: string, entryId: string, revisionId: string): Promise<{
-    id: string;
     data: unknown;
+    type: "publish" | "archive" | "restore" | "draft_save";
+    status: "draft" | "published" | "archived";
+    id: string;
     createdAt: Date;
     collectionId: string;
-    status: "draft" | "published" | "archived";
     entryId: string;
     revisionNumber: number;
-    type: "draft_save" | "publish" | "archive" | "restore";
 }>;
 /**
  * Publishing takes the entry's draft slug live, unless another published entry already serves it
@@ -115,16 +116,16 @@ declare function createDraftEntry(db: ReturnType<typeof createVersioningDb>, col
     id?: string;
     slug?: string;
 }): Promise<{
-    id: string;
-    slug: string;
     data: unknown;
+    status: "draft" | "published" | "archived";
+    slug: string;
+    id: string;
     createdAt: Date;
+    updatedAt: Date;
     collectionId: string;
     draftSlug: string | null;
-    status: "draft" | "published" | "archived";
     publishedData: unknown;
     publishedRevisionId: string | null;
-    updatedAt: Date;
     publishedAt: Date | null;
     archivedAt: Date | null;
 }>;
@@ -133,72 +134,72 @@ declare function saveDraftEntry(db: ReturnType<typeof createVersioningDb>, colle
     slug?: string;
     expectedRevisionId?: string | null;
 }): Promise<{
-    id: string;
-    slug: string;
     data: unknown;
+    status: "draft" | "published" | "archived";
+    slug: string;
+    id: string;
     createdAt: Date;
+    updatedAt: Date;
     collectionId: string;
     draftSlug: string | null;
-    status: "draft" | "published" | "archived";
     publishedData: unknown;
     publishedRevisionId: string | null;
-    updatedAt: Date;
     publishedAt: Date | null;
     archivedAt: Date | null;
 }>;
 declare function publishEntry(db: ReturnType<typeof createVersioningDb>, collection: CollectionRecord, entryId: string, expectedRevisionId?: string | null): Promise<{
-    id: string;
-    slug: string;
     data: unknown;
+    status: "draft" | "published" | "archived";
+    slug: string;
+    id: string;
     createdAt: Date;
+    updatedAt: Date;
     collectionId: string;
     draftSlug: string | null;
-    status: "draft" | "published" | "archived";
     publishedData: unknown;
     publishedRevisionId: string | null;
-    updatedAt: Date;
     publishedAt: Date | null;
     archivedAt: Date | null;
 }>;
 declare function archiveEntry(db: ReturnType<typeof createVersioningDb>, collection: CollectionRecord, entryId: string, expectedRevisionId?: string | null): Promise<{
-    id: string;
-    slug: string;
     data: unknown;
+    status: "draft" | "published" | "archived";
+    slug: string;
+    id: string;
     createdAt: Date;
+    updatedAt: Date;
     collectionId: string;
     draftSlug: string | null;
-    status: "draft" | "published" | "archived";
     publishedData: unknown;
     publishedRevisionId: string | null;
-    updatedAt: Date;
     publishedAt: Date | null;
     archivedAt: Date | null;
 }>;
 declare function restoreEntryRevision(db: ReturnType<typeof createVersioningDb>, collection: CollectionRecord, entryId: string, revisionId: string, expectedRevisionId?: string | null): Promise<{
-    id: string;
-    slug: string;
     data: unknown;
+    status: "draft" | "published" | "archived";
+    slug: string;
+    id: string;
     createdAt: Date;
+    updatedAt: Date;
     collectionId: string;
     draftSlug: string | null;
-    status: "draft" | "published" | "archived";
     publishedData: unknown;
     publishedRevisionId: string | null;
-    updatedAt: Date;
     publishedAt: Date | null;
     archivedAt: Date | null;
 }>;
 declare function runPublishingTransition(env: TalismanEnv, payload: PublishWorkflowPayload): Promise<{
-    id: string;
-    slug: string;
     data: unknown;
+    status: "draft" | "published" | "archived";
+    slug: string;
+    id: string;
     createdAt: Date;
+    updatedAt: Date;
     collectionId: string;
     draftSlug: string | null;
-    status: "draft" | "published" | "archived";
     publishedData: unknown;
     publishedRevisionId: string | null;
-    updatedAt: Date;
     publishedAt: Date | null;
     archivedAt: Date | null;
 }>;

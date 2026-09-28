@@ -1,5 +1,5 @@
 import * as drizzle_orm_d1 from 'drizzle-orm/d1';
-import { s as schema } from './media-CIuK48g5.js';
+import * as drizzle_orm from 'drizzle-orm';
 import { A as Actor } from './actor-Daa_hmny.js';
 
 type CacheContext = Pick<ExecutionContext, 'waitUntil'>;
@@ -103,7 +103,7 @@ type TalismanEnv = {
     KV?: KVNamespace;
     [key: string]: unknown;
 };
-declare function createDbClient(env: TalismanEnv): drizzle_orm_d1.DrizzleD1Database<typeof schema> & {
+declare function createDbClient(env: TalismanEnv): drizzle_orm_d1.DrizzleD1Database<drizzle_orm.EmptyRelations> & {
     $client: D1Database;
 };
 interface ClientOptions {
@@ -167,22 +167,22 @@ declare function getClient(env: TalismanEnv, ctx?: CacheContext, options?: Clien
          * with a `stale_record` ConflictError when another save came first; without it the save wins.
          */
         save: (slug: string, data: Record<string, any>, opts?: SaveGlobalOptions) => Promise<{
-            id: string;
+            data: unknown;
             name: string;
             slug: string;
             description: string | null;
-            data: unknown;
+            id: string;
             createdAt: Date;
             updatedAt: Date;
             version: number;
         }>;
         /** The same as `save`, under the name earlier releases used. */
         update: (slug: string, data: Record<string, any>, opts?: SaveGlobalOptions) => Promise<{
-            id: string;
+            data: unknown;
             name: string;
             slug: string;
             description: string | null;
-            data: unknown;
+            id: string;
             createdAt: Date;
             updatedAt: Date;
             version: number;

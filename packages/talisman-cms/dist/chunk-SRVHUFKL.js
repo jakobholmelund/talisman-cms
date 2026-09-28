@@ -1,5 +1,19 @@
 // src/types.ts
 import { z } from "zod";
+
+// src/db/column-kind.ts
+function columnKind(column) {
+  const dataType = column?.dataType;
+  if (typeof dataType !== "string") return "other";
+  if (/^(object )?(date|timestamp)\b/.test(dataType)) return "date";
+  if (/^(number|integer|real|bigint)\b/.test(dataType)) return "number";
+  if (dataType === "boolean") return "boolean";
+  if (/^(object )?json\b/.test(dataType)) return "json";
+  if (/^string\b/.test(dataType)) return "string";
+  return "other";
+}
+
+// src/types.ts
 var DEFAULT_BLOCK_SETTINGS_FIELD_NAME = "_settings";
 var DEFAULT_BLOCK_SETTINGS_FIELD_LABEL = "Block Settings";
 var relationReferenceSchema = z.object({
@@ -560,12 +574,12 @@ function generateFieldsFromDrizzle(table) {
   for (const [key, column] of Object.entries(table)) {
     if (typeof column !== "object" || column === null || !("dataType" in column)) continue;
     const colName = column.name || key;
-    const dataType = column.dataType;
+    const kind = columnKind(column);
     let type = "text";
-    if (dataType === "number" || dataType === "integer" || dataType === "real") type = "number";
-    if (dataType === "boolean") type = "boolean";
-    if (dataType === "date" || dataType === "timestamp") type = "date";
-    if (dataType === "json") type = "richtext";
+    if (kind === "number") type = "number";
+    if (kind === "boolean") type = "boolean";
+    if (kind === "date") type = "date";
+    if (kind === "json") type = "richtext";
     fields.push({
       name: colName,
       label: key.charAt(0).toUpperCase() + key.slice(1),
@@ -578,6 +592,7 @@ function generateFieldsFromDrizzle(table) {
 }
 
 export {
+  columnKind,
   getRelationTargets,
   isPolymorphicRelationField,
   isRelationReference,

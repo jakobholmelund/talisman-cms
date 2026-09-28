@@ -1,16 +1,4 @@
-import {
-  __export
-} from "./chunk-MLKGABMK.js";
-
 // src/db/schema.ts
-var schema_exports = {};
-__export(schema_exports, {
-  collections: () => collections,
-  entries: () => entries,
-  entryRevisions: () => entryRevisions,
-  globals: () => globals,
-  media: () => media
-});
 import { sql } from "drizzle-orm";
 import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 var collections = sqliteTable("galaxy_collections", {
@@ -86,6 +74,5 @@ export {
   entries,
   entryRevisions,
   media,
-  globals,
-  schema_exports
+  globals
 };

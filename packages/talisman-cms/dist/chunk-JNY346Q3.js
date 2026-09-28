@@ -106,7 +106,7 @@ function createLocalAuth(request, env, adminPath = "/admin") {
     basePath: `${adminPath === "/" ? "" : adminPath}/api/auth`,
     secret,
     trustedOrigins: [origin],
-    database: drizzleAdapter(drizzle(env.DB, { schema: local_schema_exports }), {
+    database: drizzleAdapter(drizzle(env.DB), {
       provider: "sqlite",
       schema: local_schema_exports
     }),
@@ -228,14 +228,14 @@ function LocalAuthAdapter(adminPath, options = {}) {
       const rawUser = result?.user;
       if (!result || !rawUser) return null;
       if (!(Date.now() - new Date(result.session.createdAt).getTime() <= MAX_SESSION_AGE_MS)) {
-        await drizzle(env.DB, { schema: local_schema_exports }).delete(session).where(eq(session.id, result.session.id));
+        await drizzle(env.DB).delete(session).where(eq(session.id, result.session.id));
         return null;
       }
       if (rawUser.banned && !(rawUser.banExpires && new Date(rawUser.banExpires).getTime() < Date.now())) return null;
       if (rawUser.role !== "admin" && rawUser.role !== "editor") return null;
       if (options.editorOnly && rawUser.role === "admin") {
         if (!allowlistedAdmins(env).has(rawUser.email.toLowerCase()) || !result?.session?.id) return null;
-        const cmsSession = await drizzle(env.DB, { schema: local_schema_exports }).query.session.findFirst({ where: eq(session.id, result.session.id) });
+        const cmsSession = await drizzle(env.DB).select().from(session).where(eq(session.id, result.session.id)).get();
         if (cmsSession?.authMethod !== "cloudflare") return null;
       }
       if (accessEmail !== void 0 && accessEmail !== rawUser.email.toLowerCase()) return null;
@@ -307,9 +307,9 @@ function LocalAuthAdapter(adminPath, options = {}) {
         if (typeof body.email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email.trim())) {
           return Response.json({ error: "Valid email required" }, { status: 400 });
         }
-        const db = drizzle(env.DB, { schema: local_schema_exports });
+        const db = drizzle(env.DB);
         const normalizedEmail = body.email.trim().toLowerCase();
-        const existing = await db.query.user.findFirst({ where: sql`lower(${user.email}) = ${normalizedEmail}` });
+        const existing = await db.select().from(user).where(sql`lower(${user.email}) = ${normalizedEmail}`).get();
         if (existing) {
           if (existing.role !== "customer") {
             return Response.json({ error: "This email already has a CMS account" }, { status: 409 });
@@ -340,8 +340,8 @@ function LocalAuthAdapter(adminPath, options = {}) {
           return Response.json({ error: "Choose a valid user" }, { status: 400 });
         }
         revokeUserId = resetBody.userId;
-        const db = drizzle(env.DB, { schema: local_schema_exports });
-        const target = await db.query.user.findFirst({ where: eq(user.id, resetBody.userId) });
+        const db = drizzle(env.DB);
+        const target = await db.select().from(user).where(eq(user.id, resetBody.userId)).get();
         if (target?.role === "admin" && options.editorOnly) {
           return Response.json({ error: "Cloudflare SSO accounts are managed through Access" }, { status: 403 });
         }
@@ -356,8 +356,8 @@ function LocalAuthAdapter(adminPath, options = {}) {
         if (body.userId === actor.id) {
           return Response.json({ error: "You cannot change your own access here" }, { status: 400 });
         }
-        const db = drizzle(env.DB, { schema: local_schema_exports });
-        const target = await db.query.user.findFirst({ where: eq(user.id, body.userId) });
+        const db = drizzle(env.DB);
+        const target = await db.select().from(user).where(eq(user.id, body.userId)).get();
         if (target?.role === "admin" && options.editorOnly) {
           return Response.json({ error: "Cloudflare SSO accounts are managed through Access" }, { status: 403 });
         }
@@ -393,7 +393,7 @@ function LocalAuthAdapter(adminPath, options = {}) {
       }
       if (action === "sign-in/email" && response.ok) {
         const signedIn = await response.clone().json().catch(() => null);
-        const db = drizzle(env.DB, { schema: local_schema_exports });
+        const db = drizzle(env.DB);
         const [issued] = typeof signedIn?.token === "string" ? await db.select({ role: user.role }).from(session).innerJoin(user, eq(user.id, session.userId)).where(eq(session.token, signedIn.token)).limit(1) : [];
         if (!issued || !(options.editorOnly ? ["editor"] : ["admin", "editor"]).includes(issued.role)) {
           if (typeof signedIn?.token === "string") await db.delete(session).where(eq(session.token, signedIn.token));
@@ -411,7 +411,7 @@ function LocalAuthAdapter(adminPath, options = {}) {
         }
       }
       if (banUserId && response.status >= 500) {
-        const target = await drizzle(env.DB, { schema: local_schema_exports }).query.user.findFirst({ where: eq(user.id, banUserId) });
+        const target = await drizzle(env.DB).select().from(user).where(eq(user.id, banUserId)).get();
         if (target?.banned) {
           console.error("[talisman-cms] Could not end CMS sessions after disabling an account");
           headers.delete("content-length");

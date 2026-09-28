@@ -1,2 +1,2 @@
-export { m as media } from '../media-CIuK48g5.js';
+export { media } from './schema.js';
 import 'drizzle-orm/sqlite-core';

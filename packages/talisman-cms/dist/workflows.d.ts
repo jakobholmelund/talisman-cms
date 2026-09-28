@@ -1,12 +1,13 @@
 import { WorkflowEntrypoint, WorkflowEvent, WorkflowStep } from 'cloudflare:workers';
-import { T as TalismanEnv } from './client-BYOu0i3b.js';
+import { T as TalismanEnv } from './client-Ccx_f4Il.js';
 import { PublishWorkflowPayload, PublishWorkflowResult } from './versioning.js';
 import 'drizzle-orm/d1';
-import './media-CIuK48g5.js';
-import 'drizzle-orm/sqlite-core';
+import 'drizzle-orm';
 import './actor-Daa_hmny.js';
 import './types-C5a-hx5D.js';
 import 'astro';
+import './db/schema.js';
+import 'drizzle-orm/sqlite-core';
 
 declare class TalismanPublishWorkflow extends WorkflowEntrypoint<TalismanEnv, PublishWorkflowPayload> {
     run(event: Readonly<WorkflowEvent<PublishWorkflowPayload>>, step: WorkflowStep): Promise<PublishWorkflowResult>;
