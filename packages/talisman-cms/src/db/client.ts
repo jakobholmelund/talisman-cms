@@ -1,3 +1,4 @@
+import type { AnyRelations, EmptyRelations } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import type { Actor } from '../service/actor';
 import type { CacheContext } from '../service/cache';
@@ -16,11 +17,16 @@ export type TalismanEnv = {
   [key: string]: unknown;
 };
 
-export function createDbClient(env: TalismanEnv) {
+/**
+ * A Drizzle client on the site's `DB` binding. With a package's `relations` (built with
+ * `defineRelations`, as the ecommerce plugin's `schema` module exports) the client also has
+ * `db.query.<table>`, the relational query builder, for that package's tables.
+ */
+export function createDbClient<TRelations extends AnyRelations = EmptyRelations>(env: TalismanEnv, relations?: TRelations) {
   if (!env.DB) {
     throw new Error('Talisman CMS requires a D1 database bound to the "DB" environment variable.');
   }
-  return drizzle(env.DB);
+  return drizzle(env.DB, { relations });
 }
 
 export interface ClientOptions {
