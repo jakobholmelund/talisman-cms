@@ -182,9 +182,26 @@ const sql = createCommerceCatalogSeedSql({
 process.stdout.write(sql);
 ```
 
-Save the output as SQL and apply it to the same database as the CMS. Read native products through `getClient(env).entries.findMany('products')` and content through its configured collection. Native Commerce edits are visible immediately; content collections use the CMS publish action before the public site reads the new version. Source files are first-run defaults, not a live file editor.
+Save the output as SQL and apply it to the same database as the CMS. Read the catalog with `readCatalog` (below) and content through its configured collection. Native Commerce edits are visible immediately; content collections use the CMS publish action before the public site reads the new version. Source files are first-run defaults, not a live file editor.
 
 Product image URLs are stored as a string array. The Commerce editor presents each URL as a media row and converts it back to a string on save.
+
+### Read the catalog
+
+`readCatalog(env, { status })` from the same module reads the catalog for a storefront in one statement: every product with its variant groups, each with its definition, its values, their stock rows and bills of materials, and the product's categories and tags, oldest first; `status: ['active']` narrows the products. The rows are typed from the schema (`CatalogProduct`) and come straight from D1, without the KV cache, so a Commerce edit shows on the next request. One call serves every product a page shows:
+
+```ts
+import { readCatalog } from '@talisman-cms/plugin-ecommerce/catalog';
+
+const products = await readCatalog(env, { status: ['active'] });
+const frame = products.find((product) => product.slug === 'frame-01');
+const pairings = frame?.variants.flatMap((group) => group.values.map((value) => ({
+  id: value.id, name: `${group.variant?.name ?? group.name}: ${value.value}`, sku: value.sku,
+  available: value.stock?.quantity ?? 0, parts: value.requirements.length,
+})));
+```
+
+For other reads, `@talisman-cms/plugin-ecommerce/schema` exports the tables and their `relations`, and `createDbClient(env, relations)` from `talisman-cms/client` gives `db.query.<table>` with `with:` nesting across every foreign key (an order's `fulfillments`, `disputes` and `account`, a product's `categories` through the junction, a shopper account's `cmsUser` in the CMS user table) next to the select builder.
 
 ## Commerce admin workspace
 
@@ -420,7 +437,7 @@ The admin test checkout route answers the country and shipping refusals with 400
 
 ## Orders and fulfillment
 
-An order's `status` is its payment status: `pending`, `paid`, `partially_refunded`, `refunded`, `disputed` or `cancelled` (`draft` and the legacy `fulfilled` stay readable). Whether it shipped is its `fulfillmentStatus`, the `fulfillment_status` column of migration `0026`: `unfulfilled`, `partially_fulfilled` or `fulfilled`. A refund or dispute changes only the payment status, so it never hides a shipment. `_ecommerce_fulfillments` rows are only ever added: an order can ship in several parcels, and a correction restates a shipment's carrier and tracking number in a new row with the administrator and a reason, keeping the shipment as first recorded. Shipments and corrections count in the order they were written, whatever the clock of the Worker that wrote them said.
+An order's `status` is its payment status: `pending`, `paid`, `partially_refunded`, `refunded`, `disputed` or `cancelled` (`draft` and the legacy `fulfilled` stay readable). Whether it shipped is its `fulfillmentStatus` (the `fulfillment_status` column): `unfulfilled`, `partially_fulfilled` or `fulfilled`. A refund or dispute changes only the payment status, so it never hides a shipment. `_ecommerce_fulfillments` rows are only ever added: an order can ship in several parcels, and a correction restates a shipment's carrier and tracking number in a new row with the administrator and a reason, keeping the shipment as first recorded. Shipments and corrections count in the order they were written, whatever the clock of the Worker that wrote them said.
 
 - A shipment needs a paid or partially refunded real order that has not shipped in full, a note of 8–500 characters and an administrator. Pending, cancelled, refunded, disputed and admin test orders cannot ship; a database trigger enforces the same rules.
 - A shipment completes the order unless it is recorded as one parcel of several. A completing shipment is final: the order leaves the queue, and no further parcel can be recorded for it.
