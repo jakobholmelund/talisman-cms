@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type { Actor } from './service/actor';
+import type { TalismanAuthAdapter } from './auth/types';
+import type { EmailRuntimeDescriptor } from './email/types';
 
 export type FieldType =
   | 'text'
@@ -266,15 +268,93 @@ export interface AdminEntryDescriberDefinition {
   modulePath: string;
 }
 
+export interface TalismanCmsOptions {
+  /**
+   * The base path where the CMS admin dashboard will be served.
+   * @default '/admin'
+   */
+  adminPath?: string;
+
+  /**
+   * The authentication provider used to protect the CMS routes.
+   * Required for production.
+   */
+  auth?: TalismanAuthAdapter;
+
+  /**
+   * Schemas defining the data collections managed by Talisman CMS.
+   */
+  collections?: CollectionConfig[];
+
+  /**
+   * Schemas defining singleton global documents managed by Talisman CMS.
+   */
+  globals?: GlobalConfig[];
+
+  /**
+   * Plugins to extend Talisman CMS functionality
+   */
+  plugins?: Plugin[];
+
+  /**
+   * A custom email provider, loaded in the Worker from `customEmail({ moduleId, exportName, args })`
+   * (`talisman-cms/email`). It is used when `TALISMAN_EMAIL_PROVIDER` is unset or `custom`.
+   * Without it, email goes through the `[[send_email]]` binding named `EMAIL`.
+   */
+  email?: EmailRuntimeDescriptor;
+
+  /**
+   * The folder, relative to the project root, into which the core's and every plugin's D1 migrations
+   * are copied on each config setup. Point the `DB` binding's `migrations_dir` at it.
+   * @default 'node_modules/.talisman-cms/migrations'
+   */
+  migrationsDir?: string;
+
+  /**
+   * Optional Cloudflare Workflow binding used for publish/archive transitions.
+   */
+  publishing?: {
+    /**
+     * Workflow binding available on the Worker environment.
+     * @default 'TALISMAN_PUBLISH_WORKFLOW'
+     */
+    workflowBinding?: string;
+  };
+}
+
+/**
+ * The site's options as a plugin's `onInit` sees them: `collections`, `globals` and `plugins` are
+ * always arrays, and `adminPath` is normalized (`/admin` by default, `/` for a root admin, otherwise
+ * a leading slash and no trailing one).
+ */
+export interface PluginConfig extends Omit<TalismanCmsOptions, 'adminPath' | 'collections' | 'globals' | 'plugins'> {
+  adminPath: string;
+  collections: CollectionConfig[];
+  globals: GlobalConfig[];
+  plugins: Plugin[];
+}
+
 export interface Plugin {
   name: string;
-  onInit: (config: any) => any;
-  /** Task-oriented links shown in the matching admin workspace. */
+  /**
+   * Runs once, in registration order, when `talismanCms()` is called. A plugin adds or changes
+   * collections, globals and runtime hooks here, and may read what the plugins before it registered.
+   * Mutate `config` and return nothing, or return a new config.
+   */
+  onInit?: (config: PluginConfig) => PluginConfig | void;
+  /**
+   * Task-oriented links shown in the matching admin workspace. An `href` without a leading slash is
+   * relative to the admin path (`extensions/orders` is `/admin/extensions/orders` under the default
+   * admin path); one with a leading slash is used as given. Anything that is not a path on the site,
+   * such as a URL with a scheme or host, fails the build.
+   */
   adminLinks?: { section: AdminSection; label: string; description: string; href: string }[];
   endpoints?: { path: string; entrypoint: string; public?: boolean }[];
   /**
-   * Pages under the admin path need a CMS session unless `public` is true; pages elsewhere are
-   * always public. An admin-path page that needs a session cannot be prerendered.
+   * Pages the plugin adds. A `path` without a leading slash is relative to the admin path; one with a
+   * leading slash is used as given. Pages under the admin path need a CMS session unless `public` is
+   * true; pages elsewhere are always public. An admin-path page that needs a session cannot be
+   * prerendered.
    */
   routes?: { path: string; entrypoint: string; prerender?: boolean; public?: boolean }[];
   adminUi?: { path: string; label: string; componentPath: string; section?: AdminSection }[];

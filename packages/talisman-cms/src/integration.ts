@@ -6,7 +6,6 @@ import tailwindcss from '@tailwindcss/vite';
 import { TanStackRouterVite } from '@tanstack/router-vite-plugin';
 import type { TalismanAuthAdapter } from './auth/types';
 import { buildEmailVirtualModule } from './email/index';
-import type { EmailRuntimeDescriptor } from './email/types';
 import { registerAuthAdapter } from './runtime-config';
 import { looksLikeSecretValue } from './env';
 import { assembleMigrations, type MigrationSource } from './migrations';
@@ -15,6 +14,8 @@ import type {
   ComponentDefinition,
   GlobalConfig,
   Plugin,
+  PluginConfig,
+  TalismanCmsOptions,
   UiLibraryBlockAdapter,
   UiLibraryComponentAdapter,
   RuntimeCollectionHooks,
@@ -47,59 +48,7 @@ export type { TalismanAuthAdapter } from './auth/types';
 export type { Actor } from './service/actor';
 export type { EmailRuntimeDescriptor } from './email/types';
 
-export interface TalismanCmsOptions {
-  /**
-   * The base path where the CMS admin dashboard will be served.
-   * @default '/admin'
-   */
-  adminPath?: string;
-  
-  /**
-   * The authentication provider used to protect the CMS routes.
-   * Required for production.
-   */
-  auth?: TalismanAuthAdapter;
-
-  /**
-   * Schemas defining the data collections managed by Talisman CMS.
-   */
-  collections?: CollectionConfig[];
-
-  /**
-   * Schemas defining singleton global documents managed by Talisman CMS.
-   */
-  globals?: GlobalConfig[];
-
-  /**
-   * Plugins to extend Talisman CMS functionality
-   */
-  plugins?: Plugin[];
-
-  /**
-   * A custom email provider, loaded in the Worker from `customEmail({ moduleId, exportName, args })`
-   * (`talisman-cms/email`). It is used when `TALISMAN_EMAIL_PROVIDER` is unset or `custom`.
-   * Without it, email goes through the `[[send_email]]` binding named `EMAIL`.
-   */
-  email?: EmailRuntimeDescriptor;
-
-  /**
-   * The folder, relative to the project root, into which the core's and every plugin's D1 migrations
-   * are copied on each config setup. Point the `DB` binding's `migrations_dir` at it.
-   * @default 'node_modules/.talisman-cms/migrations'
-   */
-  migrationsDir?: string;
-
-  /**
-   * Optional Cloudflare Workflow binding used for publish/archive transitions.
-   */
-  publishing?: {
-    /**
-     * Workflow binding available on the Worker environment.
-     * @default 'TALISMAN_PUBLISH_WORKFLOW'
-     */
-    workflowBinding?: string;
-  };
-}
+export type { PluginConfig, TalismanCmsOptions } from './types';
 
 function normalizeAdminPath(adminPath?: string) {
   const trimmed = adminPath?.trim();
@@ -148,6 +97,54 @@ function assertDevAuthAllowed(authAdapter: TalismanAuthAdapter | undefined, comm
       !(typeof serverHost === 'string' && LOOPBACK_DEV_HOSTS.has(serverHost))) {
     throw new Error('[talisman-cms] DevAuthAdapter signs every request in as an admin, so the dev server must listen on loopback only. Remove --host (server.host) or configure LocalAuthAdapter.');
   }
+}
+
+// Plugin links and pages are resolved against this origin; a value that lands anywhere else names a host.
+const PLACEHOLDER_ORIGIN = 'https://talisman-cms.invalid';
+
+/**
+ * A plugin's `adminLinks[].href` or `routes[].path` as a path on the site: a value without a leading
+ * slash is placed under the admin path, one with a leading slash is kept. A URL with a scheme or a
+ * host (`https://...`, `//host/...`), a backslash or an empty value fails the build with the plugin's
+ * name, so a link can never leave the site's origin.
+ */
+function resolveAdminPath(value: unknown, adminPathPrefix: string, pluginName: string, what: string): string {
+  const fail = (reason: string) => {
+    throw new Error(`[talisman-cms] ${pluginName}: ${what} ${JSON.stringify(value)} ${reason}`);
+  };
+  if (typeof value !== 'string' || !value.trim()) fail('is empty; give a path such as "extensions/reviews" (relative to the admin path) or "/reviews".');
+  const trimmed = (value as string).trim();
+  if (trimmed.includes('\\')) fail('contains a backslash.');
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) || trimmed.startsWith('//')) fail('is not a path on this site; links and pages stay on the site\'s origin.');
+  const resolved = trimmed.startsWith('/') ? trimmed : `${adminPathPrefix}/${trimmed}`;
+  let url: URL | null = null;
+  try {
+    url = new URL(resolved, PLACEHOLDER_ORIGIN);
+  } catch {
+    // Reported below.
+  }
+  if (!url || url.origin !== PLACEHOLDER_ORIGIN) fail('is not a path on this site; links and pages stay on the site\'s origin.');
+  return resolved;
+}
+
+/** The plugin with its admin links and pages resolved to paths on the site (see resolveAdminPath). */
+function withResolvedAdminPaths(plugin: Plugin, adminPathPrefix: string): Plugin {
+  if (!plugin.adminLinks && !plugin.routes) return plugin;
+  return {
+    ...plugin,
+    ...(plugin.adminLinks && {
+      adminLinks: plugin.adminLinks.map((link) => ({
+        ...link,
+        href: resolveAdminPath(link?.href, adminPathPrefix, plugin.name, `the admin link ${JSON.stringify(link?.label)} href`),
+      })),
+    }),
+    ...(plugin.routes && {
+      routes: plugin.routes.map((route) => ({
+        ...route,
+        path: resolveAdminPath(route?.path, adminPathPrefix, plugin.name, 'the route path'),
+      })),
+    }),
+  };
 }
 
 /** Astro's `routePattern` for an injected route: the pattern without empty or trailing segments. */
@@ -598,13 +595,18 @@ function writeProjectMigrations(options: TalismanCmsOptions, plugins: Plugin[], 
 }
 
 export default function talismanCms(options?: TalismanCmsOptions): AstroIntegration {
-  // Apply plugins to modify config
-  let finalOptions = { ...options };
-  if (options?.plugins) {
-    for (const plugin of options.plugins) {
-      if (plugin.onInit) {
-        finalOptions = plugin.onInit(finalOptions);
-      }
+  // Plugins see the options with the arrays present and the admin path normalized; each may mutate
+  // the config it receives or return a new one, and the next plugin sees the result.
+  let finalOptions: PluginConfig = {
+    ...options,
+    adminPath: normalizeAdminPath(options?.adminPath),
+    collections: [...(options?.collections || [])],
+    globals: [...(options?.globals || [])],
+    plugins: [...(options?.plugins || [])],
+  };
+  for (const plugin of options?.plugins || []) {
+    if (typeof plugin.onInit === 'function') {
+      finalOptions = plugin.onInit(finalOptions) ?? finalOptions;
     }
   }
 
@@ -637,6 +639,7 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
 
   const adminPath = normalizeAdminPath(finalOptions?.adminPath);
   const adminPathPrefix = adminPath === '/' ? '' : adminPath;
+  finalOptions.plugins = finalOptions.plugins.map((plugin) => withResolvedAdminPaths(plugin, adminPathPrefix));
   const protectedPluginRoutes = collectProtectedPluginRoutes(finalOptions.plugins, adminPath, adminPathPrefix);
   validateAdminExtensions(finalOptions.plugins);
 

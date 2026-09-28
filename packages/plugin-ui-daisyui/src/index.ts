@@ -32,9 +32,9 @@ export function daisyUiPlugin(): Plugin {
   
   return {
     ...base,
-    onInit: (config: any) => {
+    onInit: (config) => {
       // Allow base plugin to initialize if needed
-      let updatedConfig = base.onInit ? base.onInit(config) : config;
+      const updatedConfig = base.onInit?.(config) ?? config;
 
       // Inject the hidden daisyui-theme global document config
       const themeGlobal: GlobalConfig = {

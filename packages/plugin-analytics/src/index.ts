@@ -1,4 +1,4 @@
-import type { Plugin } from 'talisman-cms';
+import type { Plugin, PluginConfig } from 'talisman-cms';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -27,7 +27,7 @@ export function analyticsPlugin(options: AnalyticsPluginOptions = {}): Plugin {
     adminUi: [overview],
     adminLinks: [],
     endpoints: [baseEndpoint],
-    onInit(config: { plugins?: Plugin[]; adminPath?: string }) {
+    onInit(config: PluginConfig) {
       const hasCommerce = options.commerce !== false &&
         config.plugins?.some(item => item.name === '@talisman-cms/plugin-ecommerce');
       const hasAsk = Boolean(hasCommerce && options.ask);
