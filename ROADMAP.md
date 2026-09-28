@@ -44,9 +44,9 @@ Public checkout stays off (`TALISMAN_COMMERCE_CHECKOUT_ENABLED=false`) until the
 
 ## Release
 
-The maintainer steps for the 0.1 preview are in [RELEASE.md](RELEASE.md): verify a clean checkout of `main` (`pnpm release:verify`, `node scripts/check-dist-drift.mjs`, `pnpm audit --prod --audit-level high`), push `main`, run `pnpm release:publish --dry-run` and then publish. Sites that upgrade apply migrations `0019` through `0030` before deploying the new Worker, as the [deployment gate](RELEASE.md#deployment-gate) describes. The incentive and abuse rules ship in the same release and need no further migration; the deployment gate lists their settings and the Stripe webhook event to add. The currency, delivery, shipping and tax settings ship in it too, with migration `0025`; a site that sets none of them behaves as before. So do the order operations, with migrations `0026` to `0030`: they add the `charge.dispute.created` webhook event, and their emails need the email settings and store details.
+The maintainer steps for the 0.1 preview are in [RELEASE.md](RELEASE.md): verify a clean checkout of `main` (`pnpm release:verify`, `node scripts/check-dist-drift.mjs`, `pnpm audit --prod --audit-level high`), push `main`, run `pnpm release:publish --dry-run` and then publish. Sites create their D1 database from 0.1's migrations before deploying the Worker, as the [deployment gate](RELEASE.md#deployment-gate) describes. The incentive and abuse rules ship in the same release and need no further migration; the deployment gate lists their settings and the Stripe webhook event to add. The currency, delivery, shipping and tax settings ship in it too; a site that sets none of them behaves as before. So do the order operations, with migrations `0026` to `0030`: they add the `charge.dispute.created` webhook event, and their emails need the email settings and store details.
 
-Three audit findings that were to be settled before the npm release are only partly fixed, and are accepted for 0.1: a built Worker still carries two copies of the auth modules, builds still print route-injection lines and the playground keeps scratch pages, and the schema types `media.updatedAt` as not null. Their remaining work is tracked below under [After publish](#after-publish) and [Maintenance](#maintenance) (`integration-contract/src-dist-dual-auth-modules`, `release-packaging/debug-leftovers`, `migrations-schema/drizzle-kit-snapshot-drift`).
+Two audit findings that were to be settled before the npm release are only partly fixed, and are accepted for 0.1: a built Worker still carries two copies of the auth modules, and builds still print route-injection lines and the playground keeps scratch pages. Their remaining work is tracked below under [After publish](#after-publish) and [Maintenance](#maintenance) (`integration-contract/src-dist-dual-auth-modules`, `release-packaging/debug-leftovers`). The third, the Drizzle schema drifting from the migrations (`migrations-schema/drizzle-kit-snapshot-drift`), is settled: the schema files are the source of truth, drizzle-kit generates the migrations from them, and `pnpm db:check` fails when they differ.
 
 ## After publish
 
@@ -514,7 +514,7 @@ The admin UX overhaul and the SSO redesign can run in parallel. The admin produc
 
 #### Return concurrency tokens from every write, including globals
 
-**Status:** Done: migration `0031_global_versions.sql` adds `galaxy_globals.version`; `globals.save` takes `expectedVersion` and refuses a stale save with a `ConflictError` whose `code` is `stale_record` and whose `version` is the stored one, in the same statement that increments the version; `POST /api/globals/:slug` reads the version from `If-Match` and answers 409 `{ error, code: 'stale_record', version }`, and `GET` answers with `version` and an `ETag`; `getClient(env).globals.save(slug, data, { expectedVersion })` does the same; the admin's globals editor sends `If-Match`, keeps the edits on a stale save and offers **Load latest version**; the entry editor publishes and archives from the revision its own save returned instead of re-reading the entry. The e2e `globals-conflict` flow covers two editors on one global.
+**Status:** Done: `galaxy_globals.version` grows by one with each save; `globals.save` takes `expectedVersion` and refuses a stale save with a `ConflictError` whose `code` is `stale_record` and whose `version` is the stored one, in the same statement that increments the version; `POST /api/globals/:slug` reads the version from `If-Match` and answers 409 `{ error, code: 'stale_record', version }`, and `GET` answers with `version` and an `ETag`; `getClient(env).globals.save(slug, data, { expectedVersion })` does the same; the admin's globals editor sends `If-Match`, keeps the edits on a stale save and offers **Load latest version**; the entry editor publishes and archives from the revision its own save returned instead of re-reading the entry. The e2e `globals-conflict` flow covers two editors on one global.
 
 **Why:** Only GET returns `latestRevisionId`, so after a save the editor re-reads the entry and can publish on top of someone else's newer revision. Global writes have no token at all, so two editors saving the same global overwrite each other.
 
@@ -761,16 +761,6 @@ Smaller fixes that fit no workstream. Take them in any order.
 **Audit refs:** `release-packaging/debug-leftovers`
 
 **Issue:** #TBD-build-logs-playground-pages
-
-#### Make `media.updatedAt` nullable in the schema
-
-**Why:** `schema.ts` declares `media.updatedAt` as `notNull()`, but migration `0006` added the column as nullable, so the type is wrong for older rows.
-
-**Approach:** Drop `.notNull()` and handle `null` where media rows are read.
-
-**Audit refs:** `migrations-schema/drizzle-kit-snapshot-drift`
-
-**Issue:** #TBD-schema-media-updated-at
 
 #### Demo seed: seconds, and no overwrite of collections
 

@@ -25,81 +25,14 @@ The playground Wrangler files contain local placeholder D1 and KV IDs. Configure
 
 This release builds the packages on Drizzle ORM 1.0. Before a site installs them, add `drizzle-orm@rc` to its `package.json` (`"drizzle-orm": "rc"`, Drizzle's release-candidate tag; the CHANGELOG's breaking changes say why not a caret range) and run its install.
 
-1. Back up the target D1 database, rehearse restoration, and apply the new migrations before deploying the matching Worker. This release adds `0019_shared_customer_identity.sql` through `0031_global_versions.sql`; `0025` to `0030` ship in `@talisman-cms/plugin-ecommerce`, the rest in `talisman-cms`. Run the commands from the site's project, where `DB` is the binding whose `migrations_dir` points at the assembled migrations folder:
+1. Create the target D1 database and apply the migrations before deploying the matching Worker. 0.1 starts the migration history from an empty database: a database that applied the pre-release chain (`0000_skinny_odin.sql` to `0031_global_versions.sql`) is not upgraded. Delete it (or drop its tables) and create it again; no production data needs keeping. Run the commands from the site's project, where `DB` is the binding whose `migrations_dir` points at the assembled migrations folder:
 
-   1. Point `migrations_dir` at the assembled folder and write it. The integration now copies the core's and every registered plugin's migrations into `node_modules/.talisman-cms/migrations` (or the `migrationsDir` option's folder) on each `astro dev`, `astro build`, `astro sync` or `astro check`, so a site whose `wrangler.toml` still has `migrations_dir = "node_modules/talisman-cms/drizzle"` (or a checkout's `packages/talisman-cms/drizzle`) changes it to `migrations_dir = "node_modules/.talisman-cms/migrations"` and runs `pnpm exec astro sync` (or a build) from the release commit before every `wrangler d1 migrations` command below. A build with the old value fails once the plugin ships migrations. The move changes no file name, so a database that already applied `0025` to `0030` from the core's folder has nothing new to apply; `migrations list` must report nothing pending after the switch.
+   1. Point `migrations_dir` at the assembled folder and write it. The integration copies the core's and every registered plugin's migrations into `node_modules/.talisman-cms/migrations` (or the `migrationsDir` option's folder) on each `astro dev`, `astro build`, `astro sync` and `astro check`, as flat `<timestamp>_<name>.sql` files; `pnpm exec astro sync` writes it without a build.
+   2. List the pending migrations with `pnpm exec wrangler d1 migrations list DB --remote`: the core's `..._core_schema.sql`, then the plugin's `..._commerce_schema.sql` and `..._commerce_triggers.sql`.
+   3. Apply them with `pnpm exec wrangler d1 migrations apply DB --remote`. Wrangler applies them in order and rolls back a migration that fails, keeping the ones before it; fix the cause and run the command again.
+   4. Check that `migrations list` reports nothing pending.
 
-   2. Record a restore point: `pnpm exec wrangler d1 time-travel info <database>` prints the current bookmark. Keep it until the deployed site passes step 4. Restoring it with `pnpm exec wrangler d1 time-travel restore <database> --bookmark=<bookmark>` also discards every write made after it.
-   3. List the pending migrations with `pnpm exec wrangler d1 migrations list DB --remote`.
-   4. Run the read-only checks below for the pending migrations with `pnpm exec wrangler d1 execute DB --remote --command "<query>"`. Each must return no rows; resolve what they find first.
-   5. Apply the migrations with `pnpm exec wrangler d1 migrations apply DB --remote`. Wrangler applies them in order and rolls back a migration that fails, keeping the ones before it; fix the cause and run the command again.
-   6. Check that `migrations list` reports nothing pending.
-
-   Before migration `0018`, if it is still pending:
-
-   ```sql
-   SELECT entry_id, revision_number, COUNT(*) AS copies
-   FROM galaxy_entry_revisions
-   GROUP BY entry_id, revision_number
-   HAVING COUNT(*) > 1;
-   ```
-
-   Before migration `0019`, which allows one CMS user per email regardless of letter case:
-
-   ```sql
-   SELECT lower(email) AS email, COUNT(*) AS copies
-   FROM galaxy_auth_user
-   GROUP BY lower(email)
-   HAVING COUNT(*) > 1;
-   ```
-
-   Before migration `0023`, which allows one published entry per slug in a collection:
-
-   ```sql
-   SELECT collection_id, slug, COUNT(*) AS copies
-   FROM galaxy_entries
-   WHERE status = 'published'
-   GROUP BY collection_id, slug
-   HAVING COUNT(*) > 1;
-   ```
-
-   What each new migration does:
-
-   - `0019` lowercases every stored CMS user email and adds a unique index on it, so it fails while its check returns rows: change the email of, or remove, all but one account for each address. It adds `galaxy_auth_session.auth_method` and `_ecommerce_customer_accounts.cms_user_id`, and links shoppers who have already verified their email to `customer` users. Without it, local and hybrid CMS sign-ins fail on the new session column and shopper account reads fail on `cms_user_id`.
-   - `0020` needs no check. It adds a baseline revision to entries that have none (for example seeded rows), pins the published revision of published entries, and unwraps globals stored as JSON text inside a JSON string. It only changes rows that still need it, so a rerun changes nothing.
-   - `0021` needs no check. It only adds the nullable `galaxy_entries.draft_slug` column. Without it, every entry read and save fails.
-   - `0022` needs no check. It keeps global data that is not a JSON object, such as a list, under a `value` key (`[1,2]` becomes `{"value":[1,2]}`), where reads would otherwise return `{}`. Site code that reads such a global then reads `data.value`. To see the rows it looks at, run `SELECT slug, data FROM galaxy_globals WHERE CASE WHEN json_valid(data) THEN json_type(data) <> 'object' ELSE 1 END;`. A listed row that holds a JSON object as encoded text is left as it is.
-   - `0023` adds a unique index on the slug of published entries in each collection, so it fails while its check returns rows. For each slug it lists, rename all but one of the entries in the CMS and publish them again, or unpublish them.
-   - `0024` needs no check. It adds the ecommerce plugin's `_ecommerce_sign_in_tokens` and `_ecommerce_rate_limits` tables and an index on order emails. It copies shopper sign-in links that have not expired into the new link table, so they keep working after the upgrade, and moves the shopper sign-in request counters out of `galaxy_auth_rate_limit` into `_ecommerce_rate_limits`. It also drops and recreates the `_ecommerce_discount_reserve_guard` trigger, so that first-order codes check the shopper's past orders instead of whether an account row exists. Without it, shopper sign-in fails (requesting, previewing and using a link), `purgeStaleCommerceData` throws, and the old trigger keeps refusing first-order codes to any shopper who has an account. Once the new Worker runs, the scheduled `purgeStaleCommerceData` also deletes the never-verified shopper accounts that earlier versions created for each link request; the [release notes](CHANGELOG.md#ecommerce-plugin) list which ones.
-   - `0025` needs no check. It only adds columns, a table and indexes, and recreates two triggers. `_ecommerce_orders` gains `shipping_amount`, `shipping_rate_id`, `shipping_label`, `tax_amount`, `tax_behavior`, `tax_calculation_id` and `tax_transaction_id`, with a partial index for taxed orders whose tax transaction is not recorded yet; the new `_ecommerce_tax_reversals` table, indexed by order, records the tax reversals that mirror refunds. It drops and recreates `_ecommerce_gift_card_reserve_guard` and `_ecommerce_discount_reserve_guard` with one change: an order's totals now include its shipping and exclusive tax. Existing orders get `0` and no tax behaviour, so the guards check them as before, and the previous Worker keeps working after the migration. The new Worker needs it: the ecommerce plugin's order reads and the analytics plugin's commerce reports read the new columns, and fail without them.
-   - `0026` needs no check. It adds `_ecommerce_orders.fulfillment_status` (`unfulfilled`, `partially_fulfilled` or `fulfilled`), sets it to `fulfilled` for orders that have a shipment record or the legacy status `fulfilled`, and moves that status back to `paid`, so the payment status no longer says whether an order shipped. It rebuilds `_ecommerce_fulfillments` without its one-row-per-order rule, keeping every row and id as a shipment that completed its order, and replaces its triggers: a shipment needs a paid or partially refunded real order that has not shipped in full, and a correction row restates a shipment's carrier and tracking number with the administrator and a reason. It adds indexes for the orders queue. D1 has always enforced the order reference the rebuild copies, so no existing row can stop it. The previous Worker keeps working after it, and its shipments are accepted as completing ones, but its Orders screen lists shipped orders as paid, with a form the database refuses, so deploy soon after. The new Worker reads the new column in every order read: without it the payment and refund webhooks, reconciliation, checkout, the order status route, `listCustomerOrders` and the admin Orders screen fail.
-   - `0027` needs no check. It only adds columns, an index and a table: `_ecommerce_gift_card_purchases.refund_adjusted_cents`, `_ecommerce_gift_cards.replaces_purchase_id` and `held_for_review`, and `_ecommerce_gift_card_reviews`, which records the decisions on gift card purchases held for review. Existing rows get `0` or no value. The previous Worker keeps working after it. The new Worker's gift card reads name the new columns, so gift card redemption at checkout, `getPurchasedGiftCard` and the admin **Gift cards** screen fail without it. Gift card codes that the new Worker issues or re-encrypts use a format with a key id, which the previous Worker cannot read, so re-encrypt older codes only once a rollback is no longer planned.
-   - `0028` needs no check. It only creates three tables and their indexes: `_ecommerce_provider_refunds` (one row for each rise in an order's Stripe refund total, with its date), `_ecommerce_disputes` and `_ecommerce_restocks`. The order status `disputed` needs no schema change. The previous Worker never reads or writes these tables. Without them, the new Worker answers order refund webhooks with HTTP 500, which Stripe retries, and dispute events, the gift card review list and the Orders screen's disputes and restocks fail.
-   - `0029` needs no check. It only adds columns, a table and non-unique indexes: reconciliation attempt and review columns on `_ecommerce_orders` and `_ecommerce_gift_card_purchases`, tax attempt columns on `_ecommerce_orders` and `_ecommerce_tax_reversals`, the `_ecommerce_reconcile_decisions` table, and indexes for reconciliation, the tax passes, payments by order, checkout resume and `galaxy_auth_verification` lookups. Existing rows start untried and not parked. The previous Worker ignores the new columns, and after a rollback it retries parked rows as it always did. The new Worker's order and gift card purchase reads fail without it.
-   - `0030` needs no check. It only creates `_ecommerce_email_deliveries`, the delivery log of order confirmations, shipment notices and gift card claim emails, which holds no address, and `_ecommerce_gift_card_claims`, the hashed one-time links that show a gift card code, with a trigger that allows a link only for an active card of its purchase. Their unique keys are on the new, empty tables. The previous Worker ignores both. The new Worker writes a delivery row in the batch that confirms a payment, records a shipment or confirms a gift card purchase, so all three fail without it. Orders paid and gift cards bought before the upgrade get no email.
-   - `0031` needs no check. It only adds `galaxy_globals.version`, a whole number that starts at 1 for every existing global and grows by one with each save. The admin's globals editor and `getClient(env).globals.save` name the version they loaded, and a save over a newer version answers HTTP 409 instead of overwriting it. The previous Worker ignores the column and keeps saving globals, without moving the version. The new Worker reads the column in every global read and save, so the globals list, the globals editor and every `getClient(env).globals` call fail without it.
-
-   `0026` to `0031` are applied in file order after `0025`, and each must reach D1 before the Worker that needs it; the new Worker needs all six.
-
-   The core's files through `0024` also create the ecommerce plugin's tables of their time, and `0019` changes both the CMS user tables and the shopper accounts, so apply every migration the assembled folder holds even if the site does not use that plugin. Later commerce migrations ship only with the plugin and are assembled only where it is registered.
-
-   Slugs are now unique within a collection when an entry is created, renamed or published, and slugs chosen by API clients must follow the format rules. Entries that already share a slug keep working, but publishing a draft onto a slug another published entry serves returns HTTP 409. An entry whose slug breaks the rules can still be saved while its slug is unchanged. These optional read-only queries find both cases before editors run into them:
-
-   ```sql
-   SELECT collection_id, slug, COUNT(*) AS copies
-   FROM galaxy_entries
-   GROUP BY collection_id, slug
-   HAVING COUNT(*) > 1;
-
-   SELECT c.slug AS collection, e.id, e.slug
-   FROM galaxy_entries e JOIN galaxy_collections c ON c.id = e.collection_id
-   WHERE e.slug = '' OR length(e.slug) > 200
-     OR e.slug GLOB '*[^A-Za-z0-9/_.~:-]*'
-     OR e.slug GLOB '/*' OR e.slug GLOB '*/' OR e.slug GLOB '*//*'
-     OR ('/' || e.slug || '/') GLOB '*/./*' OR ('/' || e.slug || '/') GLOB '*/../*';
-   ```
-
-   The second query also lists slugs with letters outside ASCII, such as `ü`, which the rules allow; check those rows by eye.
+   Later releases add migrations as folders drizzle-kit generates from the schema files (see CLAUDE.md, "Migrations"). Each release names them here with any read-only pre-check they need, and a Time Travel bookmark (`pnpm exec wrangler d1 time-travel info <database>`) is taken before they are applied.
 2. Check the target Worker bindings (`DB`, `STORAGE`, and any of `KV`, `IMAGES` and `EMAIL` the site uses; the CMS no longer reads a `QUEUE` binding), compatibility date, `TALISMAN_AUTH_SECRET`, and the one-time `TALISMAN_AUTH_SETUP_TOKEN` against the [setup guide](packages/talisman-cms/README.md). Hybrid and Access-only sites use their Access settings instead of the setup token. `DevAuthAdapter` cannot be deployed: `astro build` fails with it. Keep the auth secret stable across deploys. Remove the setup token after first-admin creation. If using Workflow publishing, configure the separate worker in `playground/wrangler.workflows.toml` with real D1 and KV bindings, and bind the site Worker to its `TalismanPublishWorkflow` class using `script_name = "talisman-cms-publishing-workflow"` and the `TALISMAN_PUBLISH_WORKFLOW` binding. Both Workers must point to the same D1 and KV resources.
 
    Sites on `HybridAuthAdapter` need no change for the SSO redesign: the SSO sign-in stores no password credential any more, the credential rows earlier versions created for SSO admins are deleted on each admin's next sign-in, existing SSO sessions keep working, and the adapters now take the admin path from the integration (a path still passed to `HybridAuthAdapter(...)` must match `adminPath`, or the build fails).

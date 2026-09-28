@@ -1,6 +1,6 @@
 # Talisman Analytics
 
-`@talisman-cms/plugin-analytics` adds a Cloudflare Web Analytics screen to Talisman CMS. When `@talisman-cms/plugin-ecommerce` is also registered, it adds a Commerce analytics screen using confirmed D1 orders. No analytics database migration is needed; the Commerce reports read the ecommerce order tables, including the shipping and tax columns that the CMS migration `0025_order_shipping_and_tax.sql` adds, so apply the CMS migrations first.
+`@talisman-cms/plugin-analytics` adds a Cloudflare Web Analytics screen to Talisman CMS. When `@talisman-cms/plugin-ecommerce` is also registered, it adds a Commerce analytics screen using confirmed D1 orders. No analytics database migration is needed; the Commerce reports read the ecommerce order tables, including the order table's shipping and tax columns, so apply the CMS migrations first.
 
 ```ts
 import { analyticsPlugin } from '@talisman-cms/plugin-analytics';

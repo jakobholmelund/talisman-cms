@@ -203,7 +203,7 @@ talismanCms({
 
 ### Database migrations
 
-The CMS and its plugins ship their D1 migrations as numbered `.sql` files. Wrangler applies one folder per binding, so on every config setup (`astro dev`, `astro build`, `astro sync` and `astro check`) the integration copies the core's files and those of every registered plugin into one folder in the project, `node_modules/.talisman-cms/migrations` by default, and logs what it wrote. `migrations_dir` points at that folder, relative to `wrangler.toml`. Run `pnpm exec astro sync` (or a build) first, then apply the migrations before deploying the Worker that needs them:
+The CMS and its plugins ship their D1 migrations as drizzle-kit writes them, one folder per migration, `drizzle/<timestamp>_<name>/migration.sql`, generated from the packages' Drizzle schema files, which are the source of truth for the database. Wrangler applies one folder of flat `.sql` files per binding, so on every config setup (`astro dev`, `astro build`, `astro sync` and `astro check`) the integration copies the core's migrations and those of every registered plugin into one folder in the project, `node_modules/.talisman-cms/migrations` by default (the `migrationsDir` integration option moves it), each as `<timestamp>_<name>.sql`. Point the `DB` binding's `migrations_dir` at that folder, run `astro sync` (or a build) first, then apply:
 
 ```sh
 pnpm exec astro sync
@@ -211,11 +211,11 @@ pnpm exec wrangler d1 migrations apply DB --local   # local development
 pnpm exec wrangler d1 migrations apply DB --remote  # production database
 ```
 
-The folder is written by the build, so it is not committed. The assembled set depends on the plugins registered in `astro.config`: `talisman-cms` ships `0000` to `0024` and continues the sequence from `0031`, and `@talisman-cms/plugin-ecommerce` ships `0025` to `0030`. The core files through `0024` also create the commerce tables of their time and `0019` changes both the CMS user tables and the shopper accounts, so those files stay in the core even for a site without the plugin; wrangler records each file by name, and a file name never changes once a database has applied it. A `sources.json` beside the files names the package each one comes from. The integration fails the build when a `migrations_dir` in `wrangler.toml`, `wrangler.json` or `wrangler.jsonc` still points at the core package's own `drizzle` folder while a plugin ships migrations, and warns when no binding points at the assembled folder. The `migrationsDir` integration option moves the folder; keep `migrations_dir` in step with it.
+The folder is written by the build, so it is not committed. The assembled set depends on the plugins registered in `astro.config`: `talisman-cms` ships the CMS tables (collections, entries, revisions, media, globals and the local-auth tables), and `@talisman-cms/plugin-ecommerce` the commerce tables and their triggers. Wrangler applies the files by the number before the first `_`, drizzle-kit's generation timestamp, and records each name in `d1_migrations`, so a name never changes once a database has applied it. A build fails while a plugin ships migrations and a `migrations_dir` still names the core package's own folder.
 
-Sites that used `migrations_dir = "node_modules/talisman-cms/drizzle"` change it to the assembled folder and run `astro sync` or a build before the next `wrangler d1 migrations apply`. A database that already applied `0000` to `0030` has nothing to apply for the move, since the files keep their names when they move between packages; `0031` is new in this release.
+Version 0.1.0 starts the migration history: its files create every table from nothing. A database that applied the pre-release migrations (`0000_skinny_odin.sql` to `0031_global_versions.sql`) is not upgraded; delete and recreate it, or drop its tables, then apply 0.1's migrations.
 
-Wrangler reads one `migrations_dir` per binding. If the site has its own migrations, add a second `[[d1_databases]]` entry for the same database with another binding name, the app's folder, and its own `migrations_table`. Then apply each set by binding name (`DB`, then `APP_DB`). Keep the CMS on the `DB` binding and the default `d1_migrations` table; moving it to another table on an existing database would re-run migrations that were already applied.
+Wrangler reads one `migrations_dir` per binding. If the site has its own migrations, add a second `[[d1_databases]]` entry for the same database with another binding name, the app's folder, and its own `migrations_table`. Then apply each set by binding name (`DB`, then `APP_DB`). Keep the CMS on the `DB` binding and the default `d1_migrations` table; the assembler refuses a `.sql` file it did not write, so the site's files cannot go in the assembled folder.
 
 ```toml
 [[d1_databases]]
@@ -226,32 +226,7 @@ migrations_dir = "migrations"
 migrations_table = "app_migrations"
 ```
 
-When upgrading an existing database, run these checks before applying the new migrations. Each must return no rows; resolve any duplicates first. Migration `0018` adds a unique revision-number index, `0019` allows only one CMS user per email regardless of letter case, and `0023` allows only one published entry per slug in a collection.
-
-```sql
--- Before 0018_entry_revision_integrity.sql
-SELECT entry_id, revision_number, COUNT(*) AS copies
-FROM galaxy_entry_revisions
-GROUP BY entry_id, revision_number
-HAVING COUNT(*) > 1;
-
--- Before 0019_shared_customer_identity.sql
-SELECT lower(email) AS email, COUNT(*) AS copies
-FROM galaxy_auth_user
-GROUP BY lower(email)
-HAVING COUNT(*) > 1;
-
--- Before 0023_published_slug_unique.sql
-SELECT collection_id, slug, COUNT(*) AS copies
-FROM galaxy_entries
-WHERE status = 'published'
-GROUP BY collection_id, slug
-HAVING COUNT(*) > 1;
-```
-
-Version 0.1.0 adds `0019_shared_customer_identity.sql` through `0031_global_versions.sql`; `0025` to `0030` ship in `@talisman-cms/plugin-ecommerce`, the rest in `talisman-cms`. Migration `0019` adds the session column the local and hybrid adapters now read, so their sign-ins fail until it is applied. It also lowercases stored CMS emails and links verified ecommerce shoppers to the shared user identity described below. Migration `0020` needs no check: it records a baseline revision for entries that have none, such as seeded rows, and unwraps globals stored as double-encoded JSON. `0021` adds the draft slug column that every entry read and save needs. `0022` keeps global data that is not a JSON object, such as a list, under a `value` key, so code that reads such a global reads `data.value`. For each slug the `0023` check lists, rename all but one of the entries and publish them again, or unpublish them. `0024` adds the ecommerce plugin's sign-in link and rate-limit tables; shopper sign-in fails without it. `0025` needs no check: it adds the shipping and tax columns of ecommerce orders and a table for tax reversals, and recreates the discount and gift card redemption guards so that an order's totals include its shipping and exclusive tax. Existing orders balance as before, and the previous Worker keeps working after it; the ecommerce plugin's order reads fail without it. `0026` to `0030` need no check either: each keeps every existing row, and the previous Worker keeps working after it. `0026` records fulfillment apart from payment: it adds `_ecommerce_orders.fulfillment_status`, moves the old `fulfilled` order status there, and rebuilds `_ecommerce_fulfillments` so that an order can ship in several parcels and a shipment can be corrected. `0027` adds the columns and table for resolving gift card purchases held for review and for replacement cards. `0028` adds tables for dated provider refunds, payment disputes and restocks. `0029` adds reconciliation and tax attempt columns, a table of administrator decisions on parked checkouts, and indexes for reconciliation, the tax passes and webhook lookups. `0030` adds the delivery log of the ecommerce plugin's order emails and the gift card claim links. The ecommerce plugin's order reads fail without `0026` and `0029`, its gift card reads without `0027` and `0029`, its order refund and dispute webhooks without `0028`, and payment confirmation, shipments and gift card purchases without `0030`. `0031` needs no check: it adds `galaxy_globals.version`, which starts at 1 for every existing global and grows by one with each save, so a save can name the version it loaded and be refused when another editor saved first. The previous Worker keeps working after it; the new Worker's global reads and saves fail without it. The [release checklist](https://github.com/jakobholmelund/talisman-cms/blob/main/RELEASE.md#deployment-gate) describes each migration.
-
-The migrations are hand-written SQL; the packages do not use `drizzle-kit` to generate them. The Drizzle table definitions in the core and the ecommerce plugin describe the columns the runtime queries, not the triggers, CHECK constraints or partial indexes, so they cannot produce a migration. To change the schema in this repository, add the next numbered `.sql` file to the `drizzle/` folder of the package that owns the change and its entry to that package's `drizzle/meta/_journal.json`; never edit a migration that has shipped. One sequence of numbers runs across the core and every plugin, so the next migration anywhere takes the number after the highest one in use (`0032` after this release), and the assembler refuses two files with the same name or the same number. The core's `test/migrations.test.mjs` applies its chain to an empty database and to one holding data from earlier releases; the ecommerce plugin's `test/migrations.test.mjs` assembles both sets, applies them as wrangler does to a fresh database and to a seeded one at `0024`, and checks that the result matches.
+In this repository, a schema change is made in `src/db/schema.ts` or `src/auth/local-schema.ts` (the ecommerce plugin: `packages/plugin-ecommerce/src/schema.ts`) and turned into a migration with `pnpm --filter talisman-cms db:generate --name <name>` (or `--filter @talisman-cms/plugin-ecommerce`); `db:generate:custom` writes an empty migration for SQL drizzle-kit cannot express, which is how the commerce triggers are kept. `pnpm db:check` proves that the migrations build exactly the schema the files declare. CLAUDE.md holds the rules, including the one D1 needs for a table rebuild.
 
 #### Plugin migrations
 
@@ -263,14 +238,14 @@ import { fileURLToPath } from 'node:url';
 export function myPlugin(): Plugin {
   return {
     name: 'my-plugin',
-    // NNNN_name.sql files, with a drizzle/meta/_journal.json like the core's.
+    // drizzle-kit's <timestamp>_<name>/migration.sql folders, or plain <number>_<name>.sql files.
     migrations: { dir: fileURLToPath(new URL('../drizzle/', import.meta.url)) },
     // ...
   };
 }
 ```
 
-The integration lists the core's folder first, then each plugin's in registration order, and copies them all into the assembled folder. The numbers must continue the shared sequence: a plugin cannot renumber or replace a core file, and two plugins cannot share a number. The same tools are exported from `talisman-cms/migrations` for tests and scripts: `listMigrationSources(sources)` returns the files of several `{ name, dir }` sources in wrangler's order and throws on a shared name or number, and `assembleMigrations({ sources, outDir })` writes them into a folder, removing `.sql` files no source ships any more.
+The integration lists the core's folder first, then each plugin's in registration order, and copies them all into the assembled folder as flat files. Two packages cannot ship a migration with the same name or the same leading number; drizzle-kit's timestamps keep them apart without coordination. The same tools are exported from `talisman-cms/migrations` (`listMigrationSources`, `assembleMigrations`, `compareMigrationNames`) for a plugin's tests.
 
 ### Scheduled jobs
 
@@ -405,7 +380,7 @@ Content stored as an HTML string, such as the posts from `seeds/ecommerce-demo.s
 
 Talisman CMS keeps the admin application separate from public Astro pages. Public media URLs use immutable IDs and cache their R2 responses at the edge when the Cloudflare Cache API is available. The first request in a location still reads R2. Edge caching requires a Worker on a custom domain or route; `workers.dev` previews do not use that cache.
 
-Use `getClient(env).entries.findBySlug('pages', slug, { depth: 0 })` for a dynamic page instead of loading the entire collection and searching it. Use `findMany('posts', { depth: 0, limit: 12 })` for bounded lists, and `findMany('posts', { where: { category: 'news' }, sort: '-createdAt', limit: 12, offset: 12 })` to narrow, order and page in the database; filters read the published snapshot in the published view. `limit` must be a positive integer and is applied in the database before relationship resolution. Published entry reads default to published snapshots. `depth: 0` avoids relation queries and can use KV for unbounded, unfiltered `findMany` and `find` reads; a read with `where`, `sort` or `offset` always goes to D1. The `0009_entry_read_indexes` migration accelerates published lists and slug lookups; filters on entry data fields scan the collection, while native columns use the table's own indexes.
+Use `getClient(env).entries.findBySlug('pages', slug, { depth: 0 })` for a dynamic page instead of loading the entire collection and searching it. Use `findMany('posts', { depth: 0, limit: 12 })` for bounded lists, and `findMany('posts', { where: { category: 'news' }, sort: '-createdAt', limit: 12, offset: 12 })` to narrow, order and page in the database; filters read the published snapshot in the published view. `limit` must be a positive integer and is applied in the database before relationship resolution. Published entry reads default to published snapshots. `depth: 0` avoids relation queries and can use KV for unbounded, unfiltered `findMany` and `find` reads; a read with `where`, `sort` or `offset` always goes to D1. The indexes on `galaxy_entries` accelerate published lists and slug lookups; filters on entry data fields scan the collection, while native columns use the table's own indexes.
 
 For responsive CMS images on Cloudflare, add an `IMAGES` binding to the site's Wrangler config and use `getMediaImageSrcSet(url)` from `talisman-cms/helpers` with an HTML `sizes` attribute. The media route accepts fixed widths of 320, 640, 960, 1280 and 1920 pixels, serves WebP variants, and caches each variant. Without the binding, it serves the original image. Cloudflare bills Images transformations, so review its pricing before enabling this on a production site.
 
