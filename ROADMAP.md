@@ -438,6 +438,8 @@ Shopper data rights, and database rules that protect balances and roles.
 
 ### Default new auth users to the `customer` role
 
+**Status:** partly done with the SSO redesign: better-auth's `defaultRole` is `customer`, and every built-in path names its role. The SQL column default stays `editor`: changing it needs a rebuild of the table that sessions and credentials reference, which no code relies on. Remaining: the schema default or a trigger, with the next rebuild of that table.
+
 **Why:** `galaxy_auth_user` now holds shoppers too, but its default role is `editor`, so any insert that forgets the role grants CMS access.
 
 **Approach:** Set better-auth's `defaultRole` and the schema default to `customer`, keep passing `editor` or `admin` explicitly, and add a `BEFORE INSERT` trigger (or the next table rebuild) that enforces it in SQL.
@@ -684,6 +686,8 @@ Depends on Plugin API v2.
 
 #### Mint the admin session directly after Access verification
 
+**Status:** done on `main`. `src/auth/cloudflare-access.ts` is a better-auth plugin with one endpoint that verifies the Access JWT from the request headers itself, finds or creates the admin row without a password, deletes any `credential` row the row has (the upgrade path for rows the old flow created, run on the next sign-in), creates the session with `authMethod` set at creation and sets the cookie; `signInCloudflareAdmin` forwards the token, client IP and user agent and turns the answer into the redirect. The endpoint is server-only in better-auth and outside the auth proxy's allowlist. The derived password, the per-login hash and the revocation of the admin's other sessions are gone; existing sessions keep working, and a sign-in prunes the admin's expired and over-age sessions. An adversarial review found no blocker; its notes are recorded in the CHANGELOG entry and the README. The integration passes its admin path to the adapters (`__talismanAuthRuntime.adminPath`), and a mismatching argument fails the build. `test/auth-matrix.test.mjs` runs every auth mode against every kind of caller. Shoppers stay in the users table with one identity per verified email; better-auth's default role is `customer`.
+
 **Why:** SSO sign-in derives a password from the auth secret and the email, stores it as a credential and signs in through the password endpoint. That ties SSO to the password path, costs a password hash on every login, and ends all of the admin's other sessions.
 
 **Approach:** Rule: an SSO-managed admin has no password credential, and the auth secret is never usable to sign in. After verifying the Access JWT, create the session through better-auth's session API, delete existing SSO credential rows, and stop revoking other sessions on every login.
@@ -790,6 +794,8 @@ Smaller fixes that fit no workstream. Take them in any order.
 
 #### Return `{ required: false }` from the setup check under hybrid auth
 
+**Status:** done on `main` with the SSO redesign. The check answers `{ required: false }` under hybrid, Access and dev auth; setup itself stays unavailable outside local auth.
+
 **Why:** The sign-in panel always asks `/api/auth/setup`, which answers 404 when the adapter is not local, so every admin load logs a failed request.
 
 **Approach:** Answer `{ required: false }` for adapters without first-admin setup, or skip the request when the config says setup is not available.
@@ -819,6 +825,8 @@ Smaller fixes that fit no workstream. Take them in any order.
 **Issue:** #TBD-identity-bare-address
 
 #### Document the Workers CPU needs of password sign-in
+
+**Status:** done on `main` with the SSO redesign: the core README's Access section says local and hybrid password sign-in need Workers Paid or a CPU limit of about 100 ms, and that SSO sign-in does no hashing.
 
 **Why:** Local and hybrid sign-in hash passwords with scrypt, which exceeds the Workers Free CPU limit, and nothing says so.
 
