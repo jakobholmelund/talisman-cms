@@ -1,7 +1,8 @@
-import { Plugin, CollectionConfig, FieldDefinition, BlockDefinition } from 'talisman-cms'
+import type { Plugin, CollectionConfig, FieldDefinition, BlockDefinition } from 'talisman-cms'
+import { nativeFields } from 'talisman-cms/fields';
 import { fileURLToPath } from 'url';
 import { existsSync } from 'node:fs';
-import { FULFILLMENT_STATUSES, PRODUCT_STATUSES, PRODUCT_TYPES } from './schema';
+import * as schema from './schema';
 export { bindCommerceApi, reconcileCommerce, deliverPendingCommerceEmails, CART_MAX_LINES, CART_MAX_LINE_QUANTITY, TaxCalculationError } from './api';
 export type { PaymentProviderAdapter, PaymentReferences, ValidatedWebhookEvent, TaxCalculation, TaxCalculationParams } from './payments';
 export { TaxAddressError } from './payments';
@@ -288,38 +289,16 @@ export const ecommercePlugin = (
       }
       
       if (!hasProductsCollection) {
-        const productFields: FieldDefinition[] = [];
-
-        productFields.push(
-          { name: 'id', label: 'ID', type: 'text', required: true },
-          { name: 'name', label: 'Name', type: 'text', required: true },
-          { name: 'slug', label: 'Slug', type: 'text', required: true },
-          { name: 'sku', label: 'SKU', type: 'text' },
-          { name: 'description', label: 'Description', type: 'textarea' },
-          {
-            name: 'images',
-            label: 'Product Images',
-            type: 'array',
-            fields: [
-              { name: 'url', label: 'Image URL', type: 'media', required: true }
-            ]
-          }
-        );
-
-        if (inject) {
-          productFields.push(
-            { name: 'categoryIds', label: 'Categories', type: 'relation', relationTo: '_ecommerce_categories', hasMany: true },
-            { name: 'tagIds', label: 'Tags', type: 'relation', relationTo: '_ecommerce_tags', hasMany: true }
-          );
-        }
-
-        productFields.push(
-          { name: 'basePrice', label: 'Base Price (smallest currency unit)', type: 'number', required: true, defaultValue: 0 },
-          { name: 'isPhysical', label: 'Is Physical Product', type: 'boolean', defaultValue: true },
-          { name: 'inventoryQuantity', label: 'Inventory Quantity', type: 'number', defaultValue: 0 },
-          { name: 'type', label: 'Product Type', type: 'select', options: [...PRODUCT_TYPES], defaultValue: 'standard', required: true },
-          { name: 'status', label: 'Status', type: 'select', options: [...PRODUCT_STATUSES], defaultValue: 'draft', required: true }
-        );
+        const productFields = nativeFields(schema.products, [
+          'id', 'name', 'slug', { name: 'sku', label: 'SKU' }, { name: 'description', type: 'textarea' },
+          { name: 'images', label: 'Product Images', type: 'array', fields: [{ name: 'url', label: 'Image URL', type: 'media', required: true }] },
+          ...(inject ? [
+            { name: 'categoryIds', label: 'Categories', type: 'relation' as const, relationTo: '_ecommerce_categories', hasMany: true },
+            { name: 'tagIds', label: 'Tags', type: 'relation' as const, relationTo: '_ecommerce_tags', hasMany: true },
+          ] : []),
+          { name: 'basePrice', label: 'Base Price (smallest currency unit)' }, { name: 'isPhysical', label: 'Is Physical Product' },
+          'inventoryQuantity', { name: 'type', label: 'Product Type' }, 'status',
+        ]);
 
         collections.push({
           name: 'Products',
@@ -343,10 +322,9 @@ export const ecommercePlugin = (
           slug: '_ecommerce_variants',
           description: 'Reusable variant definitions such as Size or Color',
           adminSection: 'commerce',
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'name', label: 'Name', type: 'text', required: true }
-          ],
+          fields: nativeFields(schema.variants, [
+            'id', 'name',
+          ]),
           nativeSchemaMapping: {
              schemaPath: '@talisman-cms/plugin-ecommerce/schema',
              exportName: 'variants',
@@ -360,15 +338,15 @@ export const ecommercePlugin = (
           slug: '_ecommerce_product_variants',
           description: 'Assigns a reusable variant definition to a product',
           adminSection: 'commerce',
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'productId', label: 'Product', type: 'relation', relationTo: productsSlug, required: true },
+          fields: nativeFields(schema.productVariants, [
+            'id',
+            { name: 'productId', label: 'Product', type: 'relation', relationTo: 'products' },
             { name: 'variantId', label: 'Variant Definition', type: 'relation', relationTo: '_ecommerce_variants' },
-            { name: 'name', label: 'Display Name', type: 'text', required: true },
-            { name: 'sku', label: 'SKU', type: 'text', defaultValue: null },
-            { name: 'priceOverride', label: 'Price Override (smallest currency unit)', type: 'number', defaultValue: null },
-            { name: 'inventoryQuantity', label: 'Inventory Quantity', type: 'number', defaultValue: 0 }
-          ],
+            { name: 'name', label: 'Display Name' },
+            { name: 'sku', label: 'SKU' },
+            { name: 'priceOverride', label: 'Price Override (smallest currency unit)' },
+            'inventoryQuantity',
+          ]),
           nativeSchemaMapping: {
              schemaPath: '@talisman-cms/plugin-ecommerce/schema',
              exportName: 'productVariants',
@@ -382,14 +360,14 @@ export const ecommercePlugin = (
           slug: '_ecommerce_product_variant_values',
           description: 'Purchasable values for each product variant group',
           adminSection: 'commerce',
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'productVariantId', label: 'Product Variant Group', type: 'relation', relationTo: '_ecommerce_product_variants', required: true },
-            { name: 'value', label: 'Value', type: 'text', required: true },
-            { name: 'sku', label: 'SKU', type: 'text', defaultValue: null },
+          fields: nativeFields(schema.productVariantValues, [
+            'id',
+            { name: 'productVariantId', label: 'Product Variant Group', type: 'relation', relationTo: '_ecommerce_product_variants' },
+            'value',
+            { name: 'sku', label: 'SKU' },
             { name: 'image', label: 'Variant Image URL', type: 'media' },
-            { name: 'priceOverride', label: 'Price Override (smallest currency unit)', type: 'number', defaultValue: null }
-          ],
+            { name: 'priceOverride', label: 'Price Override (smallest currency unit)' },
+          ]),
           nativeSchemaMapping: {
              schemaPath: '@talisman-cms/plugin-ecommerce/schema',
              exportName: 'productVariantValues',
@@ -403,11 +381,11 @@ export const ecommercePlugin = (
           slug: '_ecommerce_stocks',
           description: 'Inventory rows for product variant values',
           adminSection: 'commerce',
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'productVariantValueId', label: 'Product Variant Value', type: 'relation', relationTo: '_ecommerce_product_variant_values', required: true },
-            { name: 'quantity', label: 'Quantity', type: 'number', required: true, defaultValue: 0 }
-          ],
+          fields: nativeFields(schema.stocks, [
+            'id',
+            { name: 'productVariantValueId', label: 'Product Variant Value', type: 'relation', relationTo: '_ecommerce_product_variant_values' },
+            'quantity',
+          ]),
           nativeSchemaMapping: {
              schemaPath: '@talisman-cms/plugin-ecommerce/schema',
              exportName: 'stocks',
@@ -420,12 +398,12 @@ export const ecommercePlugin = (
           slug: '_ecommerce_components',
           description: 'Physical stock shared by sellable choices, such as frame bodies or lens pairs.',
           adminSection: 'commerce',
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'sku', label: 'Component SKU', type: 'text', required: true },
-            { name: 'name', label: 'Name', type: 'text', required: true },
-            { name: 'quantity', label: 'Available Quantity', type: 'number', required: true, defaultValue: 0 }
-          ],
+          fields: nativeFields(schema.components, [
+            'id',
+            { name: 'sku', label: 'Component SKU' },
+            'name',
+            { name: 'quantity', label: 'Available Quantity' },
+          ]),
           nativeSchemaMapping: {
             schemaPath: '@talisman-cms/plugin-ecommerce/schema',
             exportName: 'components',
@@ -438,12 +416,12 @@ export const ecommercePlugin = (
           slug: '_ecommerce_variant_components',
           description: 'Parts and quantities consumed by each sellable variant value. A choice with parts uses component stock instead of its own stock row.',
           adminSection: 'commerce',
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'productVariantValueId', label: 'Purchasable Variant Value', type: 'relation', relationTo: '_ecommerce_product_variant_values', required: true },
-            { name: 'componentId', label: 'Shared Component', type: 'relation', relationTo: '_ecommerce_components', required: true },
-            { name: 'quantity', label: 'Units per Item', type: 'number', required: true, defaultValue: 1 }
-          ],
+          fields: nativeFields(schema.variantComponents, [
+            'id',
+            { name: 'productVariantValueId', label: 'Purchasable Variant Value', type: 'relation', relationTo: '_ecommerce_product_variant_values' },
+            { name: 'componentId', label: 'Shared Component', type: 'relation', relationTo: '_ecommerce_components' },
+            { name: 'quantity', label: 'Units per Item' },
+          ]),
           nativeSchemaMapping: {
             schemaPath: '@talisman-cms/plugin-ecommerce/schema',
             exportName: 'variantComponents',
@@ -457,14 +435,12 @@ export const ecommercePlugin = (
           slug: '_ecommerce_categories',
           description: 'Product categories',
           adminSection: 'commerce',
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'name', label: 'Name', type: 'text', required: true },
-            { name: 'slug', label: 'Slug', type: 'text', required: true },
-            { name: 'description', label: 'Description', type: 'textarea' },
+          fields: nativeFields(schema.categories, [
+            'id', 'name', 'slug',
+            { name: 'description', type: 'textarea' },
             { name: 'image', label: 'Category Image URL', type: 'media' },
-            { name: 'parentId', label: 'Parent Category', type: 'relation', relationTo: '_ecommerce_categories' }
-          ],
+            { name: 'parentId', label: 'Parent Category', type: 'relation', relationTo: '_ecommerce_categories' },
+          ]),
           nativeSchemaMapping: {
              schemaPath: '@talisman-cms/plugin-ecommerce/schema',
              exportName: 'categories',
@@ -478,24 +454,15 @@ export const ecommercePlugin = (
           slug: '_ecommerce_carts',
           description: 'Active customer shopping sessions',
           adminSection: 'commerce',
-          fields: [
-             { name: 'id', label: 'ID', type: 'text', required: true },
-             { name: 'sessionToken', label: 'Session Token', type: 'text' },
-             { name: 'userId', label: 'User ID', type: 'text' },
-             { name: 'checkoutSessionId', label: 'Checkout Session ID', type: 'text' },
-             { 
-               name: 'items', 
-               label: 'Cart Items', 
-               type: 'array',
-               fields: [
-                 { name: 'productId', label: 'Product ID', type: 'text', required: true },
-                 { name: 'variantId', label: 'Variant ID', type: 'text' },
-                 { name: 'quantity', label: 'Quantity', type: 'number', required: true, defaultValue: 1 }
-               ]
-             },
-             { name: 'closed', label: 'Closed', type: 'boolean', defaultValue: false },
-             { name: 'closedAt', label: 'Closed At', type: 'date' }
-           ],
+          fields: nativeFields(schema.carts, [
+            'id', 'sessionToken', 'userId', 'checkoutSessionId',
+            { name: 'items', label: 'Cart Items', type: 'array', fields: [
+              { name: 'productId', label: 'Product ID', type: 'text', required: true },
+              { name: 'variantId', label: 'Variant ID', type: 'text' },
+              { name: 'quantity', label: 'Quantity', type: 'number', required: true, defaultValue: 1 }
+            ] },
+            'closed', 'closedAt',
+          ]),
           nativeSchemaMapping: {
             schemaPath: '@talisman-cms/plugin-ecommerce/schema',
             exportName: 'carts',
@@ -509,13 +476,9 @@ export const ecommercePlugin = (
           slug: '_ecommerce_customers',
           description: 'E-commerce customers/buyers',
           adminSection: 'commerce',
-          fields: [
-             { name: 'id', label: 'ID', type: 'text', required: true },
-             { name: 'name', label: 'Name', type: 'text' },
-             { name: 'email', label: 'Email', type: 'text' },
-             { name: 'stripeCustomerId', label: 'Stripe Customer ID', type: 'text' },
-             { name: 'userId', label: 'User ID', type: 'text' }
-          ],
+          fields: nativeFields(schema.customers, [
+            'id', 'name', 'email', 'stripeCustomerId', 'userId',
+          ]),
           nativeSchemaMapping: {
             schemaPath: '@talisman-cms/plugin-ecommerce/schema',
             exportName: 'customers',
@@ -529,12 +492,10 @@ export const ecommercePlugin = (
           description: 'Shopper accounts from a used email sign-in link or a confirmed payment. A verified shopper shares the CMS user for that email, shown in Users with the customer role.',
           adminSection: 'commerce',
           readOnly: true,
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'email', label: 'Email', type: 'text' },
-            { name: 'name', label: 'Name', type: 'text' },
-            { name: 'creditBalance', label: 'Store Credit Balance (smallest currency unit)', type: 'number' }
-          ],
+          fields: nativeFields(schema.customerAccounts, [
+            'id', 'email', 'name',
+            { name: 'creditBalance', label: 'Store Credit Balance (smallest currency unit)' },
+          ]),
           nativeSchemaMapping: {
             schemaPath: '@talisman-cms/plugin-ecommerce/schema',
             exportName: 'customerAccounts',
@@ -545,11 +506,11 @@ export const ecommercePlugin = (
         collections.push({
           name: 'Referral Codes', slug: '_ecommerce_referral_codes',
           description: 'Server-issued shopper referral links', adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'code', label: 'Code', type: 'text', required: true },
-            { name: 'accountId', label: 'Shopper Account ID', type: 'text' },
-            { name: 'active', label: 'Active', type: 'boolean' }
-          ],
+          fields: nativeFields(schema.referralCodes, [
+            'code',
+            { name: 'accountId', label: 'Shopper Account ID' },
+            'active',
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'referralCodes', idColumn: 'code' }
         });
 
@@ -557,15 +518,11 @@ export const ecommercePlugin = (
           name: 'Qualified Referrals', slug: '_ecommerce_referrals',
           description: 'First paid purchases attributed to a referral code. An approved referral is pending until its awards appear in the credit ledger; a void one earns nothing.',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'code', label: 'Code', type: 'text' },
-            { name: 'referrerAccountId', label: 'Referrer Account ID', type: 'text' },
-            { name: 'referredAccountId', label: 'Referred Account ID', type: 'text' },
-            { name: 'orderId', label: 'Order ID', type: 'text' },
-            { name: 'rewardCents', label: 'Reward (smallest currency unit)', type: 'number' },
-            { name: 'status', label: 'Status', type: 'text' }
-          ],
+          fields: nativeFields(schema.referrals, [
+            'id', 'code', 'referrerAccountId', 'referredAccountId', 'orderId',
+            { name: 'rewardCents', label: 'Reward (smallest currency unit)' },
+            'status',
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'referrals', idColumn: 'id' }
         });
 
@@ -573,13 +530,12 @@ export const ecommercePlugin = (
           name: 'Store Credit Ledger', slug: '_ecommerce_credit_ledger',
           description: 'Auditable awards, checkout reserves, releases, and refund reversals',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'accountId', label: 'Shopper Account ID', type: 'text' },
-            { name: 'orderId', label: 'Order ID', type: 'text' },
-            { name: 'kind', label: 'Kind', type: 'text' },
-            { name: 'amountCents', label: 'Amount (smallest currency unit)', type: 'number' }
-          ],
+          fields: nativeFields(schema.creditLedger, [
+            'id',
+            { name: 'accountId', label: 'Shopper Account ID' },
+            'orderId', 'kind',
+            { name: 'amountCents', label: 'Amount (smallest currency unit)' },
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'creditLedger', idColumn: 'id' }
         });
 
@@ -587,13 +543,12 @@ export const ecommercePlugin = (
           name: 'Referral Settings', slug: '_ecommerce_referral_settings',
           description: 'Referral terms. Edit through the Commerce Promotions admin page.',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'enabled', label: 'Enabled', type: 'boolean' },
-            { name: 'rewardCents', label: 'Reward (smallest currency unit)', type: 'number' },
-            { name: 'minOrderCents', label: 'Minimum Order (smallest currency unit)', type: 'number' },
-            { name: 'attributionDays', label: 'Attribution Window (Days)', type: 'number' }
-          ],
+          fields: nativeFields(schema.referralSettings, [
+            'id', 'enabled',
+            { name: 'rewardCents', label: 'Reward (smallest currency unit)' },
+            { name: 'minOrderCents', label: 'Minimum Order (smallest currency unit)' },
+            { name: 'attributionDays', label: 'Attribution Window (Days)' },
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'referralSettings', idColumn: 'id' }
         });
 
@@ -601,14 +556,11 @@ export const ecommercePlugin = (
           name: 'Discount Codes', slug: '_ecommerce_discount_codes',
           description: 'Offers and credit vouchers. Edit through the Commerce Promotions admin page.',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'code', label: 'Code', type: 'text', required: true },
-            { name: 'description', label: 'Description', type: 'text' },
-            { name: 'type', label: 'Type', type: 'text' },
-            { name: 'value', label: 'Value', type: 'number' },
-            { name: 'remainingCents', label: 'Remaining Credit (smallest currency unit)', type: 'number' },
-            { name: 'active', label: 'Active', type: 'boolean' }
-          ],
+          fields: nativeFields(schema.discountCodes, [
+            'code', 'description', 'type', 'value',
+            { name: 'remainingCents', label: 'Remaining Credit (smallest currency unit)' },
+            'active',
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'discountCodes', idColumn: 'code' }
         });
 
@@ -616,13 +568,11 @@ export const ecommercePlugin = (
           name: 'Discount Redemptions', slug: '_ecommerce_discount_redemptions',
           description: 'Reserved and confirmed code uses for payment reconciliation.',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'code', label: 'Code', type: 'text' },
-            { name: 'orderId', label: 'Order ID', type: 'text' },
-            { name: 'amountCents', label: 'Discount (smallest currency unit)', type: 'number' },
-            { name: 'status', label: 'Status', type: 'text' }
-          ],
+          fields: nativeFields(schema.discountRedemptions, [
+            'id', 'code', 'orderId',
+            { name: 'amountCents', label: 'Discount (smallest currency unit)' },
+            'status',
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'discountRedemptions', idColumn: 'id' }
         });
 
@@ -630,171 +580,155 @@ export const ecommercePlugin = (
           name: 'Gift Cards', slug: '_ecommerce_gift_cards',
           description: 'Purchased and administrator-issued stored value. Manage through the Gift Cards admin page.',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'codeSuffix', label: 'Code Suffix', type: 'text' },
-            { name: 'source', label: 'Source', type: 'text' },
-            { name: 'initialCents', label: 'Issued (smallest currency unit)', type: 'number' },
-            { name: 'balanceCents', label: 'Balance (smallest currency unit)', type: 'number' },
-            { name: 'status', label: 'Status', type: 'text' },
-            { name: 'replacesPurchaseId', label: 'Replaces Purchase', type: 'text' }
-          ],
+          fields: nativeFields(schema.giftCards, [
+            'id', 'codeSuffix', 'source',
+            { name: 'initialCents', label: 'Issued (smallest currency unit)' },
+            { name: 'balanceCents', label: 'Balance (smallest currency unit)' },
+            'status',
+            { name: 'replacesPurchaseId', label: 'Replaces Purchase' },
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCards', idColumn: 'id' }
         });
         collections.push({
           name: 'Gift Card Purchases', slug: '_ecommerce_gift_card_purchases',
           description: 'Payment and refund status for purchased cards.',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'buyerEmail', label: 'Buyer Email', type: 'text' },
-            { name: 'amountCents', label: 'Amount (smallest currency unit)', type: 'number' },
-            { name: 'status', label: 'Status', type: 'text' },
-            { name: 'providerRefundedCents', label: 'Refunded (smallest currency unit)', type: 'number' },
-            { name: 'refundAdjustedCents', label: 'Refund Taken Off Cards (smallest currency unit)', type: 'number' }
-          ],
+          fields: nativeFields(schema.giftCardPurchases, [
+            'id', 'buyerEmail',
+            { name: 'amountCents', label: 'Amount (smallest currency unit)' },
+            'status',
+            { name: 'providerRefundedCents', label: 'Refunded (smallest currency unit)' },
+            { name: 'refundAdjustedCents', label: 'Refund Taken Off Cards (smallest currency unit)' },
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardPurchases', idColumn: 'id' }
         });
         collections.push({
           name: 'Gift Card Ledger', slug: '_ecommerce_gift_card_ledger',
           description: 'Auditable issuance, reservations, releases, and reversals.',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'cardId', label: 'Gift Card ID', type: 'text' },
-            { name: 'orderId', label: 'Order ID', type: 'text' },
-            { name: 'kind', label: 'Kind', type: 'text' },
-            { name: 'amountCents', label: 'Amount (smallest currency unit)', type: 'number' }
-          ],
+          fields: nativeFields(schema.giftCardLedger, [
+            'id',
+            { name: 'cardId', label: 'Gift Card ID' },
+            'orderId', 'kind',
+            { name: 'amountCents', label: 'Amount (smallest currency unit)' },
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardLedger', idColumn: 'id' }
         });
         collections.push({
           name: 'Gift Card Redemptions', slug: '_ecommerce_gift_card_redemptions',
           description: 'Reserved and confirmed gift card uses.',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'cardId', label: 'Gift Card ID', type: 'text' },
-            { name: 'orderId', label: 'Order ID', type: 'text' },
-            { name: 'amountCents', label: 'Amount (smallest currency unit)', type: 'number' },
-            { name: 'status', label: 'Status', type: 'text' }
-          ],
+          fields: nativeFields(schema.giftCardRedemptions, [
+            'id',
+            { name: 'cardId', label: 'Gift Card ID' },
+            'orderId',
+            { name: 'amountCents', label: 'Amount (smallest currency unit)' },
+            'status',
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardRedemptions', idColumn: 'id' }
         });
         collections.push({
           name: 'Gift Card Refunds', slug: '_ecommerce_gift_card_refunds',
           description: 'Administrator-approved gift card tender refunds with reasons.',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'cardId', label: 'Gift Card ID', type: 'text' },
-            { name: 'orderId', label: 'Order ID', type: 'text' },
-            { name: 'amountCents', label: 'Amount (smallest currency unit)', type: 'number' },
-            { name: 'adminActor', label: 'Administrator', type: 'text' },
-            { name: 'reason', label: 'Reason', type: 'text' }
-          ],
+          fields: nativeFields(schema.giftCardRefunds, [
+            'id',
+            { name: 'cardId', label: 'Gift Card ID' },
+            'orderId',
+            { name: 'amountCents', label: 'Amount (smallest currency unit)' },
+            { name: 'adminActor', label: 'Administrator' },
+            'reason',
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardRefunds', idColumn: 'id' }
         });
         collections.push({
           name: 'Gift Card Reviews', slug: '_ecommerce_gift_card_reviews',
           description: 'Administrator decisions on refunded gift card purchases, with reasons.',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'purchaseId', label: 'Purchase ID', type: 'text' },
-            { name: 'cardId', label: 'Gift Card ID', type: 'text' },
-            { name: 'outcome', label: 'Outcome', type: 'text' },
-            { name: 'refundedCents', label: 'Refunded (smallest currency unit)', type: 'number' },
-            { name: 'adjustmentCents', label: 'Taken Off Cards (smallest currency unit)', type: 'number' },
-            { name: 'adminActor', label: 'Administrator', type: 'text' },
-            { name: 'reason', label: 'Reason', type: 'text' }
-          ],
+          fields: nativeFields(schema.giftCardReviews, [
+            'id', 'purchaseId',
+            { name: 'cardId', label: 'Gift Card ID' },
+            'outcome',
+            { name: 'refundedCents', label: 'Refunded (smallest currency unit)' },
+            { name: 'adjustmentCents', label: 'Taken Off Cards (smallest currency unit)' },
+            { name: 'adminActor', label: 'Administrator' },
+            'reason',
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardReviews', idColumn: 'id' }
         });
         collections.push({
           name: 'Provider Refunds', slug: '_ecommerce_provider_refunds',
           description: 'Payment provider refunds with the date each was issued, as recorded from Stripe.',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'orderId', label: 'Order ID', type: 'text' },
-            { name: 'provider', label: 'Provider', type: 'text' },
-            { name: 'providerRefundId', label: 'Provider Refund ID', type: 'text' },
-            { name: 'amountCents', label: 'Amount (smallest currency unit)', type: 'number' }
-          ],
+          fields: nativeFields(schema.providerRefunds, [
+            'id', 'orderId', 'provider', 'providerRefundId',
+            { name: 'amountCents', label: 'Amount (smallest currency unit)' },
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'providerRefunds', idColumn: 'id' }
         });
         collections.push({
           name: 'Disputes', slug: '_ecommerce_disputes',
           description: 'Payment disputes on orders and gift card purchases. Respond to them in Stripe.',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'id', label: 'Dispute ID', type: 'text', required: true },
-            { name: 'orderId', label: 'Order ID', type: 'text' },
-            { name: 'giftCardPurchaseId', label: 'Gift Card Purchase ID', type: 'text' },
-            { name: 'amountCents', label: 'Amount (smallest currency unit)', type: 'number' },
-            { name: 'currency', label: 'Currency', type: 'text' },
-            { name: 'reason', label: 'Reason', type: 'text' },
-            { name: 'status', label: 'Status', type: 'text' },
-            { name: 'statusBefore', label: 'Status Before the Dispute', type: 'text' }
-          ],
+          fields: nativeFields(schema.disputes, [
+            { name: 'id', label: 'Dispute ID' },
+            'orderId', 'giftCardPurchaseId',
+            { name: 'amountCents', label: 'Amount (smallest currency unit)' },
+            'currency', 'reason', 'status',
+            { name: 'statusBefore', label: 'Status Before the Dispute' },
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'disputes', idColumn: 'id' }
         });
         collections.push({
           name: 'Restocks', slug: '_ecommerce_restocks',
           description: 'Stock of refunded orders returned by an administrator, with reasons.',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'orderId', label: 'Order ID', type: 'text' },
-            { name: 'targetType', label: 'Stock Type', type: 'text' },
-            { name: 'targetId', label: 'Stock ID', type: 'text' },
-            { name: 'quantity', label: 'Quantity', type: 'number' },
-            { name: 'adminActor', label: 'Administrator', type: 'text' },
-            { name: 'reason', label: 'Reason', type: 'text' }
-          ],
+          fields: nativeFields(schema.restocks, [
+            'id', 'orderId',
+            { name: 'targetType', label: 'Stock Type' },
+            { name: 'targetId', label: 'Stock ID' },
+            'quantity',
+            { name: 'adminActor', label: 'Administrator' },
+            'reason',
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'restocks', idColumn: 'id' }
         });
         collections.push({
           name: 'Gift Card Order Refunds', slug: '_ecommerce_gift_card_order_refunds',
           description: 'Audited full refunds for orders settled without Stripe.',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'orderId', label: 'Order ID', type: 'text', required: true },
-            { name: 'adminActor', label: 'Administrator', type: 'text' },
-            { name: 'reason', label: 'Reason', type: 'text' }
-          ],
+          fields: nativeFields(schema.giftCardOrderRefunds, [
+            'orderId',
+            { name: 'adminActor', label: 'Administrator' },
+            'reason',
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardOrderRefunds', idColumn: 'orderId' }
         });
         collections.push({
           name: 'Gift Card Claim Links', slug: '_ecommerce_gift_card_claims',
           description: 'One-time links emailed to buyers to show their gift card code, with who resent a link and why.',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'purchaseId', label: 'Purchase ID', type: 'text' },
-            { name: 'cardId', label: 'Gift Card ID', type: 'text' },
-            { name: 'expiresAt', label: 'Expires', type: 'date' },
-            { name: 'usedAt', label: 'Used', type: 'date' },
-            { name: 'revokedAt', label: 'Revoked', type: 'date' },
-            { name: 'createdBy', label: 'Resent By', type: 'text' },
-            { name: 'reason', label: 'Reason', type: 'text' }
-          ],
+          fields: nativeFields(schema.giftCardClaims, [
+            'id', 'purchaseId',
+            { name: 'cardId', label: 'Gift Card ID' },
+            { name: 'expiresAt', label: 'Expires' },
+            { name: 'usedAt', label: 'Used' },
+            { name: 'revokedAt', label: 'Revoked' },
+            { name: 'createdBy', label: 'Resent By' },
+            'reason',
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardClaims', idColumn: 'id' }
         });
         collections.push({
           name: 'Order Emails', slug: '_ecommerce_email_deliveries',
           description: 'Order confirmations, shipment notices and gift card claim emails, with their delivery status and last error code.',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'kind', label: 'Kind', type: 'text' },
-            { name: 'subjectId', label: 'Order, Shipment or Purchase ID', type: 'text' },
-            { name: 'status', label: 'Status', type: 'text' },
-            { name: 'attempts', label: 'Attempts', type: 'number' },
-            { name: 'lastError', label: 'Last Error', type: 'text' },
-            { name: 'sentAt', label: 'Sent', type: 'date' }
-          ],
+          fields: nativeFields(schema.emailDeliveries, [
+            'id', 'kind',
+            { name: 'subjectId', label: 'Order, Shipment or Purchase ID' },
+            'status', 'attempts', 'lastError',
+            { name: 'sentAt', label: 'Sent' },
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'emailDeliveries', idColumn: 'id' }
         });
 
@@ -804,11 +738,11 @@ export const ecommercePlugin = (
           slug: '_ecommerce_tags',
           description: 'Custom tags for grouping products',
           adminSection: 'commerce',
-          fields: [
-             { name: 'id', label: 'ID', type: 'text', required: true },
-             { name: 'name', label: 'Tag Name', type: 'text', required: true },
-             { name: 'color', label: 'Color', type: 'text', defaultValue: 'blue' }
-          ],
+          fields: nativeFields(schema.tags, [
+            'id',
+            { name: 'name', label: 'Tag Name' },
+            'color',
+          ]),
           nativeSchemaMapping: {
             schemaPath: '@talisman-cms/plugin-ecommerce/schema',
             exportName: 'tags',
@@ -827,48 +761,39 @@ export const ecommercePlugin = (
            { name: 'country', label: 'Country', type: 'text' },
         ];
 
-        const orderFields: FieldDefinition[] = [
-          { name: 'id', label: 'Order ID', type: 'text', required: true },
+        const orderFields = nativeFields(schema.orders, [
+          { name: 'id', label: 'Order ID' },
           { name: 'cartId', label: 'Cart', type: 'relation', relationTo: '_ecommerce_carts' },
-          { name: 'checkoutSessionId', label: 'Checkout Session ID', type: 'text' },
-          { name: 'paymentProvider', label: 'Payment Provider', type: 'text' },
-          // 'fulfilled' stays an option: the legacy payment status earlier releases wrote for a shipped order, read as paid.
-          { name: 'status', label: 'Payment Status', type: 'select', options: ['draft', 'pending', 'paid', 'fulfilled', 'cancelled', 'partially_refunded', 'refunded', 'disputed'], required: true, defaultValue: 'draft' },
-          { name: 'fulfillmentStatus', label: 'Fulfillment Status', type: 'select', options: [...FULFILLMENT_STATUSES], required: true, defaultValue: 'unfulfilled' },
-          { name: 'subtotalAmount', label: 'Item Subtotal (smallest currency unit)', type: 'number' },
-          { name: 'shippingLabel', label: 'Shipping Option', type: 'text' },
-          { name: 'shippingRateId', label: 'Shipping Rate ID', type: 'text' },
-          { name: 'shippingAmount', label: 'Shipping (smallest currency unit)', type: 'number' },
-          { name: 'taxAmount', label: 'Tax (smallest currency unit)', type: 'number' },
-          { name: 'taxBehavior', label: 'Tax Behavior (inclusive or exclusive)', type: 'text' },
-          { name: 'taxCalculationId', label: 'Tax Calculation ID', type: 'text' },
-          { name: 'taxTransactionId', label: 'Tax Transaction ID', type: 'text' },
-          { name: 'creditApplied', label: 'Store Credit Used (smallest currency unit)', type: 'number' },
-          { name: 'discountCode', label: 'Discount Code', type: 'text' },
-          { name: 'discountAmount', label: 'Code Discount (smallest currency unit)', type: 'number' },
-          { name: 'giftCardId', label: 'Gift Card ID', type: 'text' },
-          { name: 'giftCardApplied', label: 'Gift Card Used (smallest currency unit)', type: 'number' },
-          { name: 'giftCardRefundedCents', label: 'Gift Card Refunded (smallest currency unit)', type: 'number' },
-          { name: 'totalAmount', label: 'Provider Charge (smallest currency unit)', type: 'number', required: true },
-          { name: 'providerRefundedCents', label: 'Provider Refunded (smallest currency unit)', type: 'number' },
-          { name: 'paymentIntentId', label: 'Payment Intent ID', type: 'text' },
-          { name: 'referralCode', label: 'Referral Code', type: 'text' },
-          { name: 'referralRewardCents', label: 'Referral Reward (smallest currency unit)', type: 'number' },
-          { name: 'customerEmail', label: 'Customer Email', type: 'text' },
-          { 
-             name: 'items', 
-             label: 'Order Items', 
-             type: 'array',
-             fields: [
-               { name: 'productId', label: 'Product ID', type: 'text', required: true },
-               { name: 'variantId', label: 'Variant ID', type: 'text' },
-               { name: 'quantity', label: 'Quantity', type: 'number', required: true },
-               { name: 'priceAtPurchase', label: 'Price At Purchase (smallest currency unit)', type: 'number', required: true }
-             ]
-          },
-          { name: 'shippingAddress', label: 'Shipping Address', type: 'group', fields: addressFields },
-          { name: 'billingAddress', label: 'Billing Address', type: 'group', fields: addressFields }
-        ];
+          'checkoutSessionId', 'paymentProvider',
+          { name: 'status', label: 'Payment Status', type: 'select', options: ['draft', 'pending', 'paid', 'fulfilled', 'cancelled', 'partially_refunded', 'refunded', 'disputed'] },
+          'fulfillmentStatus',
+          { name: 'subtotalAmount', label: 'Item Subtotal (smallest currency unit)' },
+          { name: 'shippingLabel', label: 'Shipping Option' },
+          'shippingRateId',
+          { name: 'shippingAmount', label: 'Shipping (smallest currency unit)' },
+          { name: 'taxAmount', label: 'Tax (smallest currency unit)' },
+          { name: 'taxBehavior', label: 'Tax Behavior (inclusive or exclusive)' },
+          'taxCalculationId', 'taxTransactionId',
+          { name: 'creditApplied', label: 'Store Credit Used (smallest currency unit)' },
+          'discountCode',
+          { name: 'discountAmount', label: 'Code Discount (smallest currency unit)' },
+          'giftCardId',
+          { name: 'giftCardApplied', label: 'Gift Card Used (smallest currency unit)' },
+          { name: 'giftCardRefundedCents', label: 'Gift Card Refunded (smallest currency unit)' },
+          { name: 'totalAmount', label: 'Provider Charge (smallest currency unit)' },
+          { name: 'providerRefundedCents', label: 'Provider Refunded (smallest currency unit)' },
+          'paymentIntentId', 'referralCode',
+          { name: 'referralRewardCents', label: 'Referral Reward (smallest currency unit)' },
+          'customerEmail',
+          { name: 'items', label: 'Order Items', type: 'array', fields: [
+            { name: 'productId', label: 'Product ID', type: 'text', required: true },
+            { name: 'variantId', label: 'Variant ID', type: 'text' },
+            { name: 'quantity', label: 'Quantity', type: 'number', required: true },
+            { name: 'priceAtPurchase', label: 'Price At Purchase (smallest currency unit)', type: 'number', required: true }
+          ] },
+          { name: 'shippingAddress', type: 'group', fields: addressFields },
+          { name: 'billingAddress', type: 'group', fields: addressFields },
+        ]);
         
         collections.push({
           name: 'Orders',
@@ -888,16 +813,15 @@ export const ecommercePlugin = (
           name: 'Payment Check Decisions', slug: '_ecommerce_reconcile_decisions',
           description: 'Administrator retries and releases of checkouts parked for review, with reasons.',
           adminSection: 'commerce', readOnly: true,
-          fields: [
-            { name: 'id', label: 'ID', type: 'text', required: true },
-            { name: 'orderId', label: 'Order ID', type: 'text' },
-            { name: 'purchaseId', label: 'Gift Card Purchase ID', type: 'text' },
-            { name: 'action', label: 'Action', type: 'text' },
-            { name: 'failure', label: 'Parked For', type: 'text' },
-            { name: 'paymentReturned', label: 'Payment Returned', type: 'text' },
-            { name: 'adminActor', label: 'Administrator', type: 'text' },
-            { name: 'reason', label: 'Reason', type: 'text' }
-          ],
+          fields: nativeFields(schema.reconcileDecisions, [
+            'id', 'orderId',
+            { name: 'purchaseId', label: 'Gift Card Purchase ID' },
+            'action',
+            { name: 'failure', label: 'Parked For' },
+            'paymentReturned',
+            { name: 'adminActor', label: 'Administrator' },
+            'reason',
+          ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'reconcileDecisions', idColumn: 'id' }
         });
       }
