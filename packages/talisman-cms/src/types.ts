@@ -220,6 +220,13 @@ export interface Plugin {
   components?: ComponentDefinition[];
   uiLibraries?: UiLibraryDefinition[];
   vite?: any;
+  /**
+   * D1 migrations the plugin ships: an absolute path to a folder of `NNNN_name.sql` files, with a
+   * `meta/_journal.json` like the core's. The integration copies them, with the core's, into the one
+   * folder a site's `migrations_dir` points at; the numbers form one sequence across the core and every
+   * plugin, and a file name never changes once a database has applied it.
+   */
+  migrations?: { dir: string };
 }
 
 const DEFAULT_BLOCK_SETTINGS_FIELD_NAME = '_settings';

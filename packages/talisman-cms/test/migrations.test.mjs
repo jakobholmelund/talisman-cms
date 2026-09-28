@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 import { is } from 'drizzle-orm';
 import { SQLiteTable, getTableConfig } from 'drizzle-orm/sqlite-core';
 import * as coreSchema from '../dist/db/schema.js';
@@ -1313,5 +1316,61 @@ test('the ecommerce demo seed applies to the migrated schema and stores post con
     }
   } finally {
     db.close();
+  }
+});
+
+test('the integration assembles the core and plugin migrations into the project and checks wrangler.toml', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const warn = t.mock.method(console, 'warn', () => {});
+  const { default: talismanCms } = await import('../dist/integration.js');
+  const work = mkdtempSync(join(tmpdir(), 'talisman-integration-migrations-'));
+  try {
+    const project = join(work, 'site');
+    mkdirSync(project);
+    const pluginDir = join(work, 'plugin-drizzle');
+    mkdirSync(pluginDir);
+    writeFileSync(join(pluginDir, '0031_plugin_table.sql'), 'CREATE TABLE plugin_table (id text PRIMARY KEY);\n');
+    const plugin = { name: 'test-plugin', onInit: (config) => config, migrations: { dir: pluginDir } };
+    const setup = (options, wranglerToml) => {
+      writeFileSync(join(project, 'wrangler.toml'), wranglerToml);
+      talismanCms(options).hooks['astro:config:setup']({
+        command: 'sync', config: { root: pathToFileURL(`${project}/`) },
+        injectRoute() {}, updateConfig() {}, addDevToolbarApp() {}, addMiddleware() {},
+      });
+    };
+    const assembled = join(project, 'node_modules', '.talisman-cms', 'migrations');
+    const listed = () => readdirSync(assembled).filter((name) => name.endsWith('.sql')).sort();
+    const pointed = 'migrations_dir = "node_modules/.talisman-cms/migrations"\n';
+
+    // Without plugins the folder holds the core's files; a plugin's file joins them and a file no
+    // source ships any more is removed.
+    setup({}, pointed);
+    assert.deepEqual(listed(), tags.map((tag) => `${tag}.sql`));
+    assert.deepEqual(JSON.parse(readFileSync(join(assembled, 'sources.json'), 'utf8')).at(-1), { name: `${tags.at(-1)}.sql`, source: 'talisman-cms' });
+    setup({ plugins: [plugin] }, pointed);
+    assert.deepEqual(listed(), [...tags.map((tag) => `${tag}.sql`), '0031_plugin_table.sql']);
+    assert.deepEqual(JSON.parse(readFileSync(join(assembled, 'sources.json'), 'utf8')).at(-1), { name: '0031_plugin_table.sql', source: 'test-plugin' });
+    setup({}, pointed);
+    assert.deepEqual(listed(), tags.map((tag) => `${tag}.sql`));
+    assert.equal(warn.mock.callCount(), 0);
+
+    // The core package's own folder no longer holds every migration once a plugin ships some.
+    const coreFolder = `migrations_dir = "${new URL('../drizzle', import.meta.url).pathname}"\n`;
+    assert.throws(() => setup({ plugins: [plugin] }, coreFolder), /wrangler\.toml: migrations_dir = ".*" is the core package's own migrations folder.*migrations_dir = "node_modules\/\.talisman-cms\/migrations"/);
+    // Another folder, or the core's without plugins, is only warned about; a second binding with its
+    // own folder beside the right one is not.
+    setup({}, coreFolder);
+    setup({ plugins: [plugin] }, 'migrations_dir = "migrations"\n# migrations_dir = "node_modules/.talisman-cms/migrations"\n');
+    assert.equal(warn.mock.callCount(), 2);
+    assert.match(warn.mock.calls[1].arguments[0], /No D1 binding's migrations_dir points at the assembled migrations folder \(node_modules\/\.talisman-cms\/migrations\); found wrangler\.toml: migrations_dir = "migrations"\./);
+    setup({ plugins: [plugin] }, `${pointed}migrations_dir = "migrations"\nmigrations_table = "app_migrations"\n`);
+    assert.equal(warn.mock.callCount(), 2);
+
+    // The migrationsDir option moves the folder; a config that names it passes.
+    setup({ plugins: [plugin], migrationsDir: 'db/migrations' }, 'migrations_dir = "db/migrations"\n');
+    assert.equal(readdirSync(join(project, 'db', 'migrations')).filter((name) => name.endsWith('.sql')).length, tags.length + 1);
+    assert.equal(warn.mock.callCount(), 2);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
   }
 });

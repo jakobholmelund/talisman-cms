@@ -412,6 +412,9 @@ async function smokeProject(project, port, packages, browserReady) {
     await run(process.execPath, ['import-entries.mjs', ...specifiers], { cwd: dir, log, timeout: 120_000 });
   });
 
+  // The integration writes the migrations folder that the README's wrangler.toml names on every
+  // config setup, so a site runs `astro sync` (or a build) before applying migrations.
+  await step('astro sync writes the migrations folder', () => run(localBin(dir, 'astro'), ['sync'], { cwd: dir, log, timeout: 120_000 }));
   await step('wrangler d1 migrations apply DB --local', () =>
     run(localBin(dir, 'wrangler'), ['d1', 'migrations', 'apply', 'DB', '--local'], { cwd: dir, log, env: { ...childEnv, CI: 'true' } }));
 

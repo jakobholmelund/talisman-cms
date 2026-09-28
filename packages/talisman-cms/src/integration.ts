@@ -1,12 +1,14 @@
 import type { AstroIntegration } from 'astro';
 import { fileURLToPath } from 'url';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync, realpathSync } from 'fs';
+import { isAbsolute, join, relative, resolve } from 'path';
 import tailwindcss from '@tailwindcss/vite';
 import { TanStackRouterVite } from '@tanstack/router-vite-plugin';
 import type { TalismanAuthAdapter } from './auth/types';
 import { buildEmailVirtualModule } from './email/index';
 import type { EmailRuntimeDescriptor } from './email/types';
 import { registerAuthAdapter } from './runtime-config';
+import { assembleMigrations, type MigrationSource } from './migrations';
 import type {
   CollectionConfig,
   ComponentDefinition,
@@ -74,6 +76,13 @@ export interface TalismanCmsOptions {
    * Without it, email goes through the `[[send_email]]` binding named `EMAIL`.
    */
   email?: EmailRuntimeDescriptor;
+
+  /**
+   * The folder, relative to the project root, into which the core's and every plugin's D1 migrations
+   * are copied on each config setup. Point the `DB` binding's `migrations_dir` at it.
+   * @default 'node_modules/.talisman-cms/migrations'
+   */
+  migrationsDir?: string;
 
   /**
    * Optional Cloudflare Workflow binding used for publish/archive transitions.
@@ -394,6 +403,67 @@ function buildCollectionHooksVirtualModule(collections: CollectionConfig[]) {
   `;
 }
 
+const DEFAULT_MIGRATIONS_DIR = 'node_modules/.talisman-cms/migrations';
+const WRANGLER_CONFIG_FILES = ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc'];
+// Resolves from dist/ and from src/ alike.
+const coreMigrationsDir = fileURLToPath(new URL('../drizzle/', import.meta.url));
+
+function samePath(a: string, b: string) {
+  const real = (path: string) => (existsSync(path) ? realpathSync(path) : resolve(path));
+  return real(a) === real(b);
+}
+
+/**
+ * Best-effort reading of the site's wrangler config, without a TOML parser: every `migrations_dir`
+ * value outside comments. A D1 binding still pointed at the core package's own `drizzle` folder would
+ * miss the plugins' migrations, so that stops the build once a plugin ships any; a config in which no
+ * binding points at the assembled folder gets a warning.
+ */
+function checkWranglerMigrationsDir(projectRoot: string, outDir: string, displayDir: string, pluginsShipMigrations: boolean) {
+  const found: string[] = [];
+  let pointsAtAssembled = false;
+  for (const fileName of WRANGLER_CONFIG_FILES) {
+    const configPath = join(projectRoot, fileName);
+    if (!existsSync(configPath)) continue;
+    const isToml = fileName.endsWith('.toml');
+    const raw = readFileSync(configPath, 'utf8');
+    const text = isToml ? raw.replace(/^\s*#.*$/gm, '') : raw.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const match of text.matchAll(/["']?migrations_dir["']?\s*[=:]\s*(?:"([^"]*)"|'([^']*)')/g)) {
+      const value = match[1] ?? match[2] ?? '';
+      const dir = resolve(projectRoot, value);
+      if (samePath(dir, outDir)) {
+        pointsAtAssembled = true;
+      } else if (pluginsShipMigrations && samePath(dir, coreMigrationsDir)) {
+        const line = isToml ? `migrations_dir = "${displayDir}"` : `"migrations_dir": "${displayDir}"`;
+        throw new Error(`[talisman-cms] ${fileName}: migrations_dir = "${value}" is the core package's own migrations folder, which no longer holds every migration: plugins ship theirs too. Point the D1 binding at the assembled folder, ${line}, and run \`astro sync\` or a build before \`wrangler d1 migrations apply\`.`);
+      }
+      found.push(`${fileName}: migrations_dir = "${value}"`);
+    }
+  }
+  if (found.length && !pointsAtAssembled) {
+    console.warn(`[talisman-cms] No D1 binding's migrations_dir points at the assembled migrations folder (${displayDir}); found ${found.join(', ')}. Migrations of the core and its plugins are applied from that folder.`);
+  }
+}
+
+/**
+ * Wrangler applies the `.sql` files of one folder per D1 binding, so the core's migrations and every
+ * plugin's are copied into one folder in the project on each config setup: `astro dev`, `build`,
+ * `sync` and `check` all run it before the site's `wrangler d1 migrations apply`.
+ */
+function writeProjectMigrations(options: TalismanCmsOptions, plugins: Plugin[], projectRoot: string) {
+  const sources: MigrationSource[] = [
+    { name: 'talisman-cms', dir: coreMigrationsDir },
+    ...plugins.flatMap((plugin) => (plugin.migrations?.dir ? [{ name: plugin.name, dir: plugin.migrations.dir }] : [])),
+  ];
+  const configured = options.migrationsDir?.trim() || DEFAULT_MIGRATIONS_DIR;
+  const outDir = resolve(projectRoot, configured);
+  const displayDir = isAbsolute(configured) ? relative(projectRoot, outDir) : configured;
+  checkWranglerMigrationsDir(projectRoot, outDir, displayDir, sources.length > 1);
+  const files = assembleMigrations({ sources, outDir });
+  const counts = sources.map((source) => `${source.name} ${files.filter((file) => file.source === source.name).length}`);
+  console.log(`[talisman-cms] Wrote ${files.length} migrations to ${displayDir} (${counts.join(', ')})`);
+}
+
 export default function talismanCms(options?: TalismanCmsOptions): AstroIntegration {
   // Apply plugins to modify config
   let finalOptions = { ...options };
@@ -458,6 +528,8 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
     hooks: {
       'astro:config:setup': ({ injectRoute, updateConfig, addDevToolbarApp, addMiddleware, command, config }) => {
         assertDevAuthAllowed(finalOptions.auth, command, config?.server?.host);
+        // Astro always passes config.root; the stand-ins in unit tests do not, and then there is no project to write into.
+        if (config?.root) writeProjectMigrations(finalOptions, finalOptions.plugins || [], fileURLToPath(config.root));
 
         console.log('[talisman-cms] Injecting admin route from:', adminRoutePath);
 
