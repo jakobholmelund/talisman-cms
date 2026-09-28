@@ -1,4 +1,6 @@
-import type { TalismanEnv } from '../db/client';
+import { and, eq, sql } from 'drizzle-orm';
+import { createDbClient, type TalismanEnv } from '../db/client';
+import { user } from './local-schema';
 
 /** Call only after proving control of the email address (for example, a consumed one-time link). */
 export async function ensureVerifiedEmailIdentity(env: TalismanEnv, email: string, name?: string | null): Promise<string> {
@@ -13,10 +15,10 @@ export async function ensureVerifiedEmailIdentity(env: TalismanEnv, email: strin
     WHERE NOT EXISTS (SELECT 1 FROM galaxy_auth_user WHERE lower(email) = ?)
     ON CONFLICT(email) DO NOTHING`)
     .bind(`shopper_${crypto.randomUUID()}`, name?.trim() || normalized, normalized, now, now, normalized).run();
-  const row = await env.DB.prepare(`SELECT id FROM galaxy_auth_user WHERE lower(email) = ? LIMIT 1`)
-    .bind(normalized).first<{ id: string }>();
+  const db = createDbClient(env);
+  const row = await db.select({ id: user.id }).from(user).where(sql`lower(${user.email}) = ${normalized}`).limit(1).get();
   if (!row?.id) throw new Error('Verified email identity could not be created');
-  await env.DB.prepare(`UPDATE galaxy_auth_user SET email_verified = 1, updated_at = ? WHERE id = ? AND email_verified = 0`)
-    .bind(now, row.id).run();
+  await db.update(user).set({ emailVerified: true, updatedAt: new Date(now * 1000) })
+    .where(and(eq(user.id, row.id), eq(user.emailVerified, false)));
   return row.id;
 }

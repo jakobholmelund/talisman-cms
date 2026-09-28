@@ -32,6 +32,8 @@ function d1(db) {
           return {
             run: async () => statement.run(...values),
             first: async () => statement.get(...values) ?? null,
+            all: async () => ({ results: statement.all(...values) }),
+            raw: async () => { const raw = db.prepare(sql); raw.setReturnArrays(true); return raw.all(...values); },
           };
         },
       };
