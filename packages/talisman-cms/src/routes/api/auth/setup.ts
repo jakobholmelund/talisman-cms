@@ -22,6 +22,11 @@ async function setupState(request: Request) {
 }
 
 export const GET: APIRoute = async ({ request }) => {
+  // Hybrid, Access and dev auth have no first-admin setup; the sign-in panel asks on every load, so
+  // answer plainly instead of with an error it would log.
+  if (authAdapter?.__talismanAuthRuntime?.moduleId !== 'talisman-cms/auth/local') {
+    return Response.json({ required: false }, { headers: { 'Cache-Control': 'no-store' } });
+  }
   const state = await setupState(request);
   if ('response' in state) return state.response!;
   return Response.json({ required: state.required }, { headers: { 'Cache-Control': 'no-store' } });

@@ -26,6 +26,7 @@ const srcUrl = new URL('../src/', import.meta.url).href;
 
 let onRequest;
 let setupRoute;
+let ssoRoute;
 if (canLoadSource) {
   registerHooks({
     resolve(specifier, context, nextResolve) {
@@ -40,6 +41,7 @@ if (canLoadSource) {
   });
   ({ onRequest } = await import('../src/routes/plugin-route-guard.ts'));
   setupRoute = await import('../src/routes/api/auth/setup.ts');
+  ssoRoute = await import('../src/routes/api/auth/sso.ts');
 }
 
 const ORIGIN = 'https://cms.example.test';
@@ -174,4 +176,26 @@ test('first-admin setup refuses an email that already belongs to a shopper or an
     assert.equal(adminCount(sqlite), 1);
     assert.equal((await createFirstAdmin('second@example.test')).status, 409, 'setup runs only once');
   } finally { sqlite.close(); }
+});
+
+test('the setup check answers plainly, and the SSO route exists, only for the auth mode that has them', { skip }, async () => {
+  const setupCheck = () => setupRoute.GET({ request: new Request(`${ORIGIN}/admin/api/auth/setup`) });
+  const ssoRequest = () => ssoRoute.GET({ request: new Request(`${ORIGIN}/admin/sso`) });
+  for (const moduleId of ['talisman-cms/auth/hybrid', 'talisman-cms/auth/access', 'talisman-cms/auth/dev']) {
+    runtime.setAdapter({ __talismanAuthRuntime: { moduleId, exportName: 'Adapter' }, getUser: async () => null });
+    const status = await setupCheck();
+    assert.equal(status.status, 200, moduleId);
+    assert.deepEqual(await status.json(), { required: false });
+    assert.equal(status.headers.get('cache-control'), 'no-store');
+    // Setup itself stays unavailable outside local auth.
+    assert.equal((await setupRoute.POST({ request: new Request(`${ORIGIN}/admin/api/auth/setup`, { method: 'POST', headers: { Origin: ORIGIN } }) })).status, 404);
+    assert.equal((await ssoRequest()).status, moduleId === 'talisman-cms/auth/hybrid' ? 403 : 404, `SSO under ${moduleId}`);
+  }
+  // Under local auth the check reads the database, and the SSO route does not exist.
+  const sqlite = setupDatabase();
+  try {
+    assert.deepEqual(await (await setupCheck()).json(), { required: true });
+    assert.equal((await ssoRequest()).status, 404);
+  } finally { sqlite.close(); }
+  runtime.setAdapter(null);
 });
