@@ -23,7 +23,7 @@ Talisman CMS is at release candidate validation. Publish only after the gates be
 
 The playground Wrangler files contain local placeholder D1 and KV IDs. Configure the real target resources and validate the deployment bundle before applying migrations or deploying; these files are not production manifests.
 
-This release builds the packages on Drizzle ORM 1.0. Before a site installs them, set `"drizzle-orm": "1.0.0-rc.4"` in its `package.json` (the CHANGELOG's breaking changes say why the version is exact) and run its install.
+This release builds the packages on Drizzle ORM 1.0. Before a site installs them, add `drizzle-orm@rc` to its `package.json` (`"drizzle-orm": "rc"`, Drizzle's release-candidate tag; the CHANGELOG's breaking changes say why not a caret range) and run its install.
 
 1. Back up the target D1 database, rehearse restoration, and apply the new migrations before deploying the matching Worker. This release adds `0019_shared_customer_identity.sql` through `0031_global_versions.sql`; `0025` to `0030` ship in `@talisman-cms/plugin-ecommerce`, the rest in `talisman-cms`. Run the commands from the site's project, where `DB` is the binding whose `migrations_dir` points at the assembled migrations folder:
 

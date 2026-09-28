@@ -21,7 +21,7 @@
     "@talisman-cms/plugin-ui-starwind": "workspace:*",
     "@tanstack/react-router": "^1.170.38",
     "astro": "^7.3.3",
-    "drizzle-orm": "1.0.0-rc.4",
+    "drizzle-orm": "rc",
     "zod": "^3.25.76",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
