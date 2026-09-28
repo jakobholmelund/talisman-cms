@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, statSync } from 'node:fs';
+import ts from 'typescript';
 import { ecommercePlugin } from '../dist/index.js';
 
 const adminOptions = async (plugin) => {
@@ -7,6 +9,33 @@ const adminOptions = async (plugin) => {
   const id = vitePlugin.resolveId('virtual:talisman-cms/ecommerce-admin');
   return vitePlugin.load(id);
 };
+
+/**
+ * The admin screens ship as TypeScript source (src/admin), so a helper module is compiled here and
+ * loaded from a data URL. `links` maps the specifiers it imports to modules loaded the same way, so
+ * a helper may import the core's own UI helpers; type-only imports are erased by the compiler.
+ */
+const coreUi = new URL('../../talisman-cms/ui/', import.meta.url);
+const pluginAdmin = new URL('../src/admin/', import.meta.url);
+
+function compileModule(url, links = {}) {
+  let { outputText } = ts.transpileModule(readFileSync(url, 'utf8'), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+  });
+  for (const [specifier, linked] of Object.entries(links)) {
+    outputText = outputText.replaceAll(`from '${specifier}'`, `from '${linked}'`).replaceAll(`from "${specifier}"`, `from "${linked}"`);
+  }
+  assert.doesNotMatch(outputText, /^import\s.*\bfrom\s+['"](?!data:)/m, `${url.pathname} imports a module this test does not link`);
+  return `data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`;
+}
+
+const entrySaveUrl = compileModule(new URL('lib/entry-save.ts', coreUi));
+const currencyUrl = compileModule(new URL('currency.ts', pluginAdmin));
+const { getVariantChangeRecovery, describeVariantChangeFailure } =
+  await import(compileModule(new URL('variant-recovery.ts', pluginAdmin), { 'talisman-cms/ui/lib/entry-save': entrySaveUrl }));
+const { describeEntry, describeCommerceEntry, formatMoney, getRelationOptionLabel, supportCollections, COMMERCE_FLOW_SLUGS } =
+  await import(compileModule(new URL('commerce-models.ts', pluginAdmin), { './currency': currencyUrl }));
+const { normalizeCurrency, storeCurrency } = await import(currencyUrl);
 
 test('commerce tools render inside the CMS by default and reject external link overrides', () => {
   const defaults = ecommercePlugin();
@@ -57,6 +86,138 @@ test('the admin test checkout is opt-in: no screen, route or simulated provider 
     section: 'commerce', componentPath: '@talisman-cms/plugin-ecommerce/admin/TestCheckout' });
   assert.equal(enabled.adminLinks.at(-1).href, '/admin/extensions/commerce-test-checkout');
   assert.equal(await adminOptions(enabled), 'export const adminTestCheckout = true;');
+});
+
+test('the plugin registers the Commerce section, the editor panels, the describer and the store currency', () => {
+  const plugin = ecommercePlugin();
+  assert.deepEqual(plugin.adminSections.map(section => [section.id, section.label, section.icon, section.adminOnly, section.componentPath]), [
+    ['commerce', 'Commerce', 'shopping-cart', true, '@talisman-cms/plugin-ecommerce/admin/CommerceWorkspace']
+  ]);
+  assert.ok(plugin.adminSections[0].emptyState.title && plugin.adminSections[0].description);
+  assert.deepEqual(plugin.adminEditorPanels, [
+    { id: 'commerce-model-guide', placement: 'before-fields', sections: ['commerce'], componentPath: '@talisman-cms/plugin-ecommerce/admin/CommerceModelGuidePanel' },
+    { id: 'commerce-product-options', placement: 'after-form', slugs: ['products'], componentPath: '@talisman-cms/plugin-ecommerce/admin/ProductOptionsPanel' }
+  ]);
+  // The options panel follows the configured products slug.
+  assert.deepEqual(ecommercePlugin({ productsCollectionSlug: 'shop_items' }).adminEditorPanels[1].slugs, ['shop_items']);
+  assert.deepEqual(plugin.adminEntryDescribers, [{ modulePath: '@talisman-cms/plugin-ecommerce/admin/commerce-models' }]);
+  assert.deepEqual(plugin.adminSettings, ['COMMERCE_CURRENCY']);
+  // Tailwind scans the admin sources shipped with the package, so the workspace and panels get their classes.
+  assert.equal(plugin.adminStyleSources.length, 1);
+  const [styleSource] = plugin.adminStyleSources;
+  assert.ok(styleSource.startsWith('/'), 'the style source is absolute');
+  assert.ok(statSync(styleSource).isDirectory());
+  assert.ok(statSync(new URL('CommerceWorkspace.tsx', pluginAdmin)).isFile());
+  assert.equal(styleSource.replace(/\/$/, ''), pluginAdmin.pathname.replace(/\/$/, ''));
+});
+
+test('every plugin table is listed under Commerce and stock counts are sent only when changed', () => {
+  const site = { name: 'Shop items', slug: 'products', fields: [{ name: 'name', label: 'Name', type: 'text' }, { name: 'inventoryQuantity', label: 'Stock', type: 'number' }],
+    nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'products', idColumn: 'id' } };
+  const collections = ecommercePlugin().onInit({ collections: [site] }).collections;
+  const plugin = collections.filter(item => item.nativeSchemaMapping?.schemaPath === '@talisman-cms/plugin-ecommerce/schema');
+  assert.ok(plugin.length > 10);
+  for (const collection of plugin) assert.equal(collection.adminSection, 'commerce', `${collection.slug} is not under Commerce`);
+  const saveOnlyIfChanged = (slug) => collections.find(item => item.slug === slug).fields.filter(field => field.saveOnlyIfChanged).map(field => field.name);
+  assert.deepEqual(saveOnlyIfChanged('products'), ['inventoryQuantity'], 'also on a site-defined products collection');
+  assert.deepEqual(saveOnlyIfChanged('_ecommerce_product_variants'), ['inventoryQuantity']);
+  assert.deepEqual(saveOnlyIfChanged('_ecommerce_stocks'), ['quantity']);
+  assert.deepEqual(saveOnlyIfChanged('_ecommerce_components'), ['quantity']);
+  assert.deepEqual(saveOnlyIfChanged('_ecommerce_variant_components'), [], 'units per item are not a stock count');
+  assert.deepEqual(saveOnlyIfChanged('_ecommerce_orders'), []);
+});
+
+test('the Options & stock panel keeps edits only after a refusal that wrote nothing, and says what it shows', () => {
+  const failure = (status, message, code = null) => ({ status, code, message });
+  const lost = failure(0, 'Failed to save the variant value: the server could not be reached. Your edits are still here.');
+  const stale = failure(409, 'This record changed since it was opened. Reload it before saving.', 'stale_record');
+  const serverError = failure(500, 'The variant change could not be saved. Check the server logs for details.');
+  // A refusal wrote nothing: the edits stay, including after an expired session, whose reload would read nothing.
+  for (const status of [400, 401, 403, 428]) assert.equal(getVariantChangeRecovery(failure(status, 'Refused')), 'keep');
+  assert.equal(getVariantChangeRecovery(failure(409, 'Another record already uses this sku.')), 'keep');
+  // Rows that changed or are gone are loaded again.
+  assert.equal(getVariantChangeRecovery(stale), 'reload');
+  assert.equal(getVariantChangeRecovery(failure(404, 'Variant value not found')), 'reload');
+  // Without an answer that says what happened, the change may have been saved.
+  for (const unknown of [lost, serverError, failure(502, 'Bad gateway'), failure(200, 'unexpected response')]) {
+    assert.equal(getVariantChangeRecovery(unknown), 'unknown');
+  }
+
+  // After a lost answer the saved rows replace the edits, so the message must not say they are still here.
+  const reloaded = describeVariantChangeFailure(lost, 'Failed to save the variant value', true);
+  assert.doesNotMatch(reloaded, /edits are still here/);
+  assert.match(reloaded, /^Failed to save the variant value: the server could not be reached\. The saved options and stock are loaded again/);
+  // When they could not be loaded either, the edits are still shown, and a new value waits for the rows.
+  const kept = describeVariantChangeFailure(serverError, 'Failed to save the variant value', false);
+  assert.match(kept, /^The variant change could not be saved\. Check the server logs for details\. The saved options and stock could not be loaded/);
+  assert.match(kept, /Your edits are still here; load the latest options and stock before creating a value\.$/);
+  assert.match(describeVariantChangeFailure(stale, 'Failed', true), /The latest values are loaded now; make your change again\.$/);
+  assert.match(describeVariantChangeFailure(stale, 'Failed', false), /Load the latest values, then make your change again\.$/);
+  assert.equal(describeVariantChangeFailure(failure(404, 'Variant value not found'), 'Failed', true),
+    'Variant value not found. The latest options and stock are loaded now.');
+});
+
+test('commerce records are described with prices in the store currency, scaled by its minor units', () => {
+  // The admin formats for the browser's locale, so the expected text comes from the same formatter.
+  const text = (major, currency) => new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(major);
+  assert.equal(formatMoney(1250, 'usd'), text(12.5, 'USD'));
+  assert.equal(formatMoney(1250, 'jpy'), text(1250, 'JPY'));
+  assert.equal(formatMoney(1250, 'kwd'), text(1.25, 'KWD'));
+  assert.equal(formatMoney(null, 'usd'), null);
+  assert.equal(formatMoney(1250, undefined), null);
+
+  const product = { id: 'p1', data: { name: 'Poster', slug: 'poster', basePrice: 1250 } };
+  assert.equal(describeCommerceEntry('products', product, {}, 'jpy').subtitle, `/poster • ${text(1250, 'JPY')}`);
+  assert.equal(getRelationOptionLabel('products', product, {}, 'kwd'), `Poster - /poster • ${text(1.25, 'KWD')}`);
+  const value = { id: 'v1', data: { value: 'Blue', priceOverride: 990 } };
+  assert.deepEqual(describeCommerceEntry('_ecommerce_product_variant_values', value, {}, 'jpy').details, [`Price override ${text(990, 'JPY')}`]);
+  // Without a currency a price is left out rather than shown in the wrong one; titles need none.
+  assert.equal(describeCommerceEntry('products', product, {}).subtitle, '/poster');
+  assert.deepEqual(describeCommerceEntry('_ecommerce_product_variant_values', value, {}).details, []);
+  assert.equal(describeCommerceEntry('products', product, {}).title, 'Poster');
+
+  // The describer the core calls: the currency comes from the admin's setting, and records of other
+  // collections are left to the core's generic description.
+  const context = { readSetting: (name) => (name === 'COMMERCE_CURRENCY' ? 'jpy' : null) };
+  assert.equal(describeEntry('products', product, {}, context).subtitle, `/poster • ${text(1250, 'JPY')}`);
+  assert.equal(describeEntry('products', product, {}, { readSetting: () => null }).subtitle, `/poster • ${text(12.5, 'USD')}`);
+  assert.equal(describeEntry('posts', { id: 'x', data: { title: 'Hello' } }, {}, context), null);
+  assert.equal(describeEntry('_ecommerce_orders', { id: 'o1', data: {} }, {}, context), null);
+  // A stock row names its value, option and product from the loaded flow.
+  const entries = {
+    products: [product],
+    _ecommerce_variants: [{ id: 'd1', data: { name: 'Size' } }],
+    _ecommerce_product_variants: [{ id: 'g1', data: { productId: 'p1', variantId: 'd1', name: 'Sizes' } }],
+    _ecommerce_product_variant_values: [{ id: 'v1', data: { productVariantId: 'g1', value: 'Large' } }],
+  };
+  assert.deepEqual(describeEntry('_ecommerce_stocks', { id: 's1', data: { productVariantValueId: 'v1', quantity: 3 } }, entries, context),
+    { title: 'Stock for Large', subtitle: 'Product: Poster • Option: Size • Value: Large', details: ['Quantity 3'] });
+  // The editor of a product-flow record loads the whole flow; other editors load only their relation targets.
+  assert.deepEqual(supportCollections('_ecommerce_stocks', ['x']), [...COMMERCE_FLOW_SLUGS]);
+  assert.deepEqual(supportCollections('posts', ['authors']), []);
+});
+
+test('the admin reads the store currency from the page meta tag, and USD without a usable one', () => {
+  assert.equal(normalizeCurrency(' JPY '), 'jpy');
+  for (const value of [null, undefined, '', 'dollars', 'u$d']) assert.equal(normalizeCurrency(value), 'usd');
+  const page = (content) => ({
+    querySelector: (selector) => selector === 'meta[name="talisman-setting-commerce-currency"]' && content !== null
+      ? { getAttribute: (name) => (name === 'content' ? content : null) } : null,
+  });
+  try {
+    globalThis.document = page('jpy');
+    assert.equal(storeCurrency(), 'jpy');
+    globalThis.document = page(' KWD ');
+    assert.equal(storeCurrency(), 'kwd');
+    for (const content of [null, '', 'dollars']) {
+      globalThis.document = page(content);
+      assert.equal(storeCurrency(), 'usd', `content ${JSON.stringify(content)}`);
+    }
+  } finally {
+    delete globalThis.document;
+  }
+  // Outside a browser there is no page to read.
+  assert.equal(storeCurrency(), 'usd');
 });
 
 test('the unfinished Durable Object inventory stub is not part of the API', async () => {

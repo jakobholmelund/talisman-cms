@@ -1,6 +1,6 @@
 import type { AstroIntegration } from 'astro';
 import { fileURLToPath } from 'url';
-import { existsSync, readFileSync, realpathSync } from 'fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
 import { isAbsolute, join, relative, resolve } from 'path';
 import tailwindcss from '@tailwindcss/vite';
 import { TanStackRouterVite } from '@tanstack/router-vite-plugin';
@@ -8,6 +8,7 @@ import type { TalismanAuthAdapter } from './auth/types';
 import { buildEmailVirtualModule } from './email/index';
 import type { EmailRuntimeDescriptor } from './email/types';
 import { registerAuthAdapter } from './runtime-config';
+import { looksLikeSecretValue } from './env';
 import { assembleMigrations, type MigrationSource } from './migrations';
 import type {
   CollectionConfig,
@@ -22,6 +23,10 @@ import { getPluginUiLibraryMetadata, resolveFieldDefinitions } from './types';
 
 // Export types for plugin developers
 export type {
+  AdminEditorPanelDefinition,
+  AdminEntryDescriberDefinition,
+  AdminSection,
+  AdminSectionDefinition,
   BlockDefinition,
   CollectionConfig,
   CollectionHookArgs,
@@ -176,14 +181,76 @@ function collectProtectedPluginRoutes(plugins: Plugin[], adminPath: string, admi
   return routes;
 }
 
+// The SPA's own top-level routes; a plugin section cannot take one of them.
+const RESERVED_ADMIN_SECTION_IDS = new Set(['collections', 'globals', 'media', 'users', 'account', 'extensions', 'api']);
+const ADMIN_SECTION_ID = /^[a-z][a-z0-9-]*$/;
+const ADMIN_SETTING_NAME = /^[A-Z][A-Z0-9_]*$/;
+const SECRET_LOOKING_SETTING = /SECRET|KEY|TOKEN|PASSWORD/;
+const EDITOR_PANEL_PLACEMENTS = new Set(['before-fields', 'after-form']);
+
+/**
+ * Checks the admin extension points a plugin declares at config time, so a typo fails the build with
+ * the plugin's name instead of a broken admin.
+ */
+function validateAdminExtensions(plugins: Plugin[]) {
+  const sectionOwners = new Map<string, string>();
+  for (const plugin of plugins) {
+    const fail = (message: string) => {
+      throw new Error(`[talisman-cms] ${plugin.name}: ${message}`);
+    };
+    for (const section of plugin.adminSections || []) {
+      if (typeof section?.id !== 'string' || !ADMIN_SECTION_ID.test(section.id)) {
+        fail(`adminSections ids are lowercase slugs (letters, digits and hyphens), not ${JSON.stringify(section?.id)}.`);
+      }
+      if (RESERVED_ADMIN_SECTION_IDS.has(section.id)) fail(`the admin section id "${section.id}" is a built-in admin route.`);
+      const owner = sectionOwners.get(section.id);
+      if (owner) fail(`the admin section "${section.id}" is already registered by ${owner}.`);
+      sectionOwners.set(section.id, plugin.name);
+      if (typeof section.label !== 'string' || !section.label.trim()) fail(`the admin section "${section.id}" needs a label.`);
+      if (section.componentPath !== undefined && (typeof section.componentPath !== 'string' || !section.componentPath.trim())) {
+        fail(`the admin section "${section.id}" has an empty componentPath.`);
+      }
+    }
+    for (const panel of plugin.adminEditorPanels || []) {
+      if (typeof panel?.id !== 'string' || !panel.id.trim()) fail('every adminEditorPanels entry needs an id.');
+      if (typeof panel.componentPath !== 'string' || !panel.componentPath.trim()) fail(`the editor panel "${panel.id}" needs a componentPath.`);
+      if (!EDITOR_PANEL_PLACEMENTS.has(panel.placement)) {
+        fail(`the editor panel "${panel.id}" has placement ${JSON.stringify(panel.placement)}; use before-fields or after-form.`);
+      }
+      for (const [key, list] of [['sections', panel.sections], ['slugs', panel.slugs]] as const) {
+        if (list !== undefined && (!Array.isArray(list) || list.some((item) => typeof item !== 'string' || !item))) {
+          fail(`the editor panel "${panel.id}" has a ${key} list that is not a list of names.`);
+        }
+      }
+    }
+    for (const describer of plugin.adminEntryDescribers || []) {
+      if (typeof describer?.modulePath !== 'string' || !describer.modulePath.trim()) fail('every adminEntryDescribers entry needs a modulePath.');
+    }
+    for (const name of plugin.adminSettings || []) {
+      if (typeof name !== 'string' || !ADMIN_SETTING_NAME.test(name)) {
+        fail(`adminSettings names are TALISMAN_* setting names without the prefix, in upper case, not ${JSON.stringify(name)}.`);
+      }
+      if (SECRET_LOOKING_SETTING.test(name) || SECRET_LOOKING_KEY.test(name)) fail(`the setting ${name} looks like a secret and cannot be exposed to the admin page.`);
+    }
+    for (const dir of plugin.adminStyleSources || []) {
+      if (typeof dir !== 'string' || !isAbsolute(dir)) fail(`adminStyleSources entries are absolute directories, not ${JSON.stringify(dir)}.`);
+      let isDirectory = false;
+      try {
+        isDirectory = statSync(dir).isDirectory();
+      } catch {
+        // Reported below.
+      }
+      if (!isDirectory) fail(`the adminStyleSources directory ${dir} does not exist.`);
+    }
+  }
+}
+
 const SECRET_LOOKING_KEY = /secret|token|passw(?:or)?d|api[-_]?key|private[-_]?key|credential/i;
-// Common API key and signing secret prefixes.
-const SECRET_LOOKING_VALUE = /^(?:re_|sk_|rk_|whsec_|xkeysib-|SG\.)/;
 
 /** Drop secret-looking keys and values from data bound for the browser, reporting each path once. */
 function withoutSecretLookingValues(value: unknown, path: string, dropped: string[]): unknown {
   if (typeof value === 'string') {
-    if (!SECRET_LOOKING_VALUE.test(value)) return value;
+    if (!looksLikeSecretValue(value)) return value;
     dropped.push(path);
     return undefined;
   }
@@ -228,6 +295,7 @@ function buildClientConfigModule(options: TalismanCmsOptions, adminPath: string)
   }));
   const adminLinks = (options.plugins || []).flatMap((plugin) => plugin.adminLinks || [])
     .map(({ section, label, description, href }) => ({ section, label, description, href }));
+  const adminSections = registeredAdminSectionIds(options.plugins || []);
   const dropped: string[] = [];
   const safe = withoutSecretLookingValues({
     collections,
@@ -242,9 +310,15 @@ function buildClientConfigModule(options: TalismanCmsOptions, adminPath: string)
     export const adminPath = ${JSON.stringify(adminPath)};
     export const collections = ${JSON.stringify(safe.collections)};
     export const adminLinks = ${JSON.stringify(safe.adminLinks)};
+    export const adminSections = ${JSON.stringify(adminSections)};
     export const globals = ${JSON.stringify(safe.globals)};
     export const uiLibraries = ${JSON.stringify(safe.uiLibraries)};
   `;
+}
+
+/** The ids of the admin sections plugins registered, in registration order. */
+function registeredAdminSectionIds(plugins: Plugin[]) {
+  return plugins.flatMap((plugin) => (plugin.adminSections || []).map((section) => section.id));
 }
 
 function buildServerConfigModule(options: TalismanCmsOptions, adminPath: string) {
@@ -252,11 +326,70 @@ function buildServerConfigModule(options: TalismanCmsOptions, adminPath: string)
     export const adminPath = ${JSON.stringify(adminPath)};
     export const collections = ${JSON.stringify(options.collections || [])};
     export const adminLinks = ${JSON.stringify((options.plugins || []).flatMap(plugin => plugin.adminLinks || []))};
+    export const adminSections = ${JSON.stringify(registeredAdminSectionIds(options.plugins || []))};
     export const globals = ${JSON.stringify(options.globals || [])};
     export const uiLibraries = ${JSON.stringify(getPluginUiLibraryMetadata(options.plugins || []))};
+    export const adminSettings = ${JSON.stringify([...new Set((options.plugins || []).flatMap((plugin) => plugin.adminSettings || []))])};
     export const publishing = ${JSON.stringify({
       workflowBinding: options.publishing?.workflowBinding || 'TALISMAN_PUBLISH_WORKFLOW'
     })};
+  `;
+}
+
+/**
+ * The admin SPA's registry of plugin screens: extension pages, sections, editor panels and record
+ * describers. Page and panel components are lazy imports, so each loads when first shown; describer
+ * modules are small and imported statically, as every relation label may need them.
+ */
+function buildAdminExtensionsModule(plugins: Plugin[]) {
+  const extensions = plugins.flatMap((plugin) => (plugin.adminUi || []).map((ext) => `{
+    path: ${JSON.stringify(ext.path)},
+    label: ${JSON.stringify(ext.label)},
+    section: ${JSON.stringify(ext.section || null)},
+    plugin: ${JSON.stringify(plugin.name)},
+    component: lazy(() => import(${JSON.stringify(ext.componentPath)}))
+  }`));
+  const sections = plugins.flatMap((plugin) => (plugin.adminSections || []).map((section) => `{
+    id: ${JSON.stringify(section.id)},
+    label: ${JSON.stringify(section.label)},
+    description: ${JSON.stringify(section.description ?? null)},
+    icon: ${JSON.stringify(section.icon ?? null)},
+    adminOnly: ${JSON.stringify(section.adminOnly === true)},
+    emptyState: ${JSON.stringify(section.emptyState ?? null)},
+    plugin: ${JSON.stringify(plugin.name)},
+    workspace: ${section.componentPath ? `lazy(() => import(${JSON.stringify(section.componentPath)}))` : 'null'}
+  }`));
+  const panels = plugins.flatMap((plugin) => (plugin.adminEditorPanels || []).map((panel) => `{
+    id: ${JSON.stringify(panel.id)},
+    placement: ${JSON.stringify(panel.placement)},
+    sections: ${JSON.stringify(panel.sections ?? null)},
+    slugs: ${JSON.stringify(panel.slugs ?? null)},
+    plugin: ${JSON.stringify(plugin.name)},
+    component: lazy(() => import(${JSON.stringify(panel.componentPath)}))
+  }`));
+  const describerImports: string[] = [];
+  const describers = plugins.flatMap((plugin) => (plugin.adminEntryDescribers || []).map((describer) => {
+    const importName = `describer_${describerImports.length}`;
+    describerImports.push(`import * as ${importName} from ${JSON.stringify(describer.modulePath)};`);
+    return `{ plugin: ${JSON.stringify(plugin.name)}, module: ${importName} }`;
+  }));
+
+  return `
+    import { lazy } from 'react';
+    ${describerImports.join('\n')}
+
+    export const adminExtensions = [
+      ${extensions.join(',\n')}
+    ];
+    export const adminSections = [
+      ${sections.join(',\n')}
+    ];
+    export const adminEditorPanels = [
+      ${panels.join(',\n')}
+    ];
+    export const adminEntryDescribers = [
+      ${describers.join(',\n')}
+    ];
   `;
 }
 
@@ -505,6 +638,7 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
   const adminPath = normalizeAdminPath(finalOptions?.adminPath);
   const adminPathPrefix = adminPath === '/' ? '' : adminPath;
   const protectedPluginRoutes = collectProtectedPluginRoutes(finalOptions.plugins, adminPath, adminPathPrefix);
+  validateAdminExtensions(finalOptions.plugins);
 
   // Astro compiles injected .astro and .ts routes from package source.
   const adminRoutePath = fileURLToPath(new URL('../src/routes/admin.astro', import.meta.url));
@@ -652,6 +786,11 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
             }
           }
         }
+
+        // 3.10 Plugin admin screens that use Tailwind classes: Tailwind only scans the folders the admin
+        // stylesheet names, so each plugin folder is added to it as an @source line when it loads.
+        const adminStylesheetPath = fileURLToPath(new URL('../ui/globals.css', import.meta.url));
+        const adminStyleSources = [...new Set((finalOptions.plugins || []).flatMap((plugin) => plugin.adminStyleSources || []))];
 
         // 4. Inject vite config to handle the React SPA within the package
         updateConfig({
@@ -812,28 +951,16 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
                 },
                 load(id) {
                   if (id === '\0virtual:talisman-cms/admin-extensions') {
-                    const extensions = (finalOptions?.plugins || []).flatMap((plugin) => 
-                      (plugin.adminUi || []).map(ext => ({...ext, plugin: plugin.name}))
-                    );
-                    
-                    // The sidebar reads only the metadata, so each page component is a lazy import: its
-                    // chunk loads when the extension route first renders it.
-                    const configExports = extensions.map((ext) => `{
-                      path: ${JSON.stringify(ext.path)},
-                      label: ${JSON.stringify(ext.label)},
-                      section: ${JSON.stringify(ext.section || null)},
-                      plugin: ${JSON.stringify(ext.plugin)},
-                      component: lazy(() => import(${JSON.stringify(ext.componentPath)}))
-                    }`).join(',\n');
-
-                    return `
-                      import { lazy } from 'react';
-
-                      export const adminExtensions = [
-                        ${configExports}
-                      ];
-                    `;
+                    return buildAdminExtensionsModule(finalOptions?.plugins || []);
                   }
+                }
+              },
+              {
+                name: 'vite-plugin-talisman-cms-admin-styles',
+                load(id) {
+                  if (adminStyleSources.length === 0 || id.split('?')[0] !== adminStylesheetPath) return;
+                  const sources = adminStyleSources.map((dir) => `@source ${JSON.stringify(dir)};`).join('\n');
+                  return `${readFileSync(adminStylesheetPath, 'utf8')}\n${sources}\n`;
                 }
               }
             ],

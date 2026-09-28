@@ -1,7 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { Button } from '../ui/button';
-import { readCommerceCurrency } from '../../commerce-currency';
-import { describeCommerceEntry, getRelationOptionLabel } from '../../lib/commerce-models';
+import { describeEntry, getRelationOptionLabel } from '../../lib/entry-describers';
 import type { RelationReference } from '../../lib/page-builder';
 import {
   getRelationOptionsForField,
@@ -37,13 +36,12 @@ export function RelationshipPicker({
   // Read out by screen readers: "Added X", "Removed X", "Moved X to position N of M".
   const [announcement, setAnnouncement] = useState('');
   const searchRef = useRef<HTMLInputElement | null>(null);
-  const currency = readCommerceCurrency();
   const options = getRelationOptionsForField(field, relationOptions);
   const selections = normalizeRelationSelections(field, value);
   const selectedKeys = new Set(selections.map(getRelationSelectionKey));
   const filteredOptions = options.filter((option) => {
-    const label = getRelationOptionLabel(option.collectionSlug, option.entry, relationSupportEntries, currency).toLowerCase();
-    const subtitle = describeCommerceEntry(option.collectionSlug, option.entry, relationSupportEntries, currency).subtitle.toLowerCase();
+    const label = getRelationOptionLabel(option.collectionSlug, option.entry, relationSupportEntries).toLowerCase();
+    const subtitle = describeEntry(option.collectionSlug, option.entry, relationSupportEntries).subtitle.toLowerCase();
     const search = query.trim().toLowerCase();
 
     if (!search) return true;
@@ -99,7 +97,7 @@ export function RelationshipPicker({
         <div className="space-y-2">
           {selections.map((selection, index) => {
             const entry = (relationSupportEntries[selection.relationTo] || []).find((candidate: any) => candidate.id === selection.value) || null;
-            const description = describeCommerceEntry(selection.relationTo, entry, relationSupportEntries, currency);
+            const description = describeEntry(selection.relationTo, entry, relationSupportEntries);
 
             return (
               <div key={getRelationSelectionKey(selection)} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-3">
@@ -140,7 +138,7 @@ export function RelationshipPicker({
           <div className="px-3 py-4 text-sm text-zinc-500">No entries matched this search.</div>
         ) : (
           filteredOptions.map((option) => {
-            const description = describeCommerceEntry(option.collectionSlug, option.entry, relationSupportEntries, currency);
+            const description = describeEntry(option.collectionSlug, option.entry, relationSupportEntries);
             const selection = { relationTo: option.collectionSlug, value: option.entry.id };
             const isSelected = selectedKeys.has(getRelationSelectionKey(selection));
 

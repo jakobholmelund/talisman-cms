@@ -1,15 +1,32 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Outlet, createRootRouteWithContext, Link, useRouter, useRouterState } from '@tanstack/react-router';
-import { Database, FileText, Globe, Home, ImageIcon, Layers, LogOut, Menu, ShoppingCart, UserRound, Users, X } from 'lucide-react';
+import { BarChart3, Database, FileText, Globe, Home, ImageIcon, Layers, LayoutGrid, LogOut, Menu, Package, ShoppingCart, Store, UserRound, Users, X } from 'lucide-react';
 import type { RouterContext } from '../routerContext';
-import { canOpenAdminExtension, getReadableSectionCollections, hasMediaCollection, hasPagesCollection, hasSection } from '../lib/admin-sections';
+import {
+  canOpenAdminExtension,
+  canOpenAdminSection,
+  getReadableSectionCollections,
+  getRegisteredSections,
+  getSectionIndexLink,
+  hasMediaCollection,
+  hasPagesCollection,
+  hasSection,
+  isSectionExtension,
+} from '../lib/admin-sections';
 import { AuthPanel } from '../components/AuthPanel';
 import { useModalDialog } from '../lib/use-modal-dialog';
-// @ts-ignore
 import { adminExtensions } from 'virtual:talisman-cms/admin-extensions';
 import '../globals.css';
 
 const SIDEBAR_ID = 'talisman-sidebar';
+// The icons a plugin section may ask for (AdminSectionDefinition.icon).
+const SECTION_ICONS: Record<string, typeof LayoutGrid> = {
+  'shopping-cart': ShoppingCart,
+  store: Store,
+  package: Package,
+  chart: BarChart3,
+  'layout-grid': LayoutGrid,
+};
 // Tailwind's `md` breakpoint: from here up the sidebar is a static column, below it a drawer.
 const DESKTOP_MEDIA_QUERY = '(min-width: 48rem)';
 
@@ -52,11 +69,17 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       return () => media.removeEventListener('change', closeOnDesktop);
     }, [menuOpen]);
     const isAdmin = context.user?.role === 'admin';
-    const hasCommerce = isAdmin && hasSection('commerce');
-    // Editors skip the Commerce workspace (its tools are admin-only) and get the commerce content they may edit,
-    // opened under /collections so its back links never lead into that workspace.
-    const editorCommerceCollections = context.user && !isAdmin ? getReadableSectionCollections('commerce', context.user) : [];
-    const sidebarExtensions = adminExtensions.filter((ext: any) => ext.section !== 'commerce' && canOpenAdminExtension(ext, context.user));
+    // A registered section gets a sidebar entry once it has collections or a workspace, for the roles
+    // that may open it. An admin-only section's workspace is skipped for editors; they get the section's
+    // collections they may edit, opened under /collections so its back links never lead into that workspace.
+    const registeredSections = getRegisteredSections();
+    const sectionEntries = registeredSections.filter((section) => hasSection(section.id) && canOpenAdminSection(section, context.user));
+    const editorSectionCollections = context.user && !isAdmin
+      ? registeredSections.filter((section) => section.adminOnly).flatMap((section) =>
+          getReadableSectionCollections(section.id, context.user).map((collection) => ({ section, collection })))
+      : [];
+    // An extension in a registered section is listed by that section's workspace, not here.
+    const sidebarExtensions = adminExtensions.filter((ext) => !isSectionExtension(ext) && canOpenAdminExtension(ext, context.user));
     const hasMedia = hasMediaCollection();
     const hasPages = hasPagesCollection();
     // Hybrid admins sign in through Cloudflare Access, so signing out must end that session as well.
@@ -148,16 +171,22 @@ export const Route = createRootRouteWithContext<RouterContext>()({
                  <ImageIcon size={16} className="opacity-70" /> Media
                </Link>
              )}
-             {hasCommerce && (
-               <Link to="/commerce" className="flex items-center gap-3 px-3 py-2 text-sm text-zinc-400 hover:text-zinc-100 hover:bg-white/5 rounded-lg transition-all duration-200 [&.active]:bg-indigo-500/15 [&.active]:text-indigo-300 [&.active]:font-medium [&.active]:shadow-[inset_2px_0_0_0_theme(colors.indigo.500)]">
-                 <ShoppingCart size={16} className="opacity-70" /> Commerce
-               </Link>
-             )}
-             {editorCommerceCollections.map((collection) => (
-               <Link key={collection.slug} to="/collections/$slug" params={{ slug: collection.slug }} className="flex items-center gap-3 px-3 py-2 text-sm text-zinc-400 hover:text-zinc-100 hover:bg-white/5 rounded-lg transition-all duration-200 [&.active]:bg-indigo-500/15 [&.active]:text-indigo-300 [&.active]:font-medium [&.active]:shadow-[inset_2px_0_0_0_theme(colors.indigo.500)]">
-                 <ShoppingCart size={16} className="opacity-70" /> {collection.name}
-               </Link>
-             ))}
+             {sectionEntries.map((section) => {
+               const Icon = SECTION_ICONS[section.icon || ''] || LayoutGrid;
+               return (
+                 <Link key={section.id} {...getSectionIndexLink(section.id)} className="flex items-center gap-3 px-3 py-2 text-sm text-zinc-400 hover:text-zinc-100 hover:bg-white/5 rounded-lg transition-all duration-200 [&.active]:bg-indigo-500/15 [&.active]:text-indigo-300 [&.active]:font-medium [&.active]:shadow-[inset_2px_0_0_0_theme(colors.indigo.500)]">
+                   <Icon size={16} className="opacity-70" /> {section.label}
+                 </Link>
+               );
+             })}
+             {editorSectionCollections.map(({ section, collection }) => {
+               const Icon = SECTION_ICONS[section.icon || ''] || LayoutGrid;
+               return (
+                 <Link key={`${section.id}:${collection.slug}`} to="/collections/$slug" params={{ slug: collection.slug }} className="flex items-center gap-3 px-3 py-2 text-sm text-zinc-400 hover:text-zinc-100 hover:bg-white/5 rounded-lg transition-all duration-200 [&.active]:bg-indigo-500/15 [&.active]:text-indigo-300 [&.active]:font-medium [&.active]:shadow-[inset_2px_0_0_0_theme(colors.indigo.500)]">
+                   <Icon size={16} className="opacity-70" /> {collection.name}
+                 </Link>
+               );
+             })}
              <Link to="/globals" className="flex items-center gap-3 px-3 py-2 text-sm text-zinc-400 hover:text-zinc-100 hover:bg-white/5 rounded-lg transition-all duration-200 [&.active]:bg-indigo-500/15 [&.active]:text-indigo-300 [&.active]:font-medium [&.active]:shadow-[inset_2px_0_0_0_theme(colors.indigo.500)]">
                <Globe size={16} className="opacity-70" /> Globals
              </Link>
@@ -167,7 +196,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
              {sidebarExtensions.length > 0 && (
                <>
                  <div className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest mb-3 px-3 mt-6">Extensions</div>
-                 {sidebarExtensions.map((ext: any) => (
+                 {sidebarExtensions.map((ext) => (
                    <Link key={ext.path} to="/extensions/$extensionPath" params={{ extensionPath: ext.path }} className="flex items-center gap-3 px-3 py-2 text-sm text-zinc-400 hover:text-zinc-100 hover:bg-white/5 rounded-lg transition-all duration-200 [&.active]:bg-indigo-500/15 [&.active]:text-indigo-300 [&.active]:font-medium [&.active]:shadow-[inset_2px_0_0_0_theme(colors.indigo.500)]">
                      <Layers size={16} className="opacity-70" /> {ext.label}
                    </Link>

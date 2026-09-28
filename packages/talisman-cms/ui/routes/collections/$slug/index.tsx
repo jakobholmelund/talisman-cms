@@ -4,7 +4,7 @@ import { Card } from '../../../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
 import { Button } from '../../../components/ui/button';
 import { Plus, MoreHorizontal, ArrowLeft, ChevronRight } from 'lucide-react';
-import { getSectionBasePath, getSectionEntryRoute, type AdminSection } from '../../../lib/admin-sections';
+import { getSectionEntryLink, getSectionIndexLink, getSectionLabel, type AdminSection } from '../../../lib/admin-sections';
 import { fetchCollectionConfigs } from '../../../lib/admin-api';
 import { getPagePath, getPendingSlugRename } from '../../../lib/entry-save';
 
@@ -123,11 +123,8 @@ export function CollectionEntriesPage({
     }
   };
 
-  const sectionBasePath = getSectionBasePath(section);
-  const sectionEntryRoute = getSectionEntryRoute(section);
   const entryLabel = collection?.nativeSchemaMapping ? 'record' : 'entry';
   const isPagesCollection = slug === 'pages';
-  const isProductsCollection = collection?.nativeSchemaMapping?.exportName === 'products';
 
   if (!collection) {
     return <div>Collection not found.</div>;
@@ -136,8 +133,8 @@ export function CollectionEntriesPage({
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4 text-zinc-400 mb-2">
-        <Link to={sectionBasePath} className="hover:text-white transition-colors flex items-center gap-1 text-sm bg-white/5 px-2.5 py-1 rounded-md backdrop-blur-sm border border-white/5 hover:bg-white/10 hover:border-white/10">
-          <ArrowLeft size={14} /> Back to {section === 'commerce' ? 'Commerce' : 'Collections'}
+        <Link {...getSectionIndexLink(section)} className="hover:text-white transition-colors flex items-center gap-1 text-sm bg-white/5 px-2.5 py-1 rounded-md backdrop-blur-sm border border-white/5 hover:bg-white/10 hover:border-white/10">
+          <ArrowLeft size={14} /> Back to {getSectionLabel(section)}
         </Link>
       </div>
 
@@ -150,8 +147,8 @@ export function CollectionEntriesPage({
         </div>
         {/* One link styled as a button, so the keyboard reaches it once. */}
         {!collection.readOnly && <Button asChild className="gap-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-400 hover:to-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_25px_rgba(99,102,241,0.5)] transition-all duration-300 border-0">
-          <Link to={sectionEntryRoute} params={{ slug, entryId: 'new' }}>
-            <Plus size={16} strokeWidth={2.5} aria-hidden="true" /> {isProductsCollection ? 'Add product' : `Create ${entryLabel}`}
+          <Link {...getSectionEntryLink(section, slug, 'new')}>
+            <Plus size={16} strokeWidth={2.5} aria-hidden="true" /> Create {entryLabel}
           </Link>
         </Button>}
       </div>
@@ -161,7 +158,7 @@ export function CollectionEntriesPage({
           <TableHeader className="bg-white/[0.02] hover:bg-white/[0.02] border-b border-white/5">
             <TableRow className="border-none hover:bg-transparent">
               <TableHead className="w-[300px] text-zinc-400 font-medium">
-                {isPagesCollection ? 'Page' : isProductsCollection ? 'Product' : collection.nativeSchemaMapping ? 'Record' : 'Entry'}
+                {isPagesCollection ? 'Page' : collection.nativeSchemaMapping ? 'Record' : 'Entry'}
               </TableHead>
               {isPagesCollection && <TableHead className="text-zinc-400 font-medium">URL</TableHead>}
               <TableHead className="text-zinc-400 font-medium">Status</TableHead>
@@ -180,8 +177,8 @@ export function CollectionEntriesPage({
                     </div>
                     <p className="text-sm font-medium text-zinc-300">No {entryLabel}s found for {collection.name}.</p>
                     {!collection.readOnly && <Button asChild variant="outline" size="sm" className="mt-2 text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/10">
-                      <Link to={sectionEntryRoute} params={{ slug, entryId: 'new' }}>
-                        {isProductsCollection ? 'Add the first product' : `Create the first ${entryLabel}`}
+                      <Link {...getSectionEntryLink(section, slug, 'new')}>
+                        Create the first {entryLabel}
                       </Link>
                     </Button>}
                   </div>
@@ -191,9 +188,10 @@ export function CollectionEntriesPage({
               entries.map((entry: any, index: number) => {
                 const data = parseEntryData(entry);
                 const pageTitle = typeof data.title === 'string' && data.title.length > 0 ? data.title : 'Untitled page';
-                const entryName = [data.name, data.customerEmail, data.email, data.code, data.value]
+                // A record without a naming field is shown as its collection plus the end of its id.
+                const entryName = [data.name, data.customerEmail, data.email, data.code, data.value, entry.slug]
                   .find(value => typeof value === 'string' && value.length > 0)
-                  || (slug === '_ecommerce_orders' ? `Order ${String(entry.id).slice(-8)}` : entry.slug);
+                  || `${collection.name} ${String(entry.id).slice(-8)}`;
                 const displayStatus = collection.nativeSchemaMapping && !('status' in data) ? 'record' : entry.status;
                 // A published entry keeps serving its live slug until the renamed draft is published.
                 const pendingRename = getPendingSlugRename(entry);
@@ -206,15 +204,14 @@ export function CollectionEntriesPage({
                     key={entry.id}
                     className="cursor-pointer border-b border-white/5 hover:bg-white/[0.04] transition-colors duration-200 group"
                     onClick={() => {
-                      navigate({ to: sectionEntryRoute, params: { slug, entryId: entry.id } });
+                      navigate(getSectionEntryLink(section, slug, entry.id));
                     }}
                   >
                     <TableCell>
                       {/* The name is a real link, so the row can be reached and opened from the keyboard. */}
                       <Link
                         ref={index === firstNewIndex ? firstNewRowRef : undefined}
-                        to={sectionEntryRoute}
-                        params={{ slug, entryId: entry.id }}
+                        {...getSectionEntryLink(section, slug, entry.id)}
                         onClick={(event) => event.stopPropagation()}
                         className="font-medium text-zinc-100 group-hover:text-indigo-400 transition-colors flex items-center gap-2 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/60"
                       >

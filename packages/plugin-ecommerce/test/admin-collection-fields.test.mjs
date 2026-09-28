@@ -10,17 +10,19 @@ import { variantChangeSchema } from '../dist/variants.js';
 // The core refuses a native write to a table column that is not a configured field, so every key
 // the admin sends to a commerce collection must be one. Variant values and their stock go to the
 // plugin's variants endpoint instead, which refuses keys it does not know. The keys are read from the
-// admin source.
-const adminUi = new URL('../../talisman-cms/ui/', import.meta.url);
-const entryEditorPath = 'components/editor/CollectionEntryEditor.tsx';
-const commerceModelsPath = 'lib/commerce-models.ts';
-const pageBuilderPath = 'lib/page-builder.ts';
+// admin source: the plugin's Options & stock panel and describer, and the core's form defaults.
+const pluginAdmin = new URL('../src/admin/', import.meta.url);
+const coreUi = new URL('../../talisman-cms/ui/', import.meta.url);
+const entryEditorPath = new URL('ProductOptionsPanel.tsx', pluginAdmin);
+const commerceModelsPath = new URL('commerce-models.ts', pluginAdmin);
+const pageBuilderPath = new URL('lib/page-builder.ts', coreUi);
 
 // The server sets these itself and drops them from a write.
 const serverManagedColumns = ['createdAt', 'updatedAt'];
 
-function parseAdminSource(path) {
-  const text = readFileSync(new URL(path, adminUi), 'utf8');
+function parseAdminSource(url) {
+  const path = url.pathname;
+  const text = readFileSync(url, 'utf8');
   const kind = path.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
   return ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, kind);
 }
@@ -141,7 +143,7 @@ function readCommerceFlowSlugs() {
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
-  assert.ok(slugs, `${commerceModelsPath} no longer declares COMMERCE_FLOW_SLUGS`);
+  assert.ok(slugs, `${commerceModelsPath.pathname} no longer declares COMMERCE_FLOW_SLUGS`);
   return slugs;
 }
 
@@ -151,7 +153,7 @@ function loadFormDefaults() {
   const names = ['isRelationshipFieldType', 'createDefaultValueForField', 'buildDefaultValues'];
   const declarations = sourceFile.statements
     .filter((statement) => ts.isFunctionDeclaration(statement) && names.includes(statement.name?.text));
-  assert.equal(declarations.length, names.length, `${pageBuilderPath} no longer declares ${names.join(', ')}`);
+  assert.equal(declarations.length, names.length, `${pageBuilderPath.pathname} no longer declares ${names.join(', ')}`);
   const source = declarations.map((declaration) => declaration.getText(sourceFile).replace(/^export\s+/, '')).join('\n');
   const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } });
   return new Function(`${outputText}\nreturn buildDefaultValues;`)();
@@ -237,8 +239,9 @@ test('the commerce collections the admin edits configure every column the server
   }
 
   const groups = injectedCollection('_ecommerce_product_variants').collection;
+  // The count is sent only when changed: checkout moves it in place (see saveOnlyIfChanged in the core).
   assert.deepEqual(groups.fields.find((field) => field.name === 'inventoryQuantity'),
-    { name: 'inventoryQuantity', label: 'Inventory Quantity', type: 'number', defaultValue: 0 });
+    { name: 'inventoryQuantity', label: 'Inventory Quantity', type: 'number', defaultValue: 0, saveOnlyIfChanged: true });
 });
 
 test('a new commerce record from the collection form starts its optional fields with values the server keeps', () => {

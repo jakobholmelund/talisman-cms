@@ -4,7 +4,7 @@ import { Card } from '../../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 import { Button } from '../../components/ui/button';
 import { ChevronRight, Plus, Database } from 'lucide-react';
-import { filterCollectionsBySection, getEmptyStateCopy, getSectionCollectionRoute, getSectionDescription, getSectionTitle, isPagesCollection, type AdminSection } from '../../lib/admin-sections';
+import { filterCollectionsBySection, getEmptyStateCopy, getSectionCollectionLink, getSectionDescription, getSectionTitle, isPagesCollection, type AdminSection } from '../../lib/admin-sections';
 import { fetchCollectionConfigs } from '../../lib/admin-api';
 
 export const Route = createFileRoute('/collections/')({
@@ -36,7 +36,6 @@ export function CollectionSectionPage({
   section: AdminSection;
 }) {
   const navigate = useNavigate();
-  const sectionCollectionRoute = getSectionCollectionRoute(section);
   const emptyState = getEmptyStateCopy(section);
 
   return (
@@ -47,7 +46,7 @@ export function CollectionSectionPage({
           <p className="text-zinc-400 mt-2 text-sm leading-relaxed max-w-2xl">{getSectionDescription(section)}</p>
         </div>
         <Button className="gap-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-400 hover:to-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_25px_rgba(99,102,241,0.5)] transition-all duration-300 border-0" disabled>
-          <Plus size={16} strokeWidth={2.5} /> {section === 'commerce' ? 'New Model' : 'New Collection'}
+          <Plus size={16} strokeWidth={2.5} /> New Collection
         </Button>
       </div>
 
@@ -79,14 +78,13 @@ export function CollectionSectionPage({
                   key={col.id} 
                   className="cursor-pointer border-b border-white/5 hover:bg-white/[0.04] transition-colors duration-200 group"
                   onClick={() => {
-                    navigate({ to: sectionCollectionRoute, params: { slug: col.slug } });
+                    navigate(getSectionCollectionLink(section, col.slug));
                   }}
                 >
                   <TableCell className="font-medium text-zinc-100 group-hover:text-indigo-400 transition-colors">
                     {/* The name is a real link, so the row can be reached and opened from the keyboard. */}
                     <Link
-                      to={sectionCollectionRoute}
-                      params={{ slug: col.slug }}
+                      {...getSectionCollectionLink(section, col.slug)}
                       onClick={(event) => event.stopPropagation()}
                       className="flex items-center gap-3 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/60"
                     >

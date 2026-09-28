@@ -1,6 +1,5 @@
 import React, { Suspense } from 'react';
 import { createFileRoute, useRouter } from '@tanstack/react-router';
-// @ts-ignore
 import { adminExtensions } from 'virtual:talisman-cms/admin-extensions';
 import { canOpenAdminExtension } from '../../lib/admin-sections';
 
@@ -11,7 +10,7 @@ export const Route = createFileRoute('/extensions/$extensionPath')({
 function ExtensionRoute() {
   const { extensionPath } = Route.useParams();
   const { context } = useRouter().options;
-  const extension = adminExtensions.find((ext: any) => ext.path === extensionPath);
+  const extension = adminExtensions.find((ext) => ext.path === extensionPath);
 
   if (!extension) {
     return (

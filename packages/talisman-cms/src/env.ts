@@ -60,6 +60,14 @@ export function readSetting(env: EnvSource, name: string): string | undefined {
   return read(env, name, (value, key) => settingValue(value, key)) as string | undefined;
 }
 
+// Common API key and signing secret prefixes.
+const SECRET_LOOKING_VALUE = /^(?:re_|sk_|rk_|whsec_|xkeysib-|SG\.)/;
+
+/** True for a value that reads like an API key or signing secret, which never belongs in a page or a browser bundle. */
+export function looksLikeSecretValue(value: unknown): boolean {
+  return typeof value === 'string' && SECRET_LOOKING_VALUE.test(value);
+}
+
 /** The `TALISMAN_<name>` Worker binding, else `GALAXY_<name>`. Missing, null and blank values count as unset. */
 export function readBinding<T = unknown>(env: EnvSource, name: string): T | undefined {
   return read(env, name, bindingValue) as T | undefined;

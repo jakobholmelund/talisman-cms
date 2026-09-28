@@ -10,7 +10,10 @@ type SaveTarget = {
    */
   native?: boolean;
   mode?: 'create' | 'update';
-  /** The values as loaded. On a native update a value the user did not change is sent back as loaded. */
+  /**
+   * The values as loaded. On a native update a value the user did not change is sent back as loaded,
+   * except for a field with `saveOnlyIfChanged`, which is left out unless it changed.
+   */
   baseline?: Record<string, any> | null;
 };
 
@@ -41,6 +44,14 @@ export function prepareFieldValuesForSave(fields: any[] | undefined, values: any
 
     if (CONTAINER_TYPES.has(field.type)) {
       next[name] = prepareNestedValue(field, value);
+      continue;
+    }
+
+    // Server code changes such a column in place (a stock count that checkout reserves), so a value
+    // the user did not touch is left out rather than written back as loaded.
+    if (field.saveOnlyIfChanged && target.native && target.mode === 'update' && target.baseline &&
+        JSON.stringify(target.baseline[name]) === JSON.stringify(value)) {
+      delete next[name];
       continue;
     }
 
@@ -113,42 +124,6 @@ export function isStaleRecordConflict({ status, code, message }: SaveFailure) {
 export function isSlugConflict({ status, code, message }: SaveFailure) {
   if (code) return code === 'slug_conflict';
   return (status === 409 || status === 422) && SLUG_CONFLICT_MESSAGE.test(message);
-}
-
-/**
- * How the product's variant editor recovers from a failed change to its options and stock, which the
- * commerce plugin applies in one batch:
- * - `keep`: the server refused the change and wrote nothing, so the edits stay for another try;
- * - `reload`: the rows changed or are gone since they were loaded, so the saved ones are loaded;
- * - `unknown`: no answer says what happened (no connection, a server error, an unreadable body), so
- *   the change may have been saved, and the saved rows are loaded before a value is created again.
- */
-export function getVariantChangeRecovery(failure: SaveFailure): 'keep' | 'reload' | 'unknown' {
-  if (failure.status === 404 || isStaleRecordConflict(failure)) return 'reload';
-  return failure.status >= 400 && failure.status < 500 ? 'keep' : 'unknown';
-}
-
-const asSentence = (text: string) => (/[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`);
-
-/**
- * The variant editor's message after a failed change that it answered by loading the saved rows
- * (`reload` or `unknown` above). When they loaded, the editor shows them instead of the edits; when
- * they did not, the edits are still there. The message says which.
- */
-export function describeVariantChangeFailure(failure: SaveFailure, failedAction: string, reloaded: boolean) {
-  if (isStaleRecordConflict(failure)) {
-    return 'This option or its stock changed after the page loaded, for example because a checkout reserved stock, so the change was refused. '
-      + (reloaded ? 'The latest values are loaded now; make your change again.' : 'Load the latest values, then make your change again.');
-  }
-  if (failure.status === 404) {
-    return `${asSentence(failure.message)} ${reloaded ? 'The latest options and stock are loaded now.' : 'Load the latest options and stock.'}`;
-  }
-  // The message of a lost answer says the edits are still here, which is not true after a reload.
-  const reason = failure.status === 0 ? `${failedAction}: the server could not be reached.` : asSentence(failure.message);
-  return reloaded
-    ? `${reason} The saved options and stock are loaded again: check them, and make the change again if it is missing.`
-    : `${reason} The saved options and stock could not be loaded to check whether it was saved. `
-      + 'Your edits are still here; load the latest options and stock before creating a value.';
 }
 
 /**

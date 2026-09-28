@@ -10,19 +10,61 @@ declare module 'virtual:talisman-cms/auth' {
  * like a secret) and `publishing` is not exported.
  */
 declare module 'virtual:talisman-cms/config' {
-  import type { CollectionConfig, GlobalConfig, UiLibraryDefinition } from './types';
+  import type { AdminSection, CollectionConfig, GlobalConfig, UiLibraryDefinition } from './types';
   export const adminPath: string;
   export const collections: CollectionConfig[];
   export const globals: GlobalConfig[];
-  export const adminLinks: { section: 'collections' | 'commerce'; label: string; description: string; href: string }[];
+  export const adminLinks: { section: AdminSection; label: string; description: string; href: string }[];
+  /** The ids of the admin sections plugins registered (Plugin.adminSections). */
+  export const adminSections: string[];
   export const uiLibraries: Array<Pick<UiLibraryDefinition, 'id' | 'name' | 'requirements' | 'presets'> & {
     blockSlugs: string[];
     componentSlugs: string[];
   }>;
+  /** Server only: the plugin settings the admin page exposes as meta tags. */
+  export const adminSettings: string[];
   /** Server only. */
   export const publishing: {
     workflowBinding: string;
   };
+}
+
+/**
+ * The admin SPA's registry of plugin screens (see buildAdminExtensionsModule in integration.ts).
+ * Page, workspace and panel components are React.lazy components.
+ */
+declare module 'virtual:talisman-cms/admin-extensions' {
+  import type { ComponentType, LazyExoticComponent } from 'react';
+  import type { AdminEditorPanelDefinition, AdminSectionDefinition } from './types';
+  export const adminExtensions: Array<{
+    path: string;
+    label: string;
+    section: string | null;
+    plugin: string;
+    component: LazyExoticComponent<ComponentType<any>>;
+  }>;
+  export const adminSections: Array<{
+    id: string;
+    label: string;
+    description: string | null;
+    icon: string | null;
+    adminOnly: boolean;
+    emptyState: AdminSectionDefinition['emptyState'] | null;
+    plugin: string;
+    workspace: LazyExoticComponent<ComponentType<any>> | null;
+  }>;
+  export const adminEditorPanels: Array<{
+    id: string;
+    placement: AdminEditorPanelDefinition['placement'];
+    sections: string[] | null;
+    slugs: string[] | null;
+    plugin: string;
+    component: LazyExoticComponent<ComponentType<any>>;
+  }>;
+  export const adminEntryDescribers: Array<{
+    plugin: string;
+    module: Record<string, unknown>;
+  }>;
 }
 
 declare module 'virtual:talisman-cms/protected-routes' {

@@ -25,13 +25,11 @@ const {
   describeSettledTransition,
   waitForPendingTransition,
   PENDING_TRANSITION_CHECK_DELAYS_MS,
-  getVariantChangeRecovery,
-  describeVariantChangeFailure,
 } =
   await loadAdminModule('lib/entry-save.ts');
 const { fetchAllEntries, fetchCollectionConfigs, fetchEntriesBySlug } = await loadAdminModule('lib/admin-api.ts');
-const { describeCommerceEntry, formatMoney, getRelationOptionLabel } = await loadAdminModule('lib/commerce-models.ts');
-const { readCommerceCurrency } = await loadAdminModule('commerce-currency.ts');
+const { describeEntryWith, describeEntryGeneric, getEntryOptionLabel, getSupportCollectionSlugsWith, readAdminSetting } =
+  await loadAdminModule('lib/entry-labels.ts');
 const { COLLAPSED_STATE_INDEX_KEY, COLLAPSED_STATE_MAX_ENTRIES, pruneCollapsedState, readCollapsedCards, writeCollapsedCards } =
   await loadAdminModule('lib/collapsed-state.ts');
 
@@ -146,6 +144,26 @@ test('a native update clears blank optional columns with null but sends unchange
   );
 });
 
+test('a native update leaves out an unchanged field with saveOnlyIfChanged, and sends it once changed', () => {
+  const stockFields = [
+    { name: 'name', type: 'text', required: true },
+    { name: 'quantity', type: 'number', saveOnlyIfChanged: true },
+    { name: 'note', type: 'text' },
+  ];
+  const baseline = { name: 'Poster', quantity: 4, note: '' };
+  // Untouched: the count is left out, so a checkout that reserved stock meanwhile is not undone.
+  assert.deepEqual(prepareFieldValuesForSave(stockFields, { name: 'Poster', quantity: 4, note: 'x' }, { native: true, mode: 'update', baseline }),
+    { name: 'Poster', note: 'x' });
+  // Changed: the new count is written.
+  assert.deepEqual(prepareFieldValuesForSave(stockFields, { name: 'Poster', quantity: 9, note: '' }, { native: true, mode: 'update', baseline }),
+    { name: 'Poster', quantity: 9, note: '' });
+  // A new row and a stored-JSON entry always send the field: there is nothing to preserve.
+  assert.deepEqual(prepareFieldValuesForSave(stockFields, { name: 'Poster', quantity: 4, note: '' }, { native: true, mode: 'create', baseline }),
+    { name: 'Poster', quantity: 4, note: '' });
+  assert.deepEqual(prepareFieldValuesForSave(stockFields, { name: 'Poster', quantity: 4, note: '' }),
+    { name: 'Poster', quantity: 4, note: '' });
+});
+
 test('only a stale edit counts as a conflict to reload; slug and unique clashes do not', () => {
   assert.equal(isStaleRecordConflict({ status: 409, code: 'revision_conflict', message: 'x' }), true);
   assert.equal(isStaleRecordConflict({ status: 409, code: 'stale_record', message: 'x' }), true);
@@ -163,36 +181,6 @@ test('only a stale edit counts as a conflict to reload; slug and unique clashes 
   assert.equal(isSlugConflict({ status: 409, code: null, message: 'Another entry in this collection already uses this slug.' }), true);
   assert.equal(isSlugConflict({ status: 409, code: 'constraint', message: 'Another record already uses this slug.' }), false);
   assert.equal(isSlugConflict({ status: 400, code: null, message: 'Slug is invalid' }), false);
-});
-
-test('the variant editor keeps edits only after a refusal that wrote nothing, and says what it shows', () => {
-  const failure = (status, message, code = null) => ({ status, code, message });
-  const lost = failure(0, 'Failed to save the variant value: the server could not be reached. Your edits are still here.');
-  const stale = failure(409, 'This record changed since it was opened. Reload it before saving.', 'stale_record');
-  const serverError = failure(500, 'The variant change could not be saved. Check the server logs for details.');
-  // A refusal wrote nothing: the edits stay, including after an expired session, whose reload would read nothing.
-  for (const status of [400, 401, 403, 428]) assert.equal(getVariantChangeRecovery(failure(status, 'Refused')), 'keep');
-  assert.equal(getVariantChangeRecovery(failure(409, 'Another record already uses this sku.')), 'keep');
-  // Rows that changed or are gone are loaded again.
-  assert.equal(getVariantChangeRecovery(stale), 'reload');
-  assert.equal(getVariantChangeRecovery(failure(404, 'Variant value not found')), 'reload');
-  // Without an answer that says what happened, the change may have been saved.
-  for (const unknown of [lost, serverError, failure(502, 'Bad gateway'), failure(200, 'unexpected response')]) {
-    assert.equal(getVariantChangeRecovery(unknown), 'unknown');
-  }
-
-  // After a lost answer the saved rows replace the edits, so the message must not say they are still here.
-  const reloaded = describeVariantChangeFailure(lost, 'Failed to save the variant value', true);
-  assert.doesNotMatch(reloaded, /edits are still here/);
-  assert.match(reloaded, /^Failed to save the variant value: the server could not be reached\. The saved options and stock are loaded again/);
-  // When they could not be loaded either, the edits are still shown, and a new value waits for the rows.
-  const kept = describeVariantChangeFailure(serverError, 'Failed to save the variant value', false);
-  assert.match(kept, /^The variant change could not be saved\. Check the server logs for details\. The saved options and stock could not be loaded/);
-  assert.match(kept, /Your edits are still here; load the latest options and stock before creating a value\.$/);
-  assert.match(describeVariantChangeFailure(stale, 'Failed', true), /The latest values are loaded now; make your change again\.$/);
-  assert.match(describeVariantChangeFailure(stale, 'Failed', false), /Load the latest values, then make your change again\.$/);
-  assert.equal(describeVariantChangeFailure(failure(404, 'Variant value not found'), 'Failed', true),
-    'Variant value not found. The latest options and stock are loaded now.');
 });
 
 test('a published entry with a different draft slug has a pending rename', () => {
@@ -289,45 +277,65 @@ test('waitForPendingTransition checks the entry after each delay until it moves 
   assert.ok(PENDING_TRANSITION_CHECK_DELAYS_MS.length > 0 && PENDING_TRANSITION_CHECK_DELAYS_MS.every((ms) => ms >= 1000));
 });
 
-test('commerce prices show in the store currency, scaled by its minor units', () => {
-  // The admin formats for the browser's locale, so the expected text comes from the same formatter.
-  const text = (major, currency) => new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(major);
-  assert.equal(formatMoney(1250, 'usd'), text(12.5, 'USD'));
-  assert.equal(formatMoney(1250, 'jpy'), text(1250, 'JPY'));
-  assert.equal(formatMoney(1250, 'kwd'), text(1.25, 'KWD'));
-  assert.equal(formatMoney(null, 'usd'), null);
-  assert.equal(formatMoney(1250, undefined), null);
+test('a record is described by the first describer that knows it, else from its own fields', () => {
+  const product = { id: 'p1', slug: 'poster-entry', data: { name: 'Poster', slug: 'poster', sku: 'PST-1' } };
+  const bare = { id: 'abcdef12', data: {} };
+  assert.deepEqual(describeEntryGeneric(product), { title: 'Poster', subtitle: '/poster • SKU PST-1', details: [] });
+  assert.deepEqual(describeEntryGeneric({ id: 'v1', data: { value: 'Blue' } }), { title: 'Blue', subtitle: '', details: [] });
+  assert.deepEqual(describeEntryGeneric(bare), { title: 'abcdef12', subtitle: '', details: [] });
+  assert.deepEqual(describeEntryGeneric(null), { title: 'Unknown record', subtitle: '', details: [] });
 
-  const product = { id: 'p1', data: { name: 'Poster', slug: 'poster', basePrice: 1250 } };
-  assert.equal(describeCommerceEntry('products', product, {}, 'jpy').subtitle, `/poster • ${text(1250, 'JPY')}`);
-  assert.equal(getRelationOptionLabel('products', product, {}, 'kwd'), `Poster - /poster • ${text(1.25, 'KWD')}`);
-  const value = { id: 'v1', data: { value: 'Blue', priceOverride: 990 } };
-  assert.deepEqual(describeCommerceEntry('_ecommerce_product_variant_values', value, {}, 'jpy').details, [`Price override ${text(990, 'JPY')}`]);
-  // Without a currency a price is left out rather than shown in the wrong one; titles need none.
-  assert.equal(describeCommerceEntry('products', product, {}).subtitle, '/poster');
-  assert.deepEqual(describeCommerceEntry('_ecommerce_product_variant_values', value, {}).details, []);
-  assert.equal(describeCommerceEntry('products', product, {}).title, 'Poster');
+  const calls = [];
+  const silent = { describeEntry: (slug) => { calls.push(['silent', slug]); return null; } };
+  const products = {
+    describeEntry: (slug, entry, entriesBySlug, context) => {
+      calls.push(['products', slug, context.readSetting('COMMERCE_CURRENCY')]);
+      return slug === 'products' ? { title: `${entry.data.name} (${entriesBySlug.products.length} loaded)`, subtitle: '', details: ['Type: poster'] } : null;
+    },
+  };
+  const context = { readSetting: (name) => (name === 'COMMERCE_CURRENCY' ? 'jpy' : null) };
+  const entries = { products: [product] };
+  assert.deepEqual(describeEntryWith([silent, products], 'products', product, entries, context),
+    { title: 'Poster (1 loaded)', subtitle: '', details: ['Type: poster'] });
+  assert.deepEqual(calls, [['silent', 'products'], ['products', 'products', 'jpy']]);
+  // A record no describer knows falls back to the generic description; a missing record needs no describer.
+  assert.equal(describeEntryWith([silent, products], 'authors', { id: 'a1', data: { name: 'Ada' } }, {}, context).title, 'Ada');
+  assert.equal(describeEntryWith([products], 'products', null, entries, context).title, 'Unknown record');
+  // A describer that answers with blanks still yields a usable label.
+  assert.deepEqual(describeEntryWith([{ describeEntry: () => ({ title: '', subtitle: null, details: null }) }], 'x', bare, {}, context),
+    { title: 'abcdef12', subtitle: '', details: [] });
+  assert.equal(getEntryOptionLabel({ title: 'Poster', subtitle: '/poster', details: [] }), 'Poster - /poster');
+  assert.equal(getEntryOptionLabel({ title: 'Poster', subtitle: '', details: [] }), 'Poster');
 });
 
-test('the admin reads the store currency from the page meta tag, and USD without a usable one', () => {
-  const page = (content) => ({
-    querySelector: (selector) => selector === 'meta[name="talisman-commerce-currency"]' && content !== null
-      ? { getAttribute: (name) => (name === 'content' ? content : null) } : null,
+test('the editor loads the relation targets plus what every describer asks for, once each', () => {
+  const describers = [
+    { supportCollections: (slug, targets) => (slug === 'products' ? ['_options', ...targets] : null) },
+    { supportCollections: () => ['_options', 'presets', ''] },
+    {},
+  ];
+  assert.deepEqual(getSupportCollectionSlugsWith(describers, 'products', ['categories']), ['categories', '_options', 'presets']);
+  assert.deepEqual(getSupportCollectionSlugsWith(describers, 'posts', ['authors']), ['authors', '_options', 'presets']);
+  assert.deepEqual(getSupportCollectionSlugsWith([], 'posts', ['authors']), ['authors']);
+});
+
+test('a plugin setting is read from the page meta tag the admin renders for it', () => {
+  const page = (tags) => ({
+    querySelector: (selector) => {
+      const name = /meta\[name="([^"]+)"\]/.exec(selector)?.[1];
+      return name && name in tags ? { getAttribute: (attribute) => (attribute === 'content' ? tags[name] : null) } : null;
+    },
   });
   try {
-    globalThis.document = page('jpy');
-    assert.equal(readCommerceCurrency(), 'jpy');
-    globalThis.document = page(' KWD ');
-    assert.equal(readCommerceCurrency(), 'kwd');
-    for (const content of [null, '', 'dollars', 'u$d']) {
-      globalThis.document = page(content);
-      assert.equal(readCommerceCurrency(), 'usd', `content ${JSON.stringify(content)}`);
-    }
+    globalThis.document = page({ 'talisman-setting-commerce-currency': ' JPY ', 'talisman-setting-store-name': '' });
+    assert.equal(readAdminSetting('COMMERCE_CURRENCY'), 'JPY');
+    assert.equal(readAdminSetting('STORE_NAME'), null, 'an empty tag reads as unset');
+    assert.equal(readAdminSetting('OTHER'), null, 'a missing tag reads as unset');
   } finally {
     delete globalThis.document;
   }
   // Outside a browser there is no page to read.
-  assert.equal(readCommerceCurrency(), 'usd');
+  assert.equal(readAdminSetting('COMMERCE_CURRENCY'), null);
 });
 
 const realFetch = globalThis.fetch;

@@ -133,6 +133,21 @@ function resolveMigrationsDir() {
   return fileURLToPath(new URL('../drizzle/', import.meta.url));
 }
 
+/** The admin screens ship as source (src/admin), next to dist/ in the package and in the repository. */
+function resolveAdminSourceDir() {
+  return fileURLToPath(new URL('../src/admin/', import.meta.url));
+}
+
+const ADMIN_SCHEMA_PATH = '@talisman-cms/plugin-ecommerce/schema';
+// Stock counts that checkout reserves and releases in place (quantity = quantity - n). The admin
+// editor sends them only when the user changed them, so a save cannot undo those changes.
+const INVENTORY_FIELDS_BY_EXPORT: Record<string, string[]> = {
+  products: ['inventoryQuantity'],
+  productVariants: ['inventoryQuantity'],
+  stocks: ['quantity'],
+  components: ['quantity'],
+};
+
 export function createEcommerceLayoutBlocks(productsCollectionSlug = 'products'): BlockDefinition[] {
   return [
     {
@@ -209,6 +224,28 @@ export const ecommercePlugin = (
       path: page.path, label: page.label, section: 'commerce' as const,
       componentPath: `@talisman-cms/plugin-ecommerce/admin/${page.component}`
     })),
+    // The Commerce section: its sidebar entry and routes, the workspace page, the product editor's
+    // Options & stock panel, the model guide for the other catalog records, and the record labels.
+    adminSections: [{
+      id: 'commerce',
+      label: 'Commerce',
+      description: 'Manage products, catalog structure, inventory, and orders.',
+      icon: 'shopping-cart',
+      adminOnly: true,
+      componentPath: '@talisman-cms/plugin-ecommerce/admin/CommerceWorkspace',
+      emptyState: {
+        title: 'No commerce models registered',
+        body: 'Enable the ecommerce plugin or tag a collection with `adminSection: "commerce"`.'
+      }
+    }],
+    adminEditorPanels: [
+      { id: 'commerce-model-guide', placement: 'before-fields', sections: ['commerce'], componentPath: '@talisman-cms/plugin-ecommerce/admin/CommerceModelGuidePanel' },
+      { id: 'commerce-product-options', placement: 'after-form', slugs: [productsSlug], componentPath: '@talisman-cms/plugin-ecommerce/admin/ProductOptionsPanel' }
+    ],
+    adminEntryDescribers: [{ modulePath: '@talisman-cms/plugin-ecommerce/admin/commerce-models' }],
+    // The store currency, read by the admin screens from the page's meta tag.
+    adminSettings: ['COMMERCE_CURRENCY'],
+    adminStyleSources: [resolveAdminSourceDir()],
     blocks,
     vite: {
       plugins: [{
@@ -857,10 +894,16 @@ export const ecommercePlugin = (
       }
 
       for (const collection of collections) {
-        if (collection.nativeSchemaMapping?.schemaPath !== '@talisman-cms/plugin-ecommerce/schema') continue;
+        if (collection.nativeSchemaMapping?.schemaPath !== ADMIN_SCHEMA_PATH) continue;
         collection.access = { read: 'admin', create: 'admin', update: 'admin', delete: 'admin' };
         if (collection.slug === '_ecommerce_carts' || collection.slug === '_ecommerce_customers') {
           collection.readOnly = true;
+        }
+        // Every plugin table is listed under Commerce, also one the site defined itself.
+        if (!collection.adminSection) collection.adminSection = 'commerce';
+        const inventoryFields = INVENTORY_FIELDS_BY_EXPORT[collection.nativeSchemaMapping.exportName] || [];
+        for (const field of collection.fields || []) {
+          if (inventoryFields.includes(field.name)) field.saveOnlyIfChanged = true;
         }
       }
 

@@ -10,26 +10,31 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as SectionRouteImport } from './routes/$section'
 import { Route as AccountRouteImport } from './routes/account'
 import { Route as CollectionsRouteImport } from './routes/collections'
-import { Route as CommerceRouteImport } from './routes/commerce'
 import { Route as GlobalsRouteImport } from './routes/globals'
 import { Route as MediaRouteImport } from './routes/media'
 import { Route as UsersRouteImport } from './routes/users'
+import { Route as SectionIndexRouteImport } from './routes/$section/index'
 import { Route as CollectionsIndexRouteImport } from './routes/collections/index'
-import { Route as CommerceIndexRouteImport } from './routes/commerce/index'
 import { Route as ExtensionsExtensionPathRouteImport } from './routes/extensions/$extensionPath'
 import { Route as GlobalsIndexRouteImport } from './routes/globals/index'
 import { Route as GlobalsSlugRouteImport } from './routes/globals/$slug'
 import { Route as GlobalsNewRouteImport } from './routes/globals/new'
+import { Route as SectionSlugIndexRouteImport } from './routes/$section/$slug/index'
+import { Route as SectionSlugEntryIdRouteImport } from './routes/$section/$slug/$entryId'
 import { Route as CollectionsSlugIndexRouteImport } from './routes/collections/$slug/index'
 import { Route as CollectionsSlugEntryIdRouteImport } from './routes/collections/$slug/$entryId'
-import { Route as CommerceSlugIndexRouteImport } from './routes/commerce/$slug/index'
-import { Route as CommerceSlugEntryIdRouteImport } from './routes/commerce/$slug/$entryId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SectionRoute = SectionRouteImport.update({
+  id: '/$section',
+  path: '/$section',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AccountRoute = AccountRouteImport.update({
@@ -40,11 +45,6 @@ const AccountRoute = AccountRouteImport.update({
 const CollectionsRoute = CollectionsRouteImport.update({
   id: '/collections',
   path: '/collections',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CommerceRoute = CommerceRouteImport.update({
-  id: '/commerce',
-  path: '/commerce',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GlobalsRoute = GlobalsRouteImport.update({
@@ -62,15 +62,15 @@ const UsersRoute = UsersRouteImport.update({
   path: '/users',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SectionIndexRoute = SectionIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SectionRoute,
+} as any)
 const CollectionsIndexRoute = CollectionsIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => CollectionsRoute,
-} as any)
-const CommerceIndexRoute = CommerceIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => CommerceRoute,
 } as any)
 const ExtensionsExtensionPathRoute = ExtensionsExtensionPathRouteImport.update({
   id: '/extensions/$extensionPath',
@@ -92,6 +92,16 @@ const GlobalsNewRoute = GlobalsNewRouteImport.update({
   path: '/new',
   getParentRoute: () => GlobalsRoute,
 } as any)
+const SectionSlugIndexRoute = SectionSlugIndexRouteImport.update({
+  id: '/$slug/',
+  path: '/$slug/',
+  getParentRoute: () => SectionRoute,
+} as any)
+const SectionSlugEntryIdRoute = SectionSlugEntryIdRouteImport.update({
+  id: '/$slug/$entryId',
+  path: '/$slug/$entryId',
+  getParentRoute: () => SectionRoute,
+} as any)
 const CollectionsSlugIndexRoute = CollectionsSlugIndexRouteImport.update({
   id: '/$slug/',
   path: '/$slug/',
@@ -102,35 +112,25 @@ const CollectionsSlugEntryIdRoute = CollectionsSlugEntryIdRouteImport.update({
   path: '/$slug/$entryId',
   getParentRoute: () => CollectionsRoute,
 } as any)
-const CommerceSlugIndexRoute = CommerceSlugIndexRouteImport.update({
-  id: '/$slug/',
-  path: '/$slug/',
-  getParentRoute: () => CommerceRoute,
-} as any)
-const CommerceSlugEntryIdRoute = CommerceSlugEntryIdRouteImport.update({
-  id: '/$slug/$entryId',
-  path: '/$slug/$entryId',
-  getParentRoute: () => CommerceRoute,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/$section': typeof SectionRouteWithChildren
   '/account': typeof AccountRoute
   '/collections': typeof CollectionsRouteWithChildren
-  '/commerce': typeof CommerceRouteWithChildren
   '/globals': typeof GlobalsRouteWithChildren
   '/media': typeof MediaRoute
   '/users': typeof UsersRoute
   '/extensions/$extensionPath': typeof ExtensionsExtensionPathRoute
   '/globals/$slug': typeof GlobalsSlugRoute
   '/globals/new': typeof GlobalsNewRoute
+  '/$section/': typeof SectionIndexRoute
   '/collections/': typeof CollectionsIndexRoute
-  '/commerce/': typeof CommerceIndexRoute
   '/globals/': typeof GlobalsIndexRoute
+  '/$section/$slug/$entryId': typeof SectionSlugEntryIdRoute
   '/collections/$slug/$entryId': typeof CollectionsSlugEntryIdRoute
-  '/commerce/$slug/$entryId': typeof CommerceSlugEntryIdRoute
+  '/$section/$slug/': typeof SectionSlugIndexRoute
   '/collections/$slug/': typeof CollectionsSlugIndexRoute
-  '/commerce/$slug/': typeof CommerceSlugIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -140,54 +140,54 @@ export interface FileRoutesByTo {
   '/extensions/$extensionPath': typeof ExtensionsExtensionPathRoute
   '/globals/$slug': typeof GlobalsSlugRoute
   '/globals/new': typeof GlobalsNewRoute
+  '/$section': typeof SectionIndexRoute
   '/collections': typeof CollectionsIndexRoute
-  '/commerce': typeof CommerceIndexRoute
   '/globals': typeof GlobalsIndexRoute
+  '/$section/$slug/$entryId': typeof SectionSlugEntryIdRoute
   '/collections/$slug/$entryId': typeof CollectionsSlugEntryIdRoute
-  '/commerce/$slug/$entryId': typeof CommerceSlugEntryIdRoute
+  '/$section/$slug': typeof SectionSlugIndexRoute
   '/collections/$slug': typeof CollectionsSlugIndexRoute
-  '/commerce/$slug': typeof CommerceSlugIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/$section': typeof SectionRouteWithChildren
   '/account': typeof AccountRoute
   '/collections': typeof CollectionsRouteWithChildren
-  '/commerce': typeof CommerceRouteWithChildren
   '/globals': typeof GlobalsRouteWithChildren
   '/media': typeof MediaRoute
   '/users': typeof UsersRoute
   '/extensions/$extensionPath': typeof ExtensionsExtensionPathRoute
   '/globals/$slug': typeof GlobalsSlugRoute
   '/globals/new': typeof GlobalsNewRoute
+  '/$section/': typeof SectionIndexRoute
   '/collections/': typeof CollectionsIndexRoute
-  '/commerce/': typeof CommerceIndexRoute
   '/globals/': typeof GlobalsIndexRoute
+  '/$section/$slug/$entryId': typeof SectionSlugEntryIdRoute
   '/collections/$slug/$entryId': typeof CollectionsSlugEntryIdRoute
-  '/commerce/$slug/$entryId': typeof CommerceSlugEntryIdRoute
+  '/$section/$slug/': typeof SectionSlugIndexRoute
   '/collections/$slug/': typeof CollectionsSlugIndexRoute
-  '/commerce/$slug/': typeof CommerceSlugIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/$section'
     | '/account'
     | '/collections'
-    | '/commerce'
     | '/globals'
     | '/media'
     | '/users'
     | '/extensions/$extensionPath'
     | '/globals/$slug'
     | '/globals/new'
+    | '/$section/'
     | '/collections/'
-    | '/commerce/'
     | '/globals/'
+    | '/$section/$slug/$entryId'
     | '/collections/$slug/$entryId'
-    | '/commerce/$slug/$entryId'
+    | '/$section/$slug/'
     | '/collections/$slug/'
-    | '/commerce/$slug/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -197,39 +197,39 @@ export interface FileRouteTypes {
     | '/extensions/$extensionPath'
     | '/globals/$slug'
     | '/globals/new'
+    | '/$section'
     | '/collections'
-    | '/commerce'
     | '/globals'
+    | '/$section/$slug/$entryId'
     | '/collections/$slug/$entryId'
-    | '/commerce/$slug/$entryId'
+    | '/$section/$slug'
     | '/collections/$slug'
-    | '/commerce/$slug'
   id:
     | '__root__'
     | '/'
+    | '/$section'
     | '/account'
     | '/collections'
-    | '/commerce'
     | '/globals'
     | '/media'
     | '/users'
     | '/extensions/$extensionPath'
     | '/globals/$slug'
     | '/globals/new'
+    | '/$section/'
     | '/collections/'
-    | '/commerce/'
     | '/globals/'
+    | '/$section/$slug/$entryId'
     | '/collections/$slug/$entryId'
-    | '/commerce/$slug/$entryId'
+    | '/$section/$slug/'
     | '/collections/$slug/'
-    | '/commerce/$slug/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  SectionRoute: typeof SectionRouteWithChildren
   AccountRoute: typeof AccountRoute
   CollectionsRoute: typeof CollectionsRouteWithChildren
-  CommerceRoute: typeof CommerceRouteWithChildren
   GlobalsRoute: typeof GlobalsRouteWithChildren
   MediaRoute: typeof MediaRoute
   UsersRoute: typeof UsersRoute
@@ -245,6 +245,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/$section': {
+      id: '/$section'
+      path: '/$section'
+      fullPath: '/$section'
+      preLoaderRoute: typeof SectionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/account': {
       id: '/account'
       path: '/account'
@@ -257,13 +264,6 @@ declare module '@tanstack/react-router' {
       path: '/collections'
       fullPath: '/collections'
       preLoaderRoute: typeof CollectionsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/commerce': {
-      id: '/commerce'
-      path: '/commerce'
-      fullPath: '/commerce'
-      preLoaderRoute: typeof CommerceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/globals': {
@@ -287,19 +287,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UsersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/$section/': {
+      id: '/$section/'
+      path: '/'
+      fullPath: '/$section/'
+      preLoaderRoute: typeof SectionIndexRouteImport
+      parentRoute: typeof SectionRoute
+    }
     '/collections/': {
       id: '/collections/'
       path: '/'
       fullPath: '/collections/'
       preLoaderRoute: typeof CollectionsIndexRouteImport
       parentRoute: typeof CollectionsRoute
-    }
-    '/commerce/': {
-      id: '/commerce/'
-      path: '/'
-      fullPath: '/commerce/'
-      preLoaderRoute: typeof CommerceIndexRouteImport
-      parentRoute: typeof CommerceRoute
     }
     '/extensions/$extensionPath': {
       id: '/extensions/$extensionPath'
@@ -329,6 +329,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GlobalsNewRouteImport
       parentRoute: typeof GlobalsRoute
     }
+    '/$section/$slug/': {
+      id: '/$section/$slug/'
+      path: '/$slug'
+      fullPath: '/$section/$slug/'
+      preLoaderRoute: typeof SectionSlugIndexRouteImport
+      parentRoute: typeof SectionRoute
+    }
+    '/$section/$slug/$entryId': {
+      id: '/$section/$slug/$entryId'
+      path: '/$slug/$entryId'
+      fullPath: '/$section/$slug/$entryId'
+      preLoaderRoute: typeof SectionSlugEntryIdRouteImport
+      parentRoute: typeof SectionRoute
+    }
     '/collections/$slug/': {
       id: '/collections/$slug/'
       path: '/$slug'
@@ -343,22 +357,23 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CollectionsSlugEntryIdRouteImport
       parentRoute: typeof CollectionsRoute
     }
-    '/commerce/$slug/': {
-      id: '/commerce/$slug/'
-      path: '/$slug'
-      fullPath: '/commerce/$slug/'
-      preLoaderRoute: typeof CommerceSlugIndexRouteImport
-      parentRoute: typeof CommerceRoute
-    }
-    '/commerce/$slug/$entryId': {
-      id: '/commerce/$slug/$entryId'
-      path: '/$slug/$entryId'
-      fullPath: '/commerce/$slug/$entryId'
-      preLoaderRoute: typeof CommerceSlugEntryIdRouteImport
-      parentRoute: typeof CommerceRoute
-    }
   }
 }
+
+interface SectionRouteChildren {
+  SectionIndexRoute: typeof SectionIndexRoute
+  SectionSlugEntryIdRoute: typeof SectionSlugEntryIdRoute
+  SectionSlugIndexRoute: typeof SectionSlugIndexRoute
+}
+
+const SectionRouteChildren: SectionRouteChildren = {
+  SectionIndexRoute: SectionIndexRoute,
+  SectionSlugEntryIdRoute: SectionSlugEntryIdRoute,
+  SectionSlugIndexRoute: SectionSlugIndexRoute,
+}
+
+const SectionRouteWithChildren =
+  SectionRoute._addFileChildren(SectionRouteChildren)
 
 interface CollectionsRouteChildren {
   CollectionsIndexRoute: typeof CollectionsIndexRoute
@@ -374,22 +389,6 @@ const CollectionsRouteChildren: CollectionsRouteChildren = {
 
 const CollectionsRouteWithChildren = CollectionsRoute._addFileChildren(
   CollectionsRouteChildren,
-)
-
-interface CommerceRouteChildren {
-  CommerceIndexRoute: typeof CommerceIndexRoute
-  CommerceSlugEntryIdRoute: typeof CommerceSlugEntryIdRoute
-  CommerceSlugIndexRoute: typeof CommerceSlugIndexRoute
-}
-
-const CommerceRouteChildren: CommerceRouteChildren = {
-  CommerceIndexRoute: CommerceIndexRoute,
-  CommerceSlugEntryIdRoute: CommerceSlugEntryIdRoute,
-  CommerceSlugIndexRoute: CommerceSlugIndexRoute,
-}
-
-const CommerceRouteWithChildren = CommerceRoute._addFileChildren(
-  CommerceRouteChildren,
 )
 
 interface GlobalsRouteChildren {
@@ -409,9 +408,9 @@ const GlobalsRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  SectionRoute: SectionRouteWithChildren,
   AccountRoute: AccountRoute,
   CollectionsRoute: CollectionsRouteWithChildren,
-  CommerceRoute: CommerceRouteWithChildren,
   GlobalsRoute: GlobalsRouteWithChildren,
   MediaRoute: MediaRoute,
   UsersRoute: UsersRoute,

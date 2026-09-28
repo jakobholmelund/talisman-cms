@@ -1,5 +1,5 @@
 import { defineToolbarApp } from 'astro/toolbar';
-import { adminPath, collections, globals, uiLibraries } from 'virtual:talisman-cms/config';
+import { adminPath, adminSections, collections, globals, uiLibraries } from 'virtual:talisman-cms/config';
 
 // Everything shown comes from the integration's resolved config, so a custom adminPath and the
 // collections, globals and UI libraries of the installed plugins appear as configured.
@@ -13,10 +13,9 @@ function escapeHtml(value: unknown) {
 // Mirrors the admin's own sections (ui/lib/admin-sections.ts).
 function collectionHref(collection: (typeof collections)[number]) {
   if (collection.slug === 'media') return `${adminPrefix}/media`;
-  const commerce = collection.adminSection === 'commerce' ||
-    (!collection.adminSection && (collection.nativeSchemaMapping?.schemaPath === '@talisman-cms/plugin-ecommerce/schema' ||
-      collection.slug.startsWith('_ecommerce_')));
-  return `${adminPrefix}/${commerce ? 'commerce' : 'collections'}/${encodeURIComponent(collection.slug)}`;
+  // A collection opens under its admin section when a plugin registered it, else under Collections.
+  const section = collection.adminSection && adminSections.includes(collection.adminSection) ? collection.adminSection : 'collections';
+  return `${adminPrefix}/${encodeURIComponent(section)}/${encodeURIComponent(collection.slug)}`;
 }
 
 function chipLinks(items: Array<{ label: string; href: string }>, empty: string) {

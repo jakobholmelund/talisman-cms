@@ -10,7 +10,10 @@
     "declaration": true,
     "outDir": "dist",
     "rootDir": "src",
-    "types": ["node", "@cloudflare/workers-types"]
+    "types": ["node", "@cloudflare/workers-types"],
+    "paths": {
+      "talisman-cms/ui/*": ["./node_modules/talisman-cms/ui/*"]
+    }
   },
   "include": ["src"]
 }

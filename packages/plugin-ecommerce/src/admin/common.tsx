@@ -2,7 +2,10 @@ import React, { type ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 import { adminTestCheckout } from 'virtual:talisman-cms/ecommerce-admin';
 import { formatMoney, fromMinorUnits, toMinorUnits } from '@talisman-cms/plugin-ecommerce/money';
+import { storeCurrency } from './currency';
 import './commerce-admin.css';
+
+export { storeCurrency };
 
 export type CommerceTool = 'orders' | 'promotions' | 'gift-cards' | 'test-checkout';
 
@@ -32,17 +35,6 @@ export function errorText(error: unknown) {
 /** An amount in the currency's minor units as text: money(1250, 'usd') is "$12.50", money(1250, 'jpy') "¥1,250". */
 export function money(amount: number, currency: string) {
   return formatMoney(amount, currency);
-}
-
-/**
- * The currency the store sells in, from the talisman-commerce-currency meta tag that the admin page
- * renders from TALISMAN_COMMERCE_CURRENCY. Discount values, referral rewards and store credit are
- * amounts in its minor units.
- */
-export function storeCurrency() {
-  const content = typeof document === 'undefined' ? undefined
-    : document.querySelector('meta[name="talisman-commerce-currency"]')?.getAttribute('content')?.trim().toLowerCase();
-  return content && /^[a-z]{3}$/.test(content) ? content : 'usd';
 }
 
 /**

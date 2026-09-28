@@ -16,7 +16,7 @@ export type RelationOptionRecord = {
 /** The selectable records of each relation field, keyed by getRelationOptionKey(field). */
 export type RelationOptions = Record<string, RelationOptionRecord[]>;
 
-/** Loaded records by collection slug: relation targets, commerce options and stock, component presets. */
+/** Loaded records by collection slug: relation targets, the collections plugin describers ask for, component presets. */
 export type RelationSupportEntries = Record<string, any[]>;
 
 /** Whether a blocks field has a component slot that accepts saved presets, which the editor then loads. */

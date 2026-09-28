@@ -1,28 +1,36 @@
 ---
 // @ts-expect-error Types will be generated when building inside an actual Astro project
 import type { APIRoute } from 'astro';
-import { readSetting } from '../env';
+import { looksLikeSecretValue, readSetting } from '../env';
+import { adminSettings } from 'virtual:talisman-cms/config';
 
 // This is the shell for our React SPA
 // In the future, we will render the React App here using a client:only directive or similar
 
-// Commerce screens show money in the store currency (TALISMAN_COMMERCE_CURRENCY), scaled by its
-// minor units. The commerce plugin checks the setting itself; here anything else reads as USD.
-let commerceCurrency = 'usd';
+// Plugins declare the TALISMAN_* settings their admin screens read (Plugin.adminSettings); each is
+// rendered as a meta tag. This page is served before sign-in, so the values are public: the names are
+// checked at config time, and a value that reads like a key or signing secret is left out here too. The
+// plugin checks the value itself; an unset or withheld setting is an empty string.
+let env: unknown = null;
 try {
-  const { env } = await import('cloudflare:workers');
-  const configured = readSetting(env, 'COMMERCE_CURRENCY')?.toLowerCase();
-  if (configured && /^[a-z]{3}$/.test(configured)) commerceCurrency = configured;
+  env = (await import('cloudflare:workers')).env;
 } catch {
   // Outside a Worker there are no settings to read.
 }
+const settingTags = adminSettings.map((name: string) => {
+  const value = env ? readSetting(env as any, name) : undefined;
+  return {
+    name: `talisman-setting-${name.toLowerCase().replace(/_/g, '-')}`,
+    content: value && !looksLikeSecretValue(value) ? value : '',
+  };
+});
 ---
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="talisman-commerce-currency" content={commerceCurrency}>
+    {settingTags.map((tag) => <meta name={tag.name} content={tag.content} />)}
     <title>Talisman CMS</title>
 </head>
 <body class="bg-zinc-950 text-white">

@@ -1,6 +1,5 @@
 import React from 'react';
-import { readCommerceCurrency } from '../../commerce-currency';
-import { describeCommerceEntry } from '../../lib/commerce-models';
+import { describeEntry } from '../../lib/entry-describers';
 import { isPolymorphicRelationField } from '../../lib/page-builder';
 import { normalizeRelationSelections, type RelationSupportEntries } from './relations';
 
@@ -15,7 +14,6 @@ export function RelationFieldSummary({
   relationSupportEntries: RelationSupportEntries;
 }) {
   const selections = normalizeRelationSelections(field, value);
-  const currency = readCommerceCurrency();
   if (!field.relationTo || selections.length === 0) {
     return null;
   }
@@ -46,7 +44,7 @@ export function RelationFieldSummary({
           );
         }
 
-        const description = describeCommerceEntry(selection.collectionSlug, selection.entry, relationSupportEntries, currency);
+        const description = describeEntry(selection.collectionSlug, selection.entry, relationSupportEntries);
         return (
           <div key={`${selection.collectionSlug}:${selection.entry.id}`} className="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2">
             <div className="flex items-center gap-2">

@@ -3,8 +3,9 @@
 // itself lives in components/editor and is loaded with its route, so nothing heavy belongs here.
 import { formatFieldErrors, type ServerFieldErrors } from '../components/fields/field-errors';
 import { buildRelationOptions, fieldsNeedPresetEntries } from '../components/fields/relations';
+import type { RelationSupportEntries } from '../components/fields/relations';
 import { fetchCollectionConfigs, fetchEntriesBySlug } from './admin-api';
-import { getCommerceSupportSlugs, type CommerceSupportEntries } from './commerce-models';
+import { getSupportCollectionSlugs } from './entry-describers';
 import { isSlugConflict, isStaleRecordConflict } from './entry-save';
 import { collectRelationshipFields, getRelationTargets } from './page-builder';
 
@@ -15,12 +16,15 @@ export function isNativeCollection(collection: any) {
   return Boolean(collection?.nativeSchemaMapping);
 }
 
-/** The collections whose records the editor needs next to the entry: relation targets, commerce models, presets. */
-function getRelationSupportSlugs(collection: any) {
+/**
+ * The collections whose records the editor needs next to the entry: relation targets, what the
+ * registered describers ask for (a plugin's related tables), and component presets.
+ */
+export function getRelationSupportSlugs(collection: any) {
   if (!collection?.fields) return [];
   const relationFields = collectRelationshipFields(collection.fields);
   const relationTargets = [...new Set(relationFields.flatMap((field: any) => getRelationTargets(field)))];
-  const supportSlugs = getCommerceSupportSlugs(collection.slug, relationTargets);
+  const supportSlugs = getSupportCollectionSlugs(collection.slug, relationTargets);
   if (fieldsNeedPresetEntries(collection.fields)) {
     supportSlugs.push('_ui_component_presets');
   }
@@ -53,7 +57,7 @@ export async function loadEntryEditorData(basePath: string, slug: string, entryI
   const entry = loadedEntry as any;
   const relationOptions = buildRelationOptions(collection?.fields, relationSupportEntries);
 
-  return { collection, entry, revisions, isNew, relationOptions, relationSupportEntries: relationSupportEntries as CommerceSupportEntries };
+  return { collection, entry, revisions, isNew, relationOptions, relationSupportEntries: relationSupportEntries as RelationSupportEntries };
 }
 
 const SESSION_EXPIRED_MESSAGE = 'Your session has expired. Sign in again in another tab, then try again. Your edits are still here.';

@@ -17,7 +17,11 @@ export type FieldType =
   | 'color'
   | 'media';
 
-export type AdminSection = 'collections' | 'commerce';
+/**
+ * The admin area a collection is listed in: `collections` is built in, and a plugin registers others
+ * with `Plugin.adminSections`. A collection whose section is not registered is listed under Collections.
+ */
+export type AdminSection = string;
 
 export interface BlockSettingsConfig {
   name?: string;
@@ -110,6 +114,12 @@ export interface FieldDefinition {
   options?: string[];
   blocksFromPlugins?: boolean | string[];
   blockSettings?: BlockSettingsConfig;
+  /**
+   * The admin editor sends this field of a native record only when the user changed it. For a value
+   * that server code changes in place, such as a stock count that checkout reserves and releases, a
+   * save that re-sent the value loaded at page open would undo those changes.
+   */
+  saveOnlyIfChanged?: boolean;
 }
 
 export interface CollectionHookArgs<T = any> {
@@ -204,6 +214,58 @@ export interface UiLibraryDefinition {
   presets?: UiComponentPresetDefinition[];
 }
 
+/**
+ * An admin section a plugin adds next to Collections: a sidebar entry, the routes `/<id>`,
+ * `/<id>/<slug>` and `/<id>/<slug>/<entryId>`, and the collections whose `adminSection` names it.
+ */
+export interface AdminSectionDefinition {
+  /** The URL segment and the value of `CollectionConfig.adminSection`: a lowercase slug. */
+  id: string;
+  label: string;
+  description?: string;
+  /** One of `shopping-cart`, `store`, `package`, `chart` or `layout-grid` (the default). */
+  icon?: string;
+  /**
+   * The workspace and the extensions it links need the admin role. Editors get the section's
+   * collections they may read under Collections instead.
+   */
+  adminOnly?: boolean;
+  /**
+   * A module whose default export renders the section's index page with `AdminSectionWorkspaceProps`
+   * (from `talisman-cms/ui/lib/admin-sections`). Without one the generic collection table is shown.
+   */
+  componentPath?: string;
+  /** Shown by the generic collection table when the section has no collections. */
+  emptyState?: { title: string; body: string };
+}
+
+/**
+ * A panel the entry editor renders for matching collections. The module's default export takes
+ * `AdminEditorPanelProps` (from `talisman-cms/ui/components/editor/panels`) and loads when the editor
+ * first shows it.
+ */
+export interface AdminEditorPanelDefinition {
+  id: string;
+  componentPath: string;
+  /** `before-fields`: in the form card above the fields; `after-form`: below the form and its actions. */
+  placement: 'before-fields' | 'after-form';
+  /** Collections in one of these sections get the panel. */
+  sections?: string[];
+  /** Collections with one of these slugs get the panel. With neither list, every collection does. */
+  slugs?: string[];
+}
+
+/**
+ * A module that labels records. It exports `describeEntry(slug, entry, entriesBySlug, ctx)`, which
+ * returns `{ title, subtitle, details }` for a record it knows and null for any other, and
+ * `supportCollections(slug, relationTargets)`, the slugs of the extra collections the editor of
+ * `slug` loads so the labels can name related records. Both are optional. See
+ * `EntryDescriberModule` in `talisman-cms/ui/lib/entry-labels`.
+ */
+export interface AdminEntryDescriberDefinition {
+  modulePath: string;
+}
+
 export interface Plugin {
   name: string;
   onInit: (config: any) => any;
@@ -216,6 +278,25 @@ export interface Plugin {
    */
   routes?: { path: string; entrypoint: string; prerender?: boolean; public?: boolean }[];
   adminUi?: { path: string; label: string; componentPath: string; section?: AdminSection }[];
+  /** Admin sections next to Collections. Ids must be unique across plugins and not a built-in route. */
+  adminSections?: AdminSectionDefinition[];
+  /** Panels the entry editor shows for matching collections. */
+  adminEditorPanels?: AdminEditorPanelDefinition[];
+  /** Modules that label records in relation pickers and summaries. */
+  adminEntryDescribers?: AdminEntryDescriberDefinition[];
+  /**
+   * Names of `TALISMAN_*` settings, without the prefix, whose values the admin page exposes to the
+   * browser as `<meta name="talisman-setting-<name in kebab case>">`. The page is served before
+   * sign-in, so the values are visible to anyone who can load it: name display settings only, never
+   * allowlists or credentials. Names that look like secrets are refused at config time, and a value
+   * that reads like a key or signing secret is left out at request time.
+   */
+  adminSettings?: string[];
+  /**
+   * Absolute directories of admin screens that use Tailwind utility classes. Tailwind scans them for
+   * the admin stylesheet, so classes used only there are generated too.
+   */
+  adminStyleSources?: string[];
   blocks?: BlockDefinition[];
   components?: ComponentDefinition[];
   uiLibraries?: UiLibraryDefinition[];
@@ -368,7 +449,7 @@ export function normalizeDataForFields(fields: FieldDefinition[] | undefined, va
 
     if (field.type === 'array' && field.fields && Array.isArray(fieldValue)) {
       // A native JSON column may store a list of strings while the editor uses
-      // a one-field row (for example, Commerce product image URLs).
+      // a one-field row (for example, a list of image URLs).
       const stringField = field.fields.length === 1 && field.fields[0].name === 'url';
       normalized[field.name] = fieldValue.map((item) => normalizeDataForFields(
         field.fields,

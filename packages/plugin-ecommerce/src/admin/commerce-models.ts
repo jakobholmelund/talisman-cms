@@ -1,4 +1,11 @@
-const COMMERCE_FLOW_SLUGS = [
+// The commerce record describer (Plugin.adminEntryDescribers): how the admin names products, options,
+// values, stock and components in relation pickers and summaries, which related tables the editor
+// loads for them, and the model guide the editor panel shows. Prices show in the store currency.
+import type { EntriesBySlug, EntryDescriberContext, EntryDescription, EntryLike } from 'talisman-cms/ui/lib/entry-labels';
+import { normalizeCurrency, storeCurrency } from './currency';
+
+/** The collections of the product flow, loaded together so each record can name the others. */
+export const COMMERCE_FLOW_SLUGS = [
   'products',
   '_ecommerce_variants',
   '_ecommerce_product_variants',
@@ -8,47 +15,19 @@ const COMMERCE_FLOW_SLUGS = [
   '_ecommerce_variant_components',
 ] as const;
 
-export type CommerceEntry = {
-  id: string;
-  slug?: string;
-  data?: Record<string, any> | string | null;
-};
-
-export type CommerceSupportEntries = Record<string, CommerceEntry[]>;
+export type CommerceEntry = EntryLike;
+export type CommerceSupportEntries = EntriesBySlug;
 
 export function isCommerceFlowSlug(slug: string) {
   return COMMERCE_FLOW_SLUGS.includes(slug as (typeof COMMERCE_FLOW_SLUGS)[number]);
 }
 
-export function getCommerceSupportSlugs(collectionSlug: string, relationTargets: string[] = []) {
-  const slugs = new Set<string>(relationTargets);
-
-  if (isCommerceFlowSlug(collectionSlug)) {
-    for (const slug of COMMERCE_FLOW_SLUGS) {
-      slugs.add(slug);
-    }
-  }
-
-  return Array.from(slugs);
+/** Describer export: the extra collections the editor of a product-flow record loads. */
+export function supportCollections(collectionSlug: string, _relationTargets: string[] = []) {
+  return isCommerceFlowSlug(collectionSlug) ? [...COMMERCE_FLOW_SLUGS] : [];
 }
 
-// Stock counts that checkout reserves and releases in place (quantity = quantity - n). An editor
-// save that re-sends the value loaded at page open would undo those changes.
-const INVENTORY_FIELDS_BY_EXPORT: Record<string, string[]> = {
-  products: ['inventoryQuantity'],
-  productVariants: ['inventoryQuantity'],
-  stocks: ['quantity'],
-  components: ['quantity'],
-};
-
-/** Inventory fields of a plugin-ecommerce native collection; the editor only sends them when changed. */
-export function getInventoryFieldNames(collection: { nativeSchemaMapping?: { schemaPath?: string; exportName?: string } } | null | undefined) {
-  const mapping = collection?.nativeSchemaMapping;
-  if (!mapping?.exportName || !String(mapping.schemaPath || '').includes('plugin-ecommerce')) return [];
-  return INVENTORY_FIELDS_BY_EXPORT[mapping.exportName] || [];
-}
-
-export function getEntryData(entry: CommerceEntry | null | undefined) {
+export function getEntryData(entry: CommerceEntry | null | undefined): Record<string, any> {
   if (!entry?.data) return {};
   return typeof entry.data === 'string' ? JSON.parse(entry.data) : entry.data;
 }
@@ -59,8 +38,8 @@ function findEntry(entriesBySlug: CommerceSupportEntries, slug: string, id: stri
 }
 
 /**
- * An amount in the currency's minor units as text, such as 1250 as $12.50 in USD or ¥1,250 in JPY.
- * Null without an amount or a currency.
+ * An amount in the currency's minor units as text, such as 1250 as $12.50 in USD or ¥1,250 in JPY,
+ * for the browser's locale. Null without an amount or a currency.
  */
 export function formatMoney(amount: number | null | undefined, currency: string | undefined) {
   if (typeof amount !== 'number' || Number.isNaN(amount) || !currency) return null;
@@ -107,23 +86,17 @@ function getProductVariantValueContext(entry: CommerceEntry | null | undefined, 
 }
 
 /**
- * Title, subtitle and details for a commerce record. Prices show in `currency`, the store currency
- * whose minor units they are stored in, and are left out without one.
+ * Title, subtitle and details for a commerce record, or null for a record of another collection.
+ * Prices show in `currency`, the store currency whose minor units they are stored in, and are left
+ * out without one.
  */
 export function describeCommerceEntry(
   collectionSlug: string,
   entry: CommerceEntry | null | undefined,
   entriesBySlug: CommerceSupportEntries,
   currency?: string
-) {
-  if (!entry) {
-    return {
-      title: 'Unknown record',
-      subtitle: '',
-      details: [] as string[],
-    };
-  }
-
+): EntryDescription | null {
+  if (!entry) return null;
   const data = getEntryData(entry);
 
   switch (collectionSlug) {
@@ -217,15 +190,20 @@ export function describeCommerceEntry(
         details: [],
       };
     }
-    default: {
-      const title = data.name || data.title || data.slug || entry.id;
-      return {
-        title,
-        subtitle: compact([data.slug ? `/${data.slug}` : null]).join(' • '),
-        details: [],
-      };
-    }
+    default:
+      return null;
   }
+}
+
+/** Describer export: the description of a commerce record in the store currency, or null for other records. */
+export function describeEntry(
+  collectionSlug: string,
+  entry: CommerceEntry,
+  entriesBySlug: CommerceSupportEntries,
+  context?: EntryDescriberContext
+) {
+  const currency = context ? normalizeCurrency(context.readSetting('COMMERCE_CURRENCY')) : storeCurrency();
+  return describeCommerceEntry(collectionSlug, entry, entriesBySlug, currency);
 }
 
 export function getRelationOptionLabel(
@@ -235,7 +213,7 @@ export function getRelationOptionLabel(
   currency?: string
 ) {
   const description = describeCommerceEntry(relationTo, entry, entriesBySlug, currency);
-  return compact([description.title, description.subtitle]).join(' - ');
+  return description ? compact([description.title, description.subtitle]).join(' - ') : entry.id;
 }
 
 export function getCommerceModelGuide(collectionSlug: string) {
@@ -287,6 +265,9 @@ export function getCommerceModelGuide(collectionSlug: string) {
   }
 }
 
+const titleOf = (slug: string, entry: CommerceEntry | null, entriesBySlug: CommerceSupportEntries) =>
+  entry ? describeCommerceEntry(slug, entry, entriesBySlug)?.title ?? entry.id : null;
+
 export function getCommerceFlowSummary(
   collectionSlug: string,
   values: Record<string, any>,
@@ -329,10 +310,10 @@ export function getCommerceFlowSummary(
       : null;
 
   return [
-    product ? { label: 'Product', value: describeCommerceEntry('products', product, entriesBySlug).title } : null,
-    variantDefinition ? { label: 'Option', value: describeCommerceEntry('_ecommerce_variants', variantDefinition, entriesBySlug).title } : null,
-    group ? { label: 'Group', value: describeCommerceEntry('_ecommerce_product_variants', group, entriesBySlug).title } : null,
-    value ? { label: 'Value', value: describeCommerceEntry('_ecommerce_product_variant_values', value, entriesBySlug).title } : null,
+    product ? { label: 'Product', value: titleOf('products', product, entriesBySlug) } : null,
+    variantDefinition ? { label: 'Option', value: titleOf('_ecommerce_variants', variantDefinition, entriesBySlug) } : null,
+    group ? { label: 'Group', value: titleOf('_ecommerce_product_variants', group, entriesBySlug) } : null,
+    value ? { label: 'Value', value: titleOf('_ecommerce_product_variant_values', value, entriesBySlug) } : null,
     collectionSlug === '_ecommerce_stocks' && typeof values.quantity === 'number'
       ? { label: 'Quantity', value: `${values.quantity}` }
       : null,
