@@ -38,7 +38,7 @@ export function reviewsPlugin(options: { moderation?: boolean } = {}): Plugin {
 
 Use it to:
 
-- add collections and globals, for example a collection mapped to a Drizzle table the plugin ships (`nativeSchemaMapping`), placed in a section with `adminSection`;
+- add collections and globals, for example a collection mapped to a Drizzle table the plugin ships (`nativeSchemaMapping`), with its fields read from the table's columns (`nativeFields(table, picks)` from `talisman-cms/fields`), placed in a section with `adminSection`;
 - attach `runtimeHooks` to a collection the site defined, as the Stripe plugin does for the collections it syncs;
 - read what the plugins before yours registered (`config.plugins.some((plugin) => plugin.name === '@talisman-cms/plugin-ecommerce')`) and adapt.
 
