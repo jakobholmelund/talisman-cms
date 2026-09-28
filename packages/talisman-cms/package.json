@@ -53,6 +53,10 @@
       "types": "./dist/env.d.ts",
       "import": "./dist/env.js"
     },
+    "./fields": {
+      "types": "./dist/fields.d.ts",
+      "import": "./dist/fields.js"
+    },
     "./email": {
       "types": "./dist/email/index.d.ts",
       "import": "./dist/email/index.js"

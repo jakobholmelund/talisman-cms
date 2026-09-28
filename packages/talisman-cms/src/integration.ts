@@ -36,6 +36,7 @@ export type {
   ComponentSlotDefinition,
   FieldDefinition,
   FieldType,
+  NativeFieldPick,
   GlobalConfig,
   Plugin,
   RuntimeCollectionHooks,

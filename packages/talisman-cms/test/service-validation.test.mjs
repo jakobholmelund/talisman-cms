@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { sql } from 'drizzle-orm';
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
-import { call, database, doc, editor, hourAgo, parts, runtime, skip } from './helpers/handler-harness.mjs';
+import { call, database, doc, editor, hourAgo, parts, runtime, skip, types } from './helpers/handler-harness.mjs';
 
 let validation;
 let errors;
@@ -61,6 +61,32 @@ test('entry writes check the data shape, the id and slug formats, the schema and
   assert.equal(seen.length, 2);
 });
 
+test('a native payload is checked against its columns after the fields, with the column in the error path', { skip }, async () => {
+  const gated = sqliteTable('gated', {
+    id: text('id').primaryKey(),
+    status: text('status', { enum: ['draft', 'live'] }).notNull().default('draft'),
+    count: integer('count'),
+    shippedAt: integer('shipped_at', { mode: 'timestamp' }),
+  });
+  // The status field is configured as free text, so only the column knows its values.
+  const fields = types.nativeFields(gated, ['id', { name: 'status', type: 'text' }, 'count', 'shippedAt']);
+  const config = { slug: 'gated', name: 'Gated', fields, nativeSchemaMapping: { schemaPath: 'test', exportName: 'gated', idColumn: 'id' } };
+  const collection = { config, slug: 'gated', activeFields: fields, nativeTable: gated, nativeIdCol: 'id' };
+  const system = actors.systemActor('test');
+
+  await rejects(write({ collection, operation: 'create', actor: user('editor'), data: { id: 'a', status: 'nope' } }), errors.ValidationError,
+    (error) => assert.deepEqual(error.issues.map((issue) => issue.path), [['status']]));
+  await rejects(write({ collection, operation: 'update', actor: system, data: { count: 1.5 }, stored: { id: 'a', status: 'draft' } }), errors.ValidationError,
+    (error) => assert.deepEqual(error.issues.map((issue) => issue.path), [['count']]));
+  await rejects(write({ collection, operation: 'update', actor: system, data: { status: null }, stored: { id: 'a', status: 'draft' } }), errors.ValidationError,
+    (error) => assert.deepEqual(error.issues.map((issue) => issue.path), [['status']]));
+  // A date string, as the admin sends a date field, becomes the Date the timestamp column takes.
+  const created = await write({ collection, operation: 'create', actor: user('editor'), data: { id: 'a', status: 'live', shippedAt: '2020-09-13T12:26:40.000Z' } });
+  assert.deepEqual([created.nativePayload.status, created.nativePayload.shippedAt instanceof Date, created.nativePayload.shippedAt?.getTime()],
+    ['live', true, 1_600_000_000_000]);
+  assert.deepEqual(Object.keys(created.nativePayload).sort(), ['id', 'shippedAt', 'status']);
+});
+
 test('native writes keep users to the configured columns and let server code write any column', { skip }, async () => {
   const collection = collectionFor('parts');
   const system = actors.systemActor('test');
@@ -81,7 +107,7 @@ test('native writes keep users to the configured columns and let server code wri
   const stamp = new Date(1_600_000_000_000);
   const asSystem = await write({ collection, operation: 'create', actor: system, data: { id: 'nut', name: 'Nut', quantity: 2, internalNote: 'kept', createdAt: stamp } });
   assert.equal(asSystem.nativePayload.internalNote, 'kept');
-  assert.equal(asSystem.nativePayload.createdAt, stamp);
+  assert.equal(asSystem.nativePayload.createdAt.getTime(), stamp.getTime());
   assert.ok(asSystem.nativePayload.updatedAt instanceof Date);
   // Unless it asks for the users' rules.
   await rejects(write({ collection, operation: 'create', actor: system, columns: 'configured', data: { id: 'nut', name: 'Nut', quantity: 2, internalNote: 'x' } }), errors.ValidationError);
@@ -97,7 +123,7 @@ test('native writes keep users to the configured columns and let server code wri
   const partial = await write({ collection, operation: 'update', actor: user('editor'), data: { quantity: 8 }, stored });
   assert.deepEqual(Object.keys(partial.nativePayload).sort(), ['quantity', 'updatedAt'], 'a partial update leaves the other required columns alone');
   const stamped = await write({ collection, operation: 'update', actor: system, data: { updatedAt: stamp }, stored });
-  assert.equal(stamped.nativePayload.updatedAt, stamp, 'server code may set updatedAt itself');
+  assert.equal(stamped.nativePayload.updatedAt.getTime(), stamp.getTime(), 'server code may set updatedAt itself');
 
   // The media collection's url and type are set by the upload.
   const media = collectionFor('media');

@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { TalismanEnv, createDbClient } from '../db/client';
 import * as schema from '../db/schema';
-import { generateFieldsFromDrizzle, type CollectionConfig, type FieldDefinition } from '../types';
+import { nativeFields, type CollectionConfig, type FieldDefinition } from '../types';
 import type { ServiceConfig } from './config';
 import type { ServiceContext } from './context';
 import { cacheKeys, invalidateCollectionCache, readCache, writeCache } from './cache';
@@ -47,7 +47,7 @@ function memoFor(binding: unknown): Map<string, CollectionRecord> | null {
 export function configuredCollectionFields(collectionConfig: CollectionConfig, nativeSchemas: Record<string, any>): FieldDefinition[] {
   const fields = collectionConfig.fields || [];
   if (fields.length === 0 && collectionConfig.nativeSchemaMapping && nativeSchemas[collectionConfig.slug]) {
-    return generateFieldsFromDrizzle(nativeSchemas[collectionConfig.slug]);
+    return nativeFields(nativeSchemas[collectionConfig.slug]);
   }
   return fields;
 }

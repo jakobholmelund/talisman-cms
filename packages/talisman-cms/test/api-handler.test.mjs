@@ -168,8 +168,8 @@ test('native records refuse a save based on a stale updatedAt and keep columns t
   }
 });
 
-test('empty rich text is recognised, and generated native fields with a database default are optional', { skip }, () => {
-  const { isEmptyRichText, generateFieldsFromDrizzle } = types;
+test('empty rich text is recognised, and native fields follow their columns', { skip }, () => {
+  const { isEmptyRichText, nativeFields } = types;
   assert.equal(isEmptyRichText({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '  ' }] }, { type: 'hardBreak' }] }), true);
   assert.equal(isEmptyRichText('<p>&nbsp;</p>'), true);
   assert.equal(isEmptyRichText(doc('Text')), false);
@@ -182,9 +182,34 @@ test('empty rich text is recognised, and generated native fields with a database
     items: text('items', { mode: 'json' }).notNull().default([]),
     note: text('note').notNull(),
     memo: text('memo'),
+    orderId: text('order_id').unique(),
+    status: text('status', { enum: ['draft', 'live'] }).notNull().default('draft'),
+    count: integer('count'),
+    priority: integer('priority').notNull().default(3),
+    sold: integer('sold', { mode: 'boolean' }).notNull().default(false),
+    shippedAt: integer('shipped_at', { mode: 'timestamp' }),
   });
-  assert.deepEqual(Object.fromEntries(generateFieldsFromDrizzle(table).map((field) => [field.name, field.required])),
-    { id: true, items: false, note: true, memo: false });
+  // Every column: the type from its kind, an enum column as a select, required only without a default,
+  // a primitive default as the field default, null for a blank nullable number or unique column.
+  assert.deepEqual(nativeFields(table), [
+    { name: 'id', label: 'ID', type: 'text', required: true },
+    { name: 'items', label: 'Items', type: 'richtext' },
+    { name: 'note', label: 'Note', type: 'text', required: true },
+    { name: 'memo', label: 'Memo', type: 'text' },
+    { name: 'orderId', label: 'Order ID', type: 'text', defaultValue: null },
+    { name: 'status', label: 'Status', type: 'select', options: ['draft', 'live'], defaultValue: 'draft' },
+    { name: 'count', label: 'Count', type: 'number', defaultValue: null },
+    { name: 'priority', label: 'Priority', type: 'number', defaultValue: 3 },
+    { name: 'sold', label: 'Sold', type: 'boolean', defaultValue: false },
+    { name: 'shippedAt', label: 'Shipped At', type: 'date' },
+  ]);
+  // Picks choose and order the columns; an override's own keys win, and a SQL column name is accepted too.
+  assert.deepEqual(nativeFields(table, ['status', { name: 'note', label: 'Internal note', type: 'textarea' }, 'shipped_at']), [
+    { name: 'status', label: 'Status', type: 'select', options: ['draft', 'live'], defaultValue: 'draft' },
+    { name: 'note', label: 'Internal note', type: 'textarea', required: true },
+    { name: 'shipped_at', label: 'Shipped At', type: 'date' },
+  ]);
+  assert.throws(() => nativeFields(table, ['colour']), /"colour" is not a column/);
 });
 
 test('native writes only reach configured fields, while hooks can still set other columns', { skip }, async () => {

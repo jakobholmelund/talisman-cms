@@ -1,4 +1,5 @@
 import { getTableColumns } from 'drizzle-orm';
+import { createSchemaFactory } from 'drizzle-orm/zod';
 import { columnKind } from '../db/column-kind';
 import { validatePresetPayload } from '../presets';
 import {
@@ -81,6 +82,31 @@ export function readEntryData(data: unknown): Record<string, any> {
   }
   if (!isGlobalData(value)) throw new InvalidInputError('Entry data must be a JSON object.');
   return value;
+}
+
+// The column schemas coerce date strings, which the admin sends for a date field, into the Dates
+// the timestamp columns take.
+const columnSchemas = createSchemaFactory({ coerce: { date: true } });
+const tableSchemas = new WeakMap<object, { create: ReturnType<typeof columnSchemas.createInsertSchema>; update: ReturnType<typeof columnSchemas.createUpdateSchema> }>();
+
+/**
+ * The column-level check of a native payload, after the collection's fields validated it: every
+ * value must fit its column's type, an enum column takes one of its values, a NOT NULL column
+ * without a default is present on a create and never set to null. The schema is read from the
+ * table itself, so a rule the database enforces answers 400 with the column in the error path
+ * instead of reaching D1, whose refusal names no column. Returns the payload as the columns take it.
+ */
+export function checkNativeColumns(table: Record<string, any>, payload: Record<string, any>, operation: 'create' | 'update') {
+  let schemas = tableSchemas.get(table);
+  if (!schemas) {
+    schemas = { create: columnSchemas.createInsertSchema(table as any), update: columnSchemas.createUpdateSchema(table as any) };
+    tableSchemas.set(table, schemas);
+  }
+  const parsed = schemas[operation].safeParse(payload);
+  if (!parsed.success) {
+    throw new ValidationError(parsed.error.issues.map((issue): FieldValidationIssue => ({ path: [...issue.path], message: issue.message, code: issue.code })));
+  }
+  return parsed.data as Record<string, any>;
 }
 
 /** A native id may be a whole number (integer keys) or text in the entry id format. */
@@ -247,10 +273,10 @@ export async function prepareWrite(input: PrepareWriteInput): Promise<PreparedWr
 
   const prepared: PreparedWrite = { data, slug, id: id === undefined ? undefined : String(id) };
   if (nativeTable) {
-    prepared.nativePayload = prepareNativeWrite(collection, {
+    prepared.nativePayload = checkNativeColumns(nativeTable, prepareNativeWrite(collection, {
       ...data,
       ...(operation === 'create' && nativeTable[nativeIdCol] && id !== undefined ? { [nativeIdCol]: id } : {}),
-    }, { mode: operation, stored: input.stored, trusted: columns === 'any' });
+    }, { mode: operation, stored: input.stored, trusted: columns === 'any' }), operation);
   }
   return prepared;
 }

@@ -1193,30 +1193,57 @@ export function getPluginUiLibraryMetadata(plugins: Plugin[] = []) {
   }));
 }
 
-export function generateFieldsFromDrizzle(table: any): FieldDefinition[] {
-  if (!table) return [];
-  const fields: FieldDefinition[] = [];
+/** A column to expose as a field: its property name, or an override whose own keys win over what the column says. */
+export type NativeFieldPick = string | (Partial<Omit<FieldDefinition, 'name'>> & { name: string });
 
-  for (const [key, column] of Object.entries(table)) {
-    if (typeof column !== 'object' || column === null || !('dataType' in column)) continue;
+/** "Order ID", "Code Suffix" or "Product Variant Value ID" from a column's property name. */
+function labelFromProperty(property: string) {
+  return property.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim().split(/\s+/)
+    .map((word) => word.toLowerCase() === 'id' ? 'ID' : word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+}
 
-    const colName = (column as any).name || key;
-    const kind = columnKind(column);
+const isColumn = (value: unknown): value is Record<string, any> => typeof value === 'object' && value !== null && 'dataType' in value;
 
-    let type: FieldType = 'text';
-    if (kind === 'number') type = 'number';
-    if (kind === 'boolean') type = 'boolean';
-    if (kind === 'date') type = 'date';
-    if (kind === 'json') type = 'richtext';
-
-    fields.push({
-      name: colName,
-      label: key.charAt(0).toUpperCase() + key.slice(1),
-      type,
-      // A NOT NULL column with a database default can be left out; the default fills it.
-      required: (column as any).notNull === true && (column as any).hasDefault !== true,
-    });
+/**
+ * The field a Drizzle column stands for on its own. The type follows the column's kind, and an enum
+ * column is a `select` with the column's values; a JSON column is `richtext`, which passes any value,
+ * until an override says how it is edited (an `array` or `group` with fields, a relation). `required`
+ * is NOT NULL without a database default, and a primitive default is the field's `defaultValue`. A
+ * nullable number or UNIQUE column starts at null rather than '': a blank number is not a value, and
+ * two blank unique values would collide.
+ */
+function fieldFromColumn(property: string, column: Record<string, any>): FieldDefinition {
+  const kind = columnKind(column);
+  const options = Array.isArray(column.enumValues) && column.enumValues.length > 0 ? [...column.enumValues] : undefined;
+  const type: FieldType = kind === 'number' ? 'number' : kind === 'boolean' ? 'boolean' : kind === 'date' ? 'date'
+    : kind === 'json' ? 'richtext' : options ? 'select' : 'text';
+  const field: FieldDefinition = { name: property, label: labelFromProperty(property), type };
+  if (options) field.options = options;
+  if (column.notNull === true && column.hasDefault !== true) field.required = true;
+  if (column.hasDefault === true && ['string', 'number', 'boolean'].includes(typeof column.default)) {
+    field.defaultValue = column.default;
+  } else if (column.notNull !== true && column.hasDefault !== true && (kind === 'number' || column.isUnique === true)) {
+    field.defaultValue = null;
   }
+  return field;
+}
 
-  return fields;
+/**
+ * Field definitions for a collection mapped to a Drizzle table, read from its columns, so the
+ * schema says what each field is and the collection says only what the column cannot: the label
+ * where the property name is not one, the widget (a relation, a media array), `saveOnlyIfChanged`.
+ * `picks` names the columns to expose, in order, each as a property name or as an override whose
+ * own keys win; a pick that names no column throws at config time, so a renamed column is found
+ * before the admin loads. Without `picks`, every column is a field, as the service does for a
+ * native collection configured without fields.
+ */
+export function nativeFields(table: any, picks?: NativeFieldPick[]): FieldDefinition[] {
+  const columns = Object.entries(table ?? {}).filter((entry): entry is [string, Record<string, any>] => isColumn(entry[1]));
+  if (!picks) return columns.map(([property, column]) => fieldFromColumn(property, column));
+  return picks.map((pick) => {
+    const override = typeof pick === 'string' ? { name: pick } : pick;
+    const match = columns.find(([property, column]) => property === override.name || column.name === override.name);
+    if (!match) throw new Error(`nativeFields: "${override.name}" is not a column of the table`);
+    return { ...fieldFromColumn(override.name, match[1]), ...override };
+  });
 }
