@@ -1,12 +1,16 @@
 import { sql } from 'drizzle-orm';
 import { sqliteTable, text, integer, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
+// This file, with ../auth/local-schema.ts, is the source of truth for the core's tables: drizzle-kit
+// generates the migrations in ../../drizzle from them (`pnpm --filter talisman-cms db:generate`).
+// Every column, index, unique rule and foreign key the database enforces is declared here.
+
 export const collections = sqliteTable('galaxy_collections', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
   description: text('description'),
-  fields: text('fields', { mode: 'json' }).notNull().default('[]'),
+  fields: text('fields', { mode: 'json' }).notNull().default([]),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 
@@ -26,8 +30,8 @@ export const entries = sqliteTable('galaxy_entries', {
 }, (table) => [
   index('galaxy_entries_collection_status_created_idx').on(table.collectionId, table.status, table.createdAt),
   index('galaxy_entries_collection_status_slug_idx').on(table.collectionId, table.status, table.slug, table.createdAt),
-  // Migration 0023: one published entry per live slug in a collection.
-  uniqueIndex('galaxy_entries_published_slug_unique').on(table.collectionId, table.slug).where(sql`status = 'published'`),
+  // One published entry per live slug in a collection.
+  uniqueIndex('galaxy_entries_published_slug_unique').on(table.collectionId, table.slug).where(sql`${table.status} = 'published'`),
 ]);
 
 export const entryRevisions = sqliteTable('galaxy_entry_revisions', {
@@ -61,7 +65,7 @@ export const globals = sqliteTable('galaxy_globals', {
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
   description: text('description'),
-  data: text('data', { mode: 'json' }).notNull().default('{}'),
+  data: text('data', { mode: 'json' }).notNull().default({}),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
   /** Grows by one on every save; a save that names the version it loaded is refused when it moved on. */

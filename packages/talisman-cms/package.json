@@ -114,6 +114,10 @@
       "types": "./dist/auth/identity.d.ts",
       "import": "./dist/auth/identity.js"
     },
+    "./auth/local-schema": {
+      "types": "./dist/auth/local-schema.d.ts",
+      "import": "./dist/auth/local-schema.js"
+    },
     "./auth/guard": {
       "types": "./dist/auth/guard.d.ts",
       "import": "./dist/auth/guard.js"
