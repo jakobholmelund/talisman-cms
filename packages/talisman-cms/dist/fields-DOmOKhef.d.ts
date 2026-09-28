@@ -377,5 +377,19 @@ interface FieldValidationIssue {
     code?: string;
     received?: unknown;
 }
+/** A column to expose as a field: its property name, or an override whose own keys win over what the column says. */
+type NativeFieldPick = string | (Partial<Omit<FieldDefinition, 'name'>> & {
+    name: string;
+});
+/**
+ * Field definitions for a collection mapped to a Drizzle table, read from its columns, so the
+ * schema says what each field is and the collection says only what the column cannot: the label
+ * where the property name is not one, the widget (a relation, a media array), `saveOnlyIfChanged`.
+ * `picks` names the columns to expose, in order, each as a property name or as an override whose
+ * own keys win; a pick that names no column throws at config time, so a renamed column is found
+ * before the admin loads. Without `picks`, every column is a field, as the service does for a
+ * native collection configured without fields.
+ */
+declare function nativeFields(table: any, picks?: NativeFieldPick[]): FieldDefinition[];
 
-export type { AdminEditorPanelDefinition as A, BlockDefinition as B, CollectionConfig as C, FieldDefinition as F, GlobalConfig as G, Plugin as P, RelationReference as R, TalismanCmsOptions as T, UiComponentPresetDefinition as U, AdminEntryDescriberDefinition as a, AdminSection as b, AdminSectionDefinition as c, CollectionHookArgs as d, CollectionHooks as e, ComponentDefinition as f, ComponentSlotDefinition as g, FieldType as h, PluginConfig as i, RuntimeCollectionHooks as j, UiLibraryBlockAdapter as k, UiLibraryComponentAdapter as l, UiLibraryDefinition as m, UiLibraryRequirement as n, AdvancedAdapterDefinition as o, FieldValidationIssue as p };
+export { type AdminEditorPanelDefinition as A, type BlockDefinition as B, type CollectionConfig as C, type FieldDefinition as F, type GlobalConfig as G, type NativeFieldPick as N, type Plugin as P, type RelationReference as R, type TalismanCmsOptions as T, type UiComponentPresetDefinition as U, type AdminEntryDescriberDefinition as a, type AdminSection as b, type AdminSectionDefinition as c, type CollectionHookArgs as d, type CollectionHooks as e, type ComponentDefinition as f, type ComponentSlotDefinition as g, type FieldType as h, type PluginConfig as i, type RuntimeCollectionHooks as j, type UiLibraryBlockAdapter as k, type UiLibraryComponentAdapter as l, type UiLibraryDefinition as m, type UiLibraryRequirement as n, type AdvancedAdapterDefinition as o, type FieldValidationIssue as p, nativeFields as q };

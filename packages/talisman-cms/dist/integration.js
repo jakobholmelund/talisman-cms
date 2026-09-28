@@ -5,12 +5,12 @@ import {
   registerAuthAdapter
 } from "./chunk-UKQJWUX7.js";
 import {
-  getPluginUiLibraryMetadata,
-  resolveFieldDefinitions
-} from "./chunk-SRVHUFKL.js";
-import {
   looksLikeSecretValue
 } from "./chunk-GAOPNFAO.js";
+import {
+  getPluginUiLibraryMetadata,
+  resolveFieldDefinitions
+} from "./chunk-OAGJMNST.js";
 import {
   assembleMigrations
 } from "./chunk-4NHF23I7.js";

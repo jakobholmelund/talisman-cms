@@ -568,27 +568,33 @@ function getPluginUiLibraryMetadata(plugins = []) {
     componentSlugs: (library.components || []).map((adapter) => adapter.component.slug)
   }));
 }
-function generateFieldsFromDrizzle(table) {
-  if (!table) return [];
-  const fields = [];
-  for (const [key, column] of Object.entries(table)) {
-    if (typeof column !== "object" || column === null || !("dataType" in column)) continue;
-    const colName = column.name || key;
-    const kind = columnKind(column);
-    let type = "text";
-    if (kind === "number") type = "number";
-    if (kind === "boolean") type = "boolean";
-    if (kind === "date") type = "date";
-    if (kind === "json") type = "richtext";
-    fields.push({
-      name: colName,
-      label: key.charAt(0).toUpperCase() + key.slice(1),
-      type,
-      // A NOT NULL column with a database default can be left out; the default fills it.
-      required: column.notNull === true && column.hasDefault !== true
-    });
+function labelFromProperty(property) {
+  return property.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").trim().split(/\s+/).map((word) => word.toLowerCase() === "id" ? "ID" : word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+}
+var isColumn = (value) => typeof value === "object" && value !== null && "dataType" in value;
+function fieldFromColumn(property, column) {
+  const kind = columnKind(column);
+  const options = Array.isArray(column.enumValues) && column.enumValues.length > 0 ? [...column.enumValues] : void 0;
+  const type = kind === "number" ? "number" : kind === "boolean" ? "boolean" : kind === "date" ? "date" : kind === "json" ? "richtext" : options ? "select" : "text";
+  const field = { name: property, label: labelFromProperty(property), type };
+  if (options) field.options = options;
+  if (column.notNull === true && column.hasDefault !== true) field.required = true;
+  if (column.hasDefault === true && ["string", "number", "boolean"].includes(typeof column.default)) {
+    field.defaultValue = column.default;
+  } else if (column.notNull !== true && column.hasDefault !== true && (kind === "number" || column.isUnique === true)) {
+    field.defaultValue = null;
   }
-  return fields;
+  return field;
+}
+function nativeFields(table, picks) {
+  const columns = Object.entries(table ?? {}).filter((entry) => isColumn(entry[1]));
+  if (!picks) return columns.map(([property, column]) => fieldFromColumn(property, column));
+  return picks.map((pick) => {
+    const override = typeof pick === "string" ? { name: pick } : pick;
+    const match = columns.find(([property, column]) => property === override.name || column.name === override.name);
+    if (!match) throw new Error(`nativeFields: "${override.name}" is not a column of the table`);
+    return { ...fieldFromColumn(override.name, match[1]), ...override };
+  });
 }
 
 export {
@@ -611,5 +617,5 @@ export {
   decodeGlobalData,
   buildZodSchemaForCollection,
   getPluginUiLibraryMetadata,
-  generateFieldsFromDrizzle
+  nativeFields
 };

@@ -39,17 +39,17 @@ import {
   describeInvalidEntrySlug,
   findUnwritableNativeColumns,
   formatValidationIssues,
-  generateFieldsFromDrizzle,
   getNativeIdColumn,
   getRelationTargets,
   isGlobalData,
   isInlineComponentValue,
   isPolymorphicRelationField,
   isRelationReference,
+  nativeFields,
   nextNativeUpdatedAt,
   normalizeBlankNativeValues,
   pickConfiguredNativeFields
-} from "./chunk-SRVHUFKL.js";
+} from "./chunk-OAGJMNST.js";
 
 // src/service/config.ts
 function configFromModules(modules) {
@@ -270,7 +270,7 @@ function memoFor(binding) {
 function configuredCollectionFields(collectionConfig, nativeSchemas) {
   const fields = collectionConfig.fields || [];
   if (fields.length === 0 && collectionConfig.nativeSchemaMapping && nativeSchemas[collectionConfig.slug]) {
-    return generateFieldsFromDrizzle(nativeSchemas[collectionConfig.slug]);
+    return nativeFields(nativeSchemas[collectionConfig.slug]);
   }
   return fields;
 }
@@ -761,6 +761,7 @@ async function resolveRelationships(ctx, entriesToResolve, collection, depth = 1
 
 // src/service/validation.ts
 import { getTableColumns } from "drizzle-orm";
+import { createSchemaFactory } from "drizzle-orm/zod";
 
 // src/presets.ts
 function getUiLibraryComponentDefinition(libraries, libraryId, componentSlug) {
@@ -845,6 +846,20 @@ function readEntryData(data) {
   }
   if (!isGlobalData(value)) throw new InvalidInputError("Entry data must be a JSON object.");
   return value;
+}
+var columnSchemas = createSchemaFactory({ coerce: { date: true } });
+var tableSchemas = /* @__PURE__ */ new WeakMap();
+function checkNativeColumns(table, payload, operation) {
+  let schemas = tableSchemas.get(table);
+  if (!schemas) {
+    schemas = { create: columnSchemas.createInsertSchema(table), update: columnSchemas.createUpdateSchema(table) };
+    tableSchemas.set(table, schemas);
+  }
+  const parsed = schemas[operation].safeParse(payload);
+  if (!parsed.success) {
+    throw new ValidationError(parsed.error.issues.map((issue) => ({ path: [...issue.path], message: issue.message, code: issue.code })));
+  }
+  return parsed.data;
 }
 function describeInvalidNativeId(value) {
   if (isBlank(value)) return null;
@@ -966,10 +981,10 @@ async function prepareWrite(input) {
   data = await runHooks(input.hooks, "beforeChange", { ...hookArgs, data }, hookOptions);
   const prepared = { data, slug, id: id === void 0 ? void 0 : String(id) };
   if (nativeTable) {
-    prepared.nativePayload = prepareNativeWrite(collection, {
+    prepared.nativePayload = checkNativeColumns(nativeTable, prepareNativeWrite(collection, {
       ...data,
       ...operation === "create" && nativeTable[nativeIdCol] && id !== void 0 ? { [nativeIdCol]: id } : {}
-    }, { mode: operation, stored: input.stored, trusted: columns === "any" });
+    }, { mode: operation, stored: input.stored, trusted: columns === "any" }), operation);
   }
   return prepared;
 }

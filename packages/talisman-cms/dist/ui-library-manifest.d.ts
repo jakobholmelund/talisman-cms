@@ -1,4 +1,4 @@
-import { n as UiLibraryRequirement, F as FieldDefinition, o as AdvancedAdapterDefinition, U as UiComponentPresetDefinition, g as ComponentSlotDefinition, m as UiLibraryDefinition, k as UiLibraryBlockAdapter, l as UiLibraryComponentAdapter } from './types-BdxRwCLu.js';
+import { n as UiLibraryRequirement, F as FieldDefinition, o as AdvancedAdapterDefinition, U as UiComponentPresetDefinition, g as ComponentSlotDefinition, m as UiLibraryDefinition, k as UiLibraryBlockAdapter, l as UiLibraryComponentAdapter } from './fields-DOmOKhef.js';
 import './actor-Daa_hmny.js';
 import './types-C5a-hx5D.js';
 import 'astro';
@@ -110,8 +110,8 @@ declare function buildUiLibraryDefinition(library: Pick<UiLibraryDefinition, 'id
     blocks: UiLibraryBlockAdapter[];
     components: UiLibraryComponentAdapter[];
     presets: UiComponentPresetDefinition[];
-    id: string;
     name: string;
+    id: string;
     requirements?: UiLibraryRequirement[] | undefined;
 };
 declare function buildUiLibraryPlugin(pluginName: string, library: UiLibraryDefinition): {
