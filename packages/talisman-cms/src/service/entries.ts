@@ -235,7 +235,7 @@ export function entriesService(ctx: ServiceContext) {
       const entries = schema.entries;
       const rows = await db.select().from(entries)
         .where(and(eq(entries.collectionId, collection.record.id), compiled.where))
-        .orderBy(...(compiled.orderBy.length > 0 ? compiled.orderBy : [desc(entries.createdAt)]));
+        .orderBy(...(compiled.orderBy.length > 0 ? compiled.orderBy : [desc(entries.createdAt), desc(entries.id)]));
       return rows.map(toEditableEntry);
     },
 
@@ -468,7 +468,7 @@ export function entriesService(ctx: ServiceContext) {
         const entries = schema.entries;
         let query = db.select().from(entries)
           .where(and(eq(entries.collectionId, collection.record.id), versionMode === 'published' ? eq(entries.status, 'published') : undefined, compiled.where))
-          .orderBy(...(compiled.orderBy.length > 0 ? [...compiled.orderBy, desc(entries.id)] : [desc(entries.createdAt)]))
+          .orderBy(...(compiled.orderBy.length > 0 ? [...compiled.orderBy, desc(entries.id)] : [desc(entries.createdAt), desc(entries.id)]))
           .$dynamic();
         if (limit !== undefined) query = query.limit(limit).offset(compiled.offset ?? 0);
         data = (await query).map((entry: any) => normalizeEntryDataForRead(entry, versionMode));

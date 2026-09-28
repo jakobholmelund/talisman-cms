@@ -103,7 +103,8 @@ test('the SDK filters the published snapshot, never caches a filtered read, and 
     assert.deepEqual(ids(await client.entries.findMany('posts', { depth: 0, sort: '-title', limit: 1, offset: 1 })), ['a']);
     assert.deepEqual(ids(await client.entries.findMany('parts', { where: { quantity: { gt: 5 } }, sort: '-quantity' })), ['case', 'frame']);
     assert.deepEqual(puts, [], 'filtered, sorted or offset reads bypass KV');
-    assert.deepEqual(ids(await client.entries.findMany('posts', { depth: 0 })), ['a', 'b']);
+    // Newest first; the seeded entries share a creation time, so the higher id comes first.
+    assert.deepEqual(ids(await client.entries.findMany('posts', { depth: 0 })), ['b', 'a']);
     assert.deepEqual(puts, ['talisman:entries:posts:all:published'], 'a plain read is still cached');
 
     await assert.rejects(client.entries.findMany('posts', { offset: 1 }), publicClient.InvalidInputError);
