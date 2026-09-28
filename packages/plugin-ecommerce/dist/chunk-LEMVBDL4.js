@@ -7,7 +7,7 @@ import {
 } from "./chunk-K4FWMXR2.js";
 
 // src/accounts.ts
-import { and as and2, count, eq as eq2, gt as gt2, isNotNull, isNull } from "drizzle-orm";
+import { and as and2, count, eq as eq2, gt as gt2, isNotNull, isNull, sql } from "drizzle-orm";
 import { createDbClient as createDbClient2 } from "talisman-cms/client";
 import { ensureVerifiedEmailIdentity } from "talisman-cms/auth/identity";
 import { parseAddress } from "talisman-cms/email";
@@ -288,19 +288,16 @@ async function consumeCustomerEmailSignIn(env, token) {
   if (!account) return null;
   const cmsUserId = await ensureVerifiedEmailIdentity(env, account.emailNormalized, account.name);
   const sessionToken = `${crypto.randomUUID()}${crypto.randomUUID()}`;
-  await env.DB.batch([
-    env.DB.prepare(`UPDATE _ecommerce_customer_accounts
-      SET email_verified_at = COALESCE(email_verified_at, ?), updated_at = ?, cms_user_id = ?
-      WHERE id = ?`).bind(now, now, cmsUserId, account.id),
-    env.DB.prepare(`INSERT INTO _ecommerce_customer_sessions
-      (id, account_id, token_hash, expires_at, created_at, purpose)
-      VALUES (?, ?, ?, ?, ?, 'session')`).bind(
-      `csess_${crypto.randomUUID()}`,
-      account.id,
-      await hashToken(sessionToken),
-      now + CUSTOMER_SESSION_MAX_AGE,
-      now
-    )
+  await db.batch([
+    db.update(customerAccounts).set({ emailVerifiedAt: sql`COALESCE(${customerAccounts.emailVerifiedAt}, ${now})`, updatedAt: at(now), cmsUserId }).where(eq2(customerAccounts.id, account.id)),
+    db.insert(customerSessions).values({
+      id: `csess_${crypto.randomUUID()}`,
+      accountId: account.id,
+      tokenHash: await hashToken(sessionToken),
+      expiresAt: at(now + CUSTOMER_SESSION_MAX_AGE),
+      createdAt: at(now),
+      purpose: "session"
+    })
   ]);
   return { account, token: sessionToken };
 }

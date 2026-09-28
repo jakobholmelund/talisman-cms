@@ -5,7 +5,8 @@ import {
   runVariantChange,
   saveVariantValue,
   variantChangeSchema
-} from "./chunk-5XSW5CVN.js";
+} from "./chunk-CRLRVHLN.js";
+import "./chunk-K4FWMXR2.js";
 export {
   VariantChangeError,
   deleteVariantGroup,

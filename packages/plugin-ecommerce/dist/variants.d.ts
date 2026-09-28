@@ -4,8 +4,8 @@ import { TalismanEnv } from 'talisman-cms/client';
 /**
  * Changes the product editor's variant configurator makes: save a variant value together with its
  * stock row, delete a value, or delete a group with its values. Each change is one D1 batch, so a
- * failure leaves nothing half-saved and a retry cannot create a second value. The batches write D1
- * directly, so no collection hooks run; the core's cached reads of the rows are cleared afterwards.
+ * failure leaves nothing half-saved and a retry cannot create a second value. The batches write the
+ * tables directly, so no collection hooks run; the core's cached reads of the rows are cleared afterwards.
  */
 /** A refused change, with the HTTP status and message the admin route answers. */
 declare class VariantChangeError extends Error {
@@ -24,16 +24,16 @@ declare const saveValueInput: z.ZodObject<{
         image: z.ZodEffects<z.ZodNullable<z.ZodString>, string | null, string | null>;
         priceOverride: z.ZodNullable<z.ZodNumber>;
     }, "strict", z.ZodTypeAny, {
-        value: string;
         sku: string | null;
         priceOverride: number | null;
+        value: string;
         image: string | null;
         id?: string | undefined;
         expectedUpdatedAt?: string | number | undefined;
     }, {
-        value: string;
         sku: string | null;
         priceOverride: number | null;
+        value: string;
         image: string | null;
         id?: string | undefined;
         expectedUpdatedAt?: string | number | undefined;
@@ -53,9 +53,9 @@ declare const saveValueInput: z.ZodObject<{
     }>>;
 }, "strict", z.ZodTypeAny, {
     value: {
-        value: string;
         sku: string | null;
         priceOverride: number | null;
+        value: string;
         image: string | null;
         id?: string | undefined;
         expectedUpdatedAt?: string | number | undefined;
@@ -68,9 +68,9 @@ declare const saveValueInput: z.ZodObject<{
     } | undefined;
 }, {
     value: {
-        value: string;
         sku: string | null;
         priceOverride: number | null;
+        value: string;
         image: string | null;
         id?: string | undefined;
         expectedUpdatedAt?: string | number | undefined;
@@ -93,16 +93,16 @@ declare const variantChangeSchema: z.ZodDiscriminatedUnion<"action", [z.ZodObjec
         image: z.ZodEffects<z.ZodNullable<z.ZodString>, string | null, string | null>;
         priceOverride: z.ZodNullable<z.ZodNumber>;
     }, "strict", z.ZodTypeAny, {
-        value: string;
         sku: string | null;
         priceOverride: number | null;
+        value: string;
         image: string | null;
         id?: string | undefined;
         expectedUpdatedAt?: string | number | undefined;
     }, {
-        value: string;
         sku: string | null;
         priceOverride: number | null;
+        value: string;
         image: string | null;
         id?: string | undefined;
         expectedUpdatedAt?: string | number | undefined;
@@ -124,9 +124,9 @@ declare const variantChangeSchema: z.ZodDiscriminatedUnion<"action", [z.ZodObjec
     action: z.ZodLiteral<"saveValue">;
 }, "strict", z.ZodTypeAny, {
     value: {
-        value: string;
         sku: string | null;
         priceOverride: number | null;
+        value: string;
         image: string | null;
         id?: string | undefined;
         expectedUpdatedAt?: string | number | undefined;
@@ -140,9 +140,9 @@ declare const variantChangeSchema: z.ZodDiscriminatedUnion<"action", [z.ZodObjec
     } | undefined;
 }, {
     value: {
-        value: string;
         sku: string | null;
         priceOverride: number | null;
+        value: string;
         image: string | null;
         id?: string | undefined;
         expectedUpdatedAt?: string | number | undefined;
