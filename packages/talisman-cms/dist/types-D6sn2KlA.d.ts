@@ -1,7 +1,11 @@
 import { A as Actor } from './actor-BAnSg_qp.js';
 
 type FieldType = 'text' | 'number' | 'boolean' | 'date' | 'textarea' | 'richtext' | 'relationship' | 'array' | 'blocks' | 'select' | 'relation' | 'group' | 'color' | 'media';
-type AdminSection = 'collections' | 'commerce';
+/**
+ * The admin area a collection is listed in: `collections` is built in, and a plugin registers others
+ * with `Plugin.adminSections`. A collection whose section is not registered is listed under Collections.
+ */
+type AdminSection = string;
 interface BlockSettingsConfig {
     name?: string;
     label?: string;
@@ -71,6 +75,12 @@ interface FieldDefinition {
     options?: string[];
     blocksFromPlugins?: boolean | string[];
     blockSettings?: BlockSettingsConfig;
+    /**
+     * The admin editor sends this field of a native record only when the user changed it. For a value
+     * that server code changes in place, such as a stock count that checkout reserves and releases, a
+     * save that re-sent the value loaded at page open would undo those changes.
+     */
+    saveOnlyIfChanged?: boolean;
 }
 interface CollectionHookArgs<T = any> {
     data: Partial<T>;
@@ -161,6 +171,58 @@ interface UiLibraryDefinition {
     components?: UiLibraryComponentAdapter[];
     presets?: UiComponentPresetDefinition[];
 }
+/**
+ * An admin section a plugin adds next to Collections: a sidebar entry, the routes `/<id>`,
+ * `/<id>/<slug>` and `/<id>/<slug>/<entryId>`, and the collections whose `adminSection` names it.
+ */
+interface AdminSectionDefinition {
+    /** The URL segment and the value of `CollectionConfig.adminSection`: a lowercase slug. */
+    id: string;
+    label: string;
+    description?: string;
+    /** One of `shopping-cart`, `store`, `package`, `chart` or `layout-grid` (the default). */
+    icon?: string;
+    /**
+     * The workspace and the extensions it links need the admin role. Editors get the section's
+     * collections they may read under Collections instead.
+     */
+    adminOnly?: boolean;
+    /**
+     * A module whose default export renders the section's index page with `AdminSectionWorkspaceProps`
+     * (from `talisman-cms/ui/lib/admin-sections`). Without one the generic collection table is shown.
+     */
+    componentPath?: string;
+    /** Shown by the generic collection table when the section has no collections. */
+    emptyState?: {
+        title: string;
+        body: string;
+    };
+}
+/**
+ * A panel the entry editor renders for matching collections. The module's default export takes
+ * `AdminEditorPanelProps` (from `talisman-cms/ui/components/editor/panels`) and loads when the editor
+ * first shows it.
+ */
+interface AdminEditorPanelDefinition {
+    id: string;
+    componentPath: string;
+    /** `before-fields`: in the form card above the fields; `after-form`: below the form and its actions. */
+    placement: 'before-fields' | 'after-form';
+    /** Collections in one of these sections get the panel. */
+    sections?: string[];
+    /** Collections with one of these slugs get the panel. With neither list, every collection does. */
+    slugs?: string[];
+}
+/**
+ * A module that labels records. It exports `describeEntry(slug, entry, entriesBySlug, ctx)`, which
+ * returns `{ title, subtitle, details }` for a record it knows and null for any other, and
+ * `supportCollections(slug, relationTargets)`, the slugs of the extra collections the editor of
+ * `slug` loads so the labels can name related records. Both are optional. See
+ * `EntryDescriberModule` in `talisman-cms/ui/lib/entry-labels`.
+ */
+interface AdminEntryDescriberDefinition {
+    modulePath: string;
+}
 interface Plugin {
     name: string;
     onInit: (config: any) => any;
@@ -192,10 +254,38 @@ interface Plugin {
         componentPath: string;
         section?: AdminSection;
     }[];
+    /** Admin sections next to Collections. Ids must be unique across plugins and not a built-in route. */
+    adminSections?: AdminSectionDefinition[];
+    /** Panels the entry editor shows for matching collections. */
+    adminEditorPanels?: AdminEditorPanelDefinition[];
+    /** Modules that label records in relation pickers and summaries. */
+    adminEntryDescribers?: AdminEntryDescriberDefinition[];
+    /**
+     * Names of `TALISMAN_*` settings, without the prefix, whose values the admin page exposes to the
+     * browser as `<meta name="talisman-setting-<name in kebab case>">`. The page is served before
+     * sign-in, so the values are visible to anyone who can load it: name display settings only, never
+     * allowlists or credentials. Names that look like secrets are refused at config time, and a value
+     * that reads like a key or signing secret is left out at request time.
+     */
+    adminSettings?: string[];
+    /**
+     * Absolute directories of admin screens that use Tailwind utility classes. Tailwind scans them for
+     * the admin stylesheet, so classes used only there are generated too.
+     */
+    adminStyleSources?: string[];
     blocks?: BlockDefinition[];
     components?: ComponentDefinition[];
     uiLibraries?: UiLibraryDefinition[];
     vite?: any;
+    /**
+     * D1 migrations the plugin ships: an absolute path to a folder of `NNNN_name.sql` files, with a
+     * `meta/_journal.json` like the core's. The integration copies them, with the core's, into the one
+     * folder a site's `migrations_dir` points at; the numbers form one sequence across the core and every
+     * plugin, and a file name never changes once a database has applied it.
+     */
+    migrations?: {
+        dir: string;
+    };
 }
 interface FieldValidationIssue {
     path: PropertyKey[];
@@ -204,4 +294,4 @@ interface FieldValidationIssue {
     received?: unknown;
 }
 
-export type { AdvancedAdapterDefinition as A, BlockDefinition as B, CollectionConfig as C, FieldDefinition as F, GlobalConfig as G, Plugin as P, RelationReference as R, UiComponentPresetDefinition as U, CollectionHookArgs as a, CollectionHooks as b, ComponentDefinition as c, ComponentSlotDefinition as d, FieldType as e, RuntimeCollectionHooks as f, UiLibraryBlockAdapter as g, UiLibraryComponentAdapter as h, UiLibraryDefinition as i, UiLibraryRequirement as j, FieldValidationIssue as k };
+export type { AdminEditorPanelDefinition as A, BlockDefinition as B, CollectionConfig as C, FieldDefinition as F, GlobalConfig as G, Plugin as P, RelationReference as R, UiComponentPresetDefinition as U, AdminEntryDescriberDefinition as a, AdminSection as b, AdminSectionDefinition as c, CollectionHookArgs as d, CollectionHooks as e, ComponentDefinition as f, ComponentSlotDefinition as g, FieldType as h, RuntimeCollectionHooks as i, UiLibraryBlockAdapter as j, UiLibraryComponentAdapter as k, UiLibraryDefinition as l, UiLibraryRequirement as m, AdvancedAdapterDefinition as n, FieldValidationIssue as o };

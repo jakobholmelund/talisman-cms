@@ -33,11 +33,16 @@ var bindingValue = (value) => value === void 0 || value === null || typeof value
 function readSetting(env, name) {
   return read(env, name, (value, key) => settingValue(value, key));
 }
+var SECRET_LOOKING_VALUE = /^(?:re_|sk_|rk_|whsec_|xkeysib-|SG\.)/;
+function looksLikeSecretValue(value) {
+  return typeof value === "string" && SECRET_LOOKING_VALUE.test(value);
+}
 function readBinding(env, name) {
   return read(env, name, bindingValue);
 }
 
 export {
   readSetting,
+  looksLikeSecretValue,
   readBinding
 };

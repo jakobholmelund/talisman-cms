@@ -1,6 +1,6 @@
 import {
   buildEmailVirtualModule
-} from "./chunk-7KSHAODO.js";
+} from "./chunk-IOMPOTBQ.js";
 import {
   registerAuthAdapter
 } from "./chunk-UKQJWUX7.js";
@@ -8,12 +8,18 @@ import {
   getPluginUiLibraryMetadata,
   resolveFieldDefinitions
 } from "./chunk-6DE4JXMX.js";
-import "./chunk-R6EGKTST.js";
+import {
+  looksLikeSecretValue
+} from "./chunk-GAOPNFAO.js";
+import {
+  assembleMigrations
+} from "./chunk-B2BAGIY4.js";
 import "./chunk-MLKGABMK.js";
 
 // src/integration.ts
 import { fileURLToPath } from "url";
-import { existsSync } from "fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "fs";
+import { isAbsolute, join, relative, resolve } from "path";
 import tailwindcss from "@tailwindcss/vite";
 import { TanStackRouterVite } from "@tanstack/router-vite-plugin";
 function normalizeAdminPath(adminPath) {
@@ -72,11 +78,66 @@ function collectProtectedPluginRoutes(plugins, adminPath, adminPathPrefix) {
   }
   return routes;
 }
+var RESERVED_ADMIN_SECTION_IDS = /* @__PURE__ */ new Set(["collections", "globals", "media", "users", "account", "extensions", "api"]);
+var ADMIN_SECTION_ID = /^[a-z][a-z0-9-]*$/;
+var ADMIN_SETTING_NAME = /^[A-Z][A-Z0-9_]*$/;
+var SECRET_LOOKING_SETTING = /SECRET|KEY|TOKEN|PASSWORD/;
+var EDITOR_PANEL_PLACEMENTS = /* @__PURE__ */ new Set(["before-fields", "after-form"]);
+function validateAdminExtensions(plugins) {
+  const sectionOwners = /* @__PURE__ */ new Map();
+  for (const plugin of plugins) {
+    const fail = (message) => {
+      throw new Error(`[talisman-cms] ${plugin.name}: ${message}`);
+    };
+    for (const section of plugin.adminSections || []) {
+      if (typeof section?.id !== "string" || !ADMIN_SECTION_ID.test(section.id)) {
+        fail(`adminSections ids are lowercase slugs (letters, digits and hyphens), not ${JSON.stringify(section?.id)}.`);
+      }
+      if (RESERVED_ADMIN_SECTION_IDS.has(section.id)) fail(`the admin section id "${section.id}" is a built-in admin route.`);
+      const owner = sectionOwners.get(section.id);
+      if (owner) fail(`the admin section "${section.id}" is already registered by ${owner}.`);
+      sectionOwners.set(section.id, plugin.name);
+      if (typeof section.label !== "string" || !section.label.trim()) fail(`the admin section "${section.id}" needs a label.`);
+      if (section.componentPath !== void 0 && (typeof section.componentPath !== "string" || !section.componentPath.trim())) {
+        fail(`the admin section "${section.id}" has an empty componentPath.`);
+      }
+    }
+    for (const panel of plugin.adminEditorPanels || []) {
+      if (typeof panel?.id !== "string" || !panel.id.trim()) fail("every adminEditorPanels entry needs an id.");
+      if (typeof panel.componentPath !== "string" || !panel.componentPath.trim()) fail(`the editor panel "${panel.id}" needs a componentPath.`);
+      if (!EDITOR_PANEL_PLACEMENTS.has(panel.placement)) {
+        fail(`the editor panel "${panel.id}" has placement ${JSON.stringify(panel.placement)}; use before-fields or after-form.`);
+      }
+      for (const [key, list] of [["sections", panel.sections], ["slugs", panel.slugs]]) {
+        if (list !== void 0 && (!Array.isArray(list) || list.some((item) => typeof item !== "string" || !item))) {
+          fail(`the editor panel "${panel.id}" has a ${key} list that is not a list of names.`);
+        }
+      }
+    }
+    for (const describer of plugin.adminEntryDescribers || []) {
+      if (typeof describer?.modulePath !== "string" || !describer.modulePath.trim()) fail("every adminEntryDescribers entry needs a modulePath.");
+    }
+    for (const name of plugin.adminSettings || []) {
+      if (typeof name !== "string" || !ADMIN_SETTING_NAME.test(name)) {
+        fail(`adminSettings names are TALISMAN_* setting names without the prefix, in upper case, not ${JSON.stringify(name)}.`);
+      }
+      if (SECRET_LOOKING_SETTING.test(name) || SECRET_LOOKING_KEY.test(name)) fail(`the setting ${name} looks like a secret and cannot be exposed to the admin page.`);
+    }
+    for (const dir of plugin.adminStyleSources || []) {
+      if (typeof dir !== "string" || !isAbsolute(dir)) fail(`adminStyleSources entries are absolute directories, not ${JSON.stringify(dir)}.`);
+      let isDirectory = false;
+      try {
+        isDirectory = statSync(dir).isDirectory();
+      } catch {
+      }
+      if (!isDirectory) fail(`the adminStyleSources directory ${dir} does not exist.`);
+    }
+  }
+}
 var SECRET_LOOKING_KEY = /secret|token|passw(?:or)?d|api[-_]?key|private[-_]?key|credential/i;
-var SECRET_LOOKING_VALUE = /^(?:re_|sk_|rk_|whsec_|xkeysib-|SG\.)/;
 function withoutSecretLookingValues(value, path, dropped) {
   if (typeof value === "string") {
-    if (!SECRET_LOOKING_VALUE.test(value)) return value;
+    if (!looksLikeSecretValue(value)) return value;
     dropped.push(path);
     return void 0;
   }
@@ -114,6 +175,7 @@ function buildClientConfigModule(options, adminPath) {
     fields: globalConfig.fields
   }));
   const adminLinks = (options.plugins || []).flatMap((plugin) => plugin.adminLinks || []).map(({ section, label, description, href }) => ({ section, label, description, href }));
+  const adminSections = registeredAdminSectionIds(options.plugins || []);
   const dropped = [];
   const safe = withoutSecretLookingValues({
     collections,
@@ -128,20 +190,76 @@ function buildClientConfigModule(options, adminPath) {
     export const adminPath = ${JSON.stringify(adminPath)};
     export const collections = ${JSON.stringify(safe.collections)};
     export const adminLinks = ${JSON.stringify(safe.adminLinks)};
+    export const adminSections = ${JSON.stringify(adminSections)};
     export const globals = ${JSON.stringify(safe.globals)};
     export const uiLibraries = ${JSON.stringify(safe.uiLibraries)};
   `;
+}
+function registeredAdminSectionIds(plugins) {
+  return plugins.flatMap((plugin) => (plugin.adminSections || []).map((section) => section.id));
 }
 function buildServerConfigModule(options, adminPath) {
   return `
     export const adminPath = ${JSON.stringify(adminPath)};
     export const collections = ${JSON.stringify(options.collections || [])};
     export const adminLinks = ${JSON.stringify((options.plugins || []).flatMap((plugin) => plugin.adminLinks || []))};
+    export const adminSections = ${JSON.stringify(registeredAdminSectionIds(options.plugins || []))};
     export const globals = ${JSON.stringify(options.globals || [])};
     export const uiLibraries = ${JSON.stringify(getPluginUiLibraryMetadata(options.plugins || []))};
+    export const adminSettings = ${JSON.stringify([...new Set((options.plugins || []).flatMap((plugin) => plugin.adminSettings || []))])};
     export const publishing = ${JSON.stringify({
     workflowBinding: options.publishing?.workflowBinding || "TALISMAN_PUBLISH_WORKFLOW"
   })};
+  `;
+}
+function buildAdminExtensionsModule(plugins) {
+  const extensions = plugins.flatMap((plugin) => (plugin.adminUi || []).map((ext) => `{
+    path: ${JSON.stringify(ext.path)},
+    label: ${JSON.stringify(ext.label)},
+    section: ${JSON.stringify(ext.section || null)},
+    plugin: ${JSON.stringify(plugin.name)},
+    component: lazy(() => import(${JSON.stringify(ext.componentPath)}))
+  }`));
+  const sections = plugins.flatMap((plugin) => (plugin.adminSections || []).map((section) => `{
+    id: ${JSON.stringify(section.id)},
+    label: ${JSON.stringify(section.label)},
+    description: ${JSON.stringify(section.description ?? null)},
+    icon: ${JSON.stringify(section.icon ?? null)},
+    adminOnly: ${JSON.stringify(section.adminOnly === true)},
+    emptyState: ${JSON.stringify(section.emptyState ?? null)},
+    plugin: ${JSON.stringify(plugin.name)},
+    workspace: ${section.componentPath ? `lazy(() => import(${JSON.stringify(section.componentPath)}))` : "null"}
+  }`));
+  const panels = plugins.flatMap((plugin) => (plugin.adminEditorPanels || []).map((panel) => `{
+    id: ${JSON.stringify(panel.id)},
+    placement: ${JSON.stringify(panel.placement)},
+    sections: ${JSON.stringify(panel.sections ?? null)},
+    slugs: ${JSON.stringify(panel.slugs ?? null)},
+    plugin: ${JSON.stringify(plugin.name)},
+    component: lazy(() => import(${JSON.stringify(panel.componentPath)}))
+  }`));
+  const describerImports = [];
+  const describers = plugins.flatMap((plugin) => (plugin.adminEntryDescribers || []).map((describer) => {
+    const importName = `describer_${describerImports.length}`;
+    describerImports.push(`import * as ${importName} from ${JSON.stringify(describer.modulePath)};`);
+    return `{ plugin: ${JSON.stringify(plugin.name)}, module: ${importName} }`;
+  }));
+  return `
+    import { lazy } from 'react';
+    ${describerImports.join("\n")}
+
+    export const adminExtensions = [
+      ${extensions.join(",\n")}
+    ];
+    export const adminSections = [
+      ${sections.join(",\n")}
+    ];
+    export const adminEditorPanels = [
+      ${panels.join(",\n")}
+    ];
+    export const adminEntryDescribers = [
+      ${describers.join(",\n")}
+    ];
   `;
 }
 function ensureSystemCollections(collections) {
@@ -266,6 +384,51 @@ function buildCollectionHooksVirtualModule(collections) {
     export const collectionHooks = { ${entries.join(",\n")} };
   `;
 }
+var DEFAULT_MIGRATIONS_DIR = "node_modules/.talisman-cms/migrations";
+var WRANGLER_CONFIG_FILES = ["wrangler.toml", "wrangler.json", "wrangler.jsonc"];
+var coreMigrationsDir = fileURLToPath(new URL("../drizzle/", import.meta.url));
+function samePath(a, b) {
+  const real = (path) => existsSync(path) ? realpathSync(path) : resolve(path);
+  return real(a) === real(b);
+}
+function checkWranglerMigrationsDir(projectRoot, outDir, displayDir, pluginsShipMigrations) {
+  const found = [];
+  let pointsAtAssembled = false;
+  for (const fileName of WRANGLER_CONFIG_FILES) {
+    const configPath = join(projectRoot, fileName);
+    if (!existsSync(configPath)) continue;
+    const isToml = fileName.endsWith(".toml");
+    const raw = readFileSync(configPath, "utf8");
+    const text = isToml ? raw.replace(/^\s*#.*$/gm, "") : raw.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const match of text.matchAll(/["']?migrations_dir["']?\s*[=:]\s*(?:"([^"]*)"|'([^']*)')/g)) {
+      const value = match[1] ?? match[2] ?? "";
+      const dir = resolve(projectRoot, value);
+      if (samePath(dir, outDir)) {
+        pointsAtAssembled = true;
+      } else if (pluginsShipMigrations && samePath(dir, coreMigrationsDir)) {
+        const line = isToml ? `migrations_dir = "${displayDir}"` : `"migrations_dir": "${displayDir}"`;
+        throw new Error(`[talisman-cms] ${fileName}: migrations_dir = "${value}" is the core package's own migrations folder, which no longer holds every migration: plugins ship theirs too. Point the D1 binding at the assembled folder, ${line}, and run \`astro sync\` or a build before \`wrangler d1 migrations apply\`.`);
+      }
+      found.push(`${fileName}: migrations_dir = "${value}"`);
+    }
+  }
+  if (found.length && !pointsAtAssembled) {
+    console.warn(`[talisman-cms] No D1 binding's migrations_dir points at the assembled migrations folder (${displayDir}); found ${found.join(", ")}. Migrations of the core and its plugins are applied from that folder.`);
+  }
+}
+function writeProjectMigrations(options, plugins, projectRoot) {
+  const sources = [
+    { name: "talisman-cms", dir: coreMigrationsDir },
+    ...plugins.flatMap((plugin) => plugin.migrations?.dir ? [{ name: plugin.name, dir: plugin.migrations.dir }] : [])
+  ];
+  const configured = options.migrationsDir?.trim() || DEFAULT_MIGRATIONS_DIR;
+  const outDir = resolve(projectRoot, configured);
+  const displayDir = isAbsolute(configured) ? relative(projectRoot, outDir) : configured;
+  checkWranglerMigrationsDir(projectRoot, outDir, displayDir, sources.length > 1);
+  const files = assembleMigrations({ sources, outDir });
+  const counts = sources.map((source) => `${source.name} ${files.filter((file) => file.source === source.name).length}`);
+  console.log(`[talisman-cms] Wrote ${files.length} migrations to ${displayDir} (${counts.join(", ")})`);
+}
 function talismanCms(options) {
   let finalOptions = { ...options };
   if (options?.plugins) {
@@ -301,6 +464,7 @@ function talismanCms(options) {
   const adminPath = normalizeAdminPath(finalOptions?.adminPath);
   const adminPathPrefix = adminPath === "/" ? "" : adminPath;
   const protectedPluginRoutes = collectProtectedPluginRoutes(finalOptions.plugins, adminPath, adminPathPrefix);
+  validateAdminExtensions(finalOptions.plugins);
   const adminRoutePath = fileURLToPath(new URL("../src/routes/admin.astro", import.meta.url));
   const apiRoutePath = fileURLToPath(new URL("../src/routes/api.ts", import.meta.url));
   const apiAuthSessionRoutePath = fileURLToPath(new URL("../src/routes/api/auth/session.ts", import.meta.url));
@@ -319,6 +483,7 @@ function talismanCms(options) {
     hooks: {
       "astro:config:setup": ({ injectRoute, updateConfig, addDevToolbarApp, addMiddleware, command, config }) => {
         assertDevAuthAllowed(finalOptions.auth, command, config?.server?.host);
+        if (config?.root) writeProjectMigrations(finalOptions, finalOptions.plugins || [], fileURLToPath(config.root));
         console.log("[talisman-cms] Injecting admin route from:", adminRoutePath);
         let toolbarAppPath = fileURLToPath(new URL("./toolbar/app.js", import.meta.url));
         if (!existsSync(toolbarAppPath)) {
@@ -416,6 +581,8 @@ function talismanCms(options) {
             }
           }
         }
+        const adminStylesheetPath = fileURLToPath(new URL("../ui/globals.css", import.meta.url));
+        const adminStyleSources = [...new Set((finalOptions.plugins || []).flatMap((plugin) => plugin.adminStyleSources || []))];
         updateConfig({
           vite: {
             resolve: {
@@ -567,24 +734,18 @@ function talismanCms(options) {
                 },
                 load(id) {
                   if (id === "\0virtual:talisman-cms/admin-extensions") {
-                    const extensions = (finalOptions?.plugins || []).flatMap(
-                      (plugin) => (plugin.adminUi || []).map((ext) => ({ ...ext, plugin: plugin.name }))
-                    );
-                    const configExports = extensions.map((ext) => `{
-                      path: ${JSON.stringify(ext.path)},
-                      label: ${JSON.stringify(ext.label)},
-                      section: ${JSON.stringify(ext.section || null)},
-                      plugin: ${JSON.stringify(ext.plugin)},
-                      component: lazy(() => import(${JSON.stringify(ext.componentPath)}))
-                    }`).join(",\n");
-                    return `
-                      import { lazy } from 'react';
-
-                      export const adminExtensions = [
-                        ${configExports}
-                      ];
-                    `;
+                    return buildAdminExtensionsModule(finalOptions?.plugins || []);
                   }
+                }
+              },
+              {
+                name: "vite-plugin-talisman-cms-admin-styles",
+                load(id) {
+                  if (adminStyleSources.length === 0 || id.split("?")[0] !== adminStylesheetPath) return;
+                  const sources = adminStyleSources.map((dir) => `@source ${JSON.stringify(dir)};`).join("\n");
+                  return `${readFileSync(adminStylesheetPath, "utf8")}
+${sources}
+`;
                 }
               }
             ],

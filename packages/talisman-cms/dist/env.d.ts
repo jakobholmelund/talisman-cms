@@ -9,7 +9,9 @@ type EnvSource = object | null | undefined;
  * booleans are converted (`500` reads as "500"); blank values and other types count as unset.
  */
 declare function readSetting(env: EnvSource, name: string): string | undefined;
+/** True for a value that reads like an API key or signing secret, which never belongs in a page or a browser bundle. */
+declare function looksLikeSecretValue(value: unknown): boolean;
 /** The `TALISMAN_<name>` Worker binding, else `GALAXY_<name>`. Missing, null and blank values count as unset. */
 declare function readBinding<T = unknown>(env: EnvSource, name: string): T | undefined;
 
-export { readBinding, readSetting };
+export { looksLikeSecretValue, readBinding, readSetting };

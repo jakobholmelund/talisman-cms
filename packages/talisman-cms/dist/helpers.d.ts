@@ -1,4 +1,4 @@
-import { R as RelationReference, B as BlockDefinition } from './types-1wLQqVHz.js';
+import { R as RelationReference, B as BlockDefinition } from './types-D6sn2KlA.js';
 import './actor-BAnSg_qp.js';
 import './types-B9Ys5hZL.js';
 import 'astro';

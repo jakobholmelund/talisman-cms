@@ -2,7 +2,7 @@ import "../chunk-MLKGABMK.js";
 
 // src/toolbar/app.ts
 import { defineToolbarApp } from "astro/toolbar";
-import { adminPath, collections, globals, uiLibraries } from "virtual:talisman-cms/config";
+import { adminPath, adminSections, collections, globals, uiLibraries } from "virtual:talisman-cms/config";
 var adminHome = adminPath || "/admin";
 var adminPrefix = adminHome === "/" ? "" : adminHome;
 function escapeHtml(value) {
@@ -10,8 +10,8 @@ function escapeHtml(value) {
 }
 function collectionHref(collection) {
   if (collection.slug === "media") return `${adminPrefix}/media`;
-  const commerce = collection.adminSection === "commerce" || !collection.adminSection && (collection.nativeSchemaMapping?.schemaPath === "@talisman-cms/plugin-ecommerce/schema" || collection.slug.startsWith("_ecommerce_"));
-  return `${adminPrefix}/${commerce ? "commerce" : "collections"}/${encodeURIComponent(collection.slug)}`;
+  const section = collection.adminSection && adminSections.includes(collection.adminSection) ? collection.adminSection : "collections";
+  return `${adminPrefix}/${encodeURIComponent(section)}/${encodeURIComponent(collection.slug)}`;
 }
 function chipLinks(items, empty) {
   if (!items.length) return `<span class="talisman-empty">${escapeHtml(empty)}</span>`;

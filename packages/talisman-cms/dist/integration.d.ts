@@ -1,8 +1,8 @@
 import { AstroIntegration } from 'astro';
 import { T as TalismanAuthAdapter } from './types-B9Ys5hZL.js';
 import { E as EmailRuntimeDescriptor } from './types-CqOBvOgc.js';
-import { C as CollectionConfig, G as GlobalConfig, P as Plugin } from './types-1wLQqVHz.js';
-export { B as BlockDefinition, a as CollectionHookArgs, b as CollectionHooks, c as ComponentDefinition, d as ComponentSlotDefinition, F as FieldDefinition, e as FieldType, f as RuntimeCollectionHooks, U as UiComponentPresetDefinition, g as UiLibraryBlockAdapter, h as UiLibraryComponentAdapter, i as UiLibraryDefinition } from './types-1wLQqVHz.js';
+import { C as CollectionConfig, G as GlobalConfig, P as Plugin } from './types-D6sn2KlA.js';
+export { A as AdminEditorPanelDefinition, a as AdminEntryDescriberDefinition, b as AdminSection, c as AdminSectionDefinition, B as BlockDefinition, d as CollectionHookArgs, e as CollectionHooks, f as ComponentDefinition, g as ComponentSlotDefinition, F as FieldDefinition, h as FieldType, i as RuntimeCollectionHooks, U as UiComponentPresetDefinition, j as UiLibraryBlockAdapter, k as UiLibraryComponentAdapter, l as UiLibraryDefinition } from './types-D6sn2KlA.js';
 export { A as Actor } from './actor-BAnSg_qp.js';
 
 interface TalismanCmsOptions {
@@ -34,6 +34,12 @@ interface TalismanCmsOptions {
      * Without it, email goes through the `[[send_email]]` binding named `EMAIL`.
      */
     email?: EmailRuntimeDescriptor;
+    /**
+     * The folder, relative to the project root, into which the core's and every plugin's D1 migrations
+     * are copied on each config setup. Point the `DB` binding's `migrations_dir` at it.
+     * @default 'node_modules/.talisman-cms/migrations'
+     */
+    migrationsDir?: string;
     /**
      * Optional Cloudflare Workflow binding used for publish/archive transitions.
      */
