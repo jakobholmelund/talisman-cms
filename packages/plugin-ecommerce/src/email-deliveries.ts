@@ -1,7 +1,9 @@
-import type { TalismanEnv } from 'talisman-cms/client';
+import { and, eq, isNull, lte, or, sql } from 'drizzle-orm';
+import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
 import { isEmailDeliveryError, parseAddress, resolveEmailProvider, sendEmail, type EmailProvider } from 'talisman-cms/email';
 import { readSetting } from 'talisman-cms/env';
 import { emailLink, type CommerceEmailMessage, type CommerceEmailStore, type CommerceEmailTemplates } from './emails';
+import { emailDeliveries } from './schema';
 
 /**
  * Order confirmations, shipment notices and gift card claim emails go through `_ecommerce_email_deliveries`
@@ -73,6 +75,14 @@ export type CommerceEmailComposer = (env: TalismanEnv, subjectId: string, setup:
 export type CommerceEmailResult = { id: string; status: string; error?: string };
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
+/** A time in Unix seconds as the schema's timestamp columns take it. */
+const at = (seconds: number) => new Date(seconds * 1000);
+/** The email of this kind and subject, while it is still pending. */
+const pendingEmail = (kind: CommerceEmailKind, subjectId: string) => and(eq(emailDeliveries.kind, kind),
+  eq(emailDeliveries.subjectId, subjectId), eq(emailDeliveries.status, 'pending'));
+/** No Worker holds the email, or the lease it took had run out at `now`. */
+const unclaimedAt = (now: number) => or(isNull(emailDeliveries.claimedAt),
+  lte(emailDeliveries.claimedAt, at(now - COMMERCE_EMAIL_LEASE_SECONDS)));
 
 function originOf(value: string | undefined) {
   try {
@@ -243,12 +253,12 @@ export function commerceEmailHeld(kind: CommerceEmailKind, subjectId: string, st
  * null when no email of this kind and subject is pending, or 'busy' while a Worker is sending it.
  */
 export async function holdCommerceEmail(env: TalismanEnv, kind: CommerceEmailKind, subjectId: string, now: number) {
-  const held = await env.DB.prepare(`UPDATE _ecommerce_email_deliveries SET claimed_at = ?
-    WHERE kind = ? AND subject_id = ? AND status = 'pending' AND (claimed_at IS NULL OR claimed_at <= ?)
-    RETURNING id`).bind(now, kind, subjectId, now - COMMERCE_EMAIL_LEASE_SECONDS).first<{ id: string }>();
+  const db = createDbClient(env);
+  const [held] = await db.update(emailDeliveries).set({ claimedAt: at(now) })
+    .where(and(pendingEmail(kind, subjectId), unclaimedAt(now))).returning({ id: emailDeliveries.id });
   if (held) return now;
-  const pending = await env.DB.prepare(`SELECT id FROM _ecommerce_email_deliveries
-    WHERE kind = ? AND subject_id = ? AND status = 'pending'`).bind(kind, subjectId).first<{ id: string }>();
+  const pending = await db.select({ id: emailDeliveries.id }).from(emailDeliveries)
+    .where(pendingEmail(kind, subjectId)).get();
   return pending ? 'busy' as const : null;
 }
 
@@ -293,35 +303,35 @@ export async function runCommerceEmailDelivery(env: TalismanEnv, kind: CommerceE
     const now = options.now ?? nowSeconds();
     const setup = options.setup ?? await commerceEmailSetup(env);
     const missing = missingEmailSettings(setup, kind);
+    const db = createDbClient(env);
     if (missing.length) {
       // Nothing is claimed or counted: the email waits until email is configured, up to its maximum age.
-      await env.DB.prepare(`UPDATE _ecommerce_email_deliveries SET last_error = 'not_configured'
-        WHERE kind = ? AND subject_id = ? AND status = 'pending'`).bind(kind, subjectId).run();
+      await db.update(emailDeliveries).set({ lastError: 'not_configured' }).where(pendingEmail(kind, subjectId));
       return { id, status: 'error', error: `${label} waits: email needs ${missing.join(', ')}` };
     }
-    const claimed = await env.DB.prepare(`UPDATE _ecommerce_email_deliveries SET claimed_at = ?, attempts = attempts + 1
-      WHERE kind = ? AND subject_id = ? AND status = 'pending' AND next_attempt_at <= ?
-        AND (claimed_at IS NULL OR claimed_at <= ?)
-      RETURNING id, attempts`)
-      .bind(now, kind, subjectId, now, now - COMMERCE_EMAIL_LEASE_SECONDS).first<{ id: string; attempts: number }>();
+    const [claimed] = await db.update(emailDeliveries)
+      .set({ claimedAt: at(now), attempts: sql`${emailDeliveries.attempts} + 1` })
+      .where(and(pendingEmail(kind, subjectId), lte(emailDeliveries.nextAttemptAt, at(now)), unclaimedAt(now)))
+      .returning({ id: emailDeliveries.id, attempts: emailDeliveries.attempts });
     if (!claimed) return null;
     // Only the Worker holding the claim records the outcome; one whose lease was taken over records
     // nothing and reports nothing, since the Worker that holds the email now does both.
-    const settle = async (assignments: string, ...params: unknown[]) => {
-      const { meta } = await env.DB.prepare(`UPDATE _ecommerce_email_deliveries
-        SET ${assignments}, claimed_at = NULL WHERE id = ? AND claimed_at = ?`).bind(...params, claimed.id, now).run();
+    type Outcome = Partial<Pick<typeof emailDeliveries.$inferInsert, 'status' | 'lastError' | 'nextAttemptAt' | 'sentAt'>>;
+    const settle = async (outcome: Outcome) => {
+      const { meta } = await db.update(emailDeliveries).set({ ...outcome, claimedAt: null })
+        .where(and(eq(emailDeliveries.id, claimed.id), eq(emailDeliveries.claimedAt, at(now)))).run();
       return Number(meta?.changes ?? 0) > 0;
     };
     const recordFailure = async (code: string): Promise<CommerceEmailResult | null> => {
       // A suppressed address stays suppressed; anything else may pass on a later attempt.
       if (code === 'recipient_suppressed') {
-        return await settle(`status = 'failed', last_error = ?`, code) ? { id, status: 'email_undeliverable', error: code } : null;
+        return await settle({ status: 'failed', lastError: code }) ? { id, status: 'email_undeliverable', error: code } : null;
       }
       if (claimed.attempts >= COMMERCE_EMAIL_MAX_ATTEMPTS) {
-        return await settle(`status = 'failed', last_error = ?`, code)
+        return await settle({ status: 'failed', lastError: code })
           ? { id, status: 'error', error: `${label} was given up after ${claimed.attempts} attempts (${code})` } : null;
       }
-      if (!await settle(`last_error = ?, next_attempt_at = ?`, code, now + commerceEmailRetryDelay(claimed.attempts))) return null;
+      if (!await settle({ lastError: code, nextAttemptAt: at(now + commerceEmailRetryDelay(claimed.attempts)) })) return null;
       return CONFIGURATION_ERRORS.has(code)
         ? { id, status: 'error', error: `${label} could not be sent (${code}); it is retried` }
         : { id, status: 'email_retry', error: code };
@@ -335,11 +345,11 @@ export async function runCommerceEmailDelivery(env: TalismanEnv, kind: CommerceE
       return await recordFailure('compose_failed');
     }
     if ('cancel' in composed) {
-      return await settle(`status = 'cancelled', last_error = ?`, composed.cancel)
+      return await settle({ status: 'cancelled', lastError: composed.cancel })
         ? { id, status: 'email_cancelled', error: composed.cancel } : null;
     }
     if ('fail' in composed) {
-      return await settle(`status = 'failed', last_error = ?`, composed.fail)
+      return await settle({ status: 'failed', lastError: composed.fail })
         ? { id, status: 'email_undeliverable', error: composed.fail } : null;
     }
     try {
@@ -349,7 +359,7 @@ export async function runCommerceEmailDelivery(env: TalismanEnv, kind: CommerceE
       return await recordFailure(emailErrorCode(error));
     }
     // The email went out, so this is reported even when a Worker took it over after the lease ran out.
-    await settle(`status = 'sent', sent_at = ?, last_error = NULL`, now);
+    await settle({ status: 'sent', sentAt: at(now), lastError: null });
     return { id, status: 'email_sent' };
   } catch (error) {
     return { id, status: 'error', error: `${label} could not be recorded (${error instanceof Error ? error.name : 'error'})` };

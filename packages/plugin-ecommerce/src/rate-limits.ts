@@ -1,4 +1,6 @@
-import type { TalismanEnv } from 'talisman-cms/client';
+import { and, eq, gt } from 'drizzle-orm';
+import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
+import { rateLimits } from './schema';
 
 /**
  * Request counters for shopper-facing routes. Every counter is a row in `_ecommerce_rate_limits`
@@ -65,8 +67,8 @@ export async function countRequest(env: TalismanEnv, key: string, now: number, w
  * key was never used.
  */
 export async function peekRequestCount(env: TalismanEnv, key: string, now: number, windowSeconds: number) {
-  const row = await env.DB.prepare(`SELECT count FROM _ecommerce_rate_limits WHERE key = ? AND window_start > ?`)
-    .bind(key, now - windowSeconds).first<{ count: number }>();
+  const row = await createDbClient(env).select({ count: rateLimits.count }).from(rateLimits)
+    .where(and(eq(rateLimits.key, key), gt(rateLimits.windowStart, now - windowSeconds))).get();
   return row?.count ?? 0;
 }
 

@@ -194,8 +194,8 @@ async function closePurchaseDispute(env: TalismanEnv, purchase: DisputedPurchase
       ...giftCardPurchaseHoldStatements(env, purchase.id, now),
       ...giftCardPurchaseChargebackStatements(env, purchase.id, now),
     ]);
-    const current = await env.DB.prepare(`SELECT status FROM _ecommerce_gift_card_purchases WHERE id = ?`)
-      .bind(purchase.id).first<{ status: string }>();
+    const current = await createDbClient(env).select({ status: giftCardPurchases.status }).from(giftCardPurchases)
+      .where(eq(giftCardPurchases.id, purchase.id)).get();
     if (current?.status === 'review') {
       throw new WebhookRetryLaterError('A checkout in progress holds value on the disputed purchase\'s card; '
         + 'the lost dispute is applied once it completes or expires');

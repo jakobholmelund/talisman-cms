@@ -1,6 +1,6 @@
 import { TalismanEnv, createDbClient } from 'talisman-cms/client';
 import * as schema from './schema';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 
 import type { PaymentProviderAdapter, PaymentReferences, ValidatedWebhookEvent } from './payments';
 import { findReferralCode, getReferralPolicy, referralReversalStatements, releaseReferralAwards } from './referrals';
@@ -51,6 +51,9 @@ const RESERVATION_ROWS = `SELECT json_extract(value, '$.target') AS target, json
 
 /** Most ids bound in one statement: D1 refuses a statement with more than 100 parameters. */
 const QUERY_ID_CHUNK = 90;
+
+/** A time in Unix seconds as the schema's timestamp columns take it. */
+const at = (seconds: number) => new Date(seconds * 1000);
 
 type CatalogProduct = {
   id: string; name: string; status: string; type: string;
@@ -748,8 +751,8 @@ export function bindCommerceApi(options: CommerceApiOptions) {
         const target = choice === 'account' && owned ? owned : guest?.items.length ? guest : owned ?? guest;
         if (target) {
           if (!guest) {
-            await env.DB.prepare(`UPDATE _ecommerce_carts SET session_token = NULL
-              WHERE session_token = ? AND closed = 1`).bind(sessionToken).run();
+            await db.update(schema.carts).set({ sessionToken: null })
+              .where(and(eq(schema.carts.sessionToken, sessionToken), eq(schema.carts.closed, true)));
           }
           const updated = await db.update(schema.carts)
             .set({ userId, sessionToken, updatedAt: new Date(), version: sql`${schema.carts.version} + 1` })
@@ -773,11 +776,12 @@ export function bindCommerceApi(options: CommerceApiOptions) {
            if (!userId) {
              // A browser token outlives a shopper session after expiry or sign-out.
              // Keep the account basket, but stop treating that token as guest access.
-             await env.DB.prepare(`UPDATE _ecommerce_carts SET session_token = NULL
-               WHERE session_token = ? AND closed = 0 AND user_id IS NOT NULL`).bind(sessionToken).run();
+             await db.update(schema.carts).set({ sessionToken: null })
+               .where(and(eq(schema.carts.sessionToken, sessionToken), eq(schema.carts.closed, false),
+                 isNotNull(schema.carts.userId)));
            }
-           await env.DB.prepare(`UPDATE _ecommerce_carts SET session_token = NULL
-             WHERE session_token = ? AND closed = 1`).bind(sessionToken).run();
+           await db.update(schema.carts).set({ sessionToken: null })
+             .where(and(eq(schema.carts.sessionToken, sessionToken), eq(schema.carts.closed, true)));
            const cartId = `cart_${crypto.randomUUID()}`;
            const now = new Date();
            await db.insert(schema.carts).values({
@@ -1130,12 +1134,13 @@ export function bindCommerceApi(options: CommerceApiOptions) {
          const now = new Date();
          const timestamp = Math.floor(now.getTime() / 1000);
          const preparationLock = `preparing:${orderId}`;
-         const snapshot = JSON.stringify(cart.items);
-         const lock = await env.DB.prepare(`UPDATE _ecommerce_carts
-           SET checkout_session_id = ?, updated_at = ?, version = version + 1
-           WHERE id = ? AND closed = 0 AND checkout_session_id IS NULL AND items = ? AND version = ? RETURNING id`)
-           .bind(preparationLock, timestamp, cartId, snapshot, cart.version).all();
-         if (!lock.results?.length) throw new Error('Checkout already started for this cart');
+         // The lines are compared as stored, so a basket changed since it was read is not locked.
+         const lock = await db.update(schema.carts)
+           .set({ checkoutSessionId: preparationLock, updatedAt: now, version: sql`${schema.carts.version} + 1` })
+           .where(and(eq(schema.carts.id, cartId), eq(schema.carts.closed, false), isNull(schema.carts.checkoutSessionId),
+             eq(schema.carts.items, cart.items), eq(schema.carts.version, cart.version)))
+           .returning({ id: schema.carts.id });
+         if (!lock.length) throw new Error('Checkout already started for this cart');
 
          let session: Awaited<ReturnType<typeof defaultAdapter.createCheckoutSession>> | undefined;
          let committed = false;
@@ -1277,8 +1282,8 @@ export function bindCommerceApi(options: CommerceApiOptions) {
            } finally {
              if (providerDiscount) await discardCheckoutDiscount(defaultAdapter, orderId);
            }
-           await env.DB.prepare(`UPDATE _ecommerce_carts SET checkout_session_id = NULL
-             WHERE id = ? AND checkout_session_id = ?`).bind(cartId, preparationLock).run();
+           await db.update(schema.carts).set({ checkoutSessionId: null })
+             .where(and(eq(schema.carts.id, cartId), eq(schema.carts.checkoutSessionId, preparationLock)));
            throw error;
          }
       },
@@ -1583,8 +1588,11 @@ export async function reconcileCommerce(options: CommerceApiOptions, limit = 10)
   const { env } = options;
   const api = bindCommerceApi(options);
   const now = Math.floor(Date.now() / 1000);
-  // ';' follows ':', so the range holds exactly the ids that start with 'preparing:', read from the
-  // unique index on checkout_session_id. LIKE cannot use that index: it ignores case.
+  const db = createDbClient(env);
+  // The queue selections below stay raw SQL: the tests pin their text and query plans, and the order
+  // queries need their status literal for the partial index of migration 0029. ';' follows ':', so the
+  // range holds exactly the ids that start with 'preparing:', read from the unique index on
+  // checkout_session_id. LIKE cannot use that index: it ignores case.
   const preparations = await env.DB.prepare(`SELECT id FROM _ecommerce_carts
     WHERE checkout_session_id >= 'preparing:' AND checkout_session_id < 'preparing;' AND updated_at < ?
     ORDER BY updated_at LIMIT ?`).bind(now - 35 * 60, count).all<{ id: string }>();
@@ -1665,10 +1673,9 @@ export async function reconcileCommerce(options: CommerceApiOptions, limit = 10)
     results.push({ id: 'commerce_emails', status: 'error',
       error: error instanceof Error ? error.message : 'Email delivery failed' });
   }
-  await env.DB.prepare(`DELETE FROM _ecommerce_customer_sessions
-    WHERE (purpose = 'email_challenge' AND expires_at < ?)
-      OR (purpose = 'session' AND expires_at < ?)`)
-    .bind(now - 24 * 60 * 60, now - 30 * 24 * 60 * 60).run();
+  await db.delete(schema.customerSessions).where(or(
+    and(eq(schema.customerSessions.purpose, 'email_challenge'), lt(schema.customerSessions.expiresAt, at(now - 24 * 60 * 60))),
+    and(eq(schema.customerSessions.purpose, 'session'), lt(schema.customerSessions.expiresAt, at(now - 30 * 24 * 60 * 60)))));
   return results;
 }
 

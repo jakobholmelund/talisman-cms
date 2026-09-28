@@ -1,10 +1,12 @@
-import type { TalismanEnv } from 'talisman-cms/client';
+import { eq } from 'drizzle-orm';
+import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
 import { orderConfirmationEmail, shipmentEmail, type OrderConfirmationEmail, type OrderEmailAddress } from './emails';
 import { COMMERCE_EMAIL_LEASE_SECONDS, COMMERCE_EMAIL_MAX_AGE_SECONDS, applyEmailTemplate, bareEmailAddress,
   commerceEmailSetup, missingEmailSettings, runCommerceEmailDelivery, sendCommerceEmailNow, waitingEmailsResult,
   type CommerceEmailComposer, type CommerceEmailKind, type CommerceEmailResult } from './email-deliveries';
 import { composeGiftCardClaimEmail } from './gift-cards';
 import { ORDER_AMOUNT_COLUMNS, describeOrderItems, orderAmounts, type OrderAmountsRow } from './order-items';
+import { orders } from './schema';
 
 type OrderRow = OrderAmountsRow & {
   id: string; status: string; payment_provider: string | null; customer_email: string | null; currency: string;
@@ -38,6 +40,7 @@ function parseJson<T>(value: string | null, fallback: T): T {
 
 /** The order confirmation: items with their current catalog names, the labelled amounts and the shipping address. */
 const composeOrderConfirmation: CommerceEmailComposer = async (env, orderId, setup) => {
+  // Raw SQL: reads the column list orderAmounts shares with the orders queue, whose query stays raw.
   const order = await env.DB.prepare(`SELECT id, status, payment_provider, customer_email, currency, items,
       shipping_address, ${ORDER_AMOUNT_COLUMNS}, created_at
     FROM _ecommerce_orders WHERE id = ?`).bind(orderId).first<OrderRow>();
@@ -84,15 +87,15 @@ function shipmentComposer(update: boolean): CommerceEmailComposer {
     if (index < 0) return { cancel: 'not_found' };
     const shipment = rows[index];
     const current = rows.filter((row) => row.corrects_id === shipment.id).at(-1) ?? shipment;
-    const order = await env.DB.prepare(`SELECT id, customer_email, payment_provider, created_at FROM _ecommerce_orders
-      WHERE id = ?`).bind(shipment.order_id)
-      .first<{ id: string; customer_email: string | null; payment_provider: string | null; created_at: number }>();
-    if (!order || (order.payment_provider ?? 'stripe') === 'admin_test') return { cancel: 'not_found' };
-    const to = bareEmailAddress(order.customer_email);
+    const order = await createDbClient(env).select({ id: orders.id, customerEmail: orders.customerEmail,
+      paymentProvider: orders.paymentProvider, createdAt: orders.createdAt }).from(orders)
+      .where(eq(orders.id, shipment.order_id)).get();
+    if (!order || (order.paymentProvider ?? 'stripe') === 'admin_test') return { cancel: 'not_found' };
+    const to = bareEmailAddress(order.customerEmail);
     if (!to) return { fail: 'invalid_recipient' };
     const email = {
       store: setup.store,
-      order: { id: order.id, placedAt: new Date(order.created_at * 1000) },
+      order: { id: order.id, placedAt: order.createdAt },
       shipment: {
         id: shipment.id,
         shippedAt: new Date(shipment.created_at * 1000),

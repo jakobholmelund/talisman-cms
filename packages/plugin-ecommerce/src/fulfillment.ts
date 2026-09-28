@@ -1,8 +1,10 @@
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import type { TalismanEnv } from 'talisman-cms/client';
+import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
 import { ORDER_AMOUNT_COLUMNS, chunked, describeOrderItems, orderAmounts, placeholders } from './order-items';
 import { deliverCommerceEmail } from './commerce-emails';
 import { COMMERCE_EMAIL_LEASE_SECONDS, commerceEmailStatement } from './email-deliveries';
+import { orders as ordersTable } from './schema';
 
 /** Orders per page of the admin orders queue unless a request asks for another size. */
 export const ORDERS_PAGE_SIZE = 50;
@@ -238,12 +240,12 @@ function refusal(cause: unknown, message: string) {
 export async function fulfillCommerceOrder(env: TalismanEnv, actor: string, input: unknown) {
   const values = parseInput(shipmentSchema, input);
   if (!actor.trim()) throw new Error('Administrator identity is required');
-  const order = await env.DB.prepare(`SELECT status, fulfillment_status, payment_provider
-    FROM _ecommerce_orders WHERE id = ?`).bind(values.orderId)
-    .first<{ status: string; fulfillment_status: FulfillmentStatus; payment_provider: string | null }>();
+  const db = createDbClient(env);
+  const order = await db.select({ status: ordersTable.status, fulfillmentStatus: ordersTable.fulfillmentStatus,
+    paymentProvider: ordersTable.paymentProvider }).from(ordersTable).where(eq(ordersTable.id, values.orderId)).get();
   if (!order) throw new Error('Order not found');
-  if ((order.payment_provider ?? 'stripe') === 'admin_test') throw new Error('Admin test orders cannot be fulfilled');
-  if (order.fulfillment_status === 'fulfilled') throw new Error('Order has already shipped in full');
+  if ((order.paymentProvider ?? 'stripe') === 'admin_test') throw new Error('Admin test orders cannot be fulfilled');
+  if (order.fulfillmentStatus === 'fulfilled') throw new Error('Order has already shipped in full');
   if (!SHIPPABLE_STATUSES.includes(order.status)) {
     throw new Error(`A ${order.status.replaceAll('_', ' ')} order cannot ship`);
   }
@@ -263,10 +265,10 @@ export async function fulfillCommerceOrder(env: TalismanEnv, actor: string, inpu
     throw refusal(cause, 'Order is not ready for fulfillment');
   }
   await deliverCommerceEmail(env, 'shipment', id);
-  const current = await env.DB.prepare(`SELECT status, fulfillment_status FROM _ecommerce_orders WHERE id = ?`)
-    .bind(values.orderId).first<{ status: string; fulfillment_status: FulfillmentStatus }>();
+  const current = await db.select({ status: ordersTable.status, fulfillmentStatus: ordersTable.fulfillmentStatus })
+    .from(ordersTable).where(eq(ordersTable.id, values.orderId)).get();
   return { fulfillmentId: id, orderId: values.orderId, status: current?.status,
-    fulfillmentStatus: current?.fulfillment_status };
+    fulfillmentStatus: current?.fulfillmentStatus };
 }
 
 /**

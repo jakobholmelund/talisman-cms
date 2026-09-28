@@ -1,7 +1,9 @@
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import type { TalismanEnv } from 'talisman-cms/client';
+import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
 import { INVENTORY_COLUMNS } from './inventory';
 import { chunked, placeholders } from './order-items';
+import { orders as ordersTable } from './schema';
 
 /** Invalid input to an order adjustment. The admin route answers it with 400. */
 export class OrderAdjustmentInputError extends Error {
@@ -132,8 +134,8 @@ async function loadReservations(env: TalismanEnv, orderIds: string[]) {
 }
 
 /** Order statuses whose stock can go back: every row of a refunded order, chosen rows of a partly refunded one. */
-function restockMode(order: { status: string; payment_provider: string | null }) {
-  if ((order.payment_provider ?? 'stripe') === 'admin_test') return null;
+function restockMode(order: { status: string; paymentProvider: string | null }) {
+  if ((order.paymentProvider ?? 'stripe') === 'admin_test') return null;
   return order.status === 'refunded' ? 'all' as const : order.status === 'partially_refunded' ? 'choose' as const : null;
 }
 
@@ -169,7 +171,7 @@ export async function getOrderAdjustmentsAdmin(env: TalismanEnv, input: unknown)
       orderId: order.id,
       status: order.status,
       fulfillmentStatus: order.fulfillment_status,
-      restock: restockMode(order),
+      restock: restockMode({ status: order.status, paymentProvider: order.payment_provider }),
       disputes: disputes.filter((dispute) => dispute.order_id === order.id).map((dispute): OrderDispute => ({
         id: dispute.id, status: dispute.status, open: dispute.closed_at === null, reason: dispute.reason,
         amountCents: dispute.amount_cents, currency: dispute.currency, statusBefore: dispute.status_before,
@@ -210,10 +212,10 @@ function refusal(status: string) {
 export async function restockOrder(env: TalismanEnv, actor: string, input: unknown) {
   const values = parseInput(restockSchema, input);
   if (!actor.trim()) throw new Error('Administrator identity is required');
-  const order = await env.DB.prepare(`SELECT status, payment_provider FROM _ecommerce_orders WHERE id = ?`)
-    .bind(values.orderId).first<{ status: string; payment_provider: string | null }>();
+  const order = await createDbClient(env).select({ status: ordersTable.status, paymentProvider: ordersTable.paymentProvider })
+    .from(ordersTable).where(eq(ordersTable.id, values.orderId)).get();
   if (!order) throw new OrderAdjustmentRefusedError('Order not found');
-  if ((order.payment_provider ?? 'stripe') === 'admin_test') {
+  if ((order.paymentProvider ?? 'stripe') === 'admin_test') {
     throw new OrderAdjustmentRefusedError('Admin test orders take no stock to return');
   }
   const mode = restockMode(order);

@@ -1,9 +1,11 @@
 import { z } from 'zod';
-import type { TalismanEnv } from 'talisman-cms/client';
+import { eq } from 'drizzle-orm';
+import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
 import { bindCommerceApi, type CommerceApiOptions } from './api';
 import { RECONCILE_FAILURE_MESSAGES, RECONCILE_TABLES, completedCheckoutReturn, decisionInsert, isMissingSessionError,
   isOtherStripeModeSession, isProviderError, reconcileFailure, uncheckedSessionRefusal, type PaymentReturn, type ReconcileDecision,
   type ReconcileFailureCode, type ReconcileKind } from './reconcile';
+import { reconcileDecisions } from './schema';
 import { runtimeStripeMode, stripeSessionMode } from './stripe-mode';
 
 /** Invalid input to a review action. The admin route answers it with 400. */
@@ -157,8 +159,8 @@ export async function releaseParkedCommerce(options: CommerceApiOptions, actor: 
     .first<{ session_id: string | null; created_at: number }>();
   if (!row) throw new Error(notParked(kind));
   const otherMode = isOtherStripeModeSession(env, row.session_id);
-  const recorded = () => env.DB.prepare('SELECT payment_returned FROM _ecommerce_reconcile_decisions WHERE id = ?')
-    .bind(decision.id).first<{ payment_returned: PaymentReturn | null }>();
+  const recorded = () => createDbClient(env).select({ paymentReturned: reconcileDecisions.paymentReturned })
+    .from(reconcileDecisions).where(eq(reconcileDecisions.id, decision.id)).get();
   let paymentReturned: PaymentReturn | null = null;
   if (kind === 'order') {
     try {
@@ -170,7 +172,7 @@ export async function releaseParkedCommerce(options: CommerceApiOptions, actor: 
     // session's expiry meanwhile) changed it first.
     const decided = await recorded();
     if (!decided) throw new Error('The order changed while it was being released; reload the list');
-    paymentReturned = decided.payment_returned;
+    paymentReturned = decided.paymentReturned;
   } else {
     if (row.session_id) {
       const stripe = options.paymentAdapters?.find((adapter) => adapter.providerId === 'stripe');

@@ -214,8 +214,8 @@ export async function releaseReferralAwards(options: { env: TalismanEnv; payment
         continue;
       }
       if (dispute !== 'none') {
-        await env.DB.prepare(`UPDATE _ecommerce_referrals SET updated_at = ? WHERE id = ? AND status = 'approved'`)
-          .bind(now, row.id).run();
+        await db.update(referrals).set({ updatedAt: new Date(now * 1000) })
+          .where(and(eq(referrals.id, row.id), eq(referrals.status, 'approved')));
         results.push({ id: row.id, status: 'referral_held' });
         continue;
       }
@@ -240,8 +240,8 @@ export async function releaseReferralAwards(options: { env: TalismanEnv; payment
     } catch (error) {
       results.push({ id: row.id, status: 'error', error: error instanceof Error ? error.message : 'Referral release failed' });
       // Retried after the others, so one failing lookup never holds up the rest.
-      await env.DB.prepare(`UPDATE _ecommerce_referrals SET updated_at = ? WHERE id = ?`)
-        .bind(now, row.id).run().catch(() => undefined);
+      await db.update(referrals).set({ updatedAt: new Date(now * 1000) }).where(eq(referrals.id, row.id))
+        .catch(() => undefined);
     }
   }
   return results;

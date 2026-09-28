@@ -1,10 +1,10 @@
-import { and, eq, gt, isNull } from 'drizzle-orm';
+import { and, count, eq, gt, isNotNull, isNull } from 'drizzle-orm';
 import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
 import { ensureVerifiedEmailIdentity } from 'talisman-cms/auth/identity';
 import { parseAddress } from 'talisman-cms/email';
 import { readSetting } from 'talisman-cms/env';
 import { clientOverLimit, countRequest, peekRequestCount, sha256Hex } from './rate-limits';
-import { customerAccounts, customerSessions, orders } from './schema';
+import { customerAccounts, customerSessions, orders, signInTokens } from './schema';
 import { SHOPPER_SIGN_IN_TURNSTILE_ACTION, readTurnstileSettings } from './turnstile';
 
 export const CUSTOMER_SESSION_COOKIE = 'talisman-customer';
@@ -52,6 +52,8 @@ export class CustomerRequestLimitError extends Error {
 }
 
 const hashToken = sha256Hex;
+/** A time in Unix seconds as the schema's timestamp columns take it. */
+const at = (seconds: number) => new Date(seconds * 1000);
 
 /**
  * The lowercased address, or null. Only a bare address is accepted, checked with the same rule the
@@ -102,8 +104,8 @@ function customerEmailReservedDaily(env: TalismanEnv, dailyLimit: number) {
 
 /** An address with a verified shopper account, or with a purchased order placed under it. */
 async function isExistingCustomer(env: TalismanEnv, email: string) {
-  const verified = await env.DB.prepare(`SELECT 1 AS found FROM _ecommerce_customer_accounts
-    WHERE email_normalized = ? AND email_verified_at IS NOT NULL LIMIT 1`).bind(email).first<{ found: number }>();
+  const verified = await createDbClient(env).select({ id: customerAccounts.id }).from(customerAccounts)
+    .where(and(eq(customerAccounts.emailNormalized, email), isNotNull(customerAccounts.emailVerifiedAt))).get();
   return Boolean(verified) || await hasPurchaseHistory(env, { emails: [email] });
 }
 
@@ -186,9 +188,9 @@ export async function requestCustomerEmailSignIn(env: TalismanEnv, email: string
   if (await clientOverLimit(env, 'shopper-email', sourceIp, { limit: REQUESTS_PER_SOURCE_PER_HOUR, windowSeconds: 3600, now })) {
     return dropped();
   }
-  const recent = await env.DB.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_sign_in_tokens
-    WHERE email_normalized = ? AND created_at > ?`)
-    .bind(normalized, now - ADDRESS_WINDOW_SECONDS).first<{ count: number }>();
+  const recent = await createDbClient(env).select({ count: count() }).from(signInTokens)
+    .where(and(eq(signInTokens.emailNormalized, normalized), gt(signInTokens.createdAt, at(now - ADDRESS_WINDOW_SECONDS))))
+    .get();
   if ((recent?.count ?? 0) >= REQUESTS_PER_ADDRESS) return dropped();
   // The link count above only sees links already written; this counter is updated atomically, so
   // parallel requests for one address are held to the same limit. Its key holds the address's hash.
@@ -220,14 +222,13 @@ async function sendSignInLink(env: TalismanEnv, email: string, now: number,
   linkForToken: (token: string) => string, sendLink: (to: string, link: string) => Promise<void>) {
   const token = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   const tokenHash = await hashToken(token);
-  await env.DB.prepare(`INSERT INTO _ecommerce_sign_in_tokens (token_hash, email_normalized, expires_at, created_at)
-    VALUES (?, ?, ?, ?)`)
-    .bind(tokenHash, email, now + SIGN_IN_LINK_SECONDS, now).run();
+  const db = createDbClient(env);
+  await db.insert(signInTokens)
+    .values({ tokenHash, emailNormalized: email, expiresAt: at(now + SIGN_IN_LINK_SECONDS), createdAt: at(now) });
   try {
     await sendLink(email, linkForToken(token));
   } catch (error) {
-    await env.DB.prepare(`UPDATE _ecommerce_sign_in_tokens SET revoked_at = ? WHERE token_hash = ?`)
-      .bind(Math.floor(Date.now() / 1000), tokenHash).run();
+    await db.update(signInTokens).set({ revokedAt: new Date() }).where(eq(signInTokens.tokenHash, tokenHash));
     throw error;
   }
 }
@@ -244,10 +245,10 @@ export async function previewCustomerEmailSignIn(env: TalismanEnv, token: unknow
     throw new CustomerRequestLimitError();
   }
   if (!isSignInToken(token)) return null;
-  const link = await env.DB.prepare(`SELECT email_normalized FROM _ecommerce_sign_in_tokens
-    WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?`)
-    .bind(await hashToken(token), now).first<{ email_normalized: string }>();
-  const email = normalizeShopperEmail(link?.email_normalized);
+  const link = await createDbClient(env).select({ emailNormalized: signInTokens.emailNormalized }).from(signInTokens)
+    .where(and(eq(signInTokens.tokenHash, await hashToken(token)), isNull(signInTokens.revokedAt),
+      gt(signInTokens.expiresAt, at(now)))).get();
+  const email = normalizeShopperEmail(link?.emailNormalized);
   return email ? maskEmailAddress(email) : null;
 }
 
@@ -258,16 +259,17 @@ export async function previewCustomerEmailSignIn(env: TalismanEnv, token: unknow
 export async function consumeCustomerEmailSignIn(env: TalismanEnv, token: string) {
   if (!isSignInToken(token)) return null;
   const now = Math.floor(Date.now() / 1000);
-  const claimed = await env.DB.prepare(`UPDATE _ecommerce_sign_in_tokens SET revoked_at = ?
-    WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ? RETURNING email_normalized`)
-    .bind(now, await hashToken(token), now).all<{ email_normalized: string }>();
-  const email = normalizeShopperEmail(claimed.results?.[0]?.email_normalized);
-  if (!email) return null;
-  await env.DB.prepare(`INSERT INTO _ecommerce_customer_accounts
-    (id, email, email_normalized, email_verified_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(email_normalized) DO NOTHING`)
-    .bind(`acct_${crypto.randomUUID()}`, email, email, now, now, now).run();
   const db = createDbClient(env);
+  const [claimed] = await db.update(signInTokens).set({ revokedAt: at(now) })
+    .where(and(eq(signInTokens.tokenHash, await hashToken(token)), isNull(signInTokens.revokedAt),
+      gt(signInTokens.expiresAt, at(now))))
+    .returning({ emailNormalized: signInTokens.emailNormalized });
+  const email = normalizeShopperEmail(claimed?.emailNormalized);
+  if (!email) return null;
+  await db.insert(customerAccounts)
+    .values({ id: `acct_${crypto.randomUUID()}`, email, emailNormalized: email, emailVerifiedAt: at(now),
+      createdAt: at(now), updatedAt: at(now) })
+    .onConflictDoNothing({ target: customerAccounts.emailNormalized });
   const account = await db.select().from(customerAccounts)
     .where(eq(customerAccounts.emailNormalized, email)).get();
   if (!account) return null;
