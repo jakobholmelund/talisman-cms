@@ -55,7 +55,7 @@ pnpm exec wrangler d1 migrations apply DB --local   # local development
 pnpm exec wrangler d1 migrations apply DB --remote  # production database
 ```
 
-The plugin needs at least `0030_commerce_order_emails.sql`: shopper account reads fail without `0019`, shopper sign-in fails without `0024`, every order read fails without `0025`, `0026` and `0029`, whose columns the plugin's `orders` table names, gift card reads fail without `0027` and `0029`, order refund and dispute webhooks without `0028`, and payment confirmation, shipments and gift card purchases without `0030`. Run the duplicate checks under [Hosted Stripe checkout](#hosted-stripe-checkout) first when upgrading an existing database. A database that applied `0025` to `0030` from the core's folder before this release has nothing new to apply: the files keep their names. New commerce migrations continue the shared sequence (`0031` next), whichever package adds them.
+The plugin needs at least `0030_commerce_order_emails.sql`: shopper account reads fail without `0019`, shopper sign-in fails without `0024`, every order read fails without `0025`, `0026` and `0029`, whose columns the plugin's `orders` table names, gift card reads fail without `0027` and `0029`, order refund and dispute webhooks without `0028`, and payment confirmation, shipments and gift card purchases without `0030`. Run the duplicate checks under [Hosted Stripe checkout](#hosted-stripe-checkout) first when upgrading an existing database. A database that applied `0025` to `0030` from the core's folder before this release has nothing new to apply: the files keep their names. New commerce migrations continue the shared sequence (`0032` next), whichever package adds them.
 
 ### 4. Worker settings
 

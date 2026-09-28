@@ -21,7 +21,12 @@
 
 ### Admin
 
+- The globals editor sends the version it loaded with every save (`If-Match`). When another editor saved first, the edits stay in the form, a panel says so, and **Load latest version** replaces them with what is stored, after asking. The entry editor publishes and archives from the revision its own save returned instead of re-reading the entry first, so a publish right after a save cannot land on a newer revision someone else saved in between, and one request per publish or archive disappears.
 - Native records with a `name` show it in the editor heading, list rows without a naming field read `<Collection name> <id tail>`, a collection opened under a section it does not belong to shows "Collection Not Found" inside the admin, an unknown top-level path shows "Section Not Found", and editors who open an admin-only section's URL see "Admin access required". The products list and editor use the generic record wording; the product-specific labels and the details/options anchor navigation are gone.
+
+### Globals
+
+- Every global carries a `version` that grows by one with each save; migration `0031_global_versions.sql`, in the core, adds the column with 1 for existing rows. `GET <adminPath>/api/globals/:slug` answers with `version` and an `ETag`, and `POST <adminPath>/api/globals/:slug` takes the loaded version in `If-Match`, bare or quoted: a version that moved on answers HTTP 409 with `{ error, code: "stale_record", version }`, a value that is not a version 400, and a save without the header writes unconditionally, as before. The check and the increment are one statement, so two saves that name the same version cannot both win. `getClient(env).globals.save(slug, data, { expectedVersion })` does the same and throws a `ConflictError` whose `code` is `stale_record` and whose `version` is the stored one; `globals.update` stays as the older name. `ServiceErrorCode` gains `stale_record`, and `ConflictError` takes `{ code, version }`.
 
 ### Authentication and users
 
@@ -32,6 +37,7 @@
 
 ### Ecommerce plugin
 
+- The product editor's **Options & stock** panel loads only the product's variant groups, values, stock and component rows, through the entries API's `where` filter, instead of every row of those tables and the products table; the commerce describer no longer asks the editor to load the product flow for products. A refused read shows as an error rather than an empty product.
 - The plugin's plain reads and writes go through Drizzle, with row types from its schema, instead of raw SQL with hand-written row shapes: sign-in links and rate-limit reads, gift card purchase and claim reads and writes, email delivery claims and outcomes, tax sync bookkeeping, order lookups before a shipment or restock, and basket unlocks and the checkout lock. Raw SQL stays where the query builder cannot express the statement (batches, `INSERT ... SELECT`, subqueries, dynamic tables, the stale-write guards and the selections that need literals for their partial indexes); CLAUDE.md's "Database access" section states the rule. No behaviour changes.
 - `@talisman-cms/plugin-ecommerce/scheduled` is the plugin's scheduled job, registered through `Plugin.scheduled`: on every tick it runs `reconcileCommerce` with `runtimePaymentAdapters(env)` and then `purgeStaleCommerceData`, independently, with the `[Commerce] Checkout reconciliation failed` and `[Commerce] Data retention cleanup failed` log lines, and fails the tick when either failed. A site no longer wires the two functions into its own handler; it exports the handler from `talisman-cms/worker` in its Worker entry (see the plugin README's step 5). The functions stay exported for a handler of your own.
 - The Commerce admin reads the configured `productsCollectionSlug` from `virtual:talisman-cms/ecommerce-admin`; record labels, the editor's related-record loading, the model guide, the flow summary and the workspace groups followed the slug `products` before. An `adminPages` override may be a path relative to the admin path or an absolute path on the site; a full URL now fails the build.

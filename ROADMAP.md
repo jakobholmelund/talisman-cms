@@ -514,7 +514,7 @@ The admin UX overhaul and the SSO redesign can run in parallel. The admin produc
 
 #### Return concurrency tokens from every write, including globals
 
-**Status:** partly done with the service layer merge: create, PUT, publish, archive and restore answer with `latestRevisionId`, and the SDK's `status` option publishes from the save's own revision. Remaining: the admin SPA chaining its publish from the save's revision instead of re-reading, and a token on global writes.
+**Status:** Done: migration `0031_global_versions.sql` adds `galaxy_globals.version`; `globals.save` takes `expectedVersion` and refuses a stale save with a `ConflictError` whose `code` is `stale_record` and whose `version` is the stored one, in the same statement that increments the version; `POST /api/globals/:slug` reads the version from `If-Match` and answers 409 `{ error, code: 'stale_record', version }`, and `GET` answers with `version` and an `ETag`; `getClient(env).globals.save(slug, data, { expectedVersion })` does the same; the admin's globals editor sends `If-Match`, keeps the edits on a stale save and offers **Load latest version**; the entry editor publishes and archives from the revision its own save returned instead of re-reading the entry. The e2e `globals-conflict` flow covers two editors on one global.
 
 **Why:** Only GET returns `latestRevisionId`, so after a save the editor re-reads the entry and can publish on top of someone else's newer revision. Global writes have no token at all, so two editors saving the same global overwrite each other.
 
@@ -662,7 +662,7 @@ Depends on Plugin API v2.
 
 #### Load only one product's rows in the product editor
 
-**Status:** the query is in place (`?where[productId]=`, `where[field][in]=` and `fetchEntriesWhere` in `ui/lib/admin-api.ts`); the product editor and the relation pickers still load whole collections.
+**Status:** done for the product editor. The Options & stock panel reads one product's rows with `where[productId]=`, `where[productVariantId][in]=` and `where[productVariantValueId][in]=` (`packages/plugin-ecommerce/src/admin/product-rows.ts`, ids chunked under the query's parameter cap, a refused read shown as an error rather than an empty product), and the commerce describer no longer makes the editor load the flow tables for the products collection. The relation pickers still load a target in full: there is no server-side text search operator yet (`contains` works on arrays only), so a bounded picker would hide options.
 
 **Why:** Opening a product pages through every row of the variant, value, stock and component collections.
 
