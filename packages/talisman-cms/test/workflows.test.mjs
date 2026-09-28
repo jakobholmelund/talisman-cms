@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../dist/db/schema.js';
 import { createDraftEntry, getLatestRevision, RevisionConflictError, SlugConflictError } from '../dist/versioning.js';
@@ -33,6 +34,7 @@ function setup() {
       return {
         bind(...params) { values = params; return this; },
         async all() { return { results: statement.all(...values) }; },
+        async first() { return statement.get(...values) ?? null; },
         async raw() {
           const raw = sqlite.prepare(sql);
           raw.setReturnArrays(true);
@@ -56,7 +58,7 @@ function setup() {
   };
   const kvDeleted = [];
   const KV = { async get() { return null; }, async put() {}, async delete(key) { kvDeleted.push(key); } };
-  return { sqlite, db: drizzle(DB, { schema }), env: { DB, KV }, kvDeleted };
+  return { sqlite, db: drizzle(DB), env: { DB, KV }, kvDeleted };
 }
 
 /** Runs each step once, as a first attempt does, and records the step names. */
@@ -68,7 +70,7 @@ function stepRecorder() {
 test('the publish Workflow applies the transition, then clears the cached entries', async () => {
   const { sqlite, db, env, kvDeleted } = setup();
   try {
-    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    const collection = await db.select().from(schema.collections).where(eq(schema.collections.id, 'posts-id')).get();
     await createDraftEntry(db, collection, { title: 'Hello' }, { id: 'hello', slug: 'hello' });
     const expectedRevisionId = (await getLatestRevision(db, 'hello')).id;
     const { names, step } = stepRecorder();
@@ -88,7 +90,7 @@ test('the publish Workflow applies the transition, then clears the cached entrie
 test('a transition that cannot succeed ends the Workflow with its error instead of being retried', async () => {
   const { sqlite, db, env, kvDeleted } = setup();
   try {
-    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    const collection = await db.select().from(schema.collections).where(eq(schema.collections.id, 'posts-id')).get();
     await createDraftEntry(db, collection, { title: 'Hello' }, { id: 'hello', slug: 'hello' });
 
     const stale = stepRecorder();

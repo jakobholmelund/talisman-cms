@@ -106,14 +106,11 @@ export function toEditableEntry<T extends { slug: string; status: string; draftS
 }
 
 function createVersioningDb(env: TalismanEnv) {
-  return drizzle(env.DB, { schema });
+  return drizzle(env.DB);
 }
 
 export async function getCollectionBySlug(db: ReturnType<typeof createVersioningDb>, collectionSlug: string) {
-  const collection = await db.query.collections.findFirst({
-    // @ts-ignore
-    where: (c, { eq }) => eq(c.slug, collectionSlug)
-  });
+  const collection = await db.select().from(schema.collections).where(eq(schema.collections.slug, collectionSlug)).get();
 
   if (!collection) {
     throw new Error(`Collection ${collectionSlug} not found`);
@@ -127,10 +124,8 @@ export async function getVersionedEntry(
   collectionId: string,
   entryId: string
 ) {
-  const entry = await db.query.entries.findFirst({
-    // @ts-ignore
-    where: (e, { and, eq }) => and(eq(e.collectionId, collectionId), eq(e.id, entryId))
-  });
+  const entry = await db.select().from(schema.entries)
+    .where(and(eq(schema.entries.collectionId, collectionId), eq(schema.entries.id, entryId))).get();
 
   if (!entry) {
     throw new EntryNotFoundError(`Entry ${entryId} not found`);
@@ -165,13 +160,11 @@ export async function listEntryRevisions(
     return opts.limit === undefined ? query : query.limit(opts.limit);
   }
 
-  return db.query.entryRevisions.findMany({
-    // @ts-ignore
-    where: (r, { and, eq }) => and(eq(r.collectionId, collectionId), eq(r.entryId, entryId)),
-    // @ts-ignore
-    orderBy: (r, { desc }) => [desc(r.revisionNumber), desc(r.createdAt)],
-    ...(opts.limit === undefined ? {} : { limit: opts.limit })
-  }) as Promise<RevisionRecord[]>;
+  const query = db.select().from(revisions)
+    .where(and(eq(revisions.collectionId, collectionId), eq(revisions.entryId, entryId)))
+    .orderBy(desc(revisions.revisionNumber), desc(revisions.createdAt));
+  const rows = await (opts.limit === undefined ? query : query.limit(opts.limit));
+  return rows as RevisionRecord[];
 }
 
 export async function getEntryRevision(
@@ -180,10 +173,9 @@ export async function getEntryRevision(
   entryId: string,
   revisionId: string
 ) {
-  const revision = await db.query.entryRevisions.findFirst({
-    // @ts-ignore
-    where: (r, { and, eq }) => and(eq(r.collectionId, collectionId), eq(r.entryId, entryId), eq(r.id, revisionId))
-  });
+  const revision = await db.select().from(schema.entryRevisions)
+    .where(and(eq(schema.entryRevisions.collectionId, collectionId), eq(schema.entryRevisions.entryId, entryId),
+      eq(schema.entryRevisions.id, revisionId))).get();
 
   if (!revision) {
     throw new EntryNotFoundError(`Revision ${revisionId} not found for entry ${entryId}`);

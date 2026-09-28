@@ -445,7 +445,7 @@ test('a global save may name the version it loaded, and a stale one is refused w
     // The check and the increment are one statement, so two saves that name the same version cannot both win.
     const update = runtime.env.DB.statements.filter((statement) => /^update "galaxy_globals"/.test(statement)).at(-1);
     assert.match(update, /"version" = "galaxy_globals"\."version" \+ 1/);
-    assert.match(update, /where \("galaxy_globals"\."id" = \? and "galaxy_globals"\."version" = \?\)/);
+    assert.match(update, /where \(\(?"galaxy_globals"\."id" = \?\)? and \(?"galaxy_globals"\."version" = \?\)?\)/);
 
     // No header, or `*`, saves as before; a value that is not a version is a client mistake.
     assert.equal((await call('POST', '/globals/site', { siteName: 'Unconditional' })).body.version, 4);

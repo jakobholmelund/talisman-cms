@@ -1,3 +1,5 @@
+import { and, eq, inArray } from 'drizzle-orm';
+import * as schema from '../db/schema';
 import { normalizeEntryDataForRead } from '../versioning';
 import { getRelationTargets, isInlineComponentValue, isPolymorphicRelationField, isRelationReference } from '../types';
 import { canRead } from './actor';
@@ -216,11 +218,9 @@ async function findRelatedEntries(ctx: ServiceContext, targetCollectionId: strin
     chunks.push(ids.slice(index, index + RELATION_ID_CHUNK_SIZE));
   }
 
-  const results = await Promise.all(chunks.map((chunk) => ctx.db.query.entries.findMany({
-    where: (e: any, operators: any) => versionMode === 'published'
-      ? operators.and(operators.eq(e.collectionId, targetCollectionId), operators.inArray(e.id, chunk), operators.eq(e.status, 'published'))
-      : operators.and(operators.eq(e.collectionId, targetCollectionId), operators.inArray(e.id, chunk))
-  })));
+  const results = await Promise.all(chunks.map((chunk) => ctx.db.select().from(schema.entries).where(and(
+    eq(schema.entries.collectionId, targetCollectionId), inArray(schema.entries.id, chunk),
+    ...(versionMode === 'published' ? [eq(schema.entries.status, 'published')] : [])))));
   return results.flat();
 }
 

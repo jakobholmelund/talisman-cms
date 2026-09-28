@@ -1,4 +1,5 @@
 import { getTableColumns } from 'drizzle-orm';
+import { columnKind } from '../db/column-kind';
 import { validatePresetPayload } from '../presets';
 import {
   buildZodSchemaForCollection,
@@ -129,7 +130,7 @@ export function prepareNativeWrite(
   for (const key of nativeSystemColumns(collection)) {
     if (payload[key] === '') delete payload[key];
   }
-  const dateColumn = (key: string) => columns[key]?.dataType === 'date';
+  const dateColumn = (key: string) => columnKind(columns[key]) === 'date';
   const blank = (key: string) => payload[key] === undefined || payload[key] === null;
 
   if (options.mode === 'update') {
@@ -143,7 +144,7 @@ export function prepareNativeWrite(
 
   const idField = collection.activeFields.find((field) => field.name === idColumn);
   const column = columns[idColumn];
-  if (blank(idColumn) && idField?.type !== 'number' && column?.dataType !== 'number' && !(column?.hasDefault || column?.defaultFn)) {
+  if (blank(idColumn) && idField?.type !== 'number' && columnKind(column) !== 'number' && !(column?.hasDefault || column?.defaultFn)) {
     payload[idColumn] = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   }
   const now = new Date();

@@ -23,7 +23,9 @@ export class TalismanPublishWorkflow extends WorkflowEntrypoint<TalismanEnv, Pub
         if (isPermanentPublishError(error)) {
           return { ok: false, error: { name: (error as Error).name, message: (error as Error).message } };
         }
-        throw error;
+        // Drizzle wraps a failed statement with its text and bound values; the Workflow records the
+        // driver's error alone, as it did before Drizzle 1.0 wrapped statement preparation too.
+        throw error instanceof Error && error.name === 'DrizzleQueryError' && error.cause instanceof Error ? error.cause : error;
       }
     });
     if (!result.ok) return result;

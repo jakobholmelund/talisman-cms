@@ -46,7 +46,7 @@ function createLocalAuth(request: Request, env: LocalEnv, adminPath = '/admin') 
     basePath: `${adminPath === '/' ? '' : adminPath}/api/auth`,
     secret,
     trustedOrigins: [origin],
-    database: drizzleAdapter(drizzle(env.DB, { schema }), {
+    database: drizzleAdapter(drizzle(env.DB), {
       provider: 'sqlite',
       schema,
     }),
@@ -205,7 +205,7 @@ export function LocalAuthAdapter(adminPath?: string, options: { requireAccess?: 
       if (!result || !rawUser) return null;
       // Better Auth keeps extending a session in use, so cap its total age here, where every CMS request is checked.
       if (!(Date.now() - new Date(result.session.createdAt).getTime() <= MAX_SESSION_AGE_MS)) {
-        await drizzle(env.DB, { schema }).delete(schema.session).where(eq(schema.session.id, result.session.id));
+        await drizzle(env.DB).delete(schema.session).where(eq(schema.session.id, result.session.id));
         return null;
       }
       // Better Auth only checks bans when a session is created; a disabled account's other sessions end here.
@@ -213,7 +213,7 @@ export function LocalAuthAdapter(adminPath?: string, options: { requireAccess?: 
       if (rawUser.role !== 'admin' && rawUser.role !== 'editor') return null;
       if (options.editorOnly && rawUser.role === 'admin') {
         if (!allowlistedAdmins(env).has(rawUser.email.toLowerCase()) || !result?.session?.id) return null;
-        const cmsSession = await drizzle(env.DB, { schema }).query.session.findFirst({ where: eq(schema.session.id, result.session.id) });
+        const cmsSession = await drizzle(env.DB).select().from(schema.session).where(eq(schema.session.id, result.session.id)).get();
         if (cmsSession?.authMethod !== 'cloudflare') return null;
       }
       if (accessEmail !== undefined && accessEmail !== rawUser.email.toLowerCase()) return null;
@@ -284,9 +284,9 @@ export function LocalAuthAdapter(adminPath?: string, options: { requireAccess?: 
         if (typeof body.email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email.trim())) {
           return Response.json({ error: 'Valid email required' }, { status: 400 });
         }
-        const db = drizzle(env.DB, { schema });
+        const db = drizzle(env.DB);
         const normalizedEmail = body.email.trim().toLowerCase();
-        const existing = await db.query.user.findFirst({ where: sql`lower(${schema.user.email}) = ${normalizedEmail}` });
+        const existing = await db.select().from(schema.user).where(sql`lower(${schema.user.email}) = ${normalizedEmail}`).get();
         if (existing) {
           if (existing.role !== 'customer') {
             return Response.json({ error: 'This email already has a CMS account' }, { status: 409 });
@@ -322,8 +322,8 @@ export function LocalAuthAdapter(adminPath?: string, options: { requireAccess?: 
           return Response.json({ error: 'Choose a valid user' }, { status: 400 });
         }
         revokeUserId = resetBody.userId;
-        const db = drizzle(env.DB, { schema });
-        const target = await db.query.user.findFirst({ where: eq(schema.user.id, resetBody.userId) });
+        const db = drizzle(env.DB);
+        const target = await db.select().from(schema.user).where(eq(schema.user.id, resetBody.userId)).get();
         if (target?.role === 'admin' && options.editorOnly) {
           return Response.json({ error: 'Cloudflare SSO accounts are managed through Access' }, { status: 403 });
         }
@@ -340,8 +340,8 @@ export function LocalAuthAdapter(adminPath?: string, options: { requireAccess?: 
         if (body.userId === actor.id) {
           return Response.json({ error: 'You cannot change your own access here' }, { status: 400 });
         }
-        const db = drizzle(env.DB, { schema });
-        const target = await db.query.user.findFirst({ where: eq(schema.user.id, body.userId) });
+        const db = drizzle(env.DB);
+        const target = await db.select().from(schema.user).where(eq(schema.user.id, body.userId)).get();
         if (target?.role === 'admin' && options.editorOnly) {
           return Response.json({ error: 'Cloudflare SSO accounts are managed through Access' }, { status: 403 });
         }
@@ -384,7 +384,7 @@ export function LocalAuthAdapter(adminPath?: string, options: { requireAccess?: 
       }
       if (action === 'sign-in/email' && response.ok) {
         const signedIn = await response.clone().json().catch(() => null) as { token?: unknown } | null;
-        const db = drizzle(env.DB, { schema });
+        const db = drizzle(env.DB);
         const [issued] = typeof signedIn?.token === 'string'
           ? await db.select({ role: schema.user.role }).from(schema.session)
             .innerJoin(schema.user, eq(schema.user.id, schema.session.userId))
@@ -410,7 +410,7 @@ export function LocalAuthAdapter(adminPath?: string, options: { requireAccess?: 
       if (banUserId && response.status >= 500) {
         // Better Auth saves the ban before deleting the user's sessions. If only the deletion failed, the ban
         // is in force (getUser rejects banned users), so report it as saved rather than as an error.
-        const target = await drizzle(env.DB, { schema }).query.user.findFirst({ where: eq(schema.user.id, banUserId) });
+        const target = await drizzle(env.DB).select().from(schema.user).where(eq(schema.user.id, banUserId)).get();
         if (target?.banned) {
           console.error('[talisman-cms] Could not end CMS sessions after disabling an account');
           headers.delete('content-length');

@@ -1,5 +1,4 @@
 import { drizzle } from 'drizzle-orm/d1';
-import * as schema from './schema';
 import type { Actor } from '../service/actor';
 import type { CacheContext } from '../service/cache';
 import { loadServiceConfig } from '../service/config';
@@ -21,7 +20,7 @@ export function createDbClient(env: TalismanEnv) {
   if (!env.DB) {
     throw new Error('Talisman CMS requires a D1 database bound to the "DB" environment variable.');
   }
-  return drizzle(env.DB, { schema });
+  return drizzle(env.DB);
 }
 
 export interface ClientOptions {

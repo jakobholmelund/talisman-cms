@@ -1,4 +1,4 @@
-import { relations } from 'drizzle-orm';
+import { defineRelations } from 'drizzle-orm';
 import { sqliteTable, text, integer, primaryKey, uniqueIndex, check } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
@@ -225,9 +225,7 @@ export const categories = sqliteTable('_ecommerce_categories', {
 export const productCategories = sqliteTable('_ecommerce_product_categories', {
   productId: text('product_id').notNull().references(() => products.id),
   categoryId: text('category_id').notNull().references(() => categories.id)
-}, (table) => ({
-  pk: primaryKey({ columns: [table.productId, table.categoryId] })
-}));
+}, (table) => [primaryKey({ columns: [table.productId, table.categoryId] })]);
 
 export const tags = sqliteTable('_ecommerce_tags', {
   id: text('id').primaryKey(),
@@ -240,9 +238,7 @@ export const tags = sqliteTable('_ecommerce_tags', {
 export const productTags = sqliteTable('_ecommerce_product_tags', {
   productId: text('product_id').notNull().references(() => products.id),
   tagId: text('tag_id').notNull().references(() => tags.id)
-}, (table) => ({
-  pk: primaryKey({ columns: [table.productId, table.tagId] })
-}));
+}, (table) => [primaryKey({ columns: [table.productId, table.tagId] })]);
 
 export const customers = sqliteTable('_ecommerce_customers', {
   id: text('id').primaryKey(), // A generic stripe-ready customer ID
@@ -575,101 +571,58 @@ export const giftCardClaims = sqliteTable('_ecommerce_gift_card_claims', {
   reason: text('reason'),
 });
 
-// --- Drizzle Relations API ---
+// --- Relations, for the relational query builder ---
 
-export const cartsRelations = relations(carts, ({ many }) => ({
-  orders: many(orders)
-}));
+const tables = {
+  carts, orders, payments, providerRefunds, products, variants, productVariants, productVariantValues, stocks, components,
+  variantComponents, componentReservations, inventoryReservations, categories, productCategories, tags, productTags,
+  customers, customerAccounts, customerSessions, signInTokens, rateLimits, fulfillments, referralCodes, referrals,
+  creditLedger, referralSettings, discountCodes, discountRedemptions, giftCardPurchases, giftCards, giftCardLedger,
+  giftCardRedemptions, giftCardRefunds, giftCardReviews, giftCardOrderRefunds, taxReversals, disputes, restocks,
+  reconcileDecisions, emailDeliveries, giftCardClaims,
+};
 
-export const ordersRelations = relations(orders, ({ one, many }) => ({
-  cart: one(carts, {
-    fields: [orders.cartId],
-    references: [carts.id]
-  }),
-  payments: many(payments)
-}));
-
-export const paymentsRelations = relations(payments, ({ one }) => ({
-  order: one(orders, {
-    fields: [payments.orderId],
-    references: [orders.id]
-  })
-}));
-
-export const productsRelations = relations(products, ({ many }) => ({
-  variants: many(productVariants),
-  categories: many(productCategories),
-  tags: many(productTags)
-}));
-
-export const variantsRelations = relations(variants, ({ many }) => ({
-  productVariants: many(productVariants)
-}));
-
-export const productVariantsRelations = relations(productVariants, ({ one, many }) => ({
-  product: one(products, {
-    fields: [productVariants.productId],
-    references: [products.id]
-  }),
-  variant: one(variants, {
-    fields: [productVariants.variantId],
-    references: [variants.id]
-  }),
-  values: many(productVariantValues)
-}));
-
-export const productVariantValuesRelations = relations(productVariantValues, ({ one }) => ({
-  productVariant: one(productVariants, {
-    fields: [productVariantValues.productVariantId],
-    references: [productVariants.id]
-  }),
-  stock: one(stocks, {
-    fields: [productVariantValues.id],
-    references: [stocks.productVariantValueId]
-  })
-}));
-
-export const stocksRelations = relations(stocks, ({ one }) => ({
-  productVariantValue: one(productVariantValues, {
-    fields: [stocks.productVariantValueId],
-    references: [productVariantValues.id]
-  })
-}));
-
-export const tagsRelations = relations(tags, ({ many }) => ({
-  products: many(productTags)
-}));
-
-export const productTagsRelations = relations(productTags, ({ one }) => ({
-  product: one(products, {
-    fields: [productTags.productId],
-    references: [products.id]
-  }),
-  tag: one(tags, {
-    fields: [productTags.tagId],
-    references: [tags.id]
-  })
-}));
-
-export const categoriesRelations = relations(categories, ({ one, many }) => ({
-  parent: one(categories, {
-    fields: [categories.parentId],
-    references: [categories.id],
-    relationName: 'category_hierarchy'
-  }),
-  children: many(categories, {
-    relationName: 'category_hierarchy'
-  }),
-  products: many(productCategories)
-}));
-
-export const productCategoriesRelations = relations(productCategories, ({ one }) => ({
-  product: one(products, {
-    fields: [productCategories.productId],
-    references: [products.id]
-  }),
-  category: one(categories, {
-    fields: [productCategories.categoryId],
-    references: [categories.id]
-  })
+/**
+ * Every commerce table with the catalog and order relations, for a site's own relational queries:
+ * `drizzle(env.DB, { relations })` gives `db.query.<table>` for each of them.
+ */
+export const relations = defineRelations(tables, (r) => ({
+  carts: { orders: r.many.orders() },
+  orders: {
+    cart: r.one.carts({ from: r.orders.cartId, to: r.carts.id }),
+    payments: r.many.payments(),
+  },
+  payments: { order: r.one.orders({ from: r.payments.orderId, to: r.orders.id, optional: false }) },
+  products: {
+    variants: r.many.productVariants(),
+    categories: r.many.productCategories(),
+    tags: r.many.productTags(),
+  },
+  variants: { productVariants: r.many.productVariants() },
+  productVariants: {
+    product: r.one.products({ from: r.productVariants.productId, to: r.products.id, optional: false }),
+    variant: r.one.variants({ from: r.productVariants.variantId, to: r.variants.id }),
+    values: r.many.productVariantValues(),
+  },
+  productVariantValues: {
+    productVariant: r.one.productVariants({ from: r.productVariantValues.productVariantId, to: r.productVariants.id, optional: false }),
+    stock: r.one.stocks({ from: r.productVariantValues.id, to: r.stocks.productVariantValueId }),
+  },
+  stocks: {
+    productVariantValue: r.one.productVariantValues({ from: r.stocks.productVariantValueId, to: r.productVariantValues.id, optional: false }),
+  },
+  tags: { products: r.many.productTags() },
+  productTags: {
+    product: r.one.products({ from: r.productTags.productId, to: r.products.id, optional: false }),
+    tag: r.one.tags({ from: r.productTags.tagId, to: r.tags.id, optional: false }),
+  },
+  categories: {
+    parent: r.one.categories({ from: r.categories.parentId, to: r.categories.id, alias: 'category_hierarchy' }),
+    children: r.many.categories({ alias: 'category_hierarchy' }),
+    products: r.many.productCategories(),
+  },
+  productCategories: {
+    product: r.one.products({ from: r.productCategories.productId, to: r.products.id, optional: false }),
+    category: r.one.categories({ from: r.productCategories.categoryId, to: r.categories.id, optional: false }),
+  },
 }));

@@ -46,10 +46,7 @@ function withDecodedData<T extends { data?: unknown } | null | undefined>(record
 }
 
 async function findGlobal(ctx: ServiceContext, slug: string) {
-  return ctx.db.query.globals.findFirst({
-    // @ts-ignore
-    where: (g: any, { eq }: any) => eq(g.slug, slug)
-  }) as Promise<GlobalRecord | undefined>;
+  return ctx.db.select().from(schema.globals).where(eq(schema.globals.slug, slug)).get() as Promise<GlobalRecord | undefined>;
 }
 
 async function writeConfiguredGlobals(ctx: ServiceContext) {
@@ -138,7 +135,7 @@ export function globalsService(ctx: ServiceContext) {
       }
       const readStartedAt = new Date();
       await syncConfiguredGlobals(ctx);
-      const list = ordered(config.globals, await db.query.globals.findMany());
+      const list = ordered(config.globals, await db.select().from(schema.globals));
       if (useCache) {
         await writeCache(env.KV!, cacheKeys.globals(), list, ctx.ctx, { changedSinceRead: rowsUpdatedSince(db, schema.globals, readStartedAt) });
       }

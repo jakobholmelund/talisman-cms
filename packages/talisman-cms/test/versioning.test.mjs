@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../dist/db/schema.js';
 import {
@@ -30,6 +31,7 @@ function database() {
       return {
         bind(...params) { values = params; return this; },
         async all() { return { results: statement.all(...values) }; },
+        async first() { return statement.get(...values) ?? null; },
         async raw() {
           const raw = sqlite.prepare(sql);
           raw.setReturnArrays(true);
@@ -60,13 +62,13 @@ function database() {
       return run;
     },
   };
-  return { sqlite, DB, db: drizzle(DB, { schema }), failNextBatchAt: (index) => { failBatchAt = index; } };
+  return { sqlite, DB, db: drizzle(DB), failNextBatchAt: (index) => { failBatchAt = index; } };
 }
 
 test('draft, revision, and publish writes are atomic', async () => {
   const { sqlite, db, failNextBatchAt } = database();
   try {
-    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    const collection = await db.select().from(schema.collections).where(eq(schema.collections.id, 'posts-id')).get();
     const created = await createDraftEntry(db, collection, { title: 'First' }, { id: 'post-1', slug: 'first' });
     assert.equal(created.status, 'draft');
     assert.equal((await listEntryRevisions(db, collection.id, created.id)).length, 1);
@@ -91,7 +93,7 @@ test('draft, revision, and publish writes are atomic', async () => {
 test('stale editor actions preserve the latest entry and revision', async () => {
   const { sqlite, db } = database();
   try {
-    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    const collection = await db.select().from(schema.collections).where(eq(schema.collections.id, 'posts-id')).get();
     const entry = await createDraftEntry(db, collection, { title: 'First' }, { id: 'post-2' });
     const openedRevision = await getLatestRevision(db, entry.id);
     await saveDraftEntry(db, collection, entry.id, { data: { title: 'Second' }, expectedRevisionId: openedRevision.id });
@@ -118,7 +120,7 @@ test('the default publishing workflow binding also accepts its pre-rename GALAXY
   t.mock.method(console, 'warn', () => {});
   const { sqlite, DB, db } = database();
   try {
-    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    const collection = await db.select().from(schema.collections).where(eq(schema.collections.id, 'posts-id')).get();
     await createDraftEntry(db, collection, { title: 'Workflow' }, { id: 'post-3' });
     const started = [];
     const workflow = (name) => ({
@@ -152,7 +154,7 @@ function insertSeededEntry(sqlite, { id, status = 'published', data, publishedDa
 test('an entry without revisions accepts a null expected revision once and keeps its stored state as a baseline', async () => {
   const { sqlite, db } = database();
   try {
-    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    const collection = await db.select().from(schema.collections).where(eq(schema.collections.id, 'posts-id')).get();
     // Seeded straight into D1: published, with no revisions and no published snapshot.
     insertSeededEntry(sqlite, { id: 'seeded', data: { title: 'Seeded' } });
 
@@ -181,7 +183,7 @@ test('an entry without revisions accepts a null expected revision once and keeps
 test('publishing an entry without revisions records the baseline in the same batch', async () => {
   const { sqlite, db, failNextBatchAt } = database();
   try {
-    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    const collection = await db.select().from(schema.collections).where(eq(schema.collections.id, 'posts-id')).get();
     insertSeededEntry(sqlite, { id: 'draft-seed', status: 'draft', data: { title: 'Imported' } });
 
     failNextBatchAt(2);
@@ -264,7 +266,7 @@ test('migration 0020 backfills baseline revisions and unwraps double-encoded glo
 test('a published entry keeps its live slug until the next publish, and slugs stay unique', async () => {
   const { sqlite, db } = database();
   try {
-    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    const collection = await db.select().from(schema.collections).where(eq(schema.collections.id, 'posts-id')).get();
     const entry = await createDraftEntry(db, collection, { title: 'About' }, { id: 'about-page', slug: 'about' });
     await publishEntry(db, collection, entry.id);
 
@@ -305,7 +307,7 @@ test('a published entry keeps its live slug until the next publish, and slugs st
 test('revision lists can leave out the data, which is then loaded one revision at a time', async () => {
   const { sqlite, db } = database();
   try {
-    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    const collection = await db.select().from(schema.collections).where(eq(schema.collections.id, 'posts-id')).get();
     await createDraftEntry(db, collection, { title: 'One' }, { id: 'history' });
     await saveDraftEntry(db, collection, 'history', { data: { title: 'Two' } });
 
@@ -324,7 +326,7 @@ test('revision lists can leave out the data, which is then loaded one revision a
 test('workflow instance ids stay within the characters Workflows accept when an entry id has a colon', async () => {
   const { sqlite, DB, db } = database();
   try {
-    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    const collection = await db.select().from(schema.collections).where(eq(schema.collections.id, 'posts-id')).get();
     await createDraftEntry(db, collection, { title: 'Amber' }, { id: 'talisman-lens:amber' });
     const ids = [];
     const workflow = {
@@ -345,7 +347,7 @@ test('workflow instance ids stay within the characters Workflows accept when an 
 test('two publishes of one slug at the same moment put only one entry live', async () => {
   const { sqlite, db } = database();
   try {
-    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    const collection = await db.select().from(schema.collections).where(eq(schema.collections.id, 'posts-id')).get();
     // Drafts that share a slug, as an import can write them; both pass the check before either writes.
     for (const id of ['launch-a', 'launch-b']) {
       insertSeededEntry(sqlite, { id, status: 'draft', data: { title: id } });
@@ -406,7 +408,7 @@ test('waiting for a Workflow maps its failures to the inline errors and reports 
 test('a publish Workflow still running after the wait returns the stored entry marked pending', async (t) => {
   const { sqlite, DB, db } = database();
   try {
-    const collection = await db.query.collections.findFirst({ where: (table, { eq }) => eq(table.id, 'posts-id') });
+    const collection = await db.select().from(schema.collections).where(eq(schema.collections.id, 'posts-id')).get();
     await createDraftEntry(db, collection, { title: 'Slow' }, { id: 'slow-post', slug: 'slow' });
     const workflow = { async create({ id }) { return { id, async status() { return { status: 'running' }; } }; } };
     let clock = Date.now();

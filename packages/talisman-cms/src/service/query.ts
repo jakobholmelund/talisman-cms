@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, sql, type SQL } from 'drizzle-orm';
+import { columnKind } from '../db/column-kind';
 import * as schema from '../db/schema';
 import type { FieldDefinition } from '../types';
 import { InvalidInputError, ValidationError } from './errors';
@@ -95,7 +96,8 @@ function resolveField(target: QueryTarget, name: string): ResolvedField {
   if (!property) return refuse(name, 'Not a field of this collection');
   const column = columns[property];
   const field = target.fields.find((candidate) => candidate.name === property || candidate.name === column.name);
-  const type = field?.type ?? (column.dataType === 'date' ? 'timestamp' : column.dataType === 'number' ? 'number' : column.dataType === 'boolean' ? 'boolean' : 'text');
+  const kind = columnKind(column);
+  const type = field?.type ?? (kind === 'date' ? 'timestamp' : kind === 'number' ? 'number' : kind === 'boolean' ? 'boolean' : 'text');
   return { name, type, json: false, list: false, expression: column, parameters: 0 };
 }
 

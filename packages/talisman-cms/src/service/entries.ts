@@ -186,10 +186,8 @@ async function nativeRow(ctx: ServiceContext, collection: ResolvedCollection, id
 }
 
 async function entryRow(ctx: ServiceContext, collection: ResolvedCollection, id: string) {
-  return ctx.db.query.entries.findFirst({
-    // @ts-ignore
-    where: (e: any, { eq, and }: any) => and(eq(e.collectionId, collection.record.id), eq(e.id, id))
-  });
+  return ctx.db.select().from(schema.entries)
+    .where(and(eq(schema.entries.collectionId, collection.record.id), eq(schema.entries.id, id))).get();
 }
 
 /** Drafts may be incomplete, but required fields must be filled before an entry goes live. */
@@ -511,12 +509,9 @@ export function entriesService(ctx: ServiceContext) {
         const row = await nativeRow(ctx, collection, id);
         if (row) data = mapNativeEntry(row, collection.record.id, collection.nativeIdCol);
       } else {
-        const entry = await db.query.entries.findFirst({
-          // @ts-ignore
-          where: (e: any, operators: any) => versionMode === 'published'
-            ? operators.and(operators.eq(e.collectionId, collection.record.id), operators.eq(e.id, id), operators.eq(e.status, 'published'))
-            : operators.and(operators.eq(e.collectionId, collection.record.id), operators.eq(e.id, id))
-        });
+        const entry = await db.select().from(schema.entries).where(and(
+          eq(schema.entries.collectionId, collection.record.id), eq(schema.entries.id, id),
+          ...(versionMode === 'published' ? [eq(schema.entries.status, 'published')] : []))).get();
         if (entry) data = normalizeEntryDataForRead(entry, versionMode);
       }
       if (!data) return null;
@@ -546,16 +541,13 @@ export function entriesService(ctx: ServiceContext) {
         const rows = await db.select().from(nativeTable).where(eq(slugColumn, entrySlug) as any).limit(1);
         if (rows[0]) data = mapNativeEntry(rows[0], collection.record.id, collection.nativeIdCol);
       } else {
-        const entry = await db.query.entries.findFirst({
-          // @ts-ignore
-          where: (e: any, operators: any) => versionMode === 'published'
-            ? operators.and(operators.eq(e.collectionId, collection.record.id), operators.eq(e.status, 'published'), operators.eq(e.slug, entrySlug))
-            : operators.and(operators.eq(e.collectionId, collection.record.id), operators.or(
-              operators.eq(e.draftSlug, entrySlug),
-              operators.and(operators.isNull(e.draftSlug), operators.eq(e.slug, entrySlug))
-            )),
-          orderBy: (e: any, { desc }: any) => [desc(e.createdAt)]
-        });
+        const entry = await db.select().from(schema.entries).where(versionMode === 'published'
+          ? and(eq(schema.entries.collectionId, collection.record.id), eq(schema.entries.status, 'published'),
+            eq(schema.entries.slug, entrySlug))
+          : and(eq(schema.entries.collectionId, collection.record.id), or(
+            eq(schema.entries.draftSlug, entrySlug),
+            and(isNull(schema.entries.draftSlug), eq(schema.entries.slug, entrySlug)))))
+          .orderBy(desc(schema.entries.createdAt)).get();
         if (entry) data = normalizeEntryDataForRead(entry, versionMode);
       }
       if (!data) return null;

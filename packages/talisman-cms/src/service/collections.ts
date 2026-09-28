@@ -197,7 +197,7 @@ export function collectionsService(ctx: ServiceContext) {
         if (hit) return hit;
       }
       await syncCollectionDefinitions(db, env, ctx.config);
-      const rows = await db.query.collections.findMany();
+      const rows = await db.select().from(schema.collections);
       if (useCache) await writeCache(env.KV!, cacheKeys.collections(), rows, ctx.ctx);
       return rows;
     },

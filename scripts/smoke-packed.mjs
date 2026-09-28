@@ -390,9 +390,16 @@ async function smokeProject(project, port, packages, browserReady) {
   // Keep the pinned React when the README install line also names react or react-dom; a bare
   // name would move the project to the latest release.
   const pin = (arg) => (project.react && (arg === 'react' || arg === 'react-dom') ? `${arg}@${project.react}` : arg);
+  // The packages' drizzle-orm peer is a prerelease range, which a package manager would fill with
+  // the newest prerelease build; install the exact version the workspace is built against instead.
+  const drizzleOrm = core.manifest.devDependencies['drizzle-orm'];
+  assert.ok(drizzleOrm && !/[\^~<>*x]/.test(drizzleOrm), `talisman-cms: devDependencies.drizzle-orm must be an exact version, got ${drizzleOrm}`);
+  const readmeDrizzle = readmeInstall.flat().find((arg) => arg.startsWith('drizzle-orm@'))?.slice('drizzle-orm@'.length);
+  if (readmeDrizzle) assert.equal(readmeDrizzle, drizzleOrm, 'README: the drizzle-orm version in the install step differs from devDependencies');
   const installed = await step(`${project.pm} install`, async () => {
     for (const [, , ...args] of readmeInstall) {
       const packagesToAdd = args.map((arg) => (arg === core.name ? core.tarball : pin(arg)));
+      if (args.includes(core.name) && !args.some((arg) => /^drizzle-orm(@|$)/.test(arg))) packagesToAdd.push(`drizzle-orm@${drizzleOrm}`);
       if (project.plugins && args.includes(core.name)) packagesToAdd.push(...plugins.map((plugin) => plugin.tarball));
       const command = project.pm === 'npm' ? ['install', '--no-audit', '--no-fund', ...packagesToAdd] : ['add', ...packagesToAdd];
       await run(project.pm === 'npm' ? npm : pnpm, command, { cwd: dir, log });

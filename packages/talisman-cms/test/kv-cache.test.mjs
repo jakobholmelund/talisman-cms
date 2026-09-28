@@ -25,6 +25,7 @@ function database() {
       return {
         bind(...params) { values = params; return this; },
         async all() { return { results: statement.all(...values) }; },
+        async first() { return statement.get(...values) ?? null; },
         async raw() {
           const raw = sqlite.prepare(sql);
           raw.setReturnArrays(true);

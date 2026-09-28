@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { columnKind } from './db/column-kind';
 import type { Actor } from './service/actor';
 import type { TalismanAuthAdapter } from './auth/types';
 import type { EmailRuntimeDescriptor } from './email/types';
@@ -1199,13 +1200,13 @@ export function generateFieldsFromDrizzle(table: any): FieldDefinition[] {
     if (typeof column !== 'object' || column === null || !('dataType' in column)) continue;
 
     const colName = (column as any).name || key;
-    const dataType = (column as any).dataType;
+    const kind = columnKind(column);
 
     let type: FieldType = 'text';
-    if (dataType === 'number' || dataType === 'integer' || dataType === 'real') type = 'number';
-    if (dataType === 'boolean') type = 'boolean';
-    if (dataType === 'date' || dataType === 'timestamp') type = 'date';
-    if (dataType === 'json') type = 'richtext';
+    if (kind === 'number') type = 'number';
+    if (kind === 'boolean') type = 'boolean';
+    if (kind === 'date') type = 'date';
+    if (kind === 'json') type = 'richtext';
 
     fields.push({
       name: colName,

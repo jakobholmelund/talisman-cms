@@ -145,6 +145,7 @@ test('an upload whose record cannot be saved removes its file again', { skip }, 
       return {
         bind(...params) { values = params; return this; },
         async all() { return { results: sqlite.prepare(sql).all(...values) }; },
+        async first() { return sqlite.prepare(sql).get(...values) ?? null; },
         async raw() { const raw = sqlite.prepare(sql); raw.setReturnArrays(true); return raw.all(...values); },
         async run() { return { meta: sqlite.prepare(sql).run(...values) }; },
       };
