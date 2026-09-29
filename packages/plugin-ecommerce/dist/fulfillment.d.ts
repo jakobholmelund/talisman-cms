@@ -59,12 +59,20 @@ declare function listCommerceOrdersAdmin(env: TalismanEnv, options?: {
     orders: {
         id: string;
         status: string;
-        fulfillmentStatus: FulfillmentStatus;
+        fulfillmentStatus: "unfulfilled" | "partially_fulfilled" | "fulfilled";
         paymentProvider: string;
         customerEmail: string | null;
         currency: string;
         createdAt: string;
-        shippingAddress: Record<string, string> | null;
+        shippingAddress: {
+            name?: string;
+            line1?: string;
+            line2?: string;
+            city?: string;
+            state?: string;
+            postalCode?: string;
+            country?: string;
+        } | null;
         canShip: boolean;
         items: {
             productId: string;

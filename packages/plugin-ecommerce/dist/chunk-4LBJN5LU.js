@@ -1,21 +1,27 @@
 import {
   getReferralPolicy,
   referralReversalStatements
-} from "./chunk-7PQWN42E.js";
+} from "./chunk-NTFJG6BA.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
 } from "./chunk-GNU6N22K.js";
 import {
   commerceDb,
-  runStatements
+  commitBatch
 } from "./chunk-ZI5IJOR6.js";
 import {
+  creditLedger,
+  discountRedemptions,
   emailDeliveries,
   giftCardClaims,
+  giftCardOrderRefunds,
   giftCardPurchases,
+  giftCardRedemptions,
+  giftCardRefunds,
   giftCards,
-  orders
+  orders,
+  payments
 } from "./chunk-NKJTK7MK.js";
 import {
   emailLink,
@@ -28,7 +34,8 @@ import {
 } from "./chunk-2UYSCNNW.js";
 
 // src/gift-cards.ts
-import { and as and2, eq as eq2, gt, isNull as isNull2, sql as sql3 } from "drizzle-orm";
+import { and as and3, count, eq as eq3, exists, gt, inArray, isNull as isNull3, lt, ne, not, or as or2, sql as sql3 } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { z as z2 } from "zod";
 import { readSetting as readSetting2 } from "talisman-cms/env";
 
@@ -453,7 +460,8 @@ var WebhookMismatchError = class extends Error {
 };
 
 // src/reconcile.ts
-import { sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
+var at = (seconds) => new Date(seconds * 1e3);
 var PERMANENT_FAILURES = /* @__PURE__ */ new Set(["session_missing", "session_mode_mismatch", "payment_mismatch"]);
 var RECONCILE_FAILURE_MESSAGES = {
   session_missing: "The payment provider has no checkout session with this id",
@@ -516,8 +524,8 @@ function assertStoreStripeMode(env, sessionId) {
   throw new ReconcileFailure("session_mode_mismatch", `The checkout session is from Stripe ${stripeSessionMode(sessionId)} mode, and the store runs in ${runtimeStripeMode(env)} mode`);
 }
 var RECONCILE_TABLES = {
-  order: "_ecommerce_orders",
-  gift_card_purchase: "_ecommerce_gift_card_purchases"
+  order: orders,
+  gift_card_purchase: giftCardPurchases
 };
 var PAID_SESSION_REFUSAL = "Stripe reports this checkout session as paid, and its payment as neither refunded in full nor lost to a dispute, so nothing was released. Refund the payment in full in Stripe first, or retry once the cause of the mismatch is fixed.";
 var UNCHECKED_PAYMENT_REFUSAL = "Stripe reports this checkout session as complete but names no payment the store can check for a refund, so nothing was released. If the payment was returned to the shopper, confirm that and release it again.";
@@ -537,7 +545,7 @@ function decisionInsert(kind, action, condition, decision) {
       (id, order_id, purchase_id, action, failure, payment_returned, admin_actor, reason, created_at)
     SELECT ${decision.id}, ${sql.raw(orderId)}, ${sql.raw(purchaseId)}, ${action}, reconcile_last_error, ${decision.paymentReturned},
       ${decision.actor}, ${decision.reason}, ${decision.at}
-    FROM ${sql.raw(RECONCILE_TABLES[kind])} WHERE id = ${decision.recordId} AND ${condition}`;
+    FROM ${RECONCILE_TABLES[kind]} WHERE id = ${decision.recordId} AND ${condition}`;
 }
 var RECONCILE_MAX_BACKOFF_SECONDS = 6 * 60 * 60;
 function uncheckedSessionRefusal(checkoutStartedAt, now = Math.floor(Date.now() / 1e3)) {
@@ -545,30 +553,32 @@ function uncheckedSessionRefusal(checkoutStartedAt, now = Math.floor(Date.now() 
   if (now >= releasable) return null;
   return new Error(`Stripe cannot be asked about this checkout session, which may still be paid until it expires. Release it after ${new Date(releasable * 1e3).toISOString()}, 35 minutes after the checkout started.`);
 }
-function backoffSql(columns, alias) {
-  const column = (name) => alias ? `${alias}.${name}` : name;
-  const lastAt = column(`${columns}_last_at`);
+function backoff(columns, now) {
   return {
-    due: `(${lastAt} IS NULL
-  OR ${lastAt} <= ? - MIN(${RECONCILE_MAX_BACKOFF_SECONDS}, 60 << MIN(${column(`${columns}_attempts`)}, 9)))`,
-    order: `COALESCE(${lastAt}, 0), ${column("created_at")}, ${column("id")}`
+    due: sql`(${columns.lastAt} IS NULL
+      OR ${columns.lastAt} <= ${now} - MIN(${sql.raw(String(RECONCILE_MAX_BACKOFF_SECONDS))}, 60 << MIN(${columns.attempts}, 9)))`,
+    order: [sql`COALESCE(${columns.lastAt}, 0)`, columns.createdAt, columns.id]
   };
 }
-var RECONCILE_BACKOFF = backoffSql("reconcile");
-var RECONCILE_DUE = RECONCILE_BACKOFF.due;
-var RECONCILE_ORDER = RECONCILE_BACKOFF.order;
-async function recordAttempt(env, kind, id, now, failure) {
+var reconcileBackoff = (table, now) => backoff({
+  attempts: table.reconcileAttempts,
+  lastAt: table.reconcileLastAt,
+  createdAt: table.createdAt,
+  id: table.id
+}, now);
+async function recordAttempt(db, kind, id, now, failure) {
   const table = RECONCILE_TABLES[kind];
+  const attempt = {
+    reconcileAttempts: sql`${table.reconcileAttempts} + 1`,
+    reconcileLastAt: at(now),
+    reconcileLastError: failure?.code ?? null
+  };
   if (failure?.permanent) {
-    const parked = await env.DB.prepare(`UPDATE ${table} SET reconcile_attempts = reconcile_attempts + 1,
-        reconcile_last_at = ?, reconcile_last_error = ?, reconcile_review_at = ?
-      WHERE id = ? AND status = 'pending' AND reconcile_review_at IS NULL RETURNING id`).bind(now, failure.code, now, id).all();
-    return parked.results?.length ? "parked" : "skipped";
+    const parked = await db.update(table).set({ ...attempt, reconcileReviewAt: at(now) }).where(and(eq(table.id, id), eq(table.status, "pending"), isNull(table.reconcileReviewAt))).returning({ id: table.id });
+    return parked.length ? "parked" : "skipped";
   }
-  const recorded = await env.DB.prepare(`UPDATE ${table} SET reconcile_attempts = reconcile_attempts + 1,
-      reconcile_last_at = ?, reconcile_last_error = ?
-    WHERE id = ? AND reconcile_review_at IS NULL RETURNING id`).bind(now, failure?.code ?? null, id).all();
-  return recorded.results?.length ? "recorded" : "skipped";
+  const recorded = await db.update(table).set(attempt).where(and(eq(table.id, id), isNull(table.reconcileReviewAt))).returning({ id: table.id });
+  return recorded.length ? "recorded" : "skipped";
 }
 async function reconcileAttempt(env, kind, id, now, attempt) {
   let result;
@@ -580,10 +590,12 @@ async function reconcileAttempt(env, kind, id, now, attempt) {
     result = { id, status: "error", error: failure.message, code: failure.code };
   }
   try {
-    const recorded = await recordAttempt(env, kind, id, now, failure);
+    const db = commerceDb(env);
+    const recorded = await recordAttempt(db, kind, id, now, failure);
     if (recorded === "parked") result.parked = true;
     if (recorded === "skipped" && failure) {
-      const row = await env.DB.prepare(`SELECT status FROM ${RECONCILE_TABLES[kind]} WHERE id = ?`).bind(id).first();
+      const table = RECONCILE_TABLES[kind];
+      const row = await db.select({ status: table.status }).from(table).where(eq(table.id, id)).get();
       return { id, status: row?.status ?? "unchanged" };
     }
   } catch {
@@ -593,7 +605,7 @@ async function reconcileAttempt(env, kind, id, now, attempt) {
 }
 
 // src/email-deliveries.ts
-import { and, eq, isNull, lte, or, sql as sql2 } from "drizzle-orm";
+import { and as and2, eq as eq2, isNull as isNull2, lte, or, sql as sql2 } from "drizzle-orm";
 import { isEmailDeliveryError, parseAddress, resolveEmailProvider, sendEmail } from "talisman-cms/email";
 import { readSetting } from "talisman-cms/env";
 var COMMERCE_EMAIL_MAX_ATTEMPTS = 10;
@@ -618,15 +630,15 @@ var KIND_LABELS = {
 };
 var CONFIGURATION_ERRORS = /* @__PURE__ */ new Set(["not_configured", "sender_rejected", "invalid_message"]);
 var nowSeconds = () => Math.floor(Date.now() / 1e3);
-var at = (seconds) => new Date(seconds * 1e3);
-var pendingEmail = (kind, subjectId) => and(
-  eq(emailDeliveries.kind, kind),
-  eq(emailDeliveries.subjectId, subjectId),
-  eq(emailDeliveries.status, "pending")
+var at2 = (seconds) => new Date(seconds * 1e3);
+var pendingEmail = (kind, subjectId) => and2(
+  eq2(emailDeliveries.kind, kind),
+  eq2(emailDeliveries.subjectId, subjectId),
+  eq2(emailDeliveries.status, "pending")
 );
 var unclaimedAt = (now) => or(
-  isNull(emailDeliveries.claimedAt),
-  lte(emailDeliveries.claimedAt, at(now - COMMERCE_EMAIL_LEASE_SECONDS))
+  isNull2(emailDeliveries.claimedAt),
+  lte(emailDeliveries.claimedAt, at2(now - COMMERCE_EMAIL_LEASE_SECONDS))
 );
 function originOf(value) {
   try {
@@ -719,8 +731,8 @@ function missingEmailSettings(setup, kind) {
 }
 function waitingEmailsResult(kinds, missing, waiting, limit) {
   const what = kinds === "all" ? "Email needs" : `${kinds.map((kind) => `${KIND_LABELS[kind]}s`).join(" and ")} need`;
-  const count = `${waiting}${waiting === limit ? " or more" : ""} email${waiting === 1 ? " is" : "s are"} waiting`;
-  return { id: "commerce_emails", status: "error", error: `${what} ${missing.join(", ")}; ${count}` };
+  const count2 = `${waiting}${waiting === limit ? " or more" : ""} email${waiting === 1 ? " is" : "s are"} waiting`;
+  return { id: "commerce_emails", status: "error", error: `${what} ${missing.join(", ")}; ${count2}` };
 }
 var CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 function validMessage(value) {
@@ -750,24 +762,22 @@ function commerceEmailStatement(kind, subjectId, now, condition) {
     ON CONFLICT (kind, subject_id) DO NOTHING`;
 }
 function commerceEmailHeld(kind, subjectId, stamp) {
-  return { sql: `EXISTS (SELECT 1 FROM _ecommerce_email_deliveries
-    WHERE kind = ? AND subject_id = ? AND status = 'pending' AND claimed_at = ?)`, params: [kind, subjectId, stamp] };
+  return sql2`EXISTS (SELECT 1 FROM _ecommerce_email_deliveries
+    WHERE kind = ${kind} AND subject_id = ${subjectId} AND status = 'pending' AND claimed_at = ${stamp})`;
 }
 async function holdCommerceEmail(env, kind, subjectId, now) {
   const db = commerceDb(env);
-  const [held] = await db.update(emailDeliveries).set({ claimedAt: at(now) }).where(and(pendingEmail(kind, subjectId), unclaimedAt(now))).returning({ id: emailDeliveries.id });
+  const [held] = await db.update(emailDeliveries).set({ claimedAt: at2(now) }).where(and2(pendingEmail(kind, subjectId), unclaimedAt(now))).returning({ id: emailDeliveries.id });
   if (held) return now;
   const pending = await db.select({ id: emailDeliveries.id }).from(emailDeliveries).where(pendingEmail(kind, subjectId)).get();
   return pending ? "busy" : null;
 }
-function releaseCommerceEmailStatement(env, kind, subjectId, stamp) {
-  return env.DB.prepare(`UPDATE _ecommerce_email_deliveries SET claimed_at = NULL
-    WHERE kind = ? AND subject_id = ? AND status = 'pending' AND claimed_at = ?`).bind(kind, subjectId, stamp);
+var heldBy = (kind, subjectId, stamp) => and2(pendingEmail(kind, subjectId), eq2(emailDeliveries.claimedAt, at2(stamp)));
+function releaseCommerceEmailStatement(db, kind, subjectId, stamp) {
+  return db.update(emailDeliveries).set({ claimedAt: null }).where(heldBy(kind, subjectId, stamp));
 }
-function supersedeCommerceEmailStatement(env, kind, subjectId, stamp) {
-  return env.DB.prepare(`UPDATE _ecommerce_email_deliveries SET status = 'cancelled', last_error = 'superseded',
-      claimed_at = NULL
-    WHERE kind = ? AND subject_id = ? AND status = 'pending' AND claimed_at = ?`).bind(kind, subjectId, stamp);
+function supersedeCommerceEmailStatement(db, kind, subjectId, stamp) {
+  return db.update(emailDeliveries).set({ status: "cancelled", lastError: "superseded", claimedAt: null }).where(heldBy(kind, subjectId, stamp));
 }
 function sendCommerceMessage(env, setup, kind, to, message) {
   return sendEmail(env, {
@@ -795,10 +805,10 @@ async function runCommerceEmailDelivery(env, kind, subjectId, compose, options =
       await db.update(emailDeliveries).set({ lastError: "not_configured" }).where(pendingEmail(kind, subjectId));
       return { id, status: "error", error: `${label} waits: email needs ${missing.join(", ")}` };
     }
-    const [claimed] = await db.update(emailDeliveries).set({ claimedAt: at(now), attempts: sql2`${emailDeliveries.attempts} + 1` }).where(and(pendingEmail(kind, subjectId), lte(emailDeliveries.nextAttemptAt, at(now)), unclaimedAt(now))).returning({ id: emailDeliveries.id, attempts: emailDeliveries.attempts });
+    const [claimed] = await db.update(emailDeliveries).set({ claimedAt: at2(now), attempts: sql2`${emailDeliveries.attempts} + 1` }).where(and2(pendingEmail(kind, subjectId), lte(emailDeliveries.nextAttemptAt, at2(now)), unclaimedAt(now))).returning({ id: emailDeliveries.id, attempts: emailDeliveries.attempts });
     if (!claimed) return null;
     const settle = async (outcome) => {
-      const { meta } = await db.update(emailDeliveries).set({ ...outcome, claimedAt: null }).where(and(eq(emailDeliveries.id, claimed.id), eq(emailDeliveries.claimedAt, at(now)))).run();
+      const { meta } = await db.update(emailDeliveries).set({ ...outcome, claimedAt: null }).where(and2(eq2(emailDeliveries.id, claimed.id), eq2(emailDeliveries.claimedAt, at2(now)))).run();
       return Number(meta?.changes ?? 0) > 0;
     };
     const recordFailure = async (code) => {
@@ -808,7 +818,7 @@ async function runCommerceEmailDelivery(env, kind, subjectId, compose, options =
       if (claimed.attempts >= COMMERCE_EMAIL_MAX_ATTEMPTS) {
         return await settle({ status: "failed", lastError: code }) ? { id, status: "error", error: `${label} was given up after ${claimed.attempts} attempts (${code})` } : null;
       }
-      if (!await settle({ lastError: code, nextAttemptAt: at(now + commerceEmailRetryDelay(claimed.attempts)) })) return null;
+      if (!await settle({ lastError: code, nextAttemptAt: at2(now + commerceEmailRetryDelay(claimed.attempts)) })) return null;
       return CONFIGURATION_ERRORS.has(code) ? { id, status: "error", error: `${label} could not be sent (${code}); it is retried` } : { id, status: "email_retry", error: code };
     };
     let composed;
@@ -830,7 +840,7 @@ async function runCommerceEmailDelivery(env, kind, subjectId, compose, options =
       await composed.onFailure?.().catch(() => void 0);
       return await recordFailure(emailErrorCode(error));
     }
-    await settle({ status: "sent", sentAt: at(now), lastError: null });
+    await settle({ status: "sent", sentAt: at2(now), lastError: null });
     return { id, status: "email_sent" };
   } catch (error) {
     return { id, status: "error", error: `${label} could not be recorded (${error instanceof Error ? error.name : "error"})` };
@@ -863,7 +873,7 @@ var hex = (bytes) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "
 var unhex = (value) => new Uint8Array(value.match(/.{2}/g)?.map((byte) => parseInt(byte, 16)) ?? []);
 var randomHex = (bytes) => hex(crypto.getRandomValues(new Uint8Array(bytes)));
 var utf8 = new TextEncoder();
-var at2 = (seconds) => new Date(seconds * 1e3);
+var at3 = (seconds) => new Date(seconds * 1e3);
 var KEY_PATTERN = /^[0-9a-fA-F]{64}$/;
 var VERSIONED_SECRET = /^v2:([0-9a-f]{16}):([0-9a-f]{24}):((?:[0-9a-f]{2}){17,})$/;
 var UNVERSIONED_SECRET = /^([0-9a-fA-F]{24}):((?:[0-9a-fA-F]{2}){17,})$/;
@@ -955,8 +965,8 @@ async function reencryptGiftCardCodes(env, input = {}) {
   const current = keys[0];
   const prefix = `v2:${current.id}:`;
   const db = commerceDb(env);
-  const rows = await db.select({ id: giftCards.id, codeHash: giftCards.codeHash, encryptedCode: giftCards.encryptedCode }).from(giftCards).where(and2(sql3`substr(${giftCards.encryptedCode}, 1, ${prefix.length}) <> ${prefix}`, gt(giftCards.id, after))).orderBy(giftCards.id).limit(limit);
-  const reencrypt = (row, encryptedCode) => db.update(giftCards).set({ encryptedCode }).where(and2(eq2(giftCards.id, row.id), eq2(giftCards.encryptedCode, row.encryptedCode))).returning({ id: giftCards.id });
+  const rows = await db.select({ id: giftCards.id, codeHash: giftCards.codeHash, encryptedCode: giftCards.encryptedCode }).from(giftCards).where(and3(sql3`substr(${giftCards.encryptedCode}, 1, ${prefix.length}) <> ${prefix}`, gt(giftCards.id, after))).orderBy(giftCards.id).limit(limit);
+  const reencrypt = (row, encryptedCode) => db.update(giftCards).set({ encryptedCode }).where(and3(eq3(giftCards.id, row.id), eq3(giftCards.encryptedCode, row.encryptedCode))).returning({ id: giftCards.id });
   const statements = [];
   const failed = [];
   for (const row of rows) {
@@ -983,27 +993,35 @@ async function getGiftCardKeyStatus(env) {
     return null;
   }
   const prefix = `v2:${current.id}:`;
-  const row = await env.DB.prepare(`SELECT
-      COALESCE(SUM(substr(encrypted_code,1,3) = 'v2:' AND substr(encrypted_code,1,?) <> ?),0) AS previousKeyCodes,
-      COALESCE(SUM(substr(encrypted_code,1,3) <> 'v2:'),0) AS legacyCodes
-    FROM _ecommerce_gift_cards`).bind(prefix.length, prefix).first();
+  const row = await commerceDb(env).select({
+    previousKeyCodes: sql3`COALESCE(SUM(substr(${giftCards.encryptedCode},1,3) = 'v2:'
+      AND substr(${giftCards.encryptedCode},1,${prefix.length}) <> ${prefix}),0)`,
+    legacyCodes: sql3`COALESCE(SUM(substr(${giftCards.encryptedCode},1,3) <> 'v2:'),0)`
+  }).from(giftCards).get();
   return { keyId: current.id, previousKeyCodes: row?.previousKeyCodes ?? 0, legacyCodes: row?.legacyCodes ?? 0 };
 }
-var settledPurchase = `(p.status = 'paid' OR (p.status IN ('partially_refunded','refunded')
-  AND p.refund_adjusted_cents = p.provider_refunded_cents))`;
-var currentCard = (purchase) => `SELECT k.id FROM _ecommerce_gift_cards k
+var p = alias(giftCardPurchases, "p");
+var c = alias(giftCards, "c");
+var P_ID = sql3.raw("p.id");
+var settledPurchase = (purchase) => sql3`(${purchase.status} = 'paid' OR (${purchase.status} IN ('partially_refunded','refunded')
+  AND ${purchase.refundAdjustedCents} = ${purchase.providerRefundedCents}))`;
+var currentCard = (purchase) => sql3`(SELECT k.id FROM _ecommerce_gift_cards k
   WHERE (k.purchase_id = ${purchase} OR k.replaces_purchase_id = ${purchase}) AND k.status <> 'void'
-  ORDER BY k.source = 'admin' DESC,k.created_at DESC,k.id DESC LIMIT 1`;
-var pendingCheckout = (purchase) => `EXISTS (SELECT 1 FROM _ecommerce_gift_card_redemptions r
+  ORDER BY k.source = 'admin' DESC,k.created_at DESC,k.id DESC LIMIT 1)`;
+var pendingCheckout = (purchase) => sql3`EXISTS (SELECT 1 FROM _ecommerce_gift_card_redemptions r
   JOIN _ecommerce_gift_cards f ON f.id = r.card_id
   WHERE (f.purchase_id = ${purchase} OR f.replaces_purchase_id = ${purchase}) AND r.status = 'reserved')`;
-var cardValue = (purchase) => `(SELECT COALESCE(SUM(f.balance_cents),0) FROM _ecommerce_gift_cards f
+var cardValue = (purchase) => sql3`(SELECT COALESCE(SUM(f.balance_cents),0) FROM _ecommerce_gift_cards f
   WHERE (f.purchase_id = ${purchase} OR f.replaces_purchase_id = ${purchase}) AND f.status <> 'void')`;
 var units = (cents, currency) => `${(cents / 100).toFixed(2)} ${currency.toUpperCase()}`;
-async function assertReplaceable(env, purchaseId, amountCents) {
-  const purchase = await env.DB.prepare(`SELECT p.status,p.currency,${settledPurchase} AS settled,
-      ${cardValue("p.id")} AS value,${pendingCheckout("p.id")} AS pending
-    FROM _ecommerce_gift_card_purchases p WHERE p.id = ?`).bind(purchaseId).first();
+async function assertReplaceable(db, purchaseId, amountCents) {
+  const purchase = await db.select({
+    status: p.status,
+    currency: p.currency,
+    settled: settledPurchase(p),
+    value: cardValue(P_ID),
+    pending: pendingCheckout(P_ID)
+  }).from(p).where(eq3(p.id, purchaseId)).get();
   if (!purchase?.settled || !["paid", "partially_refunded"].includes(purchase.status)) {
     throw new Error("Only the card of a paid purchase that is not held for review can be replaced");
   }
@@ -1027,52 +1045,38 @@ async function issueAdminGiftCard(env, actor, input) {
   const { amountCents, reason, replacesPurchaseId } = adminIssueSchema.parse(input);
   if (!actor.trim()) throw new Error("Administrator identity is required");
   const replaces = replacesPurchaseId ?? null;
-  if (replaces) await assertReplaceable(env, replaces, amountCents);
+  const db = commerceDb(env);
+  if (replaces) await assertReplaceable(db, replaces, amountCents);
   const id = `gift_${crypto.randomUUID()}`;
   const secret = await newCardSecret(env, id);
   const timestamp = Math.floor(Date.now() / 1e3);
-  const statements = [
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_cards
+  const replacementIssued = sql3`EXISTS (SELECT 1 FROM _ecommerce_gift_cards n WHERE n.id = ${id})`;
+  const [inserted] = await db.batch([
+    db.all(sql3`INSERT INTO _ecommerce_gift_cards
       (id,code_hash,code_suffix,encrypted_code,source,admin_actor,admin_reason,replaces_purchase_id,initial_cents,balance_cents,currency,status,created_at,updated_at)
-      SELECT ?,?,?,?,'admin',?,?,?,?,0,?,'active',?,?
-      WHERE ? IS NULL OR EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p
-        WHERE p.id = ? AND p.currency = ? AND p.status IN ('paid','partially_refunded') AND ${settledPurchase}
-          AND NOT ${pendingCheckout("p.id")} AND ${cardValue("p.id")} = ?)
-      RETURNING id`).bind(
-      id,
-      secret.codeHash,
-      secret.codeSuffix,
-      secret.encryptedCode,
-      actor,
-      reason,
-      replaces,
-      amountCents,
-      currency,
-      timestamp,
-      timestamp,
-      replaces,
-      replaces,
-      currency,
-      amountCents
-    ),
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_card_ledger
+      SELECT ${id},${secret.codeHash},${secret.codeSuffix},${secret.encryptedCode},'admin',${actor},${reason},${replaces},${amountCents},0,${currency},'active',${timestamp},${timestamp}
+      WHERE ${replaces} IS NULL OR EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p
+        WHERE p.id = ${replaces} AND p.currency = ${currency} AND p.status IN ('paid','partially_refunded') AND ${settledPurchase(p)}
+          AND NOT ${pendingCheckout(p.id)} AND ${cardValue(p.id)} = ${amountCents})
+      RETURNING id`),
+    db.run(sql3`INSERT INTO _ecommerce_gift_card_ledger
       (id,card_id,purchase_id,kind,amount_cents,created_at)
-      SELECT ?,id,replaces_purchase_id,'issue',initial_cents,? FROM _ecommerce_gift_cards WHERE id = ?`).bind(`gcl_issue_${id}`, timestamp, id)
-  ];
-  if (replaces) {
-    const replacementIssued = `EXISTS (SELECT 1 FROM _ecommerce_gift_cards n WHERE n.id = ?)`;
-    statements.push(
-      env.DB.prepare(`INSERT INTO _ecommerce_gift_card_ledger
+      SELECT ${`gcl_issue_${id}`},id,replaces_purchase_id,'issue',initial_cents,${timestamp} FROM _ecommerce_gift_cards WHERE id = ${id}`),
+    ...replaces ? [
+      db.run(sql3`INSERT INTO _ecommerce_gift_card_ledger
         (id,card_id,purchase_id,kind,amount_cents,created_at)
-        SELECT 'gcl_replaced_' || c.id,c.id,?,'purchase_reversal',-c.balance_cents,?
-        FROM _ecommerce_gift_cards c WHERE (c.purchase_id = ? OR c.replaces_purchase_id = ?) AND c.id <> ?
-          AND c.status <> 'void' AND c.balance_cents > 0 AND ${replacementIssued}`).bind(replaces, timestamp, replaces, replaces, id, id),
-      env.DB.prepare(`UPDATE _ecommerce_gift_cards SET status = 'void',held_for_review = 0,updated_at = ?
-        WHERE (purchase_id = ? OR replaces_purchase_id = ?) AND id <> ? AND status <> 'void' AND ${replacementIssued}`).bind(timestamp, replaces, replaces, id, id)
-    );
-  }
-  const [inserted] = await env.DB.batch(statements);
-  if (!inserted.results?.length) throw new Error("The purchase changed while its card was being replaced; reload and try again");
+        SELECT 'gcl_replaced_' || c.id,c.id,${replaces},'purchase_reversal',-c.balance_cents,${timestamp}
+        FROM _ecommerce_gift_cards c WHERE (c.purchase_id = ${replaces} OR c.replaces_purchase_id = ${replaces}) AND c.id <> ${id}
+          AND c.status <> 'void' AND c.balance_cents > 0 AND ${replacementIssued}`),
+      db.update(giftCards).set({ status: "void", heldForReview: false, updatedAt: at3(timestamp) }).where(and3(
+        or2(eq3(giftCards.purchaseId, replaces), eq3(giftCards.replacesPurchaseId, replaces)),
+        ne(giftCards.id, id),
+        ne(giftCards.status, "void"),
+        replacementIssued
+      ))
+    ] : []
+  ]);
+  if (!inserted.length) throw new Error("The purchase changed while its card was being replaced; reload and try again");
   return { id, code: secret.code, amountCents, currency, replacesPurchaseId: replaces };
 }
 var isoSeconds = (seconds) => typeof seconds === "number" ? new Date(seconds * 1e3).toISOString() : null;
@@ -1127,43 +1131,51 @@ async function getGiftCardsAdmin(env) {
     createdAt: giftCards.createdAt
   }).from(giftCards).orderBy(giftCards.createdAt);
 }
-var reviewSelect = `SELECT p.id AS purchaseId,p.status,p.amount_cents AS amountCents,p.currency,
-    p.provider_refunded_cents AS refundedCents,p.refund_adjusted_cents AS adjustedCents,
-    c.id AS cardId,c.code_suffix AS codeSuffix,c.status AS cardStatus,c.held_for_review AS cardHeld,
-    c.replaces_purchase_id IS NOT NULL AS cardReplacement,c.balance_cents AS balanceCents,
-    (SELECT -COALESCE(SUM(l.amount_cents),0) FROM _ecommerce_gift_card_ledger l
-      JOIN _ecommerce_gift_cards f ON f.id = l.card_id
-      WHERE (f.purchase_id = p.id OR f.replaces_purchase_id = p.id)
-        AND l.kind IN ('reserve','release','refund_restore')) AS spentCents,
-    (SELECT COALESCE(SUM(r.amount_cents),0) FROM _ecommerce_gift_card_redemptions r
-      JOIN _ecommerce_gift_cards f ON f.id = r.card_id
-      WHERE (f.purchase_id = p.id OR f.replaces_purchase_id = p.id) AND r.status = 'reserved') AS pendingCents,
-    (SELECT COUNT(*) FROM _ecommerce_gift_cards f WHERE f.replaces_purchase_id = p.id) AS replacementCount
-  FROM _ecommerce_gift_card_purchases p LEFT JOIN _ecommerce_gift_cards c ON c.id = (${currentCard("p.id")})`;
-var reviewView = (row) => ({ ...row, cardHeld: row.cardHeld === 1, cardReplacement: row.cardReplacement === 1 });
-var openDispute = (purchase) => `EXISTS (SELECT 1 FROM _ecommerce_disputes d
+var reviewQuery = (db) => db.select({
+  purchaseId: p.id,
+  status: p.status,
+  amountCents: p.amountCents,
+  currency: p.currency,
+  refundedCents: p.providerRefundedCents,
+  adjustedCents: p.refundAdjustedCents,
+  cardId: c.id,
+  codeSuffix: c.codeSuffix,
+  cardStatus: c.status,
+  cardHeld: c.heldForReview,
+  cardReplacement: sql3`${c.replacesPurchaseId} IS NOT NULL`.mapWith(Boolean),
+  balanceCents: c.balanceCents,
+  spentCents: sql3`(SELECT -COALESCE(SUM(l.amount_cents),0) FROM _ecommerce_gift_card_ledger l
+    JOIN _ecommerce_gift_cards f ON f.id = l.card_id
+    WHERE (f.purchase_id = ${P_ID} OR f.replaces_purchase_id = ${P_ID})
+      AND l.kind IN ('reserve','release','refund_restore'))`,
+  pendingCents: sql3`(SELECT COALESCE(SUM(r.amount_cents),0) FROM _ecommerce_gift_card_redemptions r
+    JOIN _ecommerce_gift_cards f ON f.id = r.card_id
+    WHERE (f.purchase_id = ${P_ID} OR f.replaces_purchase_id = ${P_ID}) AND r.status = 'reserved')`,
+  replacementCount: sql3`(SELECT COUNT(*) FROM _ecommerce_gift_cards f WHERE f.replaces_purchase_id = ${P_ID})`
+}).from(p).leftJoin(c, eq3(c.id, currentCard(p.id)));
+var reviewView = (row) => ({ ...row, cardHeld: row.cardHeld === true });
+var openDispute = (purchase) => sql3`EXISTS (SELECT 1 FROM _ecommerce_disputes d
   WHERE d.gift_card_purchase_id = ${purchase} AND d.closed_at IS NULL)`;
 async function getGiftCardReviewsAdmin(env) {
-  const rows = await env.DB.prepare(`${reviewSelect}
-    WHERE p.status = 'review' AND NOT ${openDispute("p.id")} ORDER BY p.updated_at,p.id LIMIT 100`).all();
-  const total = await env.DB.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_gift_card_purchases p
-    WHERE p.status = 'review' AND NOT ${openDispute("p.id")}`).first();
-  return { reviews: (rows.results ?? []).map(reviewView), reviewCount: total?.count ?? 0 };
+  const db = commerceDb(env);
+  const held = and3(eq3(p.status, "review"), not(openDispute(p.id)));
+  const rows = await reviewQuery(db).where(held).orderBy(p.updatedAt, p.id).limit(100);
+  const total = await db.select({ count: count() }).from(p).where(held).get();
+  return { reviews: rows.map(reviewView), reviewCount: total?.count ?? 0 };
 }
 async function setGiftCardActive(env, id, active) {
   if (!/^gift_[0-9a-f-]{36}$/.test(id) || typeof active !== "boolean") throw new Error("Invalid gift card");
   const db = commerceDb(env);
-  const card = await db.select().from(giftCards).where(eq2(giftCards.id, id)).get();
+  const card = await db.select().from(giftCards).where(eq3(giftCards.id, id)).get();
   if (!card || card.status === "void") throw new Error("Gift card is unavailable");
   const timestamp = Math.floor(Date.now() / 1e3);
-  const result = await env.DB.prepare(`UPDATE _ecommerce_gift_cards SET status = ?,held_for_review = 0,updated_at = ?
-    WHERE id = ? AND status <> 'void' AND (? = 0 OR (
-      (purchase_id IS NULL OR EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p
-        WHERE p.id = _ecommerce_gift_cards.purchase_id AND ${settledPurchase}))
-      AND (replaces_purchase_id IS NULL OR EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p
-        WHERE p.id = _ecommerce_gift_cards.replaces_purchase_id AND ${settledPurchase}))))
-    RETURNING id`).bind(active ? "active" : "suspended", timestamp, id, active ? 1 : 0).all();
-  if (!result.results?.length) throw new Error("Gift card purchase requires review");
+  const settled = (purchaseId) => exists(db.select({ one: sql3`1` }).from(giftCardPurchases).where(and3(eq3(giftCardPurchases.id, purchaseId), settledPurchase(giftCardPurchases))));
+  const reactivatable = and3(
+    or2(isNull3(giftCards.purchaseId), settled(giftCards.purchaseId)),
+    or2(isNull3(giftCards.replacesPurchaseId), settled(giftCards.replacesPurchaseId))
+  );
+  const result = await db.update(giftCards).set({ status: active ? "active" : "suspended", heldForReview: false, updatedAt: at3(timestamp) }).where(and3(eq3(giftCards.id, id), ne(giftCards.status, "void"), active ? reactivatable : void 0)).returning({ id: giftCards.id });
+  if (!result.length) throw new Error("Gift card purchase requires review");
   return { id, status: active ? "active" : "suspended" };
 }
 var GiftCardRefusal = class extends Error {
@@ -1179,7 +1191,7 @@ async function evaluateGiftCard(env, code, amountDue) {
   const normalized = code.trim().toUpperCase();
   if (!/^GIFT-[A-F0-9]{32}$/.test(normalized)) throw new GiftCardRefusal("format", "Invalid gift card code");
   const db = commerceDb(env);
-  const card = await db.select().from(giftCards).where(eq2(giftCards.codeHash, await hashGiftCardSecret(normalized))).get();
+  const card = await db.select().from(giftCards).where(eq3(giftCards.codeHash, await hashGiftCardSecret(normalized))).get();
   if (!card || card.status !== "active" || card.currency !== currency || card.balanceCents <= 0) {
     throw new GiftCardRefusal("unavailable", "Gift card is unavailable");
   }
@@ -1196,7 +1208,7 @@ async function getGiftCardBalance(env, code) {
     balanceCents: giftCards.balanceCents,
     currency: giftCards.currency,
     status: giftCards.status
-  }).from(giftCards).where(eq2(giftCards.codeHash, await hashGiftCardSecret(normalized))).get();
+  }).from(giftCards).where(eq3(giftCards.codeHash, await hashGiftCardSecret(normalized))).get();
   if (!card) throw new Error("Gift card not found");
   return card;
 }
@@ -1209,7 +1221,7 @@ async function startGiftCardPurchase(env, adapter, input, urls) {
   const accessToken = randomHex(32);
   const timestamp = Math.floor(Date.now() / 1e3);
   const db = commerceDb(env);
-  const pending = and2(eq2(giftCardPurchases.id, id), eq2(giftCardPurchases.status, "pending"));
+  const pending = and3(eq3(giftCardPurchases.id, id), eq3(giftCardPurchases.status, "pending"));
   await db.insert(giftCardPurchases).values({
     id,
     buyerEmail: values.buyerEmail,
@@ -1217,8 +1229,8 @@ async function startGiftCardPurchase(env, adapter, input, urls) {
     currency,
     status: "pending",
     accessTokenHash: await hashGiftCardSecret(accessToken),
-    createdAt: at2(timestamp),
-    updatedAt: at2(timestamp)
+    createdAt: at3(timestamp),
+    updatedAt: at3(timestamp)
   });
   let providerSessionId;
   try {
@@ -1232,7 +1244,7 @@ async function startGiftCardPurchase(env, adapter, input, urls) {
       cancelUrl: urls.cancelUrl
     });
     providerSessionId = session.providerSessionId;
-    await db.update(giftCardPurchases).set({ providerSessionId: session.providerSessionId, updatedAt: at2(timestamp) }).where(pending);
+    await db.update(giftCardPurchases).set({ providerSessionId: session.providerSessionId, updatedAt: at3(timestamp) }).where(pending);
     return { id, accessToken, paymentUrl: session.url };
   } catch (error) {
     if (providerSessionId) {
@@ -1251,7 +1263,7 @@ async function confirmGiftCardPurchase(env, session) {
   const id = session.metadata?.giftCardPurchaseId;
   if (!id) throw new Error("Gift card purchase ID is missing");
   const db = commerceDb(env);
-  const purchase = await db.select().from(giftCardPurchases).where(eq2(giftCardPurchases.id, id)).get();
+  const purchase = await db.select().from(giftCardPurchases).where(eq3(giftCardPurchases.id, id)).get();
   if (!purchase || purchase.providerSessionId !== session.id || purchase.amountCents !== session.amount_total || session.currency?.toLowerCase() !== purchase.currency.toLowerCase() || session.payment_status !== "paid" || typeof session.payment_intent !== "string") {
     throw new WebhookMismatchError("purchase_mismatch", "Gift card payment does not match purchase");
   }
@@ -1263,26 +1275,24 @@ async function confirmGiftCardPurchase(env, session) {
   const cardId = `gift_${crypto.randomUUID()}`;
   const secret = await newCardSecret(env, cardId);
   const timestamp = Math.floor(Date.now() / 1e3);
-  await runStatements(db, [
-    sql3`UPDATE _ecommerce_gift_card_purchases
-      SET status = 'paid',payment_intent_id = ${session.payment_intent},updated_at = ${timestamp}
-      WHERE id = ${id} AND status = 'pending' AND provider_session_id = ${session.id}`,
-    sql3`INSERT INTO _ecommerce_gift_cards
+  await commitBatch(db, [
+    db.update(giftCardPurchases).set({ status: "paid", paymentIntentId: session.payment_intent, updatedAt: at3(timestamp) }).where(and3(eq3(giftCardPurchases.id, id), eq3(giftCardPurchases.status, "pending"), eq3(giftCardPurchases.providerSessionId, session.id))),
+    db.run(sql3`INSERT INTO _ecommerce_gift_cards
       (id,code_hash,code_suffix,encrypted_code,source,purchase_id,initial_cents,balance_cents,currency,status,created_at,updated_at)
       SELECT ${cardId},${secret.codeHash},${secret.codeSuffix},${secret.encryptedCode},'purchase',id,amount_cents,0,currency,'active',${timestamp},${timestamp}
       FROM _ecommerce_gift_card_purchases WHERE id = ${id} AND status = 'paid'
-      ON CONFLICT(purchase_id) DO NOTHING`,
-    sql3`INSERT INTO _ecommerce_gift_card_ledger
+      ON CONFLICT(purchase_id) DO NOTHING`),
+    db.run(sql3`INSERT INTO _ecommerce_gift_card_ledger
       (id,card_id,purchase_id,kind,amount_cents,created_at)
       SELECT 'gcl_issue_' || id,id,purchase_id,'issue',initial_cents,${timestamp}
-      FROM _ecommerce_gift_cards WHERE purchase_id = ${id} ON CONFLICT(id) DO NOTHING`,
+      FROM _ecommerce_gift_cards WHERE purchase_id = ${id} ON CONFLICT(id) DO NOTHING`),
     // The buyer gets a claim link once, however often the payment is confirmed.
-    commerceEmailStatement(
+    db.run(commerceEmailStatement(
       "gift_card_claim",
       id,
       timestamp,
       sql3`EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases WHERE id = ${id} AND status = 'paid' AND provider_session_id = ${session.id})`
-    )
+    ))
   ]);
   await sendCommerceEmailNow(env, "gift_card_claim", id, composeGiftCardClaimEmail);
   return { success: true, purchaseId: id };
@@ -1291,82 +1301,80 @@ var GIFT_CARD_CLAIM_SECONDS = 7 * 24 * 60 * 60;
 var GIFT_CARD_CLAIMS_PER_NETWORK_PER_HOUR = 20;
 var CLAIM_TOKEN = /^[0-9a-f]{64}$/;
 var claimUrl = (origin, token) => `${origin}/gift-cards/claim#token=${token}`;
-function claimTarget(env, purchaseId) {
-  return env.DB.prepare(`SELECT p.id,p.buyer_email,p.amount_cents,p.currency,c.id AS card_id,c.status AS card_status
-    FROM _ecommerce_gift_card_purchases p LEFT JOIN _ecommerce_gift_cards c ON c.id = (${currentCard("p.id")})
-    WHERE p.id = ?`).bind(purchaseId).first();
+function claimTarget(db, purchaseId) {
+  return db.select({
+    id: giftCardPurchases.id,
+    buyerEmail: giftCardPurchases.buyerEmail,
+    amountCents: giftCardPurchases.amountCents,
+    currency: giftCardPurchases.currency,
+    cardId: giftCards.id,
+    cardStatus: giftCards.status
+  }).from(giftCardPurchases).leftJoin(giftCards, eq3(giftCards.id, currentCard(giftCardPurchases.id))).where(eq3(giftCardPurchases.id, purchaseId)).get();
 }
-async function newClaimLink(env, target, now, { resend, condition } = {}) {
+async function newClaimLink(target, now, { resend, condition } = {}) {
   const token = randomHex(32);
   const id = `gclaim_${crypto.randomUUID()}`;
   const expiresAt = now + GIFT_CARD_CLAIM_SECONDS;
-  return { id, token, expiresAt, statement: env.DB.prepare(`INSERT INTO _ecommerce_gift_card_claims
+  return { id, token, expiresAt, statement: sql3`INSERT INTO _ecommerce_gift_card_claims
       (id,token_hash,purchase_id,card_id,expires_at,created_at,created_by,reason)
-      SELECT ?,?,?,?,?,?,?,? WHERE ${condition?.sql ?? "1"} RETURNING id`).bind(
-    id,
-    await hashGiftCardSecret(token),
-    target.id,
-    target.card_id,
-    expiresAt,
-    now,
-    resend?.actor ?? null,
-    resend?.reason ?? null,
-    ...condition?.params ?? []
-  ) };
+      SELECT ${id},${await hashGiftCardSecret(token)},${target.id},${target.cardId},${expiresAt},${now},
+        ${resend?.actor ?? null},${resend?.reason ?? null} WHERE ${condition ?? sql3`1`} RETURNING id` };
 }
-var revokeClaimLinkStatement = (env, id) => env.DB.prepare(`UPDATE _ecommerce_gift_card_claims
-  SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`).bind(Math.floor(Date.now() / 1e3), id);
-var revokeClaimLink = (env, id) => revokeClaimLinkStatement(env, id).run();
+var revokeClaimLinkStatement = (db, id) => db.update(giftCardClaims).set({ revokedAt: /* @__PURE__ */ new Date() }).where(and3(eq3(giftCardClaims.id, id), isNull3(giftCardClaims.revokedAt)));
 function claimEmail(setup, target, link) {
   const email = {
     store: setup.store,
-    purchase: { id: target.id, amountCents: target.amount_cents, currency: target.currency },
+    purchase: { id: target.id, amountCents: target.amountCents, currency: target.currency },
     claim: { url: claimUrl(setup.store.origin, link.token), expiresAt: new Date(link.expiresAt * 1e3) }
   };
   return applyEmailTemplate(setup, "giftCardClaim", email, giftCardClaimEmail(email));
 }
 var composeGiftCardClaimEmail = async (env, purchaseId, setup, now) => {
-  const target = await claimTarget(env, purchaseId);
+  const db = commerceDb(env);
+  const target = await claimTarget(db, purchaseId);
   if (!target) return { cancel: "not_found" };
-  if (!target.card_id || target.card_status !== "active") return { cancel: "not_claimable" };
-  const to = bareEmailAddress(target.buyer_email);
+  if (!target.cardId || target.cardStatus !== "active") return { cancel: "not_claimable" };
+  const to = bareEmailAddress(target.buyerEmail);
   if (!to) return { fail: "invalid_recipient" };
   const link = await newClaimLink(
-    env,
-    { ...target, card_id: target.card_id },
+    { ...target, cardId: target.cardId },
     now,
     { condition: commerceEmailHeld("gift_card_claim", purchaseId, now) }
   );
-  if (!await link.statement.first()) return { cancel: "superseded" };
-  return { to, message: await claimEmail(setup, target, link), onFailure: () => revokeClaimLink(env, link.id) };
+  if (!await db.get(link.statement)) return { cancel: "superseded" };
+  return { to, message: await claimEmail(setup, target, link), onFailure: () => revokeClaimLinkStatement(db, link.id).run() };
 };
 async function claimGiftCardCode(env, token) {
   if (typeof token !== "string" || !CLAIM_TOKEN.test(token)) return null;
   const now = Math.floor(Date.now() / 1e3);
-  const claim = await commerceDb(env).select({
+  const db = commerceDb(env);
+  const claim = await db.select({
     id: giftCardClaims.id,
     cardId: giftCardClaims.cardId,
     codeHash: giftCards.codeHash,
     encryptedCode: giftCards.encryptedCode,
     balanceCents: giftCards.balanceCents,
     currency: giftCards.currency
-  }).from(giftCardClaims).innerJoin(giftCards, eq2(giftCards.id, giftCardClaims.cardId)).where(and2(
-    eq2(giftCardClaims.tokenHash, await hashGiftCardSecret(token)),
-    isNull2(giftCardClaims.usedAt),
-    isNull2(giftCardClaims.revokedAt),
-    gt(giftCardClaims.expiresAt, at2(now)),
-    eq2(giftCards.status, "active")
+  }).from(giftCardClaims).innerJoin(giftCards, eq3(giftCards.id, giftCardClaims.cardId)).where(and3(
+    eq3(giftCardClaims.tokenHash, await hashGiftCardSecret(token)),
+    isNull3(giftCardClaims.usedAt),
+    isNull3(giftCardClaims.revokedAt),
+    gt(giftCardClaims.expiresAt, at3(now)),
+    eq3(giftCards.status, "active")
   )).get();
   if (!claim) return null;
   const code = await decryptCardSecret(
     await giftCardKeyring(env),
     { id: claim.cardId, codeHash: claim.codeHash, encryptedCode: claim.encryptedCode }
   );
-  const used = await env.DB.prepare(`UPDATE _ecommerce_gift_card_claims SET used_at = ?
-    WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?
-      AND EXISTS (SELECT 1 FROM _ecommerce_gift_cards WHERE id = ? AND status = 'active')
-    RETURNING id`).bind(now, claim.id, now, claim.cardId).all();
-  if (!used.results?.length) return null;
+  const used = await db.update(giftCardClaims).set({ usedAt: at3(now) }).where(and3(
+    eq3(giftCardClaims.id, claim.id),
+    isNull3(giftCardClaims.usedAt),
+    isNull3(giftCardClaims.revokedAt),
+    gt(giftCardClaims.expiresAt, at3(now)),
+    exists(db.select({ one: sql3`1` }).from(giftCards).where(and3(eq3(giftCards.id, claim.cardId), eq3(giftCards.status, "active"))))
+  )).returning({ id: giftCardClaims.id });
+  if (!used.length) return null;
   return { code, balanceCents: claim.balanceCents, currency: claim.currency };
 }
 var resendSchema = z2.object({
@@ -1379,40 +1387,44 @@ async function resendGiftCardClaimLink(env, actor, input) {
   const setup = await commerceEmailSetup(env);
   const missing = missingEmailSettings(setup, "gift_card_claim");
   if (missing.length) throw new Error(`Email needs ${missing.join(", ")} before a claim link can be sent`);
-  const target = await claimTarget(env, values.purchaseId);
+  const db = commerceDb(env);
+  const target = await claimTarget(db, values.purchaseId);
   if (!target) throw new Error("Gift card purchase not found");
-  if (!target.card_id || target.card_status !== "active") {
+  if (!target.cardId || target.cardStatus !== "active") {
     throw new Error("A claim link can be sent only while the card that holds the purchase's value is active");
   }
-  const to = bareEmailAddress(target.buyer_email);
+  const to = bareEmailAddress(target.buyerEmail);
   if (!to) throw new Error("The purchase has no valid buyer address");
   const now = Math.floor(Date.now() / 1e3);
   const hold = await holdCommerceEmail(env, "gift_card_claim", values.purchaseId, now);
   if (hold === "busy") {
     throw new Error("The claim email is being sent right now; reload in a few minutes and resend it only if it was not sent");
   }
-  const release = hold === null ? [] : [releaseCommerceEmailStatement(env, "gift_card_claim", values.purchaseId, hold)];
-  const link = await newClaimLink(env, { ...target, card_id: target.card_id }, now, { resend: { actor, reason: values.reason } });
+  const release = hold === null ? [] : [releaseCommerceEmailStatement(db, "gift_card_claim", values.purchaseId, hold)];
+  const link = await newClaimLink({ ...target, cardId: target.cardId }, now, { resend: { actor, reason: values.reason } });
   try {
-    await link.statement.first();
+    await db.get(link.statement);
   } catch (cause) {
-    if (release.length) await env.DB.batch(release);
+    await commitBatch(db, release);
     throw new Error("The purchase's card changed while the link was being made; reload and try again", { cause });
   }
   try {
     await sendCommerceMessage(env, setup, "gift_card_claim", to, await claimEmail(setup, target, link));
   } catch (error) {
-    await env.DB.batch([revokeClaimLinkStatement(env, link.id), ...release]).catch(() => void 0);
+    await commitBatch(db, [revokeClaimLinkStatement(db, link.id), ...release]).catch(() => void 0);
     const code = emailErrorCode(error);
     console.warn("[commerce] Gift card claim link not sent", { purchase: values.purchaseId, code });
     throw new Error(`The claim email could not be sent (${code}); earlier links still work. Try again later`);
   }
   try {
-    await env.DB.batch([
-      env.DB.prepare(`UPDATE _ecommerce_gift_card_claims SET revoked_at = ?
-        WHERE purchase_id = ? AND used_at IS NULL AND revoked_at IS NULL
-          AND rowid < (SELECT rowid FROM _ecommerce_gift_card_claims WHERE id = ?)`).bind(now, values.purchaseId, link.id),
-      ...hold === null ? [] : [supersedeCommerceEmailStatement(env, "gift_card_claim", values.purchaseId, hold)]
+    await commitBatch(db, [
+      db.update(giftCardClaims).set({ revokedAt: at3(now) }).where(and3(
+        eq3(giftCardClaims.purchaseId, values.purchaseId),
+        isNull3(giftCardClaims.usedAt),
+        isNull3(giftCardClaims.revokedAt),
+        lt(sql3`rowid`, db.select({ rowid: sql3`rowid` }).from(giftCardClaims).where(eq3(giftCardClaims.id, link.id)))
+      )),
+      ...hold === null ? [] : [supersedeCommerceEmailStatement(db, "gift_card_claim", values.purchaseId, hold)]
     ]);
   } catch (cause) {
     throw new Error("The claim email was sent, but earlier links still work; resend it again to stop them", { cause });
@@ -1420,15 +1432,15 @@ async function resendGiftCardClaimLink(env, actor, input) {
   return { purchaseId: values.purchaseId, claimId: link.id, expiresAt: new Date(link.expiresAt * 1e3).toISOString() };
 }
 async function expireGiftCardPurchase(env, id, sessionId) {
-  await commerceDb(env).update(giftCardPurchases).set({ status: "cancelled", updatedAt: /* @__PURE__ */ new Date() }).where(and2(
-    eq2(giftCardPurchases.id, id),
-    eq2(giftCardPurchases.providerSessionId, sessionId),
-    eq2(giftCardPurchases.status, "pending")
+  await commerceDb(env).update(giftCardPurchases).set({ status: "cancelled", updatedAt: /* @__PURE__ */ new Date() }).where(and3(
+    eq3(giftCardPurchases.id, id),
+    eq3(giftCardPurchases.providerSessionId, sessionId),
+    eq3(giftCardPurchases.status, "pending")
   ));
 }
 async function reconcileGiftCardPurchase(env, adapter, id) {
   const db = commerceDb(env);
-  const purchase = await db.select().from(giftCardPurchases).where(eq2(giftCardPurchases.id, id)).get();
+  const purchase = await db.select().from(giftCardPurchases).where(eq3(giftCardPurchases.id, id)).get();
   if (!purchase || purchase.status !== "pending" || !purchase.providerSessionId) return null;
   if (purchase.reconcileReviewAt) return { status: "pending", review: true };
   if (adapter?.providerId !== "stripe" || !adapter.getCheckoutSession) {
@@ -1461,9 +1473,9 @@ async function reconcileGiftCardPurchase(env, adapter, id) {
 async function getPurchasedGiftCard(env, id, accessToken) {
   if (!/^gp_[0-9a-f-]{36}$/.test(id) || !accessToken) return null;
   const db = commerceDb(env);
-  const purchase = await db.select().from(giftCardPurchases).where(eq2(giftCardPurchases.id, id)).get();
+  const purchase = await db.select().from(giftCardPurchases).where(eq3(giftCardPurchases.id, id)).get();
   if (!purchase || purchase.accessTokenHash !== await hashGiftCardSecret(accessToken)) return null;
-  const card = await db.select().from(giftCards).where(eq2(giftCards.purchaseId, id)).get();
+  const card = await db.select().from(giftCards).where(eq3(giftCards.purchaseId, id)).get();
   return {
     status: purchase.status,
     amountCents: purchase.amountCents,
@@ -1477,7 +1489,7 @@ async function getPurchasedGiftCard(env, id, accessToken) {
 function giftCardPurchaseHoldStatements(purchaseId, timestamp) {
   const unspentFullRefund = sql3`EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p
     WHERE p.id = ${purchaseId} AND p.status = 'review' AND p.provider_refunded_cents >= p.amount_cents
-      AND NOT ${sql3.raw(pendingCheckout("p.id"))}
+      AND NOT ${pendingCheckout(p.id)}
       AND (SELECT COALESCE(SUM(l.amount_cents),0) FROM _ecommerce_gift_card_ledger l
         JOIN _ecommerce_gift_cards f ON f.id = l.card_id
         WHERE (f.purchase_id = p.id OR f.replaces_purchase_id = p.id)
@@ -1505,11 +1517,11 @@ function giftCardPurchaseReleaseStatements(purchaseId, timestamp) {
   return [
     sql3`UPDATE _ecommerce_gift_cards SET status = 'active',held_for_review = 0,updated_at = ${timestamp}
       WHERE (purchase_id = ${purchaseId} OR replaces_purchase_id = ${purchaseId}) AND status = 'suspended' AND held_for_review = 1
-        AND EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p WHERE p.id = ${purchaseId} AND ${sql3.raw(settledPurchase)})`
+        AND EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p WHERE p.id = ${purchaseId} AND ${settledPurchase(p)})`
   ];
 }
 function giftCardPurchaseChargebackStatements(purchaseId, timestamp) {
-  const clear = sql3`NOT EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p WHERE p.id = ${purchaseId} AND ${sql3.raw(pendingCheckout("p.id"))})`;
+  const clear = sql3`NOT EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p WHERE p.id = ${purchaseId} AND ${pendingCheckout(p.id)})`;
   return [
     sql3`INSERT INTO _ecommerce_gift_card_ledger
       (id,card_id,purchase_id,kind,amount_cents,created_at)
@@ -1528,19 +1540,18 @@ function giftCardPurchaseChargebackStatements(purchaseId, timestamp) {
 }
 async function recordGiftCardPurchaseRefund(env, params) {
   const db = commerceDb(env);
-  const purchase = await db.select().from(giftCardPurchases).where(eq2(giftCardPurchases.paymentIntentId, params.paymentIntentId)).get();
+  const purchase = await db.select().from(giftCardPurchases).where(eq3(giftCardPurchases.paymentIntentId, params.paymentIntentId)).get();
   if (!purchase) return null;
   if (purchase.amountCents !== params.amount || params.currency.toLowerCase() !== purchase.currency.toLowerCase() || !Number.isSafeInteger(params.amountRefunded) || params.amountRefunded < 0 || params.amountRefunded > purchase.amountCents) {
     throw new WebhookMismatchError("refund_mismatch", "Gift card refund does not match purchase");
   }
   if (params.amountRefunded <= purchase.providerRefundedCents) return { success: true, duplicate: true };
   const timestamp = Math.floor(Date.now() / 1e3);
-  await runStatements(db, [
-    sql3`UPDATE _ecommerce_gift_card_purchases SET status = 'review',provider_refunded_cents = ${params.amountRefunded},updated_at = ${timestamp}
-      WHERE id = ${purchase.id} AND provider_refunded_cents < ${params.amountRefunded}`,
-    ...giftCardPurchaseHoldStatements(purchase.id, timestamp)
+  await commitBatch(db, [
+    db.update(giftCardPurchases).set({ status: "review", providerRefundedCents: params.amountRefunded, updatedAt: at3(timestamp) }).where(and3(eq3(giftCardPurchases.id, purchase.id), lt(giftCardPurchases.providerRefundedCents, params.amountRefunded))),
+    ...giftCardPurchaseHoldStatements(purchase.id, timestamp).map((statement) => db.run(statement))
   ]);
-  const current = await db.select({ status: giftCardPurchases.status }).from(giftCardPurchases).where(eq2(giftCardPurchases.id, purchase.id)).get();
+  const current = await db.select({ status: giftCardPurchases.status }).from(giftCardPurchases).where(eq3(giftCardPurchases.id, purchase.id)).get();
   return { success: true, purchaseId: purchase.id, status: current?.status ?? "review" };
 }
 var reviewSchema = z2.object({
@@ -1553,9 +1564,10 @@ var reviewSchema = z2.object({
 async function resolveGiftCardReview(env, actor, input) {
   const values = reviewSchema.parse(input);
   if (!actor.trim()) throw new Error("Administrator identity is required");
-  const purchase = await env.DB.prepare(`${reviewSelect} WHERE p.id = ?`).bind(values.purchaseId).first();
+  const db = commerceDb(env);
+  const purchase = await reviewQuery(db).where(eq3(p.id, values.purchaseId)).get();
   if (purchase?.status !== "review") throw new Error("Gift card purchase is not held for review");
-  const disputed = await env.DB.prepare(`SELECT ${openDispute("?")} AS open`).bind(values.purchaseId).first();
+  const disputed = await db.select({ open: openDispute(P_ID) }).from(p).where(eq3(p.id, values.purchaseId)).get();
   if (disputed?.open) throw new Error("A payment dispute is open for this purchase; its cards stay held until the dispute closes");
   if (purchase.refundedCents !== values.refundedCents) {
     throw new Error("Another refund was recorded for this purchase; reload and review it again");
@@ -1571,53 +1583,50 @@ async function resolveGiftCardReview(env, actor, input) {
   }
   const reviewId = `gcrev_${crypto.randomUUID()}`;
   const timestamp = Math.floor(Date.now() / 1e3);
-  const held = `EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases
-    WHERE id = ? AND status = 'review' AND provider_refunded_cents = ?)`;
-  const recorded = `EXISTS (SELECT 1 FROM _ecommerce_gift_card_reviews WHERE id = ?)`;
-  const guard = [values.purchaseId, values.refundedCents, reviewId];
-  const funded = [values.purchaseId, values.purchaseId];
-  const statements = values.outcome === "reinstate" ? [
-    // Recorded only while the card that holds the purchase's value covers the refund not yet taken off.
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_card_reviews
+  const held = sql3`EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases
+    WHERE id = ${values.purchaseId} AND status = 'review' AND provider_refunded_cents = ${values.refundedCents})`;
+  const recorded = sql3`EXISTS (SELECT 1 FROM _ecommerce_gift_card_reviews WHERE id = ${reviewId})`;
+  const funded = or2(eq3(giftCards.purchaseId, values.purchaseId), eq3(giftCards.replacesPurchaseId, values.purchaseId));
+  const review = values.outcome === "reinstate" ? db.all(sql3`INSERT INTO _ecommerce_gift_card_reviews
       (id,purchase_id,card_id,outcome,refunded_cents,adjustment_cents,admin_actor,reason,created_at)
-      SELECT ?,p.id,c.id,'reinstate',p.provider_refunded_cents,p.provider_refunded_cents - p.refund_adjusted_cents,?,?,?
-      FROM _ecommerce_gift_card_purchases p JOIN _ecommerce_gift_cards c ON c.id = (${currentCard("p.id")})
-      WHERE p.id = ? AND p.status = 'review' AND p.provider_refunded_cents = ?
-        AND c.balance_cents >= p.provider_refunded_cents - p.refund_adjusted_cents AND NOT ${openDispute("p.id")}
-      RETURNING adjustment_cents`).bind(reviewId, actor, values.reason, timestamp, values.purchaseId, values.refundedCents),
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_card_ledger
+      SELECT ${reviewId},p.id,c.id,'reinstate',p.provider_refunded_cents,p.provider_refunded_cents - p.refund_adjusted_cents,${actor},${values.reason},${timestamp}
+      FROM _ecommerce_gift_card_purchases p JOIN _ecommerce_gift_cards c ON c.id = ${currentCard(p.id)}
+      WHERE p.id = ${values.purchaseId} AND p.status = 'review' AND p.provider_refunded_cents = ${values.refundedCents}
+        AND c.balance_cents >= p.provider_refunded_cents - p.refund_adjusted_cents AND NOT ${openDispute(p.id)}
+      RETURNING adjustment_cents`) : db.all(sql3`INSERT INTO _ecommerce_gift_card_reviews
+      (id,purchase_id,card_id,outcome,refunded_cents,adjustment_cents,admin_actor,reason,created_at)
+      SELECT ${reviewId},p.id,COALESCE(${currentCard(p.id)},
+          (SELECT o.id FROM _ecommerce_gift_cards o WHERE o.purchase_id = p.id)),
+        'void',p.provider_refunded_cents,${cardValue(p.id)},${actor},${values.reason},${timestamp}
+      FROM _ecommerce_gift_card_purchases p
+      WHERE p.id = ${values.purchaseId} AND p.status = 'review' AND p.provider_refunded_cents = ${values.refundedCents}
+        AND NOT ${pendingCheckout(p.id)} AND NOT ${openDispute(p.id)}
+      RETURNING adjustment_cents`);
+  const effects = values.outcome === "reinstate" ? [
+    db.run(sql3`INSERT INTO _ecommerce_gift_card_ledger
       (id,card_id,purchase_id,kind,amount_cents,created_at)
       SELECT 'gcl_' || r.id,r.card_id,r.purchase_id,'purchase_reversal',-r.adjustment_cents,r.created_at
-      FROM _ecommerce_gift_card_reviews r WHERE r.id = ? AND r.adjustment_cents > 0 AND ${held}`).bind(reviewId, values.purchaseId, values.refundedCents),
-    env.DB.prepare(`UPDATE _ecommerce_gift_cards SET status = 'active',held_for_review = 0,updated_at = ?
-      WHERE (purchase_id = ? OR replaces_purchase_id = ?) AND status = 'suspended' AND held_for_review = 1
-        AND ${held} AND ${recorded}`).bind(timestamp, ...funded, ...guard)
+      FROM _ecommerce_gift_card_reviews r WHERE r.id = ${reviewId} AND r.adjustment_cents > 0 AND ${held}`),
+    db.update(giftCards).set({ status: "active", heldForReview: false, updatedAt: at3(timestamp) }).where(and3(funded, eq3(giftCards.status, "suspended"), eq3(giftCards.heldForReview, true), held, recorded))
   ] : [
-    // Recorded only while no checkout in progress holds value on the purchase's cards, so nothing is
-    // released onto them once they are void.
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_card_reviews
-      (id,purchase_id,card_id,outcome,refunded_cents,adjustment_cents,admin_actor,reason,created_at)
-      SELECT ?,p.id,COALESCE((${currentCard("p.id")}),
-          (SELECT o.id FROM _ecommerce_gift_cards o WHERE o.purchase_id = p.id)),
-        'void',p.provider_refunded_cents,${cardValue("p.id")},?,?,?
-      FROM _ecommerce_gift_card_purchases p
-      WHERE p.id = ? AND p.status = 'review' AND p.provider_refunded_cents = ? AND NOT ${pendingCheckout("p.id")}
-        AND NOT ${openDispute("p.id")}
-      RETURNING adjustment_cents`).bind(reviewId, actor, values.reason, timestamp, values.purchaseId, values.refundedCents),
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_card_ledger
+    db.run(sql3`INSERT INTO _ecommerce_gift_card_ledger
       (id,card_id,purchase_id,kind,amount_cents,created_at)
-      SELECT ? || '_' || id,id,?,'purchase_reversal',-balance_cents,?
-      FROM _ecommerce_gift_cards WHERE (purchase_id = ? OR replaces_purchase_id = ?) AND status <> 'void'
-        AND balance_cents > 0 AND ${held} AND ${recorded}`).bind(`gcl_${reviewId}`, values.purchaseId, timestamp, ...funded, ...guard),
-    env.DB.prepare(`UPDATE _ecommerce_gift_cards SET status = 'void',held_for_review = 0,updated_at = ?
-      WHERE (purchase_id = ? OR replaces_purchase_id = ?) AND status <> 'void' AND ${held} AND ${recorded}`).bind(timestamp, ...funded, ...guard)
+      SELECT ${`gcl_${reviewId}`} || '_' || id,id,${values.purchaseId},'purchase_reversal',-balance_cents,${timestamp}
+      FROM _ecommerce_gift_cards WHERE (purchase_id = ${values.purchaseId} OR replaces_purchase_id = ${values.purchaseId})
+        AND status <> 'void' AND balance_cents > 0 AND ${held} AND ${recorded}`),
+    db.update(giftCards).set({ status: "void", heldForReview: false, updatedAt: at3(timestamp) }).where(and3(funded, ne(giftCards.status, "void"), held, recorded))
   ];
-  statements.push(env.DB.prepare(`UPDATE _ecommerce_gift_card_purchases
-    SET status = CASE WHEN provider_refunded_cents >= amount_cents THEN 'refunded' ELSE 'partially_refunded' END,
-      refund_adjusted_cents = provider_refunded_cents,updated_at = ?
-    WHERE id = ? AND status = 'review' AND provider_refunded_cents = ? AND ${recorded}`).bind(timestamp, values.purchaseId, values.refundedCents, reviewId));
-  const [review] = await env.DB.batch(statements);
-  const adjustment = review.results?.[0];
+  const settled = db.update(giftCardPurchases).set({
+    status: sql3`CASE WHEN ${giftCardPurchases.providerRefundedCents} >= ${giftCardPurchases.amountCents} THEN 'refunded' ELSE 'partially_refunded' END`,
+    refundAdjustedCents: giftCardPurchases.providerRefundedCents,
+    updatedAt: at3(timestamp)
+  }).where(and3(
+    eq3(giftCardPurchases.id, values.purchaseId),
+    eq3(giftCardPurchases.status, "review"),
+    eq3(giftCardPurchases.providerRefundedCents, values.refundedCents),
+    recorded
+  ));
+  const [[adjustment]] = await db.batch([review, ...effects, settled]);
   if (!adjustment) throw new Error("The purchase changed while it was being resolved; reload and review it again");
   return {
     id: reviewId,
@@ -1635,13 +1644,14 @@ var refundSchema = z2.object({
 async function refundGiftCardTender(env, actor, input) {
   const values = refundSchema.parse(input);
   if (!actor.trim()) throw new Error("Administrator identity is required");
-  const current = await commerceDb(env).select({
+  const db = commerceDb(env);
+  const current = await db.select({
     giftCardId: orders.giftCardId,
     giftCardApplied: orders.giftCardApplied,
     giftCardRefundedCents: orders.giftCardRefundedCents,
     status: orders.status,
     referralCode: orders.referralCode
-  }).from(orders).where(eq2(orders.id, values.orderId)).get();
+  }).from(orders).where(eq3(orders.id, values.orderId)).get();
   if (!current?.giftCardId || !["paid", "fulfilled", "partially_refunded"].includes(current.status)) {
     throw new Error("Order is unavailable for a gift card refund");
   }
@@ -1649,20 +1659,27 @@ async function refundGiftCardTender(env, actor, input) {
   if (!values.amountCents || values.amountCents > remaining) throw new Error("Refund exceeds gift card payment");
   const id = `gfr_${crypto.randomUUID()}`;
   const now = Math.floor(Date.now() / 1e3);
-  const statements = [sql3`INSERT INTO _ecommerce_gift_card_refunds
-    (id,card_id,order_id,amount_cents,admin_actor,reason,created_at)
-    VALUES (${id},${current.giftCardId},${values.orderId},${values.amountCents},${actor},${values.reason},${now})`];
+  const statements = [db.insert(giftCardRefunds).values({
+    id,
+    cardId: current.giftCardId,
+    orderId: values.orderId,
+    amountCents: values.amountCents,
+    adminActor: actor,
+    reason: values.reason,
+    createdAt: at3(now)
+  })];
   if (current.referralCode) {
     const policy = await getReferralPolicy(env);
-    statements.push(...referralReversalStatements(values.orderId, { minOrderCents: policy.minOrderCents, now }));
+    statements.push(...referralReversalStatements(values.orderId, { minOrderCents: policy.minOrderCents, now }).map((statement) => db.run(statement)));
   }
-  await runStatements(commerceDb(env), statements);
+  await commitBatch(db, statements);
   return { id, orderId: values.orderId, amountCents: values.amountCents };
 }
 async function refundGiftCardOnlyOrder(env, actor, input) {
   const values = refundSchema.parse(input);
   if (!actor.trim() || values.amountCents !== void 0) throw new Error("Invalid full refund request");
-  const order = await commerceDb(env).select({
+  const db = commerceDb(env);
+  const order = await db.select({
     id: orders.id,
     giftCardId: orders.giftCardId,
     giftCardApplied: orders.giftCardApplied,
@@ -1672,31 +1689,42 @@ async function refundGiftCardOnlyOrder(env, actor, input) {
     totalAmount: orders.totalAmount,
     status: orders.status,
     userId: orders.userId
-  }).from(orders).where(eq2(orders.id, values.orderId)).get();
-  if (!order || order.paymentProvider !== "gift_card" || order.totalAmount !== 0 || !["paid", "partially_refunded", "fulfilled"].includes(order.status)) {
+  }).from(orders).where(eq3(orders.id, values.orderId)).get();
+  if (!order?.giftCardId || order.paymentProvider !== "gift_card" || order.totalAmount !== 0 || !["paid", "partially_refunded", "fulfilled"].includes(order.status)) {
     throw new Error("Only paid gift-card-only orders can be refunded here");
   }
   const now = Math.floor(Date.now() / 1e3);
   const remaining = order.giftCardApplied - order.giftCardRefundedCents;
-  const statements = [
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_card_order_refunds
-      (order_id,admin_actor,reason,created_at) VALUES (?,?,?,?)`).bind(order.id, actor, values.reason, now)
-  ];
-  if (remaining > 0) statements.push(env.DB.prepare(`INSERT INTO _ecommerce_gift_card_refunds
-    (id,card_id,order_id,amount_cents,admin_actor,reason,created_at)
-    VALUES (?,?,?,?,?,?,?)`).bind(`gfr_full_${order.id}`, order.giftCardId, order.id, remaining, actor, values.reason, now));
-  statements.push(env.DB.prepare(`UPDATE _ecommerce_orders SET status = 'refunded',updated_at = ?
-    WHERE id = ? AND payment_provider = 'gift_card' AND total_amount = 0
-      AND status IN ('paid','fulfilled','partially_refunded')`).bind(now, order.id));
-  statements.push(env.DB.prepare(`UPDATE _ecommerce_gift_card_redemptions SET status = 'refunded',updated_at = ?
-    WHERE order_id = ? AND status = 'confirmed'`).bind(now, order.id));
-  statements.push(env.DB.prepare(`UPDATE _ecommerce_discount_redemptions SET status = 'refunded',updated_at = ?
-    WHERE order_id = ? AND status = 'confirmed'`).bind(now, order.id));
-  if (order.creditApplied > 0 && order.userId) statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
-    (id,account_id,order_id,kind,amount_cents,created_at)
-    VALUES (?, ?, ?, 'purchase_credit_refund', ?, ?) ON CONFLICT(order_id,kind) DO NOTHING`).bind(`credit_refund_${order.id}`, order.userId, order.id, order.creditApplied, now));
-  statements.push(env.DB.prepare(`UPDATE _ecommerce_payments SET status = 'refunded' WHERE order_id = ?`).bind(order.id));
-  await env.DB.batch(statements);
+  const confirmed = (redemptions) => and3(eq3(redemptions.orderId, order.id), eq3(redemptions.status, "confirmed"));
+  await commitBatch(db, [
+    db.insert(giftCardOrderRefunds).values({ orderId: order.id, adminActor: actor, reason: values.reason, createdAt: at3(now) }),
+    ...remaining > 0 ? [db.insert(giftCardRefunds).values({
+      id: `gfr_full_${order.id}`,
+      cardId: order.giftCardId,
+      orderId: order.id,
+      amountCents: remaining,
+      adminActor: actor,
+      reason: values.reason,
+      createdAt: at3(now)
+    })] : [],
+    db.update(orders).set({ status: "refunded", updatedAt: at3(now) }).where(and3(
+      eq3(orders.id, order.id),
+      eq3(orders.paymentProvider, "gift_card"),
+      eq3(orders.totalAmount, 0),
+      inArray(orders.status, ["paid", "fulfilled", "partially_refunded"])
+    )),
+    db.update(giftCardRedemptions).set({ status: "refunded", updatedAt: at3(now) }).where(confirmed(giftCardRedemptions)),
+    db.update(discountRedemptions).set({ status: "refunded", updatedAt: at3(now) }).where(confirmed(discountRedemptions)),
+    ...order.creditApplied > 0 && order.userId ? [db.insert(creditLedger).values({
+      id: `credit_refund_${order.id}`,
+      accountId: order.userId,
+      orderId: order.id,
+      kind: "purchase_credit_refund",
+      amountCents: order.creditApplied,
+      createdAt: at3(now)
+    }).onConflictDoNothing({ target: [creditLedger.orderId, creditLedger.kind] })] : [],
+    db.update(payments).set({ status: "refunded" }).where(eq3(payments.orderId, order.id))
+  ]);
   return { orderId: order.id, status: "refunded" };
 }
 
@@ -1722,12 +1750,12 @@ export {
   completedCheckoutReturn,
   decisionInsert,
   uncheckedSessionRefusal,
-  backoffSql,
-  RECONCILE_DUE,
-  RECONCILE_ORDER,
+  backoff,
+  reconcileBackoff,
   reconcileAttempt,
   COMMERCE_EMAIL_MAX_AGE_SECONDS,
   COMMERCE_EMAIL_LEASE_SECONDS,
+  unclaimedAt,
   bareEmailAddress,
   commerceEmailSetup,
   missingEmailSettings,

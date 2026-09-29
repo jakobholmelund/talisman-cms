@@ -19,16 +19,20 @@ async function ensureVerifiedEmailIdentity(env, email, name) {
   if (normalized.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
     throw new Error("Valid verified email required");
   }
-  const now = Math.floor(Date.now() / 1e3);
-  await env.DB.prepare(`INSERT INTO galaxy_auth_user
-    (id, name, email, email_verified, created_at, updated_at, role)
-    SELECT ?, ?, ?, 1, ?, ?, 'customer'
-    WHERE NOT EXISTS (SELECT 1 FROM galaxy_auth_user WHERE lower(email) = ?)
-    ON CONFLICT(email) DO NOTHING`).bind(`shopper_${crypto.randomUUID()}`, name?.trim() || normalized, normalized, now, now, normalized).run();
+  const now = new Date(Math.floor(Date.now() / 1e3) * 1e3);
   const db = createDbClient(env);
+  await db.insert(user).values({
+    id: `shopper_${crypto.randomUUID()}`,
+    name: name?.trim() || normalized,
+    email: normalized,
+    emailVerified: true,
+    createdAt: now,
+    updatedAt: now,
+    role: "customer"
+  }).onConflictDoNothing();
   const row = await db.select({ id: user.id }).from(user).where(sql`lower(${user.email}) = ${normalized}`).limit(1).get();
   if (!row?.id) throw new Error("Verified email identity could not be created");
-  await db.update(user).set({ emailVerified: true, updatedAt: new Date(now * 1e3) }).where(and(eq(user.id, row.id), eq(user.emailVerified, false)));
+  await db.update(user).set({ emailVerified: true, updatedAt: now }).where(and(eq(user.id, row.id), eq(user.emailVerified, false)));
   return row.id;
 }
 export {

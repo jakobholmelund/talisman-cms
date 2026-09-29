@@ -10,13 +10,13 @@ import {
 } from "./chunk-NKJTK7MK.js";
 
 // src/accounts.ts
-import { and as and2, count, eq as eq2, gt as gt2, isNotNull, isNull, sql } from "drizzle-orm";
+import { and as and2, count, eq as eq2, gt as gt2, inArray, isNotNull, isNull, or, sql as sql2 } from "drizzle-orm";
 import { ensureVerifiedEmailIdentity } from "talisman-cms/auth/identity";
 import { parseAddress } from "talisman-cms/email";
 import { readSetting as readSetting2 } from "talisman-cms/env";
 
 // src/rate-limits.ts
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, lte, sql } from "drizzle-orm";
 var MAX_RATE_LIMIT_WINDOW_SECONDS = 24 * 60 * 60;
 async function sha256Hex(value) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -41,11 +41,11 @@ async function countRequest(env, key, now, windowSeconds) {
   if (!(windowSeconds > 0 && windowSeconds <= MAX_RATE_LIMIT_WINDOW_SECONDS)) {
     throw new RangeError("Rate-limit windows must be between 1 second and 24 hours");
   }
-  const limit = await env.DB.prepare(`INSERT INTO _ecommerce_rate_limits (key, count, window_start)
-    VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET
-      count = CASE WHEN window_start <= ? THEN 1 ELSE count + 1 END,
-      window_start = CASE WHEN window_start <= ? THEN ? ELSE window_start END
-    RETURNING count`).bind(key, now, now - windowSeconds, now - windowSeconds, now).first();
+  const ended = sql`${rateLimits.windowStart} <= ${now - windowSeconds}`;
+  const [limit] = await commerceDb(env).insert(rateLimits).values({ key, count: 1, windowStart: now }).onConflictDoUpdate({ target: rateLimits.key, set: {
+    count: sql`CASE WHEN ${ended} THEN 1 ELSE ${rateLimits.count} + 1 END`,
+    windowStart: sql`CASE WHEN ${ended} THEN ${now} ELSE ${rateLimits.windowStart} END`
+  } }).returning({ count: rateLimits.count });
   return limit?.count;
 }
 async function peekRequestCount(env, key, now, windowSeconds) {
@@ -61,10 +61,11 @@ async function claimInterval(env, key, intervalSeconds, now = Math.floor(Date.no
   if (!(intervalSeconds > 0 && intervalSeconds <= MAX_RATE_LIMIT_WINDOW_SECONDS)) {
     throw new RangeError("Rate-limit windows must be between 1 second and 24 hours");
   }
-  const claimed = await env.DB.prepare(`INSERT INTO _ecommerce_rate_limits (key, count, window_start)
-    VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET count = 1, window_start = excluded.window_start
-      WHERE _ecommerce_rate_limits.window_start <= ?
-    RETURNING window_start`).bind(key, now, now - intervalSeconds).first();
+  const [claimed] = await commerceDb(env).insert(rateLimits).values({ key, count: 1, windowStart: now }).onConflictDoUpdate({
+    target: rateLimits.key,
+    set: { count: 1, windowStart: sql`excluded.window_start` },
+    setWhere: lte(rateLimits.windowStart, now - intervalSeconds)
+  }).returning({ windowStart: rateLimits.windowStart });
   return Boolean(claimed);
 }
 
@@ -192,20 +193,21 @@ async function activateNewCustomer(_env, _orderId, _basketToken) {
 async function hasPurchaseHistory(env, shopper) {
   const emails = [...new Set((shopper.emails ?? []).flatMap((email) => email?.trim() ? [email.trim().toLowerCase()] : []))];
   const accountIds = [...new Set((shopper.accountIds ?? []).flatMap((id) => id ? [id] : []))];
-  const matches = [];
-  if (emails.length) {
-    const list = emails.map(() => "?").join(", ");
-    matches.push(
-      `lower(customer_email) IN (${list})`,
-      `user_id IN (SELECT id FROM _ecommerce_customer_accounts WHERE email_normalized IN (${list}))`
-    );
-  }
-  if (accountIds.length) matches.push(`user_id IN (${accountIds.map(() => "?").join(", ")})`);
+  const db = commerceDb(env);
+  const matches = [
+    // Order emails have an index on lower(customer_email), `_ecommerce_orders_customer_email_idx`.
+    ...emails.length ? [
+      inArray(sql2`lower(${orders.customerEmail})`, emails),
+      inArray(orders.userId, db.select({ id: customerAccounts.id }).from(customerAccounts).where(inArray(customerAccounts.emailNormalized, emails)))
+    ] : [],
+    ...accountIds.length ? [inArray(orders.userId, accountIds)] : []
+  ];
   if (!matches.length) return false;
-  const statuses = PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(", ");
-  const prior = await env.DB.prepare(`SELECT 1 AS found FROM _ecommerce_orders
-    WHERE status IN (${statuses}) AND COALESCE(payment_provider, 'stripe') <> 'admin_test'
-      AND (${matches.join(" OR ")}) LIMIT 1`).bind(...emails, ...emails, ...accountIds).first();
+  const prior = await db.select({ id: orders.id }).from(orders).where(and2(
+    inArray(orders.status, [...PURCHASED_ORDER_STATUSES]),
+    sql2`COALESCE(${orders.paymentProvider}, 'stripe') <> 'admin_test'`,
+    or(...matches)
+  )).limit(1).get();
   return Boolean(prior);
 }
 async function requestCustomerEmailSignIn(env, email, linkForToken, sendLink, sourceIp, options = {}) {
@@ -290,7 +292,7 @@ async function consumeCustomerEmailSignIn(env, token) {
   const cmsUserId = await ensureVerifiedEmailIdentity(env, account.emailNormalized, account.name);
   const sessionToken = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   await db.batch([
-    db.update(customerAccounts).set({ emailVerifiedAt: sql`COALESCE(${customerAccounts.emailVerifiedAt}, ${now})`, updatedAt: at(now), cmsUserId }).where(eq2(customerAccounts.id, account.id)),
+    db.update(customerAccounts).set({ emailVerifiedAt: sql2`COALESCE(${customerAccounts.emailVerifiedAt}, ${now})`, updatedAt: at(now), cmsUserId }).where(eq2(customerAccounts.id, account.id)),
     db.insert(customerSessions).values({
       id: `csess_${crypto.randomUUID()}`,
       accountId: account.id,

@@ -1,10 +1,10 @@
 import {
   INVENTORY_COLUMNS,
   fullRefundStatements
-} from "./chunk-K6SXWFZP.js";
+} from "./chunk-TT3MVFMZ.js";
 import {
   evaluateDiscountCode
-} from "./chunk-4DUQOBXB.js";
+} from "./chunk-NOGKXEVT.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
@@ -12,16 +12,14 @@ import {
   deliverCommerceEmail,
   deliverPendingCommerceEmails,
   fulfillCommerceOrder
-} from "./chunk-TMMXEXF2.js";
+} from "./chunk-FFJXPA3V.js";
 import {
-  RECONCILE_DUE,
-  RECONCILE_ORDER,
   ReconcileFailure,
   WebhookMismatchError,
   WebhookRetryLaterError,
   WebhookSignatureError,
   assertStoreStripeMode,
-  backoffSql,
+  backoff,
   commerceEmailStatement,
   completedCheckoutReturn,
   confirmGiftCardPurchase,
@@ -36,12 +34,13 @@ import {
   isOtherStripeModeSession,
   readStoreSettings,
   reconcileAttempt,
+  reconcileBackoff,
   reconcileFailure,
   reconcileGiftCardPurchase,
   recordGiftCardPurchaseRefund,
   sessionLookupFailure,
   uncheckedSessionRefusal
-} from "./chunk-46DBWAED.js";
+} from "./chunk-4LBJN5LU.js";
 import {
   canonicalEmail,
   canonicalEmailSql,
@@ -52,12 +51,12 @@ import {
   hasCanonicalPurchase,
   referralReversalStatements,
   releaseReferralAwards
-} from "./chunk-7PQWN42E.js";
+} from "./chunk-NTFJG6BA.js";
 import {
   PURCHASED_ORDER_STATUSES,
   claimInterval,
   hasPurchaseHistory
-} from "./chunk-OPQXEAZM.js";
+} from "./chunk-IAWGIRUS.js";
 import {
   batchGroups,
   chunked,
@@ -435,7 +434,7 @@ async function updateCartItems(ctx, cartId, items) {
 }
 
 // src/checkout.ts
-import { and as and4, eq as eq4, isNull as isNull4, lt, notExists, sql as sql3 } from "drizzle-orm";
+import { and as and4, eq as eq4, isNull as isNull4, lt as lt2, notExists, sql as sql4 } from "drizzle-orm";
 
 // src/checkout-input.ts
 import { z } from "zod";
@@ -487,7 +486,7 @@ function checkoutInputError(error) {
 }
 
 // src/orders.ts
-import { and as and3, eq as eq3, exists, isNull as isNull3, notInArray, sql as sql2 } from "drizzle-orm";
+import { and as and3, eq as eq3, exists, isNull as isNull3, notInArray, sql as sql3 } from "drizzle-orm";
 
 // src/provider-checks.ts
 var PROVIDER_CHECK_INTERVAL_SECONDS = 15;
@@ -513,7 +512,7 @@ async function mayAskPaymentProvider(env, order, paymentAdapters, { minOrderAgeS
 }
 
 // src/tax.ts
-import { and as and2, eq as eq2, isNotNull as isNotNull2, isNull as isNull2 } from "drizzle-orm";
+import { and as and2, eq as eq2, inArray as inArray2, isNotNull as isNotNull2, isNull as isNull2, lt, sql as sql2 } from "drizzle-orm";
 var SHIPPING_TAX_CODE = "txcd_92010001";
 var TaxCalculationError = class extends Error {
   constructor(options) {
@@ -522,6 +521,7 @@ var TaxCalculationError = class extends Error {
   }
 };
 var describe = (error) => error instanceof Error ? error.message : String(error);
+var at = (seconds) => new Date(seconds * 1e3);
 function allocateProportionally(amount, weights) {
   const total = weights.reduce((sum, weight) => sum + weight, 0);
   if (amount <= 0 || total <= 0) return weights.map(() => 0);
@@ -602,35 +602,57 @@ function taxProvider(adapters, paymentProvider) {
 }
 var PAID_STATUSES = ["paid", "fulfilled", "partially_refunded", "refunded", "disputed"];
 var TAX_SYNC_CLEARED = { taxSyncAttempts: 0, taxSyncLastAt: null, taxSyncLastError: null };
-var ORDER_TAX_BACKOFF = backoffSql("tax_sync");
+var orderTaxBackoff = (now) => backoff({
+  attempts: orders.taxSyncAttempts,
+  lastAt: orders.taxSyncLastAt,
+  createdAt: orders.createdAt,
+  id: orders.id
+}, now);
+var reversalBackoff = (now) => backoff({
+  attempts: taxReversals.taxSyncAttempts,
+  lastAt: taxReversals.taxSyncLastAt,
+  createdAt: taxReversals.createdAt,
+  id: taxReversals.id
+}, now);
 var unixNow = () => Math.floor(Date.now() / 1e3);
-async function countTaxFailure(env, table, where, key, error, now) {
+async function countTaxFailure(db, table, where, error, now) {
   try {
-    await env.DB.prepare(`UPDATE ${table} SET tax_sync_attempts = tax_sync_attempts + 1, tax_sync_last_at = ?,
-      tax_sync_last_error = ? WHERE ${where}`).bind(now, reconcileFailure(error).code, key).run();
+    await db.update(table).set({
+      taxSyncAttempts: sql2`${table.taxSyncAttempts} + 1`,
+      taxSyncLastAt: at(now),
+      taxSyncLastError: reconcileFailure(error).code
+    }).where(where);
   } catch {
   }
 }
 async function recordOrderTax(env, adapters, orderId, now = unixNow()) {
-  const order = await env.DB.prepare(`SELECT id, status, payment_provider, tax_calculation_id, tax_transaction_id,
-      (SELECT MIN(created_at) FROM _ecommerce_payments WHERE order_id = o.id) AS paid_at
-    FROM _ecommerce_orders o WHERE id = ?`).bind(orderId).first();
-  if (!order?.tax_calculation_id || order.tax_transaction_id || !PAID_STATUSES.includes(order.status)) return false;
+  const db = commerceDb(env);
+  const order = await db.select({
+    id: orders.id,
+    status: orders.status,
+    paymentProvider: orders.paymentProvider,
+    taxCalculationId: orders.taxCalculationId,
+    taxTransactionId: orders.taxTransactionId,
+    // When the order was paid, in Unix seconds: its first payment row. The subquery names the order's
+    // column as text, because the builder writes column objects in a select's fields unqualified.
+    paidAt: sql2`(SELECT MIN(created_at) FROM _ecommerce_payments WHERE order_id = _ecommerce_orders.id)`
+  }).from(orders).where(eq2(orders.id, orderId)).get();
+  if (!order?.taxCalculationId || order.taxTransactionId || !PAID_STATUSES.includes(order.status)) return false;
   try {
-    const adapter = taxProvider(adapters, order.payment_provider);
+    const adapter = taxProvider(adapters, order.paymentProvider);
     if (!adapter?.recordTaxTransaction) {
       throw new ReconcileFailure("provider_not_configured", "Payment provider cannot record tax");
     }
-    const late = order.paid_at !== null && order.paid_at < Math.floor(Date.now() / 1e3) - 300;
+    const late = order.paidAt !== null && order.paidAt < Math.floor(Date.now() / 1e3) - 300;
     const { transactionId } = await adapter.recordTaxTransaction({
       orderId: order.id,
-      calculationId: order.tax_calculation_id,
-      ...late ? { postedAt: order.paid_at } : {}
+      calculationId: order.taxCalculationId,
+      ...late ? { postedAt: order.paidAt } : {}
     });
-    const stored = await commerceDb(env).update(orders).set({ taxTransactionId: transactionId, ...TAX_SYNC_CLEARED }).where(and2(eq2(orders.id, order.id), isNull2(orders.taxTransactionId))).run();
+    const stored = await db.update(orders).set({ taxTransactionId: transactionId, ...TAX_SYNC_CLEARED }).where(and2(eq2(orders.id, order.id), isNull2(orders.taxTransactionId))).run();
     return Number(stored.meta?.changes ?? 0) > 0;
   } catch (error) {
-    await countTaxFailure(env, "_ecommerce_orders", "id = ? AND tax_transaction_id IS NULL", order.id, error, now);
+    await countTaxFailure(db, orders, and2(eq2(orders.id, order.id), isNull2(orders.taxTransactionId)), error, now);
     throw error;
   }
 }
@@ -641,74 +663,65 @@ async function recordConfirmedOrderTax(env, adapters, orderId) {
     console.error(`[Commerce] The tax transaction of order ${orderId} was not recorded: ${describe(error)}`);
   }
 }
-var REVERSAL_TARGET = `CASE WHEN o.status = 'refunded' THEN o.gift_card_applied + o.total_amount
-  ELSE MIN(o.gift_card_applied + o.total_amount, o.provider_refunded_cents + o.gift_card_refunded_cents) END`;
-var REVERSED = "(SELECT COALESCE(SUM(r.amount), 0) FROM _ecommerce_tax_reversals r WHERE r.order_id = o.id)";
-async function recordTaxReversal(env, adapters, orderId) {
+var reversalTarget = sql2`CASE WHEN ${orders.status} = 'refunded' THEN ${orders.giftCardApplied} + ${orders.totalAmount}
+  ELSE MIN(${orders.giftCardApplied} + ${orders.totalAmount}, ${orders.providerRefundedCents} + ${orders.giftCardRefundedCents}) END`;
+var reversed = sql2`(SELECT COALESCE(SUM(amount), 0) FROM _ecommerce_tax_reversals WHERE order_id = _ecommerce_orders.id)`;
+async function recordTaxReversal(db, adapters, orderId) {
   for (let attempt = 0; attempt < 3; attempt++) {
-    const order = await env.DB.prepare(`SELECT o.id, o.payment_provider, o.tax_transaction_id,
-        ${REVERSAL_TARGET} AS target, ${REVERSED} AS reversed
-      FROM _ecommerce_orders o WHERE o.id = ?`).bind(orderId).first();
-    if (!order?.tax_transaction_id || order.target <= order.reversed) return null;
-    const adapter = taxProvider(adapters, order.payment_provider);
+    const order = await db.select({
+      id: orders.id,
+      paymentProvider: orders.paymentProvider,
+      taxTransactionId: orders.taxTransactionId,
+      target: reversalTarget,
+      reversed
+    }).from(orders).where(eq2(orders.id, orderId)).get();
+    if (!order?.taxTransactionId || order.target <= order.reversed) return null;
+    const adapter = taxProvider(adapters, order.paymentProvider);
     if (!adapter?.reverseTaxTransaction) {
       throw new ReconcileFailure("provider_not_configured", "Payment provider cannot reverse tax");
     }
     const reversal = {
       orderId: order.id,
-      transactionId: order.tax_transaction_id,
+      transactionId: order.taxTransactionId,
       reference: `${order.id}:reversal:${order.target}`,
       amount: order.target - order.reversed
     };
-    const recorded = await env.DB.prepare(`INSERT INTO _ecommerce_tax_reversals
+    const recorded = await db.run(sql2`INSERT INTO _ecommerce_tax_reversals
       (id, order_id, reference, amount, provider_reversal_id, created_at)
-      SELECT ?, ?, ?, ?, '', ? WHERE (SELECT COALESCE(SUM(amount), 0) FROM _ecommerce_tax_reversals
-        WHERE order_id = ?) = ?
-      ON CONFLICT(reference) DO NOTHING`).bind(
-      `taxrev_${crypto.randomUUID()}`,
-      order.id,
-      reversal.reference,
-      reversal.amount,
-      Math.floor(Date.now() / 1e3),
-      order.id,
-      order.reversed
-    ).run();
+      SELECT ${`taxrev_${crypto.randomUUID()}`}, ${order.id}, ${reversal.reference}, ${reversal.amount}, '', ${unixNow()}
+      WHERE (SELECT COALESCE(SUM(amount), 0) FROM _ecommerce_tax_reversals WHERE order_id = ${order.id}) = ${order.reversed}
+      ON CONFLICT(reference) DO NOTHING`);
     if (Number(recorded.meta?.changes ?? 0) > 0) return { adapter, reversal };
   }
   return null;
 }
 async function reverseOrderTax(env, adapters, orderId, now = unixNow()) {
+  const db = commerceDb(env);
   let recorded;
   try {
-    recorded = await recordTaxReversal(env, adapters, orderId);
+    recorded = await recordTaxReversal(db, adapters, orderId);
   } catch (error) {
-    await countTaxFailure(env, "_ecommerce_orders", "id = ?", orderId, error, now);
+    await countTaxFailure(db, orders, eq2(orders.id, orderId), error, now);
     throw error;
   }
   if (!recorded) return null;
   try {
-    await commerceDb(env).update(orders).set(TAX_SYNC_CLEARED).where(and2(eq2(orders.id, orderId), isNotNull2(orders.taxSyncLastAt)));
+    await db.update(orders).set(TAX_SYNC_CLEARED).where(and2(eq2(orders.id, orderId), isNotNull2(orders.taxSyncLastAt)));
   } catch {
   }
-  await sendTaxReversal(env, recorded.adapter, recorded.reversal, now);
+  await sendTaxReversal(db, recorded.adapter, recorded.reversal, now);
   return { reference: recorded.reversal.reference, amount: recorded.reversal.amount };
 }
-async function sendTaxReversal(env, adapter, reversal, now) {
+async function sendTaxReversal(db, adapter, reversal, now) {
+  const unsent = and2(eq2(taxReversals.reference, reversal.reference), eq2(taxReversals.providerReversalId, ""));
   try {
     if (!adapter?.reverseTaxTransaction) {
       throw new ReconcileFailure("provider_not_configured", "Payment provider cannot reverse tax");
     }
     const { reversalId } = await adapter.reverseTaxTransaction(reversal);
-    await commerceDb(env).update(taxReversals).set({ providerReversalId: reversalId, ...TAX_SYNC_CLEARED }).where(and2(eq2(taxReversals.reference, reversal.reference), eq2(taxReversals.providerReversalId, "")));
+    await db.update(taxReversals).set({ providerReversalId: reversalId, ...TAX_SYNC_CLEARED }).where(unsent);
   } catch (error) {
-    await countTaxFailure(
-      env,
-      "_ecommerce_tax_reversals",
-      `reference = ? AND provider_reversal_id = ''`,
-      reversal.reference,
-      error,
-      now
-    );
+    await countTaxFailure(db, taxReversals, unsent, error, now);
     throw error;
   }
 }
@@ -732,49 +745,54 @@ async function attemptEach(rows, orderOf, attempt) {
   return results;
 }
 async function recordMissingTaxTransactions(env, adapters, now, limit) {
-  const rows = await env.DB.prepare(`SELECT id FROM _ecommerce_orders
-    WHERE status IN (${PAID_STATUSES.map((status) => `'${status}'`).join(", ")})
-      AND tax_calculation_id IS NOT NULL AND tax_transaction_id IS NULL AND ${ORDER_TAX_BACKOFF.due}
-    ORDER BY ${ORDER_TAX_BACKOFF.order} LIMIT ?`).bind(now, limit).all();
+  const wait = orderTaxBackoff(now);
+  const rows = await commerceDb(env).select({ id: orders.id }).from(orders).where(and2(inArray2(orders.status, PAID_STATUSES), isNotNull2(orders.taxCalculationId), isNull2(orders.taxTransactionId), wait.due)).orderBy(...wait.order).limit(limit);
   return attemptEach(
-    rows.results ?? [],
+    rows,
     (row) => row.id,
     async (row) => await recordOrderTax(env, adapters, row.id, now) ? "tax_recorded" : "unchanged"
   );
 }
 var REVERSAL_IN_FLIGHT_SECONDS = 5 * 60;
-var REVERSAL_BACKOFF = backoffSql("tax_sync", "r");
 async function resendPendingTaxReversals(env, adapters, now, limit) {
-  const pending = await env.DB.prepare(`SELECT r.order_id, r.reference, r.amount, o.payment_provider,
-      o.tax_transaction_id FROM _ecommerce_tax_reversals r JOIN _ecommerce_orders o ON o.id = r.order_id
-    WHERE r.provider_reversal_id = '' AND r.created_at < ? AND ${REVERSAL_BACKOFF.due}
-    ORDER BY ${REVERSAL_BACKOFF.order} LIMIT ?`).bind(now - REVERSAL_IN_FLIGHT_SECONDS, now, limit).all();
-  return attemptEach(pending.results ?? [], (row) => row.order_id, async (row) => {
-    await sendTaxReversal(env, taxProvider(adapters, row.payment_provider), {
-      orderId: row.order_id,
-      transactionId: row.tax_transaction_id,
+  const db = commerceDb(env);
+  const wait = reversalBackoff(now);
+  const pending = await db.select({
+    orderId: taxReversals.orderId,
+    reference: taxReversals.reference,
+    amount: taxReversals.amount,
+    paymentProvider: orders.paymentProvider,
+    taxTransactionId: orders.taxTransactionId
+  }).from(taxReversals).innerJoin(orders, eq2(orders.id, taxReversals.orderId)).where(and2(sql2`${taxReversals.providerReversalId} = ''`, lt(taxReversals.createdAt, at(now - REVERSAL_IN_FLIGHT_SECONDS)), wait.due)).orderBy(...wait.order).limit(limit);
+  return attemptEach(pending, (row) => row.orderId, async (row) => {
+    if (!row.taxTransactionId) throw new ReconcileFailure("failed", "The order has no tax transaction to reverse");
+    await sendTaxReversal(db, taxProvider(adapters, row.paymentProvider), {
+      orderId: row.orderId,
+      transactionId: row.taxTransactionId,
       reference: row.reference,
       amount: row.amount
     }, now);
     return "tax_reversed";
   });
 }
-var REFUNDED_ORDER_TAX_BACKOFF = backoffSql("tax_sync", "o");
 async function reverseUnreversedTax(env, adapters, now, limit) {
-  const rows = await env.DB.prepare(`SELECT o.id FROM _ecommerce_orders o
-    WHERE o.status IN ('partially_refunded', 'refunded') AND o.tax_transaction_id IS NOT NULL
-      AND ${REVERSAL_TARGET} > ${REVERSED} AND ${REFUNDED_ORDER_TAX_BACKOFF.due}
-    ORDER BY ${REFUNDED_ORDER_TAX_BACKOFF.order} LIMIT ?`).bind(now, limit).all();
+  const wait = orderTaxBackoff(now);
+  const rows = await commerceDb(env).select({ id: orders.id }).from(orders).where(and2(
+    sql2`${orders.status} IN ('partially_refunded', 'refunded')`,
+    isNotNull2(orders.taxTransactionId),
+    sql2`${reversalTarget} > ${reversed}`,
+    wait.due
+  )).orderBy(...wait.order).limit(limit);
   return attemptEach(
-    rows.results ?? [],
+    rows,
     (row) => row.id,
     async (row) => await reverseOrderTax(env, adapters, row.id, now) ? "tax_reversed" : "unchanged"
   );
 }
 
 // src/orders.ts
-var at = (seconds) => new Date(seconds * 1e3);
-var orderIn = (db, id, status) => exists(db.select({ one: sql2`1` }).from(orders).where(and3(eq3(orders.id, id), eq3(orders.status, status))));
+var at2 = (seconds) => new Date(seconds * 1e3);
+var orderIn = (db, id, status) => exists(db.select({ one: sql3`1` }).from(orders).where(and3(eq3(orders.id, id), eq3(orders.status, status))));
 var PARKED_CHECKOUT_MESSAGE = "The store is reviewing the payment for this checkout. Contact the store to release it.";
 async function discardCheckoutDiscount(adapter, orderId) {
   if (!adapter?.discardCheckoutDiscount) return;
@@ -871,13 +889,13 @@ async function finalizeOrderPayment(ctx, params) {
   const newAccountId = !order.userId && params.provider !== "admin_test" && emailPattern.test(normalizedEmail) ? `acct_${order.id}` : null;
   const accountName = typeof order.shippingAddress?.name === "string" ? order.shippingAddress.name.trim().slice(0, 160) : null;
   const paid = orderIn(db, params.orderId, "paid");
-  const paidBySession = exists(db.select({ one: sql2`1` }).from(orders).where(and3(
+  const paidBySession = exists(db.select({ one: sql3`1` }).from(orders).where(and3(
     eq3(orders.id, params.orderId),
     eq3(orders.status, "paid"),
     eq3(orders.checkoutSessionId, params.providerId)
   )));
   const statements = [
-    db.update(orders).set({ status: "paid", updatedAt: at(timestamp), customerEmail: email, paymentIntentId: params.paymentIntentId ?? null }).where(and3(
+    db.update(orders).set({ status: "paid", updatedAt: at2(timestamp), customerEmail: email, paymentIntentId: params.paymentIntentId ?? null }).where(and3(
       eq3(orders.id, params.orderId),
       eq3(orders.status, "pending"),
       eq3(orders.checkoutSessionId, params.providerId),
@@ -885,13 +903,13 @@ async function finalizeOrderPayment(ctx, params) {
     ))
   ];
   if (newAccountId) {
-    statements.push(db.run(sql2`INSERT INTO _ecommerce_customer_accounts
+    statements.push(db.run(sql3`INSERT INTO _ecommerce_customer_accounts
       (id, email, email_normalized, name, created_at, updated_at)
       SELECT ${newAccountId}, ${email}, ${normalizedEmail}, ${accountName}, ${timestamp}, ${timestamp} FROM _ecommerce_orders
       WHERE id = ${params.orderId} AND status = 'paid' AND checkout_session_id = ${params.providerId}
       ON CONFLICT(email_normalized) DO NOTHING`));
     const accountId = db.select({ id: customerAccounts.id }).from(customerAccounts).where(eq3(customerAccounts.emailNormalized, normalizedEmail));
-    statements.push(db.update(orders).set({ userId: sql2`(${accountId})` }).where(and3(eq3(orders.id, params.orderId), eq3(orders.status, "paid"), isNull3(orders.userId))));
+    statements.push(db.update(orders).set({ userId: sql3`(${accountId})` }).where(and3(eq3(orders.id, params.orderId), eq3(orders.status, "paid"), isNull3(orders.userId))));
   }
   if (order.referralCode && order.referralRewardCents > 0 && params.provider !== "admin_test") {
     const policy = await getReferralPolicy(env);
@@ -901,8 +919,8 @@ async function finalizeOrderPayment(ctx, params) {
     const buyerCanonicals = canonicalEmails([checkoutEmail, normalizedEmail, buyerAccount?.emailNormalized]);
     const referrerCanonical = canonicalEmail(referrer?.emailNormalized);
     if (referrerCanonical && buyerCanonicals.length && !buyerCanonicals.includes(referrerCanonical)) {
-      const purchased = sql2.raw(PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(", "));
-      statements.push(db.run(sql2`INSERT INTO _ecommerce_referrals
+      const purchased = sql3.raw(PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(", "));
+      statements.push(db.run(sql3`INSERT INTO _ecommerce_referrals
         (id, code, referrer_account_id, referred_account_id, order_id, reward_cents, currency, status, created_at, updated_at)
         SELECT ${`ref_${order.id}`}, rc.code, rc.account_id, o.user_id, o.id, ${order.referralRewardCents}, o.currency, 'approved', ${timestamp}, ${timestamp}
         FROM _ecommerce_orders o
@@ -921,14 +939,14 @@ async function finalizeOrderPayment(ctx, params) {
             JOIN _ecommerce_customer_accounts recent_referrer ON recent_referrer.id = recent.referrer_account_id
             WHERE recent.status = 'approved' AND recent.created_at > ${timestamp - policy.periodDays * 24 * 60 * 60}
               AND (recent.referrer_account_id = rc.account_id
-                OR ${sql2.raw(canonicalEmailSql("recent_referrer.email_normalized"))} = ${referrerCanonical})) < ${policy.maxPerPeriod}
+                OR ${sql3.raw(canonicalEmailSql("recent_referrer.email_normalized"))} = ${referrerCanonical})) < ${policy.maxPerPeriod}
         ON CONFLICT DO NOTHING`));
     }
   }
   statements.push(
-    db.update(discountRedemptions).set({ status: "confirmed", updatedAt: at(timestamp) }).where(and3(eq3(discountRedemptions.orderId, params.orderId), eq3(discountRedemptions.status, "reserved"), paid)),
-    db.update(giftCardRedemptions).set({ status: "confirmed", updatedAt: at(timestamp) }).where(and3(eq3(giftCardRedemptions.orderId, params.orderId), eq3(giftCardRedemptions.status, "reserved"), paid)),
-    db.run(sql2`INSERT INTO _ecommerce_payments
+    db.update(discountRedemptions).set({ status: "confirmed", updatedAt: at2(timestamp) }).where(and3(eq3(discountRedemptions.orderId, params.orderId), eq3(discountRedemptions.status, "reserved"), paid)),
+    db.update(giftCardRedemptions).set({ status: "confirmed", updatedAt: at2(timestamp) }).where(and3(eq3(giftCardRedemptions.orderId, params.orderId), eq3(giftCardRedemptions.status, "reserved"), paid)),
+    db.run(sql3`INSERT INTO _ecommerce_payments
       (id, order_id, provider, provider_id, status, amount, created_at)
       SELECT ${`pay_${crypto.randomUUID()}`}, id, ${params.provider}, ${params.providerId}, 'success', total_amount, ${timestamp} FROM _ecommerce_orders
       WHERE id = ${params.orderId} AND status = 'paid' AND checkout_session_id = ${params.providerId}
@@ -936,7 +954,7 @@ async function finalizeOrderPayment(ctx, params) {
   );
   if (order.cartId) {
     const buyer = db.select({ userId: orders.userId }).from(orders).where(eq3(orders.id, params.orderId));
-    statements.push(db.update(carts).set({ closed: true, closedAt: at(timestamp), updatedAt: at(timestamp), userId: sql2`COALESCE(${carts.userId}, (${buyer}))` }).where(and3(eq3(carts.id, order.cartId), paidBySession)));
+    statements.push(db.update(carts).set({ closed: true, closedAt: at2(timestamp), updatedAt: at2(timestamp), userId: sql3`COALESCE(${carts.userId}, (${buyer}))` }).where(and3(eq3(carts.id, order.cartId), paidBySession)));
   }
   const confirms = params.provider !== "admin_test";
   if (confirms) {
@@ -944,7 +962,7 @@ async function finalizeOrderPayment(ctx, params) {
       "order_confirmation",
       params.orderId,
       timestamp,
-      sql2`EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ${params.orderId} AND status = 'paid' AND checkout_session_id = ${params.providerId}
+      sql3`EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ${params.orderId} AND status = 'paid' AND checkout_session_id = ${params.providerId}
         AND COALESCE(payment_provider, 'stripe') <> 'admin_test')`
     )));
   }
@@ -970,12 +988,12 @@ async function recordProviderRefund(ctx, params) {
   const now = Math.floor(Date.now() / 1e3);
   const full = params.amountRefunded === order.totalAmount;
   const referralPolicy = order.referralCode ? await getReferralPolicy(env) : null;
-  const refundable = sql2`id = ${order.id} AND payment_intent_id = ${params.paymentIntentId} AND provider_refunded_cents < ${params.amountRefunded}
+  const refundable = sql3`id = ${order.id} AND payment_intent_id = ${params.paymentIntentId} AND provider_refunded_cents < ${params.amountRefunded}
     AND status IN ('paid', 'fulfilled', 'partially_refunded', 'disputed')`;
   const statements = [
     // First the part of the total that this event adds, read from the stored total under the guard
     // of the update below: a retried or out-of-order event adds no row, and the rows add up to the total.
-    db.run(sql2`INSERT INTO _ecommerce_provider_refunds
+    db.run(sql3`INSERT INTO _ecommerce_provider_refunds
       (id, order_id, provider, provider_refund_id, amount_cents, created_at)
       SELECT ${`prf_${order.id}_${params.amountRefunded}`}, id, 'stripe', ${params.providerRefundId ?? null}, ${params.amountRefunded} - provider_refunded_cents, ${params.refundedAt ?? now}
       FROM _ecommerce_orders WHERE ${refundable}
@@ -983,11 +1001,11 @@ async function recordProviderRefund(ctx, params) {
     // A dispute keeps the order disputed; closing it applies the refund status.
     db.update(orders).set({
       providerRefundedCents: params.amountRefunded,
-      updatedAt: at(now),
-      status: sql2`CASE WHEN ${orders.status} = 'disputed' THEN ${orders.status} ELSE ${full ? "refunded" : "partially_refunded"} END`
+      updatedAt: at2(now),
+      status: sql3`CASE WHEN ${orders.status} = 'disputed' THEN ${orders.status} ELSE ${full ? "refunded" : "partially_refunded"} END`
     }).where(refundable),
     // The payment shows the refund, taken from the amounts while the order is disputed.
-    db.run(sql2`UPDATE _ecommerce_payments
+    db.run(sql3`UPDATE _ecommerce_payments
       SET status = COALESCE((SELECT CASE WHEN o.status IN ('partially_refunded', 'refunded') THEN o.status
           WHEN o.provider_refunded_cents >= o.total_amount THEN 'refunded'
           WHEN o.provider_refunded_cents > 0 THEN 'partially_refunded' END
@@ -1055,38 +1073,38 @@ async function cancelOrder(ctx, id, options = {}) {
   }
   const released = orderIn(db, id, "cancelled");
   const statements = [
-    db.update(orders).set({ status: "cancelled", updatedAt: at(timestamp) }).where(and3(eq3(orders.id, id), notInArray(orders.status, [...PURCHASED_ORDER_STATUSES]))),
-    db.update(discountRedemptions).set({ status: "cancelled", updatedAt: at(timestamp) }).where(and3(eq3(discountRedemptions.orderId, id), eq3(discountRedemptions.status, "reserved"), released)),
-    db.update(giftCardRedemptions).set({ status: "cancelled", updatedAt: at(timestamp) }).where(and3(eq3(giftCardRedemptions.orderId, id), eq3(giftCardRedemptions.status, "reserved"), released))
+    db.update(orders).set({ status: "cancelled", updatedAt: at2(timestamp) }).where(and3(eq3(orders.id, id), notInArray(orders.status, [...PURCHASED_ORDER_STATUSES]))),
+    db.update(discountRedemptions).set({ status: "cancelled", updatedAt: at2(timestamp) }).where(and3(eq3(discountRedemptions.orderId, id), eq3(discountRedemptions.status, "reserved"), released)),
+    db.update(giftCardRedemptions).set({ status: "cancelled", updatedAt: at2(timestamp) }).where(and3(eq3(giftCardRedemptions.orderId, id), eq3(giftCardRedemptions.status, "reserved"), released))
   ];
   if (order.creditApplied > 0) {
-    statements.push(db.run(sql2`INSERT INTO _ecommerce_credit_ledger
+    statements.push(db.run(sql3`INSERT INTO _ecommerce_credit_ledger
       (id, account_id, order_id, kind, amount_cents, created_at)
       SELECT ${`credit_release_${id}`}, user_id, id, 'checkout_release', credit_applied, ${timestamp}
       FROM _ecommerce_orders WHERE id = ${id} AND status = 'cancelled' AND user_id IS NOT NULL
       ON CONFLICT(order_id, kind) DO NOTHING`));
   }
   for (const reservation of reservations) {
-    statements.push(db.run(sql2`UPDATE _ecommerce_components
+    statements.push(db.run(sql3`UPDATE _ecommerce_components
       SET quantity = quantity + (SELECT quantity FROM _ecommerce_component_reservations
         WHERE id = ${reservation.id} AND released_at IS NULL), updated_at = MAX(updated_at + 1, ${timestamp})
       WHERE id = ${reservation.componentId} AND EXISTS (SELECT 1 FROM _ecommerce_component_reservations
         WHERE id = ${reservation.id} AND released_at IS NULL)
         AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ${id} AND status = 'cancelled')`));
-    statements.push(db.update(componentReservations).set({ releasedAt: at(timestamp) }).where(and3(eq3(componentReservations.id, reservation.id), isNull3(componentReservations.releasedAt), released)));
+    statements.push(db.update(componentReservations).set({ releasedAt: at2(timestamp) }).where(and3(eq3(componentReservations.id, reservation.id), isNull3(componentReservations.releasedAt), released)));
   }
   for (const reservation of inventoryReservations2) {
-    const [table, column] = INVENTORY_COLUMNS[reservation.targetType];
-    statements.push(db.run(sql2`UPDATE ${sql2.raw(table)}
-      SET ${sql2.raw(column)} = ${sql2.raw(column)} + (SELECT quantity FROM _ecommerce_inventory_reservations
+    const { table, quantity } = INVENTORY_COLUMNS[reservation.targetType];
+    statements.push(db.run(sql3`UPDATE ${table}
+      SET ${sql3.identifier(quantity.name)} = ${sql3.identifier(quantity.name)} + (SELECT quantity FROM _ecommerce_inventory_reservations
         WHERE id = ${reservation.id} AND released_at IS NULL), updated_at = MAX(updated_at + 1, ${timestamp})
       WHERE id = ${reservation.targetId} AND EXISTS (SELECT 1 FROM _ecommerce_inventory_reservations
         WHERE id = ${reservation.id} AND released_at IS NULL)
         AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ${id} AND status = 'cancelled')`));
-    statements.push(db.update(inventoryReservations).set({ releasedAt: at(timestamp) }).where(and3(eq3(inventoryReservations.id, reservation.id), isNull3(inventoryReservations.releasedAt), released)));
+    statements.push(db.update(inventoryReservations).set({ releasedAt: at2(timestamp) }).where(and3(eq3(inventoryReservations.id, reservation.id), isNull3(inventoryReservations.releasedAt), released)));
   }
   if (order.cartId) {
-    statements.push(db.update(carts).set({ checkoutSessionId: null, updatedAt: at(timestamp) }).where(and3(eq3(carts.id, order.cartId), released)));
+    statements.push(db.update(carts).set({ checkoutSessionId: null, updatedAt: at2(timestamp) }).where(and3(eq3(carts.id, order.cartId), released)));
     statements.push(db.update(orders).set({ cartId: null }).where(and3(eq3(orders.id, id), eq3(orders.status, "cancelled"))));
   }
   if (options.reviewRelease) {
@@ -1094,7 +1112,7 @@ async function cancelOrder(ctx, id, options = {}) {
     statements.push(db.run(decisionInsert(
       "order",
       "release",
-      sql2`status = 'cancelled'`,
+      sql3`status = 'cancelled'`,
       { id: decision.id, paymentReturned, actor: decision.actor, reason: decision.reason, at: timestamp, recordId: id }
     )));
   }
@@ -1149,7 +1167,7 @@ function deliveryEstimate(rate) {
 }
 
 // src/checkout.ts
-var reservationRows = (list) => sql3`SELECT json_extract(value, '$.target') AS target, json_extract(value, '$.amount') AS amount
+var reservationRows = (list) => sql4`SELECT json_extract(value, '$.target') AS target, json_extract(value, '$.amount') AS amount
   FROM json_each(${list})`;
 async function createOrderFromCart(ctx, cartId, options) {
   const { env, db, adapters: paymentAdapters } = ctx;
@@ -1300,7 +1318,7 @@ async function createOrderFromCart(ctx, cartId, options) {
   const now = /* @__PURE__ */ new Date();
   const timestamp = Math.floor(now.getTime() / 1e3);
   const preparationLock = `preparing:${orderId}`;
-  const lock = await db.update(carts).set({ checkoutSessionId: preparationLock, updatedAt: now, version: sql3`${carts.version} + 1` }).where(and4(
+  const lock = await db.update(carts).set({ checkoutSessionId: preparationLock, updatedAt: now, version: sql4`${carts.version} + 1` }).where(and4(
     eq4(carts.id, cartId),
     eq4(carts.closed, false),
     isNull4(carts.checkoutSessionId),
@@ -1411,24 +1429,24 @@ async function createOrderFromCart(ctx, cartId, options) {
     const componentReservations2 = reserves ? [...componentDemand].map(([target, demand]) => ({ id: crypto.randomUUID(), target, amount: demand.quantity })) : [];
     if (componentReservations2.length) {
       const list = JSON.stringify(componentReservations2);
-      statements.push(db.run(sql3`UPDATE _ecommerce_components
+      statements.push(db.run(sql4`UPDATE _ecommerce_components
       SET quantity = quantity - demand.amount, updated_at = MAX(updated_at + 1, ${timestamp})
       FROM (${reservationRows(list)}) AS demand WHERE _ecommerce_components.id = demand.target`));
-      statements.push(db.run(sql3`INSERT INTO _ecommerce_component_reservations
+      statements.push(db.run(sql4`INSERT INTO _ecommerce_component_reservations
       (id, order_id, component_id, quantity)
       SELECT json_extract(value, '$.id'), ${orderId}, json_extract(value, '$.target'), json_extract(value, '$.amount')
       FROM json_each(${list})`));
     }
     const inventoryReservations2 = reserves ? [...inventoryDemand.values()].map((demand) => ({ id: crypto.randomUUID(), type: demand.type, target: demand.id, amount: demand.quantity })) : [];
-    for (const [type, [table, column]] of Object.entries(INVENTORY_COLUMNS)) {
+    for (const [type, { table, quantity }] of Object.entries(INVENTORY_COLUMNS)) {
       const list = inventoryReservations2.filter((reservation) => reservation.type === type);
       if (!list.length) continue;
-      statements.push(db.run(sql3`UPDATE ${sql3.raw(table)}
-      SET ${sql3.raw(column)} = ${sql3.raw(column)} - demand.amount, updated_at = MAX(updated_at + 1, ${timestamp})
-      FROM (${reservationRows(JSON.stringify(list))}) AS demand WHERE ${sql3.raw(table)}.id = demand.target`));
+      statements.push(db.run(sql4`UPDATE ${table}
+      SET ${sql4.identifier(quantity.name)} = ${sql4.identifier(quantity.name)} - demand.amount, updated_at = MAX(updated_at + 1, ${timestamp})
+      FROM (${reservationRows(JSON.stringify(list))}) AS demand WHERE ${table}.id = demand.target`));
     }
     if (inventoryReservations2.length) {
-      statements.push(db.run(sql3`INSERT INTO _ecommerce_inventory_reservations
+      statements.push(db.run(sql4`INSERT INTO _ecommerce_inventory_reservations
       (id, order_id, target_type, target_id, quantity)
       SELECT json_extract(value, '$.id'), ${orderId}, json_extract(value, '$.type'), json_extract(value, '$.target'),
         json_extract(value, '$.amount')
@@ -1485,11 +1503,11 @@ async function resumeCheckout(ctx, cartId, options = {}) {
   if (cart.checkoutSessionId.startsWith("preparing:")) {
     const nowSeconds = Math.floor(Date.now() / 1e3);
     const cutoff = nowSeconds - 35 * 60;
-    const pendingOrder = db.select({ one: sql3`1` }).from(orders).where(and4(eq4(orders.cartId, carts.id), eq4(orders.status, "pending")));
-    await db.update(carts).set({ checkoutSessionId: null, updatedAt: new Date(nowSeconds * 1e3), version: sql3`${carts.version} + 1` }).where(and4(
+    const pendingOrder = db.select({ one: sql4`1` }).from(orders).where(and4(eq4(orders.cartId, carts.id), eq4(orders.status, "pending")));
+    await db.update(carts).set({ checkoutSessionId: null, updatedAt: new Date(nowSeconds * 1e3), version: sql4`${carts.version} + 1` }).where(and4(
       eq4(carts.id, cartId),
       eq4(carts.checkoutSessionId, cart.checkoutSessionId),
-      lt(carts.updatedAt, new Date(cutoff * 1e3)),
+      lt2(carts.updatedAt, new Date(cutoff * 1e3)),
       notExists(pendingOrder)
     ));
     return null;
@@ -1590,7 +1608,7 @@ async function reconcilePendingOrder(ctx, id) {
 import { eq as eq6 } from "drizzle-orm";
 
 // src/disputes.ts
-import { eq as eq5, sql as sql4 } from "drizzle-orm";
+import { eq as eq5, sql as sql5 } from "drizzle-orm";
 function parseStripeDispute(data, eventTime) {
   const paymentIntentId = typeof data?.payment_intent === "string" ? data.payment_intent : data?.payment_intent?.id;
   if (typeof data?.id !== "string" || !data.id || typeof paymentIntentId !== "string" || !paymentIntentId) return null;
@@ -1620,11 +1638,11 @@ var RECORDS = {
 };
 function recordStatement(dispute, record, times) {
   const { column, table, statusBefore } = RECORDS[record.kind];
-  return sql4`INSERT INTO _ecommerce_disputes
-    (id, provider, ${sql4.raw(column)}, amount_cents, currency, reason, status, status_before, created_at, updated_at, closed_at)
+  return sql5`INSERT INTO _ecommerce_disputes
+    (id, provider, ${sql5.raw(column)}, amount_cents, currency, reason, status, status_before, created_at, updated_at, closed_at)
     SELECT ${dispute.id}, 'stripe', r.id, ${dispute.amountCents}, ${dispute.currency ?? record.currency}, ${dispute.reason}, ${dispute.status},
-      ${sql4.raw(statusBefore)}, ${dispute.createdAt}, ${times.now}, ${times.closedAt}
-    FROM ${sql4.raw(table)} r WHERE r.id = ${record.id}
+      ${sql5.raw(statusBefore)}, ${dispute.createdAt}, ${times.now}, ${times.closedAt}
+    FROM ${sql5.raw(table)} r WHERE r.id = ${record.id}
     ON CONFLICT(id) DO UPDATE SET status = excluded.status, amount_cents = excluded.amount_cents,
       currency = excluded.currency, reason = COALESCE(excluded.reason, _ecommerce_disputes.reason),
       updated_at = excluded.updated_at, closed_at = COALESCE(_ecommerce_disputes.closed_at, excluded.closed_at)
@@ -1639,7 +1657,7 @@ async function orderBatch(env, orderId, statements) {
   const db = commerceDb(env);
   const items = [
     ...statements.map((statement) => db.run(statement)),
-    db.get(sql4`SELECT status FROM _ecommerce_orders WHERE id = ${orderId}`)
+    db.get(sql5`SELECT status FROM _ecommerce_orders WHERE id = ${orderId}`)
   ];
   const results = await db.batch(items);
   return results[results.length - 1]?.status ?? null;
@@ -1647,7 +1665,7 @@ async function orderBatch(env, orderId, statements) {
 async function openOrderDispute(env, order, dispute, now) {
   return orderBatch(env, order.id, [
     recordStatement(dispute, { kind: "order", id: order.id, currency: order.currency }, { closedAt: null, now }),
-    sql4`UPDATE _ecommerce_orders SET status = 'disputed', updated_at = ${now}
+    sql5`UPDATE _ecommerce_orders SET status = 'disputed', updated_at = ${now}
       WHERE id = ${order.id} AND status IN ('paid', 'fulfilled', 'partially_refunded')
         AND EXISTS (SELECT 1 FROM _ecommerce_disputes WHERE id = ${dispute.id} AND order_id = ${order.id} AND closed_at IS NULL)`
   ]);
@@ -1655,10 +1673,10 @@ async function openOrderDispute(env, order, dispute, now) {
 async function settleLostOrderDispute(env, order, record, disputeId, now) {
   return orderBatch(env, order.id, [
     record,
-    sql4`UPDATE _ecommerce_orders SET status = 'refunded', updated_at = ${now}
+    sql5`UPDATE _ecommerce_orders SET status = 'refunded', updated_at = ${now}
       WHERE id = ${order.id} AND status IN ('paid', 'fulfilled', 'partially_refunded', 'disputed')
         AND EXISTS (SELECT 1 FROM _ecommerce_disputes WHERE id = ${disputeId} AND order_id = ${order.id} AND status = 'lost')`,
-    sql4`UPDATE _ecommerce_payments SET status = 'refunded'
+    sql5`UPDATE _ecommerce_payments SET status = 'refunded'
       WHERE order_id = ${order.id} AND provider = 'stripe'
         AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ${order.id} AND status = 'refunded')`,
     ...fullRefundStatements(order.id, now),
@@ -1670,7 +1688,7 @@ async function closeOrderDispute(env, order, dispute, closedAt, now) {
   if (dispute.status === "lost") return settleLostOrderDispute(env, order, record, dispute.id, now);
   return orderBatch(env, order.id, [
     record,
-    sql4`UPDATE _ecommerce_orders SET status = CASE
+    sql5`UPDATE _ecommerce_orders SET status = CASE
         WHEN total_amount > 0 AND provider_refunded_cents >= total_amount THEN 'refunded'
         WHEN provider_refunded_cents > 0 THEN 'partially_refunded'
         ELSE (SELECT status_before FROM _ecommerce_disputes WHERE id = ${dispute.id}) END,
@@ -1680,7 +1698,7 @@ async function closeOrderDispute(env, order, dispute, closedAt, now) {
         AND NOT EXISTS (SELECT 1 FROM _ecommerce_disputes WHERE order_id = ${order.id} AND closed_at IS NULL)`,
     // The previous release copies the order's status onto its payment when it sees a refund, so a
     // rollback during the dispute can leave the payment 'disputed', which reports leave out.
-    sql4`UPDATE _ecommerce_payments SET status = CASE o.status
+    sql5`UPDATE _ecommerce_payments SET status = CASE o.status
         WHEN 'refunded' THEN 'refunded' WHEN 'partially_refunded' THEN 'partially_refunded' ELSE 'success' END
       FROM _ecommerce_orders o
       WHERE _ecommerce_payments.order_id = o.id AND o.id = ${order.id} AND o.status <> 'disputed'
@@ -1692,7 +1710,7 @@ async function closeOrderDispute(env, order, dispute, closedAt, now) {
 async function openPurchaseDispute(env, purchase, dispute, now) {
   await runStatements(commerceDb(env), [
     recordStatement(dispute, { kind: "purchase", id: purchase.id, currency: purchase.currency }, { closedAt: null, now }),
-    sql4`UPDATE _ecommerce_gift_card_purchases SET status = 'review', updated_at = ${now}
+    sql5`UPDATE _ecommerce_gift_card_purchases SET status = 'review', updated_at = ${now}
       WHERE id = ${purchase.id} AND status IN ('paid', 'partially_refunded', 'refunded')
         AND EXISTS (SELECT 1 FROM _ecommerce_disputes WHERE id = ${dispute.id} AND gift_card_purchase_id = ${purchase.id} AND closed_at IS NULL)`,
     ...giftCardPurchaseHoldStatements(purchase.id, now)
@@ -1705,7 +1723,7 @@ async function closePurchaseDispute(env, purchase, dispute, closedAt, now) {
     await runStatements(db, [
       record,
       // Held first, so nothing more is spent from the cards while a checkout in progress delays the void.
-      sql4`UPDATE _ecommerce_gift_card_purchases SET status = 'review', updated_at = ${now}
+      sql5`UPDATE _ecommerce_gift_card_purchases SET status = 'review', updated_at = ${now}
         WHERE id = ${purchase.id} AND status IN ('paid', 'partially_refunded', 'refunded')`,
       ...giftCardPurchaseHoldStatements(purchase.id, now),
       ...giftCardPurchaseChargebackStatements(purchase.id, now)
@@ -1718,7 +1736,7 @@ async function closePurchaseDispute(env, purchase, dispute, closedAt, now) {
   }
   await runStatements(db, [
     record,
-    sql4`UPDATE _ecommerce_gift_card_purchases SET status = CASE
+    sql5`UPDATE _ecommerce_gift_card_purchases SET status = CASE
         WHEN provider_refunded_cents > refund_adjusted_cents THEN 'review'
         WHEN d.status_before IN ('paid', 'partially_refunded', 'refunded') THEN d.status_before
         WHEN provider_refunded_cents >= amount_cents THEN 'refunded'
@@ -1767,7 +1785,7 @@ async function assertNoAwaitedPayment(ctx, references) {
 async function applyStripeEvent(ctx, event, stripeAdapter) {
   const { env, db, adapters: paymentAdapters } = ctx;
   const text = (value) => typeof value === "string" && value ? value : null;
-  const at3 = Number.isSafeInteger(event.created) && event.created > 0 ? event.created : Math.floor(Date.now() / 1e3);
+  const at4 = Number.isSafeInteger(event.created) && event.created > 0 ? event.created : Math.floor(Date.now() / 1e3);
   if (event.type === "checkout.session.completed") {
     const session = event.data;
     if (session.payment_status !== "paid") return ignoredEvent(event);
@@ -1828,7 +1846,7 @@ async function applyStripeEvent(ctx, event, stripeAdapter) {
     const latest = listed.filter((item) => typeof item?.id === "string").sort((a, b) => Number(b.created ?? 0) - Number(a.created ?? 0))[0];
     const recorded = await recordProviderRefund(ctx, {
       ...refund,
-      refundedAt: at3,
+      refundedAt: at4,
       providerRefundId: typeof latest?.id === "string" ? latest.id : null
     });
     if (recorded) {
@@ -1842,9 +1860,9 @@ async function applyStripeEvent(ctx, event, stripeAdapter) {
     return ignoredEvent(event);
   }
   if (event.type === "charge.dispute.created" || event.type === "charge.dispute.closed") {
-    const dispute = parseStripeDispute(event.data, at3);
+    const dispute = parseStripeDispute(event.data, at4);
     if (!dispute) return ignoredEvent(event);
-    const applied = await applyStripeDispute(env, dispute, { closed: event.type === "charge.dispute.closed", at: at3 });
+    const applied = await applyStripeDispute(env, dispute, { closed: event.type === "charge.dispute.closed", at: at4 });
     if (applied && "orderId" in applied && applied.status === "refunded") {
       await reverseRefundedOrderTax(env, paymentAdapters, applied.orderId);
     }
@@ -1879,31 +1897,45 @@ async function handleStripeWebhook(ctx, payload, signature, secret) {
 }
 
 // src/reconcile-job.ts
-import { and as and5, eq as eq7, lt as lt2, or } from "drizzle-orm";
-var at2 = (seconds) => new Date(seconds * 1e3);
+import { and as and5, eq as eq7, gte, isNotNull as isNotNull3, isNull as isNull5, lt as lt3, or, sql as sql6 } from "drizzle-orm";
+var at3 = (seconds) => new Date(seconds * 1e3);
 async function reconcileCommerce(options, limit = 10) {
   const count = Math.max(1, Math.min(20, Math.floor(limit)));
   const { env } = options;
   const ctx = commerceContext(options);
   const now = Math.floor(Date.now() / 1e3);
   const { db } = ctx;
-  const preparations = await env.DB.prepare(`SELECT id FROM _ecommerce_carts
-    WHERE checkout_session_id >= 'preparing:' AND checkout_session_id < 'preparing;' AND updated_at < ?
-    ORDER BY updated_at LIMIT ?`).bind(now - 35 * 60, count).all();
+  const stale = at3(now - 15 * 60);
   const settlesAdminTest = options.paymentAdapters?.some((adapter) => adapter.providerId === "admin_test") ?? false;
-  const pending = await env.DB.prepare(`SELECT id FROM _ecommerce_orders
-    WHERE status = 'pending' AND created_at < ? AND reconcile_review_at IS NULL AND ${RECONCILE_DUE}
-      AND (? = 1 OR COALESCE(payment_provider, 'stripe') <> 'admin_test')
-    ORDER BY ${RECONCILE_ORDER} LIMIT ?`).bind(now - 15 * 60, now, settlesAdminTest ? 1 : 0, count).all();
-  const abandonedTests = settlesAdminTest ? { results: [] } : await env.DB.prepare(`SELECT id FROM _ecommerce_orders
-    WHERE status = 'pending' AND payment_provider = 'admin_test' AND created_at < ?
-    ORDER BY created_at LIMIT ?`).bind(now - 15 * 60, count).all();
-  const giftPurchases = await env.DB.prepare(`SELECT id FROM _ecommerce_gift_card_purchases
-    WHERE status = 'pending' AND provider_session_id IS NOT NULL AND created_at < ?
-      AND reconcile_review_at IS NULL AND ${RECONCILE_DUE}
-    ORDER BY ${RECONCILE_ORDER} LIMIT ?`).bind(now - 15 * 60, now, count).all();
+  const pendingOrder = sql6`${orders.status} = 'pending'`;
+  const orderWait = reconcileBackoff(orders, now);
+  const purchaseWait = reconcileBackoff(giftCardPurchases, now);
+  const queue = await batchGroups(db, {
+    // ';' follows ':', so the range holds exactly the ids that start with 'preparing:', read from the
+    // unique index on checkout_session_id. LIKE cannot use that index: it ignores case.
+    preparations: [db.select({ id: carts.id }).from(carts).where(and5(
+      gte(carts.checkoutSessionId, "preparing:"),
+      lt3(carts.checkoutSessionId, "preparing;"),
+      lt3(carts.updatedAt, at3(now - 35 * 60))
+    )).orderBy(carts.updatedAt).limit(count)],
+    pending: [db.select({ id: orders.id }).from(orders).where(and5(
+      pendingOrder,
+      lt3(orders.createdAt, stale),
+      isNull5(orders.reconcileReviewAt),
+      orderWait.due,
+      settlesAdminTest ? void 0 : sql6`COALESCE(${orders.paymentProvider}, 'stripe') <> 'admin_test'`
+    )).orderBy(...orderWait.order).limit(count)],
+    abandonedTests: settlesAdminTest ? [] : [db.select({ id: orders.id }).from(orders).where(and5(pendingOrder, eq7(orders.paymentProvider, "admin_test"), lt3(orders.createdAt, stale))).orderBy(orders.createdAt).limit(count)],
+    giftPurchases: [db.select({ id: giftCardPurchases.id }).from(giftCardPurchases).where(and5(
+      eq7(giftCardPurchases.status, "pending"),
+      isNotNull3(giftCardPurchases.providerSessionId),
+      lt3(giftCardPurchases.createdAt, stale),
+      isNull5(giftCardPurchases.reconcileReviewAt),
+      purchaseWait.due
+    )).orderBy(...purchaseWait.order).limit(count)]
+  });
   const results = [];
-  for (const row of preparations.results ?? []) {
+  for (const row of queue.preparations) {
     try {
       await resumeCheckout(ctx, row.id);
       results.push({ id: row.id, status: "preparation_checked" });
@@ -1911,10 +1943,10 @@ async function reconcileCommerce(options, limit = 10) {
       results.push({ id: row.id, status: "error", error: error instanceof Error ? error.message : "Recovery failed" });
     }
   }
-  for (const row of pending.results ?? []) {
+  for (const row of queue.pending) {
     results.push(await reconcileAttempt(env, "order", row.id, now, () => reconcilePendingOrder(ctx, row.id)));
   }
-  for (const row of abandonedTests.results ?? []) {
+  for (const row of queue.abandonedTests) {
     try {
       const cancelled = await cancelOrder(ctx, row.id);
       results.push({ id: row.id, status: cancelled?.status ?? "unchanged" });
@@ -1923,7 +1955,7 @@ async function reconcileCommerce(options, limit = 10) {
     }
   }
   const stripe = options.paymentAdapters?.find((adapter) => adapter.providerId === "stripe");
-  for (const row of giftPurchases.results ?? []) {
+  for (const row of queue.giftPurchases) {
     results.push(await reconcileAttempt(
       env,
       "gift_card_purchase",
@@ -1965,14 +1997,14 @@ async function reconcileCommerce(options, limit = 10) {
     });
   }
   await db.delete(customerSessions).where(or(
-    and5(eq7(customerSessions.purpose, "email_challenge"), lt2(customerSessions.expiresAt, at2(now - 24 * 60 * 60))),
-    and5(eq7(customerSessions.purpose, "session"), lt2(customerSessions.expiresAt, at2(now - 30 * 24 * 60 * 60)))
+    and5(eq7(customerSessions.purpose, "email_challenge"), lt3(customerSessions.expiresAt, at3(now - 24 * 60 * 60))),
+    and5(eq7(customerSessions.purpose, "session"), lt3(customerSessions.expiresAt, at3(now - 30 * 24 * 60 * 60)))
   ));
   return results;
 }
 
 // src/retention.ts
-import { sql as sql5 } from "drizzle-orm";
+import { sql as sql7 } from "drizzle-orm";
 var PURGE_MAX_BATCHES = 20;
 async function purgeStaleCommerceData(options) {
   const { env } = options;
@@ -1990,19 +2022,19 @@ async function purgeStaleCommerceData(options) {
   };
   const steps = [
     // Guest baskets untouched for 30 days. Account, checked-out and locked baskets stay.
-    ["carts", (limit) => sql5`DELETE FROM _ecommerce_carts WHERE id IN (SELECT id FROM _ecommerce_carts
+    ["carts", (limit) => sql7`DELETE FROM _ecommerce_carts WHERE id IN (SELECT id FROM _ecommerce_carts
       WHERE user_id IS NULL AND closed = 0 AND checkout_session_id IS NULL AND updated_at < ${now - 30 * day}
         AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders WHERE cart_id = _ecommerce_carts.id)
       LIMIT ${limit})`],
     // Shopper sessions, and the `email_challenge` rows of earlier releases, a day after they expired, were used or signed out.
-    ["customerSessions", (limit) => sql5`DELETE FROM _ecommerce_customer_sessions WHERE id IN (SELECT id
+    ["customerSessions", (limit) => sql7`DELETE FROM _ecommerce_customer_sessions WHERE id IN (SELECT id
       FROM _ecommerce_customer_sessions WHERE expires_at < ${now - day} OR revoked_at < ${now - day} LIMIT ${limit})`],
     // Sign-in links, with the address they were sent to, a day after they expired or were used.
-    ["signInTokens", (limit) => sql5`DELETE FROM _ecommerce_sign_in_tokens WHERE token_hash IN (SELECT token_hash
+    ["signInTokens", (limit) => sql7`DELETE FROM _ecommerce_sign_in_tokens WHERE token_hash IN (SELECT token_hash
       FROM _ecommerce_sign_in_tokens WHERE expires_at < ${now - day} OR revoked_at < ${now - day} LIMIT ${limit})`],
     // Accounts that asking for a sign-in link used to create: never verified, a day old, and with no
     // orders, sessions, basket, credit, referral or discount use. Anything else keeps the account.
-    ["unverifiedAccounts", (limit) => sql5`DELETE FROM _ecommerce_customer_accounts WHERE id IN (SELECT a.id
+    ["unverifiedAccounts", (limit) => sql7`DELETE FROM _ecommerce_customer_accounts WHERE id IN (SELECT a.id
       FROM _ecommerce_customer_accounts a
       WHERE a.email_verified_at IS NULL AND a.cms_user_id IS NULL AND a.credit_balance = 0 AND a.created_at < ${now - day}
         AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders WHERE user_id = a.id)
@@ -2014,12 +2046,12 @@ async function purgeStaleCommerceData(options) {
         AND NOT EXISTS (SELECT 1 FROM _ecommerce_discount_redemptions WHERE account_id = a.id)
       LIMIT ${limit})`],
     // Shopper request counters. Every window is at most a day long.
-    ["rateLimits", (limit) => sql5`DELETE FROM _ecommerce_rate_limits WHERE key IN (SELECT key FROM _ecommerce_rate_limits
+    ["rateLimits", (limit) => sql7`DELETE FROM _ecommerce_rate_limits WHERE key IN (SELECT key FROM _ecommerce_rate_limits
       WHERE window_start < ${now - day} LIMIT ${limit})`],
-    ["authSessions", (limit) => sql5`DELETE FROM galaxy_auth_session WHERE id IN (SELECT id FROM galaxy_auth_session
+    ["authSessions", (limit) => sql7`DELETE FROM galaxy_auth_session WHERE id IN (SELECT id FROM galaxy_auth_session
       WHERE expires_at < ${now} LIMIT ${limit})`],
     // better-auth records milliseconds. Shopper counters written in seconds by earlier releases may remain.
-    ["authRateLimits", (limit) => sql5`DELETE FROM galaxy_auth_rate_limit WHERE id IN (SELECT id FROM galaxy_auth_rate_limit
+    ["authRateLimits", (limit) => sql7`DELETE FROM galaxy_auth_rate_limit WHERE id IN (SELECT id FROM galaxy_auth_rate_limit
       WHERE CASE WHEN last_request >= 100000000000 THEN last_request / 1000 ELSE last_request END < ${now - day}
       LIMIT ${limit})`]
   ];

@@ -5,11 +5,11 @@ import "../chunk-6L7TQXAW.js";
 import {
   bindCommerceApi,
   reconcileCommerce
-} from "../chunk-GHUSAF37.js";
-import "../chunk-K6SXWFZP.js";
-import "../chunk-4DUQOBXB.js";
+} from "../chunk-3F4TX7AS.js";
+import "../chunk-TT3MVFMZ.js";
+import "../chunk-NOGKXEVT.js";
 import "../chunk-BGDJXEM5.js";
-import "../chunk-TMMXEXF2.js";
+import "../chunk-FFJXPA3V.js";
 import {
   RECONCILE_FAILURE_MESSAGES,
   RECONCILE_TABLES,
@@ -20,17 +20,19 @@ import {
   isProviderError,
   reconcileFailure,
   uncheckedSessionRefusal
-} from "../chunk-46DBWAED.js";
-import "../chunk-7PQWN42E.js";
+} from "../chunk-4LBJN5LU.js";
+import "../chunk-NTFJG6BA.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
 } from "../chunk-GNU6N22K.js";
-import "../chunk-OPQXEAZM.js";
+import "../chunk-IAWGIRUS.js";
 import {
   commerceDb
 } from "../chunk-ZI5IJOR6.js";
 import {
+  giftCardPurchases,
+  orders,
   reconcileDecisions
 } from "../chunk-NKJTK7MK.js";
 import "../chunk-NMGICNSV.js";
@@ -41,7 +43,7 @@ import { authorizeCmsRequest } from "talisman-cms/auth/guard";
 
 // src/reconcile-review.ts
 import { z } from "zod";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 var ReconcileInputError = class extends Error {
   name = "ReconcileInputError";
 };
@@ -65,7 +67,8 @@ function newDecision(actor, reason) {
   if (!actor.trim()) throw new Error("Administrator identity is required");
   return { id: `rcd_${crypto.randomUUID()}`, actor, reason };
 }
-var PARKED = sql`status = 'pending' AND reconcile_review_at IS NOT NULL`;
+var parked = (table) => sql`${table.status} = 'pending' AND ${table.reconcileReviewAt} IS NOT NULL`;
+var at = (seconds) => new Date(seconds * 1e3);
 var recorded = (decisionId) => sql`EXISTS (SELECT 1 FROM _ecommerce_reconcile_decisions WHERE id = ${decisionId})`;
 var notParked = (kind) => kind === "order" ? "This order is not pending and parked for review; reload the list" : "This gift card purchase is not pending and parked for review; reload the list";
 var isoTime = (seconds) => new Date(seconds * 1e3).toISOString();
@@ -76,14 +79,14 @@ async function listParkedCommerce(env) {
         reconcile_last_at AS last_at, reconcile_last_error AS last_error, reconcile_review_at AS review_at,
         checkout_session_id AS session_id, COALESCE(payment_provider, 'stripe') AS provider,
         total_amount AS amount_cents, currency
-      FROM _ecommerce_orders WHERE ${PARKED}
+      FROM _ecommerce_orders WHERE ${parked(orders)}
       UNION ALL
       SELECT 'gift_card_purchase', id, created_at, reconcile_attempts, reconcile_last_at, reconcile_last_error,
         reconcile_review_at, provider_session_id, 'stripe', amount_cents, currency
-      FROM _ecommerce_gift_card_purchases WHERE ${PARKED}
+      FROM _ecommerce_gift_card_purchases WHERE ${parked(giftCardPurchases)}
       ORDER BY review_at, id LIMIT ${PARKED_LIST_LIMIT}`),
-    db.get(sql`SELECT (SELECT COUNT(*) FROM _ecommerce_orders WHERE ${PARKED})
-      + (SELECT COUNT(*) FROM _ecommerce_gift_card_purchases WHERE ${PARKED}) AS count`)
+    db.get(sql`SELECT (SELECT COUNT(*) FROM _ecommerce_orders WHERE ${parked(orders)})
+      + (SELECT COUNT(*) FROM _ecommerce_gift_card_purchases WHERE ${parked(giftCardPurchases)}) AS count`)
   ]);
   const storeMode = runtimeStripeMode(env);
   return {
@@ -115,8 +118,9 @@ async function retryParkedCommerce(env, actor, input) {
   const decision = newDecision(actor, reason);
   const timestamp = Math.floor(Date.now() / 1e3);
   const db = commerceDb(env);
+  const table = RECONCILE_TABLES[kind];
   const [, retried] = await db.batch([
-    db.run(decisionInsert(kind, "retry", PARKED, {
+    db.run(decisionInsert(kind, "retry", parked(table), {
       id: decision.id,
       paymentReturned: null,
       actor: decision.actor,
@@ -124,9 +128,7 @@ async function retryParkedCommerce(env, actor, input) {
       at: timestamp,
       recordId: id
     })),
-    db.all(sql`UPDATE ${sql.raw(RECONCILE_TABLES[kind])} SET reconcile_review_at = NULL,
-        reconcile_attempts = 0, reconcile_last_at = NULL, reconcile_last_error = NULL
-      WHERE id = ${id} AND ${PARKED} AND ${recorded(decision.id)} RETURNING id`)
+    db.update(table).set({ reconcileReviewAt: null, reconcileAttempts: 0, reconcileLastAt: null, reconcileLastError: null }).where(and(eq(table.id, id), parked(table), recorded(decision.id))).returning({ id: table.id })
   ]);
   if (!retried.length) throw new Error(notParked(kind));
   console.info("[commerce] Parked checkout returned to reconciliation", { kind, id, actor });
@@ -144,10 +146,13 @@ async function releaseParkedCommerce(options, actor, input) {
   const decision = newDecision(actor, reason);
   const { env } = options;
   const db = commerceDb(env);
-  const row = await db.get(sql`SELECT ${sql.raw(kind === "order" ? "checkout_session_id" : "provider_session_id")} AS session_id,
-      created_at FROM ${sql.raw(RECONCILE_TABLES[kind])} WHERE id = ${id} AND ${PARKED}`);
+  const table = RECONCILE_TABLES[kind];
+  const row = await db.select({
+    sessionId: kind === "order" ? orders.checkoutSessionId : giftCardPurchases.providerSessionId,
+    createdAt: table.createdAt
+  }).from(table).where(and(eq(table.id, id), parked(table))).get();
   if (!row) throw new Error(notParked(kind));
-  const otherMode = isOtherStripeModeSession(env, row.session_id);
+  const otherMode = isOtherStripeModeSession(env, row.sessionId);
   const decided = () => db.select({ paymentReturned: reconcileDecisions.paymentReturned }).from(reconcileDecisions).where(eq(reconcileDecisions.id, decision.id)).get();
   let paymentReturned = null;
   if (kind === "order") {
@@ -160,13 +165,13 @@ async function releaseParkedCommerce(options, actor, input) {
     if (!outcome) throw new Error("The order changed while it was being released; reload the list");
     paymentReturned = outcome.paymentReturned;
   } else {
-    if (row.session_id) {
+    if (row.sessionId) {
       const stripe = options.paymentAdapters?.find((adapter) => adapter.providerId === "stripe");
       if (!stripe?.getCheckoutSession || !stripe.expireCheckoutSession) {
         throw new Error("Stripe must be configured to check this checkout session before the purchase is released");
       }
       const refuseUnchecked = () => {
-        const refusal = uncheckedSessionRefusal(row.created_at);
+        const refusal = uncheckedSessionRefusal(Math.floor(row.createdAt.getTime() / 1e3));
         if (refusal) throw refusal;
       };
       if (otherMode) refuseUnchecked();
@@ -174,13 +179,13 @@ async function releaseParkedCommerce(options, actor, input) {
         try {
           let session = null;
           try {
-            session = await stripe.getCheckoutSession(row.session_id);
+            session = await stripe.getCheckoutSession(row.sessionId);
           } catch (error) {
             if (!isMissingSessionError(error)) throw error;
             refuseUnchecked();
           }
           if (session?.status === "complete") paymentReturned = await completedCheckoutReturn(stripe, session, confirmPaymentReturned);
-          else if (session && session.status !== "expired") await stripe.expireCheckoutSession(row.session_id);
+          else if (session && session.status !== "expired") await stripe.expireCheckoutSession(row.sessionId);
         } catch (error) {
           throw releaseRefusal(error);
         }
@@ -188,7 +193,7 @@ async function releaseParkedCommerce(options, actor, input) {
     }
     const timestamp = Math.floor(Date.now() / 1e3);
     const [, released] = await db.batch([
-      db.run(decisionInsert(kind, "release", PARKED, {
+      db.run(decisionInsert(kind, "release", parked(table), {
         id: decision.id,
         paymentReturned,
         actor: decision.actor,
@@ -196,8 +201,7 @@ async function releaseParkedCommerce(options, actor, input) {
         at: timestamp,
         recordId: id
       })),
-      db.all(sql`UPDATE _ecommerce_gift_card_purchases SET status = 'cancelled', updated_at = ${timestamp}
-        WHERE id = ${id} AND ${PARKED} AND ${recorded(decision.id)} RETURNING id`)
+      db.update(giftCardPurchases).set({ status: "cancelled", updatedAt: at(timestamp) }).where(and(eq(giftCardPurchases.id, id), parked(giftCardPurchases), recorded(decision.id))).returning({ id: giftCardPurchases.id })
     ]);
     if (!released.length) throw new Error("The purchase changed while it was being released; reload the list");
   }

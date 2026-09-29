@@ -9,8 +9,9 @@ import {
   missingEmailSettings,
   runCommerceEmailDelivery,
   sendCommerceEmailNow,
+  unclaimedAt,
   waitingEmailsResult
-} from "./chunk-46DBWAED.js";
+} from "./chunk-4LBJN5LU.js";
 import {
   batchGroups,
   chunked,
@@ -18,6 +19,7 @@ import {
   errorText
 } from "./chunk-ZI5IJOR6.js";
 import {
+  emailDeliveries,
   fulfillments,
   orders
 } from "./chunk-NKJTK7MK.js";
@@ -27,31 +29,43 @@ import {
 } from "./chunk-NMGICNSV.js";
 
 // src/fulfillment.ts
-import { eq as eq2, sql } from "drizzle-orm";
+import { and as and2, asc, count, desc, eq as eq2, sql as sql2 } from "drizzle-orm";
 import { z } from "zod";
 
 // src/order-items.ts
-var ORDER_AMOUNT_COLUMNS = `subtotal_amount, discount_code, discount_amount, credit_applied, shipping_amount,
-  shipping_label, tax_amount, tax_behavior, gift_card_applied, total_amount, provider_refunded_cents, gift_card_refunded_cents`;
+var orderAmountColumns = {
+  subtotalAmount: orders.subtotalAmount,
+  discountCode: orders.discountCode,
+  discountAmount: orders.discountAmount,
+  creditApplied: orders.creditApplied,
+  shippingAmount: orders.shippingAmount,
+  shippingLabel: orders.shippingLabel,
+  taxAmount: orders.taxAmount,
+  taxBehavior: orders.taxBehavior,
+  giftCardApplied: orders.giftCardApplied,
+  totalAmount: orders.totalAmount,
+  providerRefundedCents: orders.providerRefundedCents,
+  giftCardRefundedCents: orders.giftCardRefundedCents
+};
 function orderAmounts(row) {
-  const amounts = [{ key: "itemsSubtotal", label: "Items subtotal", cents: row.subtotal_amount || row.total_amount }];
-  if (row.discount_amount > 0) {
-    amounts.push({ key: "discount", label: row.discount_code ? `Discount (${row.discount_code})` : "Discount", cents: -row.discount_amount });
+  const amounts = [{ key: "itemsSubtotal", label: "Items subtotal", cents: row.subtotalAmount || row.totalAmount }];
+  if (row.discountAmount > 0) {
+    amounts.push({ key: "discount", label: row.discountCode ? `Discount (${row.discountCode})` : "Discount", cents: -row.discountAmount });
   }
-  if (row.credit_applied > 0) amounts.push({ key: "storeCredit", label: "Store credit", cents: -row.credit_applied });
-  if (row.shipping_amount > 0 || row.shipping_label) {
-    amounts.push({ key: "shipping", label: row.shipping_label ? `Shipping (${row.shipping_label})` : "Shipping", cents: row.shipping_amount });
+  if (row.creditApplied > 0) amounts.push({ key: "storeCredit", label: "Store credit", cents: -row.creditApplied });
+  if (row.shippingAmount > 0 || row.shippingLabel) {
+    amounts.push({ key: "shipping", label: row.shippingLabel ? `Shipping (${row.shippingLabel})` : "Shipping", cents: row.shippingAmount });
   }
-  if (row.tax_amount > 0) {
-    amounts.push(row.tax_behavior === "inclusive" ? { key: "taxIncluded", label: "Tax included in the prices", cents: row.tax_amount } : { key: "tax", label: "Tax", cents: row.tax_amount });
+  if (row.taxAmount > 0) {
+    amounts.push(row.taxBehavior === "inclusive" ? { key: "taxIncluded", label: "Tax included in the prices", cents: row.taxAmount } : { key: "tax", label: "Tax", cents: row.taxAmount });
   }
-  if (row.gift_card_applied > 0) amounts.push({ key: "giftCard", label: "Gift card", cents: -row.gift_card_applied });
-  amounts.push({ key: "charged", label: "Charged by the payment provider", cents: row.total_amount });
-  if (row.provider_refunded_cents > 0) {
-    amounts.push({ key: "providerRefunded", label: "Refunded by the payment provider", cents: row.provider_refunded_cents });
+  if (row.giftCardApplied > 0) amounts.push({ key: "giftCard", label: "Gift card", cents: -row.giftCardApplied });
+  amounts.push({ key: "charged", label: "Charged by the payment provider", cents: row.totalAmount });
+  if (row.providerRefundedCents > 0) {
+    amounts.push({ key: "providerRefunded", label: "Refunded by the payment provider", cents: row.providerRefundedCents });
   }
-  if (row.gift_card_refunded_cents > 0) {
-    amounts.push({ key: "giftCardRefunded", label: "Refunded to the gift card", cents: row.gift_card_refunded_cents });
+  if (row.giftCardRefundedCents > 0) {
+    amounts.push({ key: "giftCardRefunded", label: "Refunded to the gift card", cents: row.giftCardRefundedCents });
   }
   return amounts;
 }
@@ -92,36 +106,38 @@ async function describeOrderItems(env, items) {
 }
 
 // src/commerce-emails.ts
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, lt, lte, sql } from "drizzle-orm";
+var at = (seconds) => new Date(seconds * 1e3);
+var storedItems = (items) => Array.isArray(items) ? items.filter((item) => typeof item?.productId === "string") : [];
+var orderOfFulfillment = (db, fulfillmentId) => db.select({ orderId: fulfillments.orderId }).from(fulfillments).where(eq(fulfillments.id, fulfillmentId));
 var BUYER_AMOUNT_LABELS = {
   charged: "Amount charged",
   providerRefunded: "Refunded to your payment method",
   giftCardRefunded: "Refunded to your gift card"
 };
 var CONFIRMABLE_STATUSES = ["paid", "fulfilled", "partially_refunded", "disputed"];
-function parseJson(value, fallback) {
-  if (!value) return fallback;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return fallback;
-  }
-}
 var composeOrderConfirmation = async (env, orderId, setup) => {
-  const order = await env.DB.prepare(`SELECT id, status, payment_provider, customer_email, currency, items,
-      shipping_address, ${ORDER_AMOUNT_COLUMNS}, created_at
-    FROM _ecommerce_orders WHERE id = ?`).bind(orderId).first();
-  if (!order || (order.payment_provider ?? "stripe") === "admin_test") return { cancel: "not_found" };
+  const order = await commerceDb(env).select({
+    id: orders.id,
+    status: orders.status,
+    paymentProvider: orders.paymentProvider,
+    customerEmail: orders.customerEmail,
+    currency: orders.currency,
+    items: orders.items,
+    shippingAddress: orders.shippingAddress,
+    ...orderAmountColumns,
+    createdAt: orders.createdAt
+  }).from(orders).where(eq(orders.id, orderId)).get();
+  if (!order || (order.paymentProvider ?? "stripe") === "admin_test") return { cancel: "not_found" };
   if (!CONFIRMABLE_STATUSES.includes(order.status)) return { cancel: "not_due" };
-  const to = bareEmailAddress(order.customer_email);
+  const to = bareEmailAddress(order.customerEmail);
   if (!to) return { fail: "invalid_recipient" };
-  const stored = parseJson(order.items, []);
-  const items = await describeOrderItems(env, Array.isArray(stored) ? stored.filter((item) => typeof item?.productId === "string") : []);
+  const items = await describeOrderItems(env, storedItems(order.items));
   const email = {
     store: setup.store,
     order: {
       id: order.id,
-      placedAt: new Date(order.created_at * 1e3),
+      placedAt: order.createdAt,
       currency: order.currency,
       items: items.map((item) => ({
         productId: item.productId,
@@ -135,30 +151,36 @@ var composeOrderConfirmation = async (env, orderId, setup) => {
         lineCents: item.priceAtPurchase * item.quantity
       })),
       amounts: orderAmounts(order).map((amount) => ({ ...amount, label: BUYER_AMOUNT_LABELS[amount.key] ?? amount.label })),
-      shippingAddress: parseJson(order.shipping_address, null)
+      shippingAddress: order.shippingAddress ?? null
     }
   };
   return { to, message: await applyEmailTemplate(setup, "orderConfirmation", email, orderConfirmationEmail(email)) };
 };
 function shipmentComposer(update) {
   return async (env, fulfillmentId, setup) => {
-    const { results } = await env.DB.prepare(`SELECT id, order_id, kind, corrects_id, completes_order, carrier,
-        tracking_number, created_at
-      FROM _ecommerce_fulfillments WHERE order_id = (SELECT order_id FROM _ecommerce_fulfillments WHERE id = ?)
-      ORDER BY rowid`).bind(fulfillmentId).all();
-    const rows = results ?? [];
+    const db = commerceDb(env);
+    const rows = await db.select({
+      id: fulfillments.id,
+      orderId: fulfillments.orderId,
+      kind: fulfillments.kind,
+      correctsId: fulfillments.correctsId,
+      completesOrder: fulfillments.completesOrder,
+      carrier: fulfillments.carrier,
+      trackingNumber: fulfillments.trackingNumber,
+      createdAt: fulfillments.createdAt
+    }).from(fulfillments).where(eq(fulfillments.orderId, orderOfFulfillment(db, fulfillmentId))).orderBy(sql`rowid`);
     const subject = rows.find((row) => row.id === fulfillmentId);
-    const shipmentId = update ? subject?.corrects_id : subject?.id;
+    const shipmentId = update ? subject?.correctsId : subject?.id;
     const index = rows.findIndex((row) => row.id === shipmentId && row.kind === "shipment");
     if (index < 0) return { cancel: "not_found" };
     const shipment = rows[index];
-    const current = rows.filter((row) => row.corrects_id === shipment.id).at(-1) ?? shipment;
-    const order = await commerceDb(env).select({
+    const current = rows.filter((row) => row.correctsId === shipment.id).at(-1) ?? shipment;
+    const order = await db.select({
       id: orders.id,
       customerEmail: orders.customerEmail,
       paymentProvider: orders.paymentProvider,
       createdAt: orders.createdAt
-    }).from(orders).where(eq(orders.id, shipment.order_id)).get();
+    }).from(orders).where(eq(orders.id, shipment.orderId)).get();
     if (!order || (order.paymentProvider ?? "stripe") === "admin_test") return { cancel: "not_found" };
     const to = bareEmailAddress(order.customerEmail);
     if (!to) return { fail: "invalid_recipient" };
@@ -167,11 +189,11 @@ function shipmentComposer(update) {
       order: { id: order.id, placedAt: order.createdAt },
       shipment: {
         id: shipment.id,
-        shippedAt: new Date(shipment.created_at * 1e3),
+        shippedAt: shipment.createdAt,
         // A shipment row may hold an empty string where there is no value.
         carrier: current.carrier || null,
-        trackingNumber: current.tracking_number || null,
-        completesOrder: shipment.completes_order === 1,
+        trackingNumber: current.trackingNumber || null,
+        completesOrder: shipment.completesOrder,
         earlierShipments: rows.slice(0, index).filter((row) => row.kind === "shipment").length
       },
       update
@@ -188,24 +210,19 @@ var COMPOSERS = {
 function deliverCommerceEmail(env, kind, subjectId) {
   return sendCommerceEmailNow(env, kind, subjectId, COMPOSERS[kind]);
 }
-async function deliverPendingCommerceEmails(options, { limit = 10, now: at } = {}) {
+async function deliverPendingCommerceEmails(options, { limit = 10, now: givenNow } = {}) {
   const { env } = options;
-  const count = Math.max(1, Math.min(50, Math.floor(limit)));
-  const now = at ?? Math.floor(Date.now() / 1e3);
+  const count2 = Math.max(1, Math.min(50, Math.floor(limit)));
+  const now = givenNow ?? Math.floor(Date.now() / 1e3);
   const results = [];
-  const expired = await env.DB.prepare(`UPDATE _ecommerce_email_deliveries
-    SET status = 'failed', last_error = 'expired', claimed_at = NULL
-    WHERE id IN (SELECT id FROM _ecommerce_email_deliveries
-      WHERE status = 'pending' AND created_at < ? AND (claimed_at IS NULL OR claimed_at <= ?)
-      ORDER BY created_at LIMIT ?)
-    RETURNING kind, subject_id`).bind(now - COMMERCE_EMAIL_MAX_AGE_SECONDS, now - COMMERCE_EMAIL_LEASE_SECONDS, count).all();
-  for (const row of expired.results ?? []) {
-    results.push({ id: `${row.kind}:${row.subject_id}`, status: "error", error: "Email was not sent within 7 days and was given up" });
+  const db = commerceDb(env);
+  const pending = sql`${emailDeliveries.status} = 'pending'`;
+  const oldest = db.select({ id: emailDeliveries.id }).from(emailDeliveries).where(and(pending, lt(emailDeliveries.createdAt, at(now - COMMERCE_EMAIL_MAX_AGE_SECONDS)), unclaimedAt(now))).orderBy(emailDeliveries.createdAt).limit(count2);
+  const expired = await db.update(emailDeliveries).set({ status: "failed", lastError: "expired", claimedAt: null }).where(inArray(emailDeliveries.id, oldest)).returning({ kind: emailDeliveries.kind, subjectId: emailDeliveries.subjectId });
+  for (const row of expired) {
+    results.push({ id: `${row.kind}:${row.subjectId}`, status: "error", error: "Email was not sent within 7 days and was given up" });
   }
-  const due = (kinds2) => env.DB.prepare(`SELECT kind, subject_id FROM _ecommerce_email_deliveries
-    WHERE status = 'pending' AND next_attempt_at <= ? AND (claimed_at IS NULL OR claimed_at <= ?)
-      AND +kind IN (${kinds2.map(() => "?").join(", ")})
-    ORDER BY next_attempt_at, created_at, kind <> 'order_confirmation', id LIMIT ?`).bind(now, now - COMMERCE_EMAIL_LEASE_SECONDS, ...kinds2, count).all();
+  const due = (kinds2) => db.select({ kind: emailDeliveries.kind, subjectId: emailDeliveries.subjectId }).from(emailDeliveries).where(and(pending, lte(emailDeliveries.nextAttemptAt, at(now)), unclaimedAt(now), sql`+${emailDeliveries.kind} IN ${kinds2}`)).orderBy(emailDeliveries.nextAttemptAt, emailDeliveries.createdAt, sql`${emailDeliveries.kind} <> 'order_confirmation'`, emailDeliveries.id).limit(count2);
   const setup = await commerceEmailSetup(env);
   const kinds = Object.keys(COMPOSERS);
   const sendable = [];
@@ -216,12 +233,12 @@ async function deliverPendingCommerceEmails(options, { limit = 10, now: at } = {
     else waiting.set(missing.join(", "), { kinds: [...waiting.get(missing.join(", "))?.kinds ?? [], kind], missing });
   }
   for (const group of waiting.values()) {
-    const found = (await due(group.kinds)).results?.length ?? 0;
-    if (found) results.push(waitingEmailsResult(group.kinds.length === kinds.length ? "all" : group.kinds, group.missing, found, count));
+    const found = (await due(group.kinds)).length;
+    if (found) results.push(waitingEmailsResult(group.kinds.length === kinds.length ? "all" : group.kinds, group.missing, found, count2));
   }
   if (!sendable.length) return results;
-  for (const row of (await due(sendable)).results ?? []) {
-    const result = await runCommerceEmailDelivery(env, row.kind, row.subject_id, COMPOSERS[row.kind], { setup, now });
+  for (const row of await due(sendable)) {
+    const result = await runCommerceEmailDelivery(env, row.kind, row.subjectId, COMPOSERS[row.kind], { setup, now });
     if (result) results.push(result);
   }
   return results;
@@ -234,15 +251,25 @@ var FulfillmentInputError = class extends Error {
   name = "FulfillmentInputError";
 };
 var SHIPPABLE_STATUSES = ["paid", "partially_refunded"];
-var REAL_ORDER = `COALESCE(payment_provider, 'stripe') <> 'admin_test'`;
+var REAL_ORDER = sql2`COALESCE(${orders.paymentProvider}, 'stripe') <> 'admin_test'`;
 var VIEWS = {
   // Every real order that can still ship, oldest first.
-  awaiting: { where: `status IN ('paid','partially_refunded') AND fulfillment_status <> 'fulfilled' AND ${REAL_ORDER}`, ascending: true },
+  awaiting: { where: sql2`${orders.status} IN ('paid','partially_refunded') AND ${orders.fulfillmentStatus} <> 'fulfilled' AND ${REAL_ORDER}`, ascending: true },
   // Real orders past checkout, newest first.
-  recent: { where: `status NOT IN ('pending','cancelled','draft') AND ${REAL_ORDER}`, ascending: false }
+  recent: { where: sql2`${orders.status} NOT IN ('pending','cancelled','draft') AND ${REAL_ORDER}`, ascending: false }
 };
-var ORDER_COLUMNS = `id, status, fulfillment_status, payment_provider, customer_email, currency, items,
-  shipping_address, ${ORDER_AMOUNT_COLUMNS}, created_at`;
+var orderColumns = {
+  id: orders.id,
+  status: orders.status,
+  fulfillmentStatus: orders.fulfillmentStatus,
+  paymentProvider: orders.paymentProvider,
+  customerEmail: orders.customerEmail,
+  currency: orders.currency,
+  items: orders.items,
+  shippingAddress: orders.shippingAddress,
+  ...orderAmountColumns,
+  createdAt: orders.createdAt
+};
 var optionalText = (max) => z.string().trim().max(max).nullish().transform((value) => value || null);
 var listSchema = z.object({
   view: z.enum(["awaiting", "recent"]).default("awaiting"),
@@ -270,17 +297,8 @@ function parseInput(schema, input) {
   const [issue] = parsed.error.issues;
   throw new FulfillmentInputError(issue.path.length ? `${issue.path.join(".")}: ${issue.message}` : issue.message);
 }
-var isoTime = (seconds) => new Date(seconds * 1e3).toISOString();
-function parseJson2(value, fallback) {
-  if (!value) return fallback;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return fallback;
-  }
-}
 function encodeCursor(view, row) {
-  const bytes = new TextEncoder().encode(JSON.stringify([view, row.created_at, row.id]));
+  const bytes = new TextEncoder().encode(JSON.stringify([view, Math.floor(row.createdAt.getTime() / 1e3), row.id]));
   return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 function decodeCursor(view, cursor) {
@@ -299,7 +317,7 @@ async function loadShipments(env, orderIds) {
   const { rows } = await batchGroups(db, {
     rows: chunked(orderIds).map((ids) => db.query.fulfillments.findMany({
       where: { orderId: { in: ids } },
-      orderBy: (_table, { sql: sql2 }) => sql2`rowid`
+      orderBy: (_table, { sql: sql3 }) => sql3`rowid`
     }))
   });
   const shipments = /* @__PURE__ */ new Map();
@@ -340,46 +358,39 @@ async function listCommerceOrdersAdmin(env, options = {}) {
   const values = parseInput(listSchema, options);
   const view = VIEWS[values.view];
   const conditions = [view.where];
-  const params = [];
   if (values.query?.includes("@")) {
-    conditions.push("lower(customer_email) = ?");
-    params.push(values.query.toLowerCase());
+    conditions.push(eq2(sql2`lower(${orders.customerEmail})`, values.query.toLowerCase()));
   } else if (values.query) {
-    conditions.push("id = ?");
-    params.push(values.query);
+    conditions.push(eq2(orders.id, values.query));
   }
   if (values.cursor) {
-    conditions.push(`(created_at, id) ${view.ascending ? ">" : "<"} (?, ?)`);
-    params.push(...decodeCursor(values.view, values.cursor));
+    const [createdAt, id] = decodeCursor(values.view, values.cursor);
+    conditions.push(view.ascending ? sql2`(${orders.createdAt}, ${orders.id}) > (${createdAt}, ${id})` : sql2`(${orders.createdAt}, ${orders.id}) < (${createdAt}, ${id})`);
   }
-  const direction = view.ascending ? "ASC" : "DESC";
-  const [counted, listed] = await env.DB.batch([
-    env.DB.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_orders WHERE ${VIEWS.awaiting.where}`),
-    env.DB.prepare(`SELECT ${ORDER_COLUMNS} FROM _ecommerce_orders WHERE ${conditions.join(" AND ")}
-      ORDER BY created_at ${direction}, id ${direction} LIMIT ?`).bind(...params, values.limit + 1)
+  const direction = view.ascending ? asc : desc;
+  const db = commerceDb(env);
+  const [[counted], found] = await db.batch([
+    db.select({ count: count() }).from(orders).where(VIEWS.awaiting.where),
+    db.select(orderColumns).from(orders).where(and2(...conditions)).orderBy(direction(orders.createdAt), direction(orders.id)).limit(values.limit + 1)
   ]);
-  const found = listed.results ?? [];
   const rows = found.slice(0, values.limit);
-  const storedItems = rows.map((row) => {
-    const items = parseJson2(row.items, []);
-    return Array.isArray(items) ? items.filter((item) => typeof item?.productId === "string") : [];
-  });
-  const described = await describeOrderItems(env, storedItems.flat());
+  const storedItems2 = rows.map((row) => Array.isArray(row.items) ? row.items.filter((item) => typeof item?.productId === "string") : []);
+  const described = await describeOrderItems(env, storedItems2.flat());
   const shipments = await loadShipments(env, rows.map((row) => row.id));
   let offset = 0;
   const orders2 = rows.map((row, index) => {
-    const items = described.slice(offset, offset += storedItems[index].length);
-    const provider = row.payment_provider ?? "stripe";
+    const items = described.slice(offset, offset += storedItems2[index].length);
+    const provider = row.paymentProvider ?? "stripe";
     return {
       id: row.id,
       status: row.status,
-      fulfillmentStatus: row.fulfillment_status,
+      fulfillmentStatus: row.fulfillmentStatus,
       paymentProvider: provider,
-      customerEmail: row.customer_email,
+      customerEmail: row.customerEmail,
       currency: row.currency,
-      createdAt: isoTime(row.created_at),
-      shippingAddress: parseJson2(row.shipping_address, null),
-      canShip: SHIPPABLE_STATUSES.includes(row.status) && row.fulfillment_status !== "fulfilled" && provider !== "admin_test",
+      createdAt: row.createdAt.toISOString(),
+      shippingAddress: row.shippingAddress ?? null,
+      canShip: SHIPPABLE_STATUSES.includes(row.status) && row.fulfillmentStatus !== "fulfilled" && provider !== "admin_test",
       items: items.map((item) => ({
         productId: item.productId,
         variantId: item.variantId ?? null,
@@ -397,7 +408,7 @@ async function listCommerceOrdersAdmin(env, options = {}) {
   return {
     view: values.view,
     pageSize: values.limit,
-    awaitingCount: Number(counted.results?.[0]?.count ?? 0),
+    awaitingCount: Number(counted?.count ?? 0),
     nextCursor: found.length > values.limit ? encodeCursor(values.view, rows[rows.length - 1]) : null,
     orders: orders2
   };
@@ -452,27 +463,30 @@ async function fulfillCommerceOrder(env, actor, input) {
 async function correctCommerceFulfillment(env, actor, input) {
   const values = parseInput(correctionSchema, input);
   if (!actor.trim()) throw new Error("Administrator identity is required");
-  const { results } = await env.DB.prepare(`SELECT f.id, f.order_id, f.kind, f.corrects_id, f.carrier,
-      f.tracking_number, o.payment_provider
-    FROM _ecommerce_fulfillments f JOIN _ecommerce_orders o ON o.id = f.order_id
-    WHERE f.order_id = (SELECT order_id FROM _ecommerce_fulfillments WHERE id = ?)
-    ORDER BY f.rowid`).bind(values.fulfillmentId).all();
-  const rows = results ?? [];
+  const db = commerceDb(env);
+  const rows = await db.select({
+    id: fulfillments.id,
+    orderId: fulfillments.orderId,
+    kind: fulfillments.kind,
+    correctsId: fulfillments.correctsId,
+    carrier: fulfillments.carrier,
+    trackingNumber: fulfillments.trackingNumber,
+    paymentProvider: orders.paymentProvider
+  }).from(fulfillments).innerJoin(orders, eq2(orders.id, fulfillments.orderId)).where(eq2(fulfillments.orderId, db.select({ orderId: fulfillments.orderId }).from(fulfillments).where(eq2(fulfillments.id, values.fulfillmentId)))).orderBy(sql2`${fulfillments}.rowid`);
   const shipment = rows.find((row) => row.id === values.fulfillmentId);
   if (!shipment || shipment.kind !== "shipment") throw new Error("Shipment not found");
-  if ((shipment.payment_provider ?? "stripe") === "admin_test") throw new Error("Admin test orders cannot be fulfilled");
-  const current = rows.filter((row) => row.corrects_id === shipment.id).at(-1) ?? shipment;
-  if ((current.carrier || null) === values.carrier && (current.tracking_number || null) === values.trackingNumber) {
+  if ((shipment.paymentProvider ?? "stripe") === "admin_test") throw new Error("Admin test orders cannot be fulfilled");
+  const current = rows.filter((row) => row.correctsId === shipment.id).at(-1) ?? shipment;
+  if ((current.carrier || null) === values.carrier && (current.trackingNumber || null) === values.trackingNumber) {
     throw new Error("The correction changes nothing");
   }
   const id = `ful_${crypto.randomUUID()}`;
   const now = Math.floor(Date.now() / 1e3);
-  const db = commerceDb(env);
   try {
     await db.batch([
       db.insert(fulfillments).values({
         id,
-        orderId: shipment.order_id,
+        orderId: shipment.orderId,
         kind: "correction",
         correctsId: shipment.id,
         completesOrder: false,
@@ -487,7 +501,7 @@ async function correctCommerceFulfillment(env, actor, input) {
         "shipment_update",
         id,
         now,
-        sql`EXISTS (SELECT 1 FROM _ecommerce_email_deliveries WHERE kind = 'shipment' AND subject_id = ${shipment.id}
+        sql2`EXISTS (SELECT 1 FROM _ecommerce_email_deliveries WHERE kind = 'shipment' AND subject_id = ${shipment.id}
           AND (status = 'sent' OR (status = 'pending' AND claimed_at > ${now - COMMERCE_EMAIL_LEASE_SECONDS})))`
       ))
     ]);
@@ -498,7 +512,7 @@ async function correctCommerceFulfillment(env, actor, input) {
   return {
     correctionId: id,
     fulfillmentId: shipment.id,
-    orderId: shipment.order_id,
+    orderId: shipment.orderId,
     carrier: values.carrier,
     trackingNumber: values.trackingNumber
   };

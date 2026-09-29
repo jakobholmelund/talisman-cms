@@ -4,21 +4,33 @@ import {
   commerceDb
 } from "./chunk-ZI5IJOR6.js";
 import {
-  orders
+  componentReservations,
+  components,
+  inventoryReservations,
+  orders,
+  productVariants,
+  products,
+  restocks,
+  stocks
 } from "./chunk-NKJTK7MK.js";
 
 // src/order-adjustments.ts
-import { eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 // src/inventory.ts
 var INVENTORY_COLUMNS = {
-  product: ["_ecommerce_products", "inventory_quantity"],
-  variant: ["_ecommerce_product_variants", "inventory_quantity"],
-  stock: ["_ecommerce_stocks", "quantity"]
+  product: { table: products, quantity: products.inventoryQuantity },
+  variant: { table: productVariants, quantity: productVariants.inventoryQuantity },
+  stock: { table: stocks, quantity: stocks.quantity }
+};
+var STOCK_COLUMNS = {
+  ...INVENTORY_COLUMNS,
+  component: { table: components, quantity: components.quantity }
 };
 
 // src/order-adjustments.ts
+var at = (seconds) => new Date(seconds * 1e3);
 var OrderAdjustmentInputError = class extends Error {
   name = "OrderAdjustmentInputError";
 };
@@ -214,48 +226,43 @@ async function restockOrder(env, actor, input) {
   if (new Set(chosen.map((row) => `${row.type}:${row.id}`)).size !== chosen.length) {
     throw new OrderAdjustmentInputError("Each item can be chosen once");
   }
+  const db = commerceDb(env);
   const now = Math.floor(Date.now() / 1e3);
   const list = JSON.stringify(chosen.map((row) => ({ id: `rstk_${crypto.randomUUID()}`, type: row.type, reservation: row.id })));
-  const allowed = `EXISTS (SELECT 1 FROM _ecommerce_orders o WHERE o.id = ?
+  const written = sql`(SELECT json_extract(value, '$.id') FROM json_each(${list}))`;
+  const allowed = sql`EXISTS (SELECT 1 FROM _ecommerce_orders o WHERE o.id = ${values.orderId}
     AND o.status IN ('refunded','partially_refunded') AND COALESCE(o.payment_provider, 'stripe') <> 'admin_test')`;
-  const picked = `SELECT json_extract(value, '$.id') AS id, json_extract(value, '$.reservation') AS reservation
-    FROM json_each(?) WHERE json_extract(value, '$.type') = ?`;
-  const returning = "RETURNING reservation_type, reservation_id, target_type, target_id, quantity";
-  const statements = [
-    env.DB.prepare(`INSERT INTO _ecommerce_restocks
-      (id, order_id, reservation_type, reservation_id, target_type, target_id, quantity, admin_actor, reason, created_at)
-      SELECT c.id, r.order_id, 'inventory', r.id, r.target_type, r.target_id, r.quantity, ?, ?, ?
-      FROM (${picked}) AS c JOIN _ecommerce_inventory_reservations r ON r.id = c.reservation
-      WHERE r.order_id = ? AND r.released_at IS NULL AND ${allowed}
-        AND CASE r.target_type
-          WHEN 'product' THEN EXISTS (SELECT 1 FROM _ecommerce_products WHERE id = r.target_id)
-          WHEN 'variant' THEN EXISTS (SELECT 1 FROM _ecommerce_product_variants WHERE id = r.target_id)
-          ELSE EXISTS (SELECT 1 FROM _ecommerce_stocks WHERE id = r.target_id) END
-      ON CONFLICT DO NOTHING ${returning}`).bind(actor, values.reason, now, list, "inventory", values.orderId, values.orderId),
-    env.DB.prepare(`INSERT INTO _ecommerce_restocks
-      (id, order_id, reservation_type, reservation_id, target_type, target_id, quantity, admin_actor, reason, created_at)
-      SELECT c.id, r.order_id, 'component', r.id, 'component', r.component_id, r.quantity, ?, ?, ?
-      FROM (${picked}) AS c JOIN _ecommerce_component_reservations r ON r.id = c.reservation
-      WHERE r.order_id = ? AND r.released_at IS NULL AND ${allowed}
-      ON CONFLICT DO NOTHING ${returning}`).bind(actor, values.reason, now, list, "component", values.orderId, values.orderId)
+  const picked = (type) => sql`SELECT json_extract(value, '$.id') AS id, json_extract(value, '$.reservation') AS reservation
+    FROM json_each(${list}) WHERE json_extract(value, '$.type') = ${type}`;
+  const returning = sql`RETURNING reservation_type, reservation_id, target_type, target_id, quantity`;
+  const inventoryRestocks = db.all(sql`INSERT INTO _ecommerce_restocks
+    (id, order_id, reservation_type, reservation_id, target_type, target_id, quantity, admin_actor, reason, created_at)
+    SELECT c.id, r.order_id, 'inventory', r.id, r.target_type, r.target_id, r.quantity, ${actor}, ${values.reason}, ${now}
+    FROM (${picked("inventory")}) AS c JOIN _ecommerce_inventory_reservations r ON r.id = c.reservation
+    WHERE r.order_id = ${values.orderId} AND r.released_at IS NULL AND ${allowed}
+      AND CASE r.target_type
+        WHEN 'product' THEN EXISTS (SELECT 1 FROM _ecommerce_products WHERE id = r.target_id)
+        WHEN 'variant' THEN EXISTS (SELECT 1 FROM _ecommerce_product_variants WHERE id = r.target_id)
+        ELSE EXISTS (SELECT 1 FROM _ecommerce_stocks WHERE id = r.target_id) END
+    ON CONFLICT DO NOTHING ${returning}`);
+  const componentRestocks = db.all(sql`INSERT INTO _ecommerce_restocks
+    (id, order_id, reservation_type, reservation_id, target_type, target_id, quantity, admin_actor, reason, created_at)
+    SELECT c.id, r.order_id, 'component', r.id, 'component', r.component_id, r.quantity, ${actor}, ${values.reason}, ${now}
+    FROM (${picked("component")}) AS c JOIN _ecommerce_component_reservations r ON r.id = c.reservation
+    WHERE r.order_id = ${values.orderId} AND r.released_at IS NULL AND ${allowed}
+    ON CONFLICT DO NOTHING ${returning}`);
+  const stockUpdates = Object.entries(STOCK_COLUMNS).map(([type, { table, quantity }]) => db.run(sql`UPDATE ${table}
+    SET ${sql.identifier(quantity.name)} = ${sql.identifier(quantity.name)} + returned.amount, updated_at = MAX(updated_at + 1, ${now})
+    FROM (SELECT target_id, SUM(quantity) AS amount FROM _ecommerce_restocks
+      WHERE order_id = ${values.orderId} AND target_type = ${type} AND id IN ${written} GROUP BY target_id) AS returned
+    WHERE ${table}.id = returned.target_id`));
+  const restockedReservations = (type) => db.select({ id: restocks.reservationId }).from(restocks).where(and(eq(restocks.orderId, values.orderId), eq(restocks.reservationType, type), inArray(restocks.id, written)));
+  const releases = [
+    db.update(inventoryReservations).set({ releasedAt: at(now) }).where(and(isNull(inventoryReservations.releasedAt), inArray(inventoryReservations.id, restockedReservations("inventory")))),
+    db.update(componentReservations).set({ releasedAt: at(now) }).where(and(isNull(componentReservations.releasedAt), inArray(componentReservations.id, restockedReservations("component"))))
   ];
-  const written = `SELECT target_id, SUM(quantity) AS amount FROM _ecommerce_restocks
-    WHERE order_id = ? AND target_type = ? AND id IN (SELECT json_extract(value, '$.id') FROM json_each(?))
-    GROUP BY target_id`;
-  const stockColumns = { ...INVENTORY_COLUMNS, component: ["_ecommerce_components", "quantity"] };
-  for (const [type, [table, column]] of Object.entries(stockColumns)) {
-    statements.push(env.DB.prepare(`UPDATE ${table}
-      SET ${column} = ${column} + returned.amount, updated_at = MAX(updated_at + 1, ?)
-      FROM (${written}) AS returned WHERE ${table}.id = returned.target_id`).bind(now, values.orderId, type, list));
-  }
-  const reservationTables = { inventory: "_ecommerce_inventory_reservations", component: "_ecommerce_component_reservations" };
-  for (const [type, table] of Object.entries(reservationTables)) {
-    statements.push(env.DB.prepare(`UPDATE ${table} SET released_at = ?
-      WHERE released_at IS NULL AND id IN (SELECT reservation_id FROM _ecommerce_restocks
-        WHERE order_id = ? AND reservation_type = ? AND id IN (SELECT json_extract(value, '$.id') FROM json_each(?)))`).bind(now, values.orderId, type, list));
-  }
-  const [inventory, component] = await env.DB.batch(statements);
-  const restocked = [...inventory.results ?? [], ...component.results ?? []].map((row) => ({
+  const [inventory, component] = await db.batch([inventoryRestocks, componentRestocks, ...stockUpdates, ...releases]);
+  const restocked = [...inventory, ...component].map((row) => ({
     type: row.reservation_type,
     reservationId: row.reservation_id,
     targetType: row.target_type,

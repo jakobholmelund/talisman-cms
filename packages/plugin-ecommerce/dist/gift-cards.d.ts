@@ -70,16 +70,16 @@ declare function getGiftCardsAdmin(env: TalismanEnv): Promise<{
 declare function getGiftCardReviewsAdmin(env: TalismanEnv): Promise<{
     reviews: {
         cardHeld: boolean;
-        cardReplacement: boolean;
         purchaseId: string;
-        status: string;
+        status: "cancelled" | "refunded" | "pending" | "paid" | "partially_refunded" | "review";
         amountCents: number;
         currency: string;
         refundedCents: number;
         adjustedCents: number;
         cardId: string | null;
         codeSuffix: string | null;
-        cardStatus: "active" | "suspended" | null;
+        cardStatus: "active" | "void" | "suspended" | null;
+        cardReplacement: boolean;
         balanceCents: number | null;
         spentCents: number;
         pendingCents: number;

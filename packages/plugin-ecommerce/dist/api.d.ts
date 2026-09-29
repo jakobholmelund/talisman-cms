@@ -113,7 +113,7 @@ declare function purgeStaleCommerceData(options: CommercePurgeOptions): Promise<
  */
 declare function deliverPendingCommerceEmails(options: {
     env: TalismanEnv;
-}, { limit, now: at }?: {
+}, { limit, now: givenNow }?: {
     limit?: number;
     now?: number;
 }): Promise<CommerceEmailResult[]>;
@@ -945,6 +945,20 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
     webhooks: {
         handleStripe: (payload: string, signature: string, secret?: string) => Promise<{
             success: boolean;
+            orderId: string;
+            status: string;
+            duplicate: boolean;
+        } | {
+            success: boolean;
+            orderId: string;
+            status: string;
+            duplicate?: undefined;
+        } | {
+            success: boolean;
+            event: string;
+            ignored: boolean;
+        } | {
+            success: boolean;
             purchaseId: string;
             duplicate: boolean;
         } | {
@@ -959,22 +973,8 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
         } | {
             success: boolean;
             orderId: string;
-            status: string;
-            duplicate: boolean;
-        } | {
-            success: boolean;
-            orderId: string;
-            status: string;
-            duplicate?: undefined;
-        } | {
-            success: boolean;
-            orderId: string;
             duplicate: boolean;
             status?: undefined;
-        } | {
-            success: boolean;
-            event: string;
-            ignored: boolean;
         } | {
             success: boolean;
             event: string;
