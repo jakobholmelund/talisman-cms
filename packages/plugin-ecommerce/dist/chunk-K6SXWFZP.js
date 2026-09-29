@@ -2,13 +2,13 @@ import {
   batchGroups,
   chunked,
   commerceDb
-} from "./chunk-DUYAQ7V4.js";
+} from "./chunk-ZI5IJOR6.js";
 import {
   orders
 } from "./chunk-NKJTK7MK.js";
 
 // src/order-adjustments.ts
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
 // src/inventory.ts
@@ -31,21 +31,21 @@ function parseInput(schema, input) {
   const [issue] = parsed.error.issues;
   throw new OrderAdjustmentInputError(issue.path.length ? `${issue.path.join(".")}: ${issue.message}` : issue.message);
 }
-function fullRefundStatements(env, orderId, now) {
-  const refunded = `EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'refunded')`;
+function fullRefundStatements(orderId, now) {
+  const refunded = sql`EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ${orderId} AND status = 'refunded')`;
   return [
-    env.DB.prepare(`UPDATE _ecommerce_discount_redemptions
-      SET status = 'refunded', updated_at = ?
-      WHERE order_id = ? AND status = 'confirmed' AND ${refunded}`).bind(now, orderId, orderId),
-    env.DB.prepare(`UPDATE _ecommerce_gift_card_redemptions
-      SET status = 'refunded', updated_at = ?
-      WHERE order_id = ? AND status = 'confirmed' AND ${refunded}`).bind(now, orderId, orderId),
-    env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
+    sql`UPDATE _ecommerce_discount_redemptions
+      SET status = 'refunded', updated_at = ${now}
+      WHERE order_id = ${orderId} AND status = 'confirmed' AND ${refunded}`,
+    sql`UPDATE _ecommerce_gift_card_redemptions
+      SET status = 'refunded', updated_at = ${now}
+      WHERE order_id = ${orderId} AND status = 'confirmed' AND ${refunded}`,
+    sql`INSERT INTO _ecommerce_credit_ledger
       (id, account_id, order_id, kind, amount_cents, created_at)
-      SELECT ?, user_id, id, 'purchase_credit_refund', credit_applied, ?
-      FROM _ecommerce_orders WHERE id = ? AND status = 'refunded'
+      SELECT ${`credit_refund_${orderId}`}, user_id, id, 'purchase_credit_refund', credit_applied, ${now}
+      FROM _ecommerce_orders WHERE id = ${orderId} AND status = 'refunded'
         AND credit_applied > 0 AND user_id IS NOT NULL
-      ON CONFLICT(order_id, kind) DO NOTHING`).bind(`credit_refund_${orderId}`, now, orderId)
+      ON CONFLICT(order_id, kind) DO NOTHING`
   ];
 }
 var restockView = (restock) => restock && { adminActor: restock.adminActor, reason: restock.reason, createdAt: restock.createdAt.toISOString() };
@@ -72,7 +72,7 @@ async function loadReservations(env, orderIds) {
   const rows = await batchGroups(db, {
     inventory: chunked(orderIds).map((ids) => db.query.inventoryReservations.findMany({
       where: { orderId: { in: ids } },
-      orderBy: (table, { sql }) => [table.orderId, sql`rowid`],
+      orderBy: (table, { sql: sql2 }) => [table.orderId, sql2`rowid`],
       with: {
         product: catalogNames,
         productVariant: { ...catalogNames, with: { product: catalogNames } },
@@ -85,7 +85,7 @@ async function loadReservations(env, orderIds) {
     })),
     component: chunked(orderIds).map((ids) => db.query.componentReservations.findMany({
       where: { orderId: { in: ids } },
-      orderBy: (table, { sql }) => [table.orderId, sql`rowid`],
+      orderBy: (table, { sql: sql2 }) => [table.orderId, sql2`rowid`],
       with: { component: catalogNames, restock }
     }))
   });

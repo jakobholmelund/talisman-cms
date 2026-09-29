@@ -1,9 +1,10 @@
 import {
   PURCHASED_ORDER_STATUSES
-} from "./chunk-2WZJA37J.js";
+} from "./chunk-OPQXEAZM.js";
 import {
-  commerceDb
-} from "./chunk-DUYAQ7V4.js";
+  commerceDb,
+  runStatements
+} from "./chunk-ZI5IJOR6.js";
 import {
   creditLedger,
   customerAccounts,
@@ -14,10 +15,11 @@ import {
 } from "./chunk-NKJTK7MK.js";
 
 // src/referrals.ts
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql as sql2 } from "drizzle-orm";
 import { readSetting } from "talisman-cms/env";
 
 // src/email-identity.ts
+import { sql } from "drizzle-orm";
 var GMAIL_DOMAINS = /* @__PURE__ */ new Set(["gmail.com", "googlemail.com"]);
 function canonicalEmail(email) {
   if (typeof email !== "string") return null;
@@ -45,23 +47,20 @@ function canonicalEmailSql(address) {
     WHEN ${domain} IN ('gmail.com', 'googlemail.com') THEN replace(${base}, '.', '') || '@gmail.com'
     ELSE ${base} || '@' || ${domain} END)`;
 }
-function canonicalPurchaseSql(count) {
-  const statuses = PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(", ");
-  const purchased = `o.status IN (${statuses}) AND COALESCE(o.payment_provider, 'stripe') <> 'admin_test' AND o.id <> ?`;
-  return `EXISTS (SELECT 1 FROM (
+function canonicalPurchase(canonicals, excludeOrderId) {
+  const statuses = sql.raw(PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(", "));
+  const purchased = sql`o.status IN (${statuses}) AND COALESCE(o.payment_provider, 'stripe') <> 'admin_test' AND o.id <> ${excludeOrderId ?? ""}`;
+  return sql`EXISTS (SELECT 1 FROM (
       SELECT o.customer_email AS address FROM _ecommerce_orders o WHERE ${purchased}
       UNION ALL
       SELECT a.email_normalized FROM _ecommerce_orders o
         JOIN _ecommerce_customer_accounts a ON a.id = o.user_id WHERE ${purchased})
-    WHERE ${canonicalEmailSql("address")} IN (${Array.from({ length: count }, () => "?").join(", ")}))`;
-}
-function canonicalPurchaseParams(canonicals, excludeOrderId) {
-  return [excludeOrderId ?? "", excludeOrderId ?? "", ...canonicals];
+    WHERE ${sql.raw(canonicalEmailSql("address"))} IN (${sql.join(canonicals.map((canonical) => sql`${canonical}`), sql`, `)}))`;
 }
 async function hasCanonicalPurchase(env, emails, excludeOrderId) {
   const canonicals = canonicalEmails(emails);
   if (!canonicals.length) return false;
-  const found = await env.DB.prepare(`SELECT ${canonicalPurchaseSql(canonicals.length)} AS found`).bind(...canonicalPurchaseParams(canonicals, excludeOrderId)).first();
+  const found = await commerceDb(env).get(sql`SELECT ${canonicalPurchase(canonicals, excludeOrderId)} AS found`);
   return Boolean(found?.found);
 }
 
@@ -123,44 +122,38 @@ function referralOrderQualifies(order, minOrderCents, rewardCents = 0) {
   const minimum = Math.min(minOrderCents, order.subtotalAmount - order.discountAmount);
   return QUALIFYING_STATUSES.includes(order.status) && referralNetAmount(order) >= Math.max(minimum, 2 * rewardCents);
 }
-function qualifyingOrderSql(alias, reward) {
-  return `(${alias}.status IN (${QUALIFYING_STATUSES.map((status) => `'${status}'`).join(", ")})
-    AND ${alias}.subtotal_amount - ${alias}.discount_amount - ${alias}.provider_refunded_cents
-      - ${alias}.gift_card_refunded_cents
-      >= MAX(MIN(?, ${alias}.subtotal_amount - ${alias}.discount_amount), 2 * ${reward}))`;
+function qualifyingOrder(alias, reward, minOrderCents) {
+  const column = (name) => sql2.raw(`${alias}.${name}`);
+  const statuses = sql2.raw(QUALIFYING_STATUSES.map((status) => `'${status}'`).join(", "));
+  return sql2`(${column("status")} IN (${statuses})
+    AND ${column("subtotal_amount")} - ${column("discount_amount")} - ${column("provider_refunded_cents")}
+      - ${column("gift_card_refunded_cents")}
+      >= MAX(MIN(${minOrderCents}, ${column("subtotal_amount")} - ${column("discount_amount")}), 2 * ${sql2.raw(reward)}))`;
 }
-function referralReversalStatements(env, orderId, options) {
+function referralReversalStatements(orderId, options) {
   const lost = options.disputeLost ? 1 : 0;
   const statements = [];
   for (const [awardKind, reversalKind] of [
     ["referral_award", "referral_reversal"],
     ["welcome_award", "welcome_reversal"]
   ]) {
-    statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
+    statements.push(sql2`INSERT INTO _ecommerce_credit_ledger
       (id, account_id, order_id, kind, amount_cents, created_at)
-      SELECT ?, l.account_id, l.order_id, ?, -l.amount_cents, ?
+      SELECT ${`credit_${reversalKind}_${orderId}`}, l.account_id, l.order_id, ${reversalKind}, -l.amount_cents, ${options.now}
       FROM _ecommerce_credit_ledger l
       JOIN _ecommerce_orders o ON o.id = l.order_id
-      WHERE l.order_id = ? AND l.kind = ? AND (? = 1 OR NOT ${qualifyingOrderSql("o", "l.amount_cents")})
-      ON CONFLICT DO NOTHING`).bind(
-      `credit_${reversalKind}_${orderId}`,
-      reversalKind,
-      options.now,
-      orderId,
-      awardKind,
-      lost,
-      options.minOrderCents
-    ));
+      WHERE l.order_id = ${orderId} AND l.kind = ${awardKind} AND (${lost} = 1 OR NOT ${qualifyingOrder("o", "l.amount_cents", options.minOrderCents)})
+      ON CONFLICT DO NOTHING`);
   }
-  statements.push(env.DB.prepare(`UPDATE _ecommerce_referrals SET status = 'void', updated_at = ?
-    WHERE order_id = ? AND status = 'approved'
-      AND (? = 1 OR EXISTS (SELECT 1 FROM _ecommerce_orders o
-        WHERE o.id = ? AND NOT ${qualifyingOrderSql("o", "_ecommerce_referrals.reward_cents")}))`).bind(options.now, orderId, lost, orderId, options.minOrderCents));
+  statements.push(sql2`UPDATE _ecommerce_referrals SET status = 'void', updated_at = ${options.now}
+    WHERE order_id = ${orderId} AND status = 'approved'
+      AND (${lost} = 1 OR EXISTS (SELECT 1 FROM _ecommerce_orders o
+        WHERE o.id = ${orderId} AND NOT ${qualifyingOrder("o", "_ecommerce_referrals.reward_cents", options.minOrderCents)}))`);
   return statements;
 }
 async function reverseReferralForOrder(env, orderId, options = {}) {
   const policy = await getReferralPolicy(env);
-  await env.DB.batch(referralReversalStatements(env, orderId, {
+  await runStatements(commerceDb(env), referralReversalStatements(orderId, {
     minOrderCents: policy.minOrderCents,
     now: Math.floor((options.now ?? /* @__PURE__ */ new Date()).getTime() / 1e3),
     disputeLost: options.disputeLost
@@ -172,18 +165,18 @@ async function releaseReferralAwards(options, run = {}) {
   const now = Math.floor((run.now ?? /* @__PURE__ */ new Date()).getTime() / 1e3);
   const limit = Math.max(1, Math.min(50, Math.floor(run.limit ?? 10)));
   const policy = await getReferralPolicy(env);
-  const due = await env.DB.prepare(`SELECT r.id, r.order_id AS orderId, r.reward_cents AS rewardCents
+  const due = await db.all(sql2`SELECT r.id, r.order_id AS orderId, r.reward_cents AS rewardCents
     FROM _ecommerce_referrals r
-    WHERE r.status = 'approved' AND r.created_at <= ?
+    WHERE r.status = 'approved' AND r.created_at <= ${now - policy.holdDays * DAY_SECONDS}
       AND NOT EXISTS (SELECT 1 FROM _ecommerce_credit_ledger l
         WHERE l.order_id = r.order_id AND l.kind = 'referral_award')
-    ORDER BY r.updated_at, r.created_at LIMIT ?`).bind(now - policy.holdDays * DAY_SECONDS, limit).all();
+    ORDER BY r.updated_at, r.created_at LIMIT ${limit}`);
   const results = [];
-  for (const row of due.results ?? []) {
+  for (const row of due) {
     try {
       const order = await db.select().from(orders).where(eq(orders.id, row.orderId)).get();
       if (!order || !referralOrderQualifies(order, policy.minOrderCents, row.rewardCents)) {
-        await env.DB.batch(referralReversalStatements(env, row.orderId, { minOrderCents: policy.minOrderCents, now }));
+        await runStatements(db, referralReversalStatements(row.orderId, { minOrderCents: policy.minOrderCents, now }));
         results.push({ id: row.id, status: "referral_void" });
         continue;
       }
@@ -191,8 +184,7 @@ async function releaseReferralAwards(options, run = {}) {
       const adapter = paymentAdapters.find((candidate) => candidate.providerId === provider);
       const dispute = order.status === "disputed" ? "open" : adapter?.getDisputeStatus && order.paymentIntentId ? await adapter.getDisputeStatus(order.paymentIntentId) : provider === "stripe" ? "unknown" : "none";
       if (dispute === "lost") {
-        await env.DB.batch(referralReversalStatements(
-          env,
+        await runStatements(db, referralReversalStatements(
           row.orderId,
           { minOrderCents: policy.minOrderCents, now, disputeLost: true }
         ));
@@ -204,16 +196,16 @@ async function releaseReferralAwards(options, run = {}) {
         results.push({ id: row.id, status: "referral_held" });
         continue;
       }
-      await env.DB.batch([
+      await runStatements(db, [
         ["referral_award", "referrer_account_id", `credit_ref_${row.orderId}`],
         ["welcome_award", "referred_account_id", `credit_welcome_${row.orderId}`]
-      ].map(([kind, account, id]) => env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
+      ].map(([kind, account, id]) => sql2`INSERT INTO _ecommerce_credit_ledger
         (id, account_id, order_id, kind, amount_cents, created_at)
-        SELECT ?, r.${account}, r.order_id, ?, r.reward_cents, ?
+        SELECT ${id}, r.${sql2.raw(account)}, r.order_id, ${kind}, r.reward_cents, ${now}
         FROM _ecommerce_referrals r JOIN _ecommerce_orders o ON o.id = r.order_id
-        WHERE r.id = ? AND r.status = 'approved' AND r.reward_cents > 0 AND ${qualifyingOrderSql("o", "r.reward_cents")}
+        WHERE r.id = ${row.id} AND r.status = 'approved' AND r.reward_cents > 0 AND ${qualifyingOrder("o", "r.reward_cents", policy.minOrderCents)}
           AND o.status <> 'disputed'
-        ON CONFLICT DO NOTHING`).bind(id, kind, now, row.id, policy.minOrderCents)));
+        ON CONFLICT DO NOTHING`));
       const released = await db.select({ id: creditLedger.id }).from(creditLedger).where(and(eq(creditLedger.orderId, row.orderId), eq(creditLedger.kind, "referral_award"))).get();
       const current = await db.select({ status: referrals.status }).from(referrals).where(eq(referrals.id, row.id)).get();
       results.push({ id: row.id, status: released ? "referral_released" : current?.status === "void" ? "referral_void" : "unchanged" });
@@ -285,8 +277,7 @@ export {
   canonicalEmail,
   canonicalEmails,
   canonicalEmailSql,
-  canonicalPurchaseSql,
-  canonicalPurchaseParams,
+  canonicalPurchase,
   hasCanonicalPurchase,
   REFERRAL_COOKIE,
   REFERRAL_COOKIE_MAX_AGE,

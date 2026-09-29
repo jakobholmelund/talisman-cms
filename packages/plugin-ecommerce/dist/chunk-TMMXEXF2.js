@@ -10,13 +10,15 @@ import {
   runCommerceEmailDelivery,
   sendCommerceEmailNow,
   waitingEmailsResult
-} from "./chunk-HOPUAWN7.js";
+} from "./chunk-46DBWAED.js";
 import {
   batchGroups,
   chunked,
-  commerceDb
-} from "./chunk-DUYAQ7V4.js";
+  commerceDb,
+  errorText
+} from "./chunk-ZI5IJOR6.js";
 import {
+  fulfillments,
   orders
 } from "./chunk-NKJTK7MK.js";
 import {
@@ -25,7 +27,7 @@ import {
 } from "./chunk-NMGICNSV.js";
 
 // src/fulfillment.ts
-import { eq as eq2 } from "drizzle-orm";
+import { eq as eq2, sql } from "drizzle-orm";
 import { z } from "zod";
 
 // src/order-items.ts
@@ -297,7 +299,7 @@ async function loadShipments(env, orderIds) {
   const { rows } = await batchGroups(db, {
     rows: chunked(orderIds).map((ids) => db.query.fulfillments.findMany({
       where: { orderId: { in: ids } },
-      orderBy: (_table, { sql }) => sql`rowid`
+      orderBy: (_table, { sql: sql2 }) => sql2`rowid`
     }))
   });
   const shipments = /* @__PURE__ */ new Map();
@@ -401,7 +403,7 @@ async function listCommerceOrdersAdmin(env, options = {}) {
   };
 }
 function refusal(cause, message) {
-  return cause instanceof Error && cause.message.includes(message) ? new Error(message, { cause }) : cause;
+  return cause instanceof Error && errorText(cause).includes(message) ? new Error(message, { cause }) : cause;
 }
 async function fulfillCommerceOrder(env, actor, input) {
   const values = parseInput(shipmentSchema, input);
@@ -421,20 +423,19 @@ async function fulfillCommerceOrder(env, actor, input) {
   const id = `ful_${crypto.randomUUID()}`;
   const now = Math.floor(Date.now() / 1e3);
   try {
-    await env.DB.batch([
-      env.DB.prepare(`INSERT INTO _ecommerce_fulfillments
-        (id, order_id, kind, completes_order, admin_actor, carrier, tracking_number, note, created_at)
-        VALUES (?, ?, 'shipment', ?, ?, ?, ?, ?, ?)`).bind(
+    await db.batch([
+      db.insert(fulfillments).values({
         id,
-        values.orderId,
-        values.completesOrder ? 1 : 0,
-        actor,
-        values.carrier,
-        values.trackingNumber,
-        values.note,
-        now
-      ),
-      commerceEmailStatement(env, "shipment", id, now)
+        orderId: values.orderId,
+        kind: "shipment",
+        completesOrder: values.completesOrder,
+        adminActor: actor,
+        carrier: values.carrier,
+        trackingNumber: values.trackingNumber,
+        note: values.note,
+        createdAt: new Date(now * 1e3)
+      }),
+      db.run(commerceEmailStatement("shipment", id, now))
     ]);
   } catch (cause) {
     throw refusal(cause, "Order is not ready for fulfillment");
@@ -466,17 +467,29 @@ async function correctCommerceFulfillment(env, actor, input) {
   }
   const id = `ful_${crypto.randomUUID()}`;
   const now = Math.floor(Date.now() / 1e3);
+  const db = commerceDb(env);
   try {
-    await env.DB.batch([
-      env.DB.prepare(`INSERT INTO _ecommerce_fulfillments
-        (id, order_id, kind, corrects_id, completes_order, admin_actor, carrier, tracking_number, note, created_at)
-        VALUES (?, ?, 'correction', ?, 0, ?, ?, ?, ?, ?)`).bind(id, shipment.order_id, shipment.id, actor, values.carrier, values.trackingNumber, values.reason, now),
-      commerceEmailStatement(env, "shipment_update", id, now, {
-        sql: `EXISTS (SELECT 1 FROM _ecommerce_email_deliveries WHERE kind = 'shipment' AND subject_id = ?
-          AND (status = 'sent' OR (status = 'pending' AND claimed_at > ?)))`,
-        // Only a live lease means the notice is being sent; after a stale one the notice carries the correction.
-        params: [shipment.id, now - COMMERCE_EMAIL_LEASE_SECONDS]
-      })
+    await db.batch([
+      db.insert(fulfillments).values({
+        id,
+        orderId: shipment.order_id,
+        kind: "correction",
+        correctsId: shipment.id,
+        completesOrder: false,
+        adminActor: actor,
+        carrier: values.carrier,
+        trackingNumber: values.trackingNumber,
+        note: values.reason,
+        createdAt: new Date(now * 1e3)
+      }),
+      // Only a live lease means the notice is being sent; after a stale one the notice carries the correction.
+      db.run(commerceEmailStatement(
+        "shipment_update",
+        id,
+        now,
+        sql`EXISTS (SELECT 1 FROM _ecommerce_email_deliveries WHERE kind = 'shipment' AND subject_id = ${shipment.id}
+          AND (status = 'sent' OR (status = 'pending' AND claimed_at > ${now - COMMERCE_EMAIL_LEASE_SECONDS})))`
+      ))
     ]);
   } catch (cause) {
     throw refusal(cause, "Shipment cannot be corrected");

@@ -2,8 +2,8 @@ import { ReferralPolicy } from './referrals.js';
 import { TalismanEnv } from 'talisman-cms/client';
 import { z } from 'zod';
 import { discountCodes } from './schema.js';
-import './payments-TQo6Ws_B.js';
 import 'drizzle-orm';
+import './payments-TQo6Ws_B.js';
 import 'drizzle-orm/sqlite-core';
 
 declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
@@ -21,12 +21,12 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     expiresAt: z.ZodNullable<z.ZodNumber>;
     active: z.ZodBoolean;
 }, "strict", z.ZodTypeAny, {
-    code: string;
-    active: boolean;
     description: string | null;
     type: "amount" | "credit" | "percent";
+    active: boolean;
     value: number;
     expiresAt: number | null;
+    code: string;
     minOrderCents: number;
     maxDiscountCents: number | null;
     eligibleProductIds: string[];
@@ -35,12 +35,12 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     firstOrderOnly: boolean;
     startsAt: number | null;
 }, {
-    code: string;
-    active: boolean;
     description: string | null;
     type: "amount" | "credit" | "percent";
+    active: boolean;
     value: number;
     expiresAt: number | null;
+    code: string;
     minOrderCents: number;
     maxDiscountCents: number | null;
     eligibleProductIds: string[];
@@ -49,12 +49,12 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     firstOrderOnly: boolean;
     startsAt: number | null;
 }>, {
-    code: string;
-    active: boolean;
     description: string | null;
     type: "amount" | "credit" | "percent";
+    active: boolean;
     value: number;
     expiresAt: number | null;
+    code: string;
     minOrderCents: number;
     maxDiscountCents: number | null;
     eligibleProductIds: string[];
@@ -63,12 +63,12 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     firstOrderOnly: boolean;
     startsAt: number | null;
 }, {
-    code: string;
-    active: boolean;
     description: string | null;
     type: "amount" | "credit" | "percent";
+    active: boolean;
     value: number;
     expiresAt: number | null;
+    code: string;
     minOrderCents: number;
     maxDiscountCents: number | null;
     eligibleProductIds: string[];

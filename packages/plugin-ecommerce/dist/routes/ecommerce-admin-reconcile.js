@@ -5,11 +5,11 @@ import "../chunk-6L7TQXAW.js";
 import {
   bindCommerceApi,
   reconcileCommerce
-} from "../chunk-2HRMHYMK.js";
-import "../chunk-TPW5F2YY.js";
-import "../chunk-SWPC7XQH.js";
+} from "../chunk-GHUSAF37.js";
+import "../chunk-K6SXWFZP.js";
+import "../chunk-4DUQOBXB.js";
 import "../chunk-BGDJXEM5.js";
-import "../chunk-6CXRXC6K.js";
+import "../chunk-TMMXEXF2.js";
 import {
   RECONCILE_FAILURE_MESSAGES,
   RECONCILE_TABLES,
@@ -20,16 +20,16 @@ import {
   isProviderError,
   reconcileFailure,
   uncheckedSessionRefusal
-} from "../chunk-HOPUAWN7.js";
-import "../chunk-2XVZABM5.js";
+} from "../chunk-46DBWAED.js";
+import "../chunk-7PQWN42E.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
 } from "../chunk-GNU6N22K.js";
-import "../chunk-2WZJA37J.js";
+import "../chunk-OPQXEAZM.js";
 import {
   commerceDb
-} from "../chunk-DUYAQ7V4.js";
+} from "../chunk-ZI5IJOR6.js";
 import {
   reconcileDecisions
 } from "../chunk-NKJTK7MK.js";
@@ -41,7 +41,7 @@ import { authorizeCmsRequest } from "talisman-cms/auth/guard";
 
 // src/reconcile-review.ts
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 var ReconcileInputError = class extends Error {
   name = "ReconcileInputError";
 };
@@ -65,13 +65,14 @@ function newDecision(actor, reason) {
   if (!actor.trim()) throw new Error("Administrator identity is required");
   return { id: `rcd_${crypto.randomUUID()}`, actor, reason };
 }
-var PARKED = `status = 'pending' AND reconcile_review_at IS NOT NULL`;
-var RECORDED = "EXISTS (SELECT 1 FROM _ecommerce_reconcile_decisions WHERE id = ?)";
+var PARKED = sql`status = 'pending' AND reconcile_review_at IS NOT NULL`;
+var recorded = (decisionId) => sql`EXISTS (SELECT 1 FROM _ecommerce_reconcile_decisions WHERE id = ${decisionId})`;
 var notParked = (kind) => kind === "order" ? "This order is not pending and parked for review; reload the list" : "This gift card purchase is not pending and parked for review; reload the list";
 var isoTime = (seconds) => new Date(seconds * 1e3).toISOString();
 async function listParkedCommerce(env) {
-  const [listed, counted] = await env.DB.batch([
-    env.DB.prepare(`SELECT 'order' AS kind, id, created_at, reconcile_attempts AS attempts,
+  const db = commerceDb(env);
+  const [rows, counted] = await db.batch([
+    db.all(sql`SELECT 'order' AS kind, id, created_at, reconcile_attempts AS attempts,
         reconcile_last_at AS last_at, reconcile_last_error AS last_error, reconcile_review_at AS review_at,
         checkout_session_id AS session_id, COALESCE(payment_provider, 'stripe') AS provider,
         total_amount AS amount_cents, currency
@@ -80,15 +81,14 @@ async function listParkedCommerce(env) {
       SELECT 'gift_card_purchase', id, created_at, reconcile_attempts, reconcile_last_at, reconcile_last_error,
         reconcile_review_at, provider_session_id, 'stripe', amount_cents, currency
       FROM _ecommerce_gift_card_purchases WHERE ${PARKED}
-      ORDER BY review_at, id LIMIT ?`).bind(PARKED_LIST_LIMIT),
-    env.DB.prepare(`SELECT (SELECT COUNT(*) FROM _ecommerce_orders WHERE ${PARKED})
+      ORDER BY review_at, id LIMIT ${PARKED_LIST_LIMIT}`),
+    db.get(sql`SELECT (SELECT COUNT(*) FROM _ecommerce_orders WHERE ${PARKED})
       + (SELECT COUNT(*) FROM _ecommerce_gift_card_purchases WHERE ${PARKED}) AS count`)
   ]);
   const storeMode = runtimeStripeMode(env);
-  const rows = listed.results ?? [];
   return {
     storeMode,
-    parkedCount: Number(counted.results?.[0]?.count ?? 0),
+    parkedCount: Number(counted?.count ?? 0),
     parked: rows.map((row) => {
       const code = row.last_error && row.last_error in RECONCILE_FAILURE_MESSAGES ? row.last_error : "failed";
       const stripe = row.provider === "stripe";
@@ -114,13 +114,21 @@ async function retryParkedCommerce(env, actor, input) {
   const { kind, id, reason } = parseAction(retrySchema, input);
   const decision = newDecision(actor, reason);
   const timestamp = Math.floor(Date.now() / 1e3);
-  const [, retried] = await env.DB.batch([
-    env.DB.prepare(decisionInsert(kind, "retry", PARKED)).bind(decision.id, null, decision.actor, decision.reason, timestamp, id),
-    env.DB.prepare(`UPDATE ${RECONCILE_TABLES[kind]} SET reconcile_review_at = NULL,
+  const db = commerceDb(env);
+  const [, retried] = await db.batch([
+    db.run(decisionInsert(kind, "retry", PARKED, {
+      id: decision.id,
+      paymentReturned: null,
+      actor: decision.actor,
+      reason: decision.reason,
+      at: timestamp,
+      recordId: id
+    })),
+    db.all(sql`UPDATE ${sql.raw(RECONCILE_TABLES[kind])} SET reconcile_review_at = NULL,
         reconcile_attempts = 0, reconcile_last_at = NULL, reconcile_last_error = NULL
-      WHERE id = ? AND ${PARKED} AND ${RECORDED} RETURNING id`).bind(id, decision.id)
+      WHERE id = ${id} AND ${PARKED} AND ${recorded(decision.id)} RETURNING id`)
   ]);
-  if (!retried.results?.length) throw new Error(notParked(kind));
+  if (!retried.length) throw new Error(notParked(kind));
   console.info("[commerce] Parked checkout returned to reconciliation", { kind, id, actor });
   return { kind, id, status: "pending" };
 }
@@ -135,11 +143,12 @@ async function releaseParkedCommerce(options, actor, input) {
   const { kind, id, reason, confirmPaymentReturned = false } = parseAction(releaseSchema, input);
   const decision = newDecision(actor, reason);
   const { env } = options;
-  const row = await env.DB.prepare(`SELECT ${kind === "order" ? "checkout_session_id" : "provider_session_id"} AS session_id,
-      created_at FROM ${RECONCILE_TABLES[kind]} WHERE id = ? AND ${PARKED}`).bind(id).first();
+  const db = commerceDb(env);
+  const row = await db.get(sql`SELECT ${sql.raw(kind === "order" ? "checkout_session_id" : "provider_session_id")} AS session_id,
+      created_at FROM ${sql.raw(RECONCILE_TABLES[kind])} WHERE id = ${id} AND ${PARKED}`);
   if (!row) throw new Error(notParked(kind));
   const otherMode = isOtherStripeModeSession(env, row.session_id);
-  const recorded = () => commerceDb(env).select({ paymentReturned: reconcileDecisions.paymentReturned }).from(reconcileDecisions).where(eq(reconcileDecisions.id, decision.id)).get();
+  const decided = () => db.select({ paymentReturned: reconcileDecisions.paymentReturned }).from(reconcileDecisions).where(eq(reconcileDecisions.id, decision.id)).get();
   let paymentReturned = null;
   if (kind === "order") {
     try {
@@ -147,9 +156,9 @@ async function releaseParkedCommerce(options, actor, input) {
     } catch (error) {
       throw releaseRefusal(error);
     }
-    const decided = await recorded();
-    if (!decided) throw new Error("The order changed while it was being released; reload the list");
-    paymentReturned = decided.paymentReturned;
+    const outcome = await decided();
+    if (!outcome) throw new Error("The order changed while it was being released; reload the list");
+    paymentReturned = outcome.paymentReturned;
   } else {
     if (row.session_id) {
       const stripe = options.paymentAdapters?.find((adapter) => adapter.providerId === "stripe");
@@ -178,12 +187,19 @@ async function releaseParkedCommerce(options, actor, input) {
       }
     }
     const timestamp = Math.floor(Date.now() / 1e3);
-    const [, released] = await env.DB.batch([
-      env.DB.prepare(decisionInsert(kind, "release", PARKED)).bind(decision.id, paymentReturned, decision.actor, decision.reason, timestamp, id),
-      env.DB.prepare(`UPDATE _ecommerce_gift_card_purchases SET status = 'cancelled', updated_at = ?
-        WHERE id = ? AND ${PARKED} AND ${RECORDED} RETURNING id`).bind(timestamp, id, decision.id)
+    const [, released] = await db.batch([
+      db.run(decisionInsert(kind, "release", PARKED, {
+        id: decision.id,
+        paymentReturned,
+        actor: decision.actor,
+        reason: decision.reason,
+        at: timestamp,
+        recordId: id
+      })),
+      db.all(sql`UPDATE _ecommerce_gift_card_purchases SET status = 'cancelled', updated_at = ${timestamp}
+        WHERE id = ${id} AND ${PARKED} AND ${recorded(decision.id)} RETURNING id`)
     ]);
-    if (!released.results?.length) throw new Error("The purchase changed while it was being released; reload the list");
+    if (!released.length) throw new Error("The purchase changed while it was being released; reload the list");
   }
   console.info("[commerce] Parked checkout released", { kind, id, actor, otherMode });
   return { kind, id, status: "cancelled", otherMode, paymentReturned };

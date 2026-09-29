@@ -1,7 +1,7 @@
+import { SQL } from 'drizzle-orm';
 import { TalismanEnv } from 'talisman-cms/client';
 import { P as PaymentProviderAdapter } from './payments-TQo6Ws_B.js';
 import { orders } from './schema.js';
-import 'drizzle-orm';
 import 'drizzle-orm/sqlite-core';
 
 /**
@@ -70,11 +70,11 @@ declare function referralOrderQualifies(order: QualifyingOrder, minOrderCents: n
  * when the order no longer qualifies at `minOrderCents` and the award's reward, or a dispute was lost. Idempotent; they read
  * the order as it is when they run, so add them after the statements that change it.
  */
-declare function referralReversalStatements(env: TalismanEnv, orderId: string, options: {
+declare function referralReversalStatements(orderId: string, options: {
     minOrderCents: number;
     now: number;
     disputeLost?: boolean;
-}): D1PreparedStatement[];
+}): SQL[];
 /** Void the order's referral and reverse released awards when it no longer qualifies or a dispute was lost. */
 declare function reverseReferralForOrder(env: TalismanEnv, orderId: string, options?: {
     now?: Date;

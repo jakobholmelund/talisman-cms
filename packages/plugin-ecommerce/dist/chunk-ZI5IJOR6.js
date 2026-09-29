@@ -24,10 +24,17 @@ async function batchGroups(db, groups) {
   let offset = 0;
   return Object.fromEntries(Object.entries(groups).map(([name, list]) => [name, results.slice(offset, offset += list.length).flat()]));
 }
+async function commitBatch(db, items) {
+  if (!items.length) return [];
+  return db.batch(items);
+}
+var runStatements = (db, statements) => commitBatch(db, statements.map((statement) => db.run(statement)));
 
 export {
   commerceDb,
   chunked,
   errorText,
-  batchGroups
+  batchGroups,
+  commitBatch,
+  runStatements
 };

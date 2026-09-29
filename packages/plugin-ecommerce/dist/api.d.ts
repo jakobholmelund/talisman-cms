@@ -4,14 +4,6 @@ import { a as CommerceEmailResult } from './email-deliveries-CyzibTug.js';
 import 'talisman-cms/email';
 import './emails.js';
 
-/** The answer when an order's slot is taken; it never says anything about the payment itself. */
-declare const PROVIDER_CHECK_RETRY_MESSAGE = "The payment session was checked moments ago. Please try again in 15 seconds.";
-/** A limited release found the order's slot taken; nothing was asked or changed. */
-declare class ProviderCheckLimitedError extends Error {
-    readonly name = "ProviderCheckLimitedError";
-    constructor();
-}
-
 /** Why a reconciliation attempt failed. Only these codes are stored, never provider text or personal data. */
 type ReconcileFailureCode = 'session_missing' | 'session_mode_mismatch' | 'payment_mismatch' | 'provider_not_configured' | 'provider_unavailable' | 'provider_refused' | 'failed';
 /** A reconciliation attempt that failed for a known reason. A permanent one parks the row. */
@@ -39,6 +31,100 @@ type ReconcileResult = {
     /** Set on the one result of the attempt that parked the row for review. */
     parked?: true;
 };
+
+interface CommerceApiOptions {
+    env: TalismanEnv;
+    paymentAdapters?: PaymentProviderAdapter[];
+}
+
+type RequiredComponent = {
+    id: string;
+    name: string;
+    quantity: number;
+    available: number;
+};
+type CartItemInput = {
+    productId: string;
+    variantId?: string;
+    quantity: number;
+};
+/** Most distinct lines one basket can hold. */
+declare const CART_MAX_LINES = 50;
+/** Most units of one line. Checkout still checks stock. */
+declare const CART_MAX_LINE_QUANTITY = 99;
+declare function aggregateComponentDemand(items: Array<{
+    quantity: number;
+    components: RequiredComponent[];
+}>): Map<string, {
+    name: string;
+    quantity: number;
+    available: number;
+}>;
+
+/** The answer to a shopper who asks about, or tries to release, a checkout parked for review. */
+declare const PARKED_CHECKOUT_MESSAGE = "The store is reviewing the payment for this checkout. Contact the store to release it.";
+
+/**
+ * Run from a protected admin request or a scheduled Worker to repair missed webhooks. Each row is
+ * attempted on its own: a failure is reported in its result and never stops the others.
+ *
+ * Pending orders and gift card purchases are taken in turn, rows never tried first, each once its
+ * backoff since the last attempt has passed (2^attempts minutes, at most six hours), so a row that keeps
+ * failing never holds back newer ones. Every attempt is recorded. A permanent failure (a session the
+ * provider no longer has, a session of the other Stripe mode, a completed payment that does not match)
+ * parks the row for an administrator: that attempt reports `error` with `parked: true`, and a parked row
+ * is not selected again, so only new or transient failures are reported.
+ *
+ * Tax records and reversals back off the same way on counts of their own, and a success clears the
+ * count. They are not parked: one that keeps failing is reported each time it is tried again.
+ */
+declare function reconcileCommerce(options: CommerceApiOptions, limit?: number): Promise<ReconcileResult[]>;
+
+interface CommercePurgeOptions {
+    env: TalismanEnv;
+    now?: Date;
+    /** Rows deleted per statement. */
+    batchSize?: number;
+}
+/**
+ * Delete shopper and sign-in data past its retention period. Run it from the scheduled
+ * Worker next to reconcileCommerce; deletes are batched to stay inside D1 and Worker limits.
+ * Every table is attempted, and the run throws afterwards if any of them failed.
+ */
+declare function purgeStaleCommerceData(options: CommercePurgeOptions): Promise<{
+    carts: number;
+    customerSessions: number;
+    signInTokens: number;
+    unverifiedAccounts: number;
+    rateLimits: number;
+    authSessions: number;
+    authRateLimits: number;
+}>;
+
+/**
+ * Retries the order confirmations, shipment notices and gift card claim emails that were not sent at
+ * once, up to `limit` (default 10, at most 50) per run, oldest due first, and gives up emails that are
+ * older than COMMERCE_EMAIL_MAX_AGE_SECONDS. reconcileCommerce runs it, so a site's scheduled Worker
+ * retries them. Results carry `<kind>:<subject id>` and error codes, never an address; status 'error'
+ * marks what needs an operator: email that is not configured (one result, id `commerce_emails`, for
+ * each missing setting), a sender the provider refuses, an email given up after its last attempt or its
+ * maximum age. 'email_retry' is retried later, and 'email_undeliverable' (a suppressed or invalid
+ * address) and 'email_cancelled' are final.
+ */
+declare function deliverPendingCommerceEmails(options: {
+    env: TalismanEnv;
+}, { limit, now: at }?: {
+    limit?: number;
+    now?: number;
+}): Promise<CommerceEmailResult[]>;
+
+/** The answer when an order's slot is taken; it never says anything about the payment itself. */
+declare const PROVIDER_CHECK_RETRY_MESSAGE = "The payment session was checked moments ago. Please try again in 15 seconds.";
+/** A limited release found the order's slot taken; nothing was asked or changed. */
+declare class ProviderCheckLimitedError extends Error {
+    readonly name = "ProviderCheckLimitedError";
+    constructor();
+}
 
 declare class TaxCalculationError extends Error {
     constructor(options?: ErrorOptions);
@@ -72,55 +158,14 @@ declare class WebhookMismatchError extends Error {
 }
 
 /**
- * Retries the order confirmations, shipment notices and gift card claim emails that were not sent at
- * once, up to `limit` (default 10, at most 50) per run, oldest due first, and gives up emails that are
- * older than COMMERCE_EMAIL_MAX_AGE_SECONDS. reconcileCommerce runs it, so a site's scheduled Worker
- * retries them. Results carry `<kind>:<subject id>` and error codes, never an address; status 'error'
- * marks what needs an operator: email that is not configured (one result, id `commerce_emails`, for
- * each missing setting), a sender the provider refuses, an email given up after its last attempt or its
- * maximum age. 'email_retry' is retried later, and 'email_undeliverable' (a suppressed or invalid
- * address) and 'email_cancelled' are final.
+ * The commerce API for a site's server code and the plugin's own routes, bound to the Worker's
+ * bindings and payment adapters. Each method is a function of its module, called with the same
+ * context: the basket in basket.ts, checkout in checkout.ts, orders and their payment in orders.ts
+ * and the Stripe webhook in stripe-events.ts.
  */
-declare function deliverPendingCommerceEmails(options: {
-    env: TalismanEnv;
-}, { limit, now: at }?: {
-    limit?: number;
-    now?: number;
-}): Promise<CommerceEmailResult[]>;
-
-/** The answer to a shopper who asks about, or tries to release, a checkout parked for review. */
-declare const PARKED_CHECKOUT_MESSAGE = "The store is reviewing the payment for this checkout. Contact the store to release it.";
-
-interface CommerceApiOptions {
-    env: TalismanEnv;
-    paymentAdapters?: PaymentProviderAdapter[];
-}
-type RequiredComponent = {
-    id: string;
-    name: string;
-    quantity: number;
-    available: number;
-};
-type CartItemInput = {
-    productId: string;
-    variantId?: string;
-    quantity: number;
-};
-/** Most distinct lines one basket can hold. */
-declare const CART_MAX_LINES = 50;
-/** Most units of one line. Checkout still checks stock. */
-declare const CART_MAX_LINE_QUANTITY = 99;
-declare function aggregateComponentDemand(items: Array<{
-    quantity: number;
-    components: RequiredComponent[];
-}>): Map<string, {
-    name: string;
-    quantity: number;
-    available: number;
-}>;
 declare function bindCommerceApi(options: CommerceApiOptions): {
     carts: {
-        quote(cartId: string): Promise<{
+        quote: (cartId: string) => Promise<{
             lines: {
                 productId: string;
                 variantId: string | undefined;
@@ -134,7 +179,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             requiresShipping: boolean;
             locked: boolean;
         }>;
-        find(sessionToken: string | undefined, userId?: string): Promise<{
+        find: (sessionToken: string | undefined, userId?: string) => Promise<{
             id: string;
             sessionToken: string | null;
             userId: string | null;
@@ -151,7 +196,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             updatedAt: Date;
         } | null | undefined>;
         /** Attach the current browser basket to an authenticated shopper account. */
-        claim(sessionToken: string, userId: string, choice?: "browser" | "account"): Promise<{
+        claim: (sessionToken: string, userId: string, choice?: "browser" | "account") => Promise<{
             id: string;
             sessionToken: string | null;
             userId: string | null;
@@ -167,7 +212,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             createdAt: Date;
             updatedAt: Date;
         } | null | undefined>;
-        getOrCreate(sessionToken: string, userId?: string): Promise<{
+        getOrCreate: (sessionToken: string, userId?: string) => Promise<{
             id: string;
             sessionToken: string | null;
             userId: string | null;
@@ -187,10 +232,10 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
          * Check an item list against the basket limits and the catalog without writing, for example
          * before creating a basket for it. Returns the list with only the stored fields.
          */
-        validateItems(items: unknown, current?: Array<{
+        validateItems: (items: unknown, current?: {
             productId: string;
             variantId?: string | null;
-        }>): Promise<({
+        }[]) => Promise<({
             productId: string;
             variantId: string;
             quantity: number;
@@ -199,7 +244,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             quantity: number;
             variantId?: undefined;
         })[]>;
-        updateItems(cartId: string, items: CartItemInput[]): Promise<{
+        updateItems: (cartId: string, items: CartItemInput[]) => Promise<{
             id: string;
             sessionToken: string | null;
             userId: string | null;
@@ -217,17 +262,9 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
         } | undefined>;
     };
     orders: {
-        /**
-         * The pending checkout that locks a basket: its payment URL while the provider session is open,
-         * or null once the lock is gone. Public routes pass `limitProviderChecks`, so the provider is asked
-         * only when the order's provider-check slot is free (see provider-checks.ts); otherwise the order is
-         * returned as stored, with `providerCheckLimited` and no payment URL. An order parked for review, or
-         * one whose check failed in a way no retry fixes, is returned with `review` and no payment URL; the
-         * provider is not asked about a parked one.
-         */
-        resumeFromCart(cartId: string, options?: {
+        resumeFromCart: (cartId: string, options?: {
             limitProviderChecks?: boolean;
-        }): Promise<{
+        }) => Promise<{
             order: {
                 createdAt: Date;
                 updatedAt: Date;
@@ -432,7 +469,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             review?: undefined;
             providerCheckLimited?: undefined;
         } | null>;
-        reconcilePending(id: string): Promise<{
+        reconcilePending: (id: string) => Promise<{
             status: string;
             paymentUrl: null;
             review: boolean;
@@ -441,19 +478,18 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             paymentUrl: string | null;
             review?: undefined;
         } | null>;
-        createFromCart(cartId: string, options: {
+        createFromCart: (cartId: string, options: {
             customerEmail: string;
             providerId?: string;
             shippingAddress?: any;
             billingAddress?: any;
-            /** One of the store's shipping rates. Without it, the first rate that serves the country. */
             shippingRateId?: string;
             successUrl: string;
             cancelUrl: string;
             referralCode?: string;
             discountCode?: string;
             giftCardCode?: string;
-        }): Promise<{
+        }) => Promise<{
             order: {
                 createdAt: Date;
                 updatedAt: Date;
@@ -520,7 +556,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             };
             paymentUrl: string;
         }>;
-        create(data: {
+        create: (data: {
             id?: string;
             cartId?: string;
             userId?: string;
@@ -553,7 +589,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 postalCode?: string;
                 country?: string;
             };
-        }): Promise<{
+        }) => Promise<{
             createdAt: Date;
             updatedAt: Date;
             taxSyncAttempts: number;
@@ -617,7 +653,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 country?: string;
             } | null;
         } | null>;
-        find(id: string): Promise<{
+        find: (id: string) => Promise<{
             createdAt: Date;
             updatedAt: Date;
             taxSyncAttempts: number;
@@ -681,7 +717,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 country?: string;
             } | null;
         } | null>;
-        findForSession(id: string, sessionToken: string | undefined, customerId?: string): Promise<{
+        findForSession: (id: string, sessionToken: string | undefined, customerId?: string) => Promise<{
             createdAt: Date;
             updatedAt: Date;
             taxSyncAttempts: number;
@@ -745,16 +781,12 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 country?: string;
             } | null;
         } | null>;
-        /**
-         * 'fulfilled' records a shipment that completes the order: it sets `fulfillmentStatus` and leaves
-         * the payment `status` as it is. Payment statuses change only through payment and cancellation.
-         */
-        updateStatus(id: string, status: string, fulfillment?: {
+        updateStatus: (id: string, status: string, fulfillment?: {
             actor: string;
             carrier: string | null;
             trackingNumber: string | null;
             note: string;
-        }): Promise<{
+        } | undefined) => Promise<{
             createdAt: Date;
             updatedAt: Date;
             taxSyncAttempts: number;
@@ -818,7 +850,8 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 country?: string;
             } | null;
         } | null>;
-        finalizePayment(id: string, options: {
+        finalizePayment: (id: string, options: Omit<{
+            orderId: string;
             provider: string;
             providerId: string;
             paymentIntentId?: string;
@@ -826,7 +859,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             amount?: number;
             currency?: string;
             customerEmail?: string;
-        }): Promise<{
+        }, "orderId">) => Promise<{
             success: boolean;
             orderId: string;
             status: string;
@@ -837,28 +870,14 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             status: string;
             duplicate?: undefined;
         }>;
-        /**
-         * Release a pending order, its reservations and its basket lock. The public release route passes
-         * `limitProviderChecks`, so the provider is asked only when the order's provider-check slot is free;
-         * otherwise it throws ProviderCheckLimitedError and changes nothing. An order parked for review is
-         * released only with `reviewRelease`, an administrator's decision, or once its session expired. A
-         * Stripe session of the other mode is never asked about, since this Worker's key cannot read it.
-         */
-        cancel(id: string, options?: {
+        cancel: (id: string, options?: {
             sessionExpired?: boolean;
             limitProviderChecks?: boolean;
-            /**
-             * An administrator's release of a parked order, whose `decision` is recorded in the batch that
-             * cancels it. A Stripe session of the other mode is not looked up, and a session the provider no
-             * longer has counts as closed. Any other session is asked about as usual; a completed one is
-             * released only once its payment went back to the shopper (see completedCheckoutReturn), which
-             * `confirmPaymentReturned` confirms only where the provider names no payment to check.
-             */
             reviewRelease?: {
                 decision: ReconcileDecision;
                 confirmPaymentReturned?: boolean;
             };
-        }): Promise<{
+        } | undefined) => Promise<{
             createdAt: Date;
             updatedAt: Date;
             taxSyncAttempts: number;
@@ -924,14 +943,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
         } | null>;
     };
     webhooks: {
-        /**
-         * Verifies a Stripe webhook event and applies it. An event that names none of this store's orders
-         * or gift card purchases is answered `{ ignored: true }` and changes nothing. One that names a
-         * record it cannot be applied to, and that no retry would fix, is logged and answered the same
-         * way with a `reason`. Throws WebhookSignatureError when the signature or payload is refused, and
-         * WebhookRetryLaterError for an event about a record whose payment is not recorded yet.
-         */
-        handleStripe(payload: string, signature: string, secret?: string): Promise<{
+        handleStripe: (payload: string, signature: string, secret?: string) => Promise<{
             success: boolean;
             purchaseId: string;
             duplicate: boolean;
@@ -979,40 +991,5 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
         }>;
     };
 };
-/**
- * Run from a protected admin request or a scheduled Worker to repair missed webhooks. Each row is
- * attempted on its own: a failure is reported in its result and never stops the others.
- *
- * Pending orders and gift card purchases are taken in turn, rows never tried first, each once its
- * backoff since the last attempt has passed (2^attempts minutes, at most six hours), so a row that keeps
- * failing never holds back newer ones. Every attempt is recorded. A permanent failure (a session the
- * provider no longer has, a session of the other Stripe mode, a completed payment that does not match)
- * parks the row for an administrator: that attempt reports `error` with `parked: true`, and a parked row
- * is not selected again, so only new or transient failures are reported.
- *
- * Tax records and reversals back off the same way on counts of their own, and a success clears the
- * count. They are not parked: one that keeps failing is reported each time it is tried again.
- */
-declare function reconcileCommerce(options: CommerceApiOptions, limit?: number): Promise<ReconcileResult[]>;
-interface CommercePurgeOptions {
-    env: TalismanEnv;
-    now?: Date;
-    /** Rows deleted per statement. */
-    batchSize?: number;
-}
-/**
- * Delete shopper and sign-in data past its retention period. Run it from the scheduled
- * Worker next to reconcileCommerce; deletes are batched to stay inside D1 and Worker limits.
- * Every table is attempted, and the run throws afterwards if any of them failed.
- */
-declare function purgeStaleCommerceData(options: CommercePurgeOptions): Promise<{
-    carts: number;
-    customerSessions: number;
-    signInTokens: number;
-    unverifiedAccounts: number;
-    rateLimits: number;
-    authSessions: number;
-    authRateLimits: number;
-}>;
 
 export { CART_MAX_LINES, CART_MAX_LINE_QUANTITY, type CartItemInput, type CommerceApiOptions, type CommercePurgeOptions, PARKED_CHECKOUT_MESSAGE, PROVIDER_CHECK_RETRY_MESSAGE, ProviderCheckLimitedError, ReconcileFailure, type ReconcileFailureCode, type ReconcileResult, TaxCalculationError, WebhookMismatchError, WebhookRetryLaterError, WebhookSignatureError, aggregateComponentDemand, bindCommerceApi, deliverPendingCommerceEmails, purgeStaleCommerceData, reconcileCommerce };

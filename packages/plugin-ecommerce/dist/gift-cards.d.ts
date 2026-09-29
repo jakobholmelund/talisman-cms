@@ -1,3 +1,4 @@
+import { SQL } from 'drizzle-orm';
 import { TalismanEnv } from 'talisman-cms/client';
 import { P as PaymentProviderAdapter } from './payments-TQo6Ws_B.js';
 import { C as CommerceEmailComposer } from './email-deliveries-CyzibTug.js';
@@ -204,20 +205,20 @@ declare function getPurchasedGiftCard(env: TalismanEnv, id: string, accessToken:
  * them is reversed and they are voided. A purchase with no card left to hold leaves review as refunded
  * or partially refunded. Add them to the batch that moves the purchase to 'review'.
  */
-declare function giftCardPurchaseHoldStatements(env: TalismanEnv, purchaseId: string, timestamp: number): D1PreparedStatement[];
+declare function giftCardPurchaseHoldStatements(purchaseId: string, timestamp: number): SQL[];
 /**
  * Statements that lift a purchase's hold once it needs no decision: the cards the hold suspended become
  * active again, and a card an administrator suspended stays so. Add them after the statement that moves
  * the purchase out of review; while it is still held they change nothing.
  */
-declare function giftCardPurchaseReleaseStatements(env: TalismanEnv, purchaseId: string, timestamp: number): D1PreparedStatement[];
+declare function giftCardPurchaseReleaseStatements(purchaseId: string, timestamp: number): SQL[];
 /**
  * Statements for a purchase whose payment a lost dispute took back: every card it funds is voided and
  * what is left on them is reversed, and the purchase becomes refunded. Value already spent on orders
  * stays spent. While a checkout in progress holds value on the cards, nothing changes, like the review
  * 'void' outcome; add the hold statements first, so nothing more is spent meanwhile.
  */
-declare function giftCardPurchaseChargebackStatements(env: TalismanEnv, purchaseId: string, timestamp: number): D1PreparedStatement[];
+declare function giftCardPurchaseChargebackStatements(purchaseId: string, timestamp: number): SQL[];
 declare function recordGiftCardPurchaseRefund(env: TalismanEnv, params: {
     paymentIntentId: string;
     amount: number;

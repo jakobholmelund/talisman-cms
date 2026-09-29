@@ -1,3 +1,4 @@
+import { SQL } from 'drizzle-orm';
 import { TalismanEnv } from 'talisman-cms/client';
 
 /** Invalid input to an order adjustment. The admin route answers it with 400. */
@@ -15,7 +16,7 @@ declare class OrderAdjustmentRefusedError extends Error {
  * order's status and repeats safely, so add them after the statement that refunds the order. A
  * provider refund of the whole charge and a lost dispute both use them.
  */
-declare function fullRefundStatements(env: TalismanEnv, orderId: string, now: number): D1PreparedStatement[];
+declare function fullRefundStatements(orderId: string, now: number): SQL[];
 type ReservationType = 'inventory' | 'component';
 type TargetType = 'product' | 'variant' | 'stock' | 'component';
 /** A reservation row of an order: the stock one line of it took, and whether that went back. */
