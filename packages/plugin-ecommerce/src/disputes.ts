@@ -1,6 +1,7 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql, type SQL } from 'drizzle-orm';
+import type { BatchItem } from 'drizzle-orm/batch';
 import type { TalismanEnv } from 'talisman-cms/client';
-import { commerceDb } from './db';
+import { commerceDb, runStatements } from './db';
 import { giftCardPurchaseChargebackStatements, giftCardPurchaseHoldStatements,
   giftCardPurchaseReleaseStatements } from './gift-cards';
 import { fullRefundStatements } from './order-adjustments';
@@ -52,45 +53,44 @@ const RECORDS = {
  * Records a dispute, or the outcome of a closed one. An open event never changes a recorded dispute,
  * so one delivered after the close does not reopen it, and a lost dispute stays lost.
  */
-function recordStatement(env: TalismanEnv, dispute: ProviderDispute, record: DisputedRecord,
-  times: { closedAt: number | null; now: number }) {
+function recordStatement(dispute: ProviderDispute, record: DisputedRecord, times: { closedAt: number | null; now: number }): SQL {
   const { column, table, statusBefore } = RECORDS[record.kind];
-  return env.DB.prepare(`INSERT INTO _ecommerce_disputes
-    (id, provider, ${column}, amount_cents, currency, reason, status, status_before, created_at, updated_at, closed_at)
-    SELECT ?, 'stripe', r.id, ?, ?, ?, ?, ${statusBefore}, ?, ?, ?
-    FROM ${table} r WHERE r.id = ?
+  return sql`INSERT INTO _ecommerce_disputes
+    (id, provider, ${sql.raw(column)}, amount_cents, currency, reason, status, status_before, created_at, updated_at, closed_at)
+    SELECT ${dispute.id}, 'stripe', r.id, ${dispute.amountCents}, ${dispute.currency ?? record.currency}, ${dispute.reason}, ${dispute.status},
+      ${sql.raw(statusBefore)}, ${dispute.createdAt}, ${times.now}, ${times.closedAt}
+    FROM ${sql.raw(table)} r WHERE r.id = ${record.id}
     ON CONFLICT(id) DO UPDATE SET status = excluded.status, amount_cents = excluded.amount_cents,
       currency = excluded.currency, reason = COALESCE(excluded.reason, _ecommerce_disputes.reason),
       updated_at = excluded.updated_at, closed_at = COALESCE(_ecommerce_disputes.closed_at, excluded.closed_at)
-    WHERE excluded.closed_at IS NOT NULL AND _ecommerce_disputes.status <> 'lost'`)
-    .bind(dispute.id, dispute.amountCents, dispute.currency ?? record.currency, dispute.reason, dispute.status,
-      dispute.createdAt, times.now, times.closedAt, record.id);
+    WHERE excluded.closed_at IS NOT NULL AND _ecommerce_disputes.status <> 'lost'`;
 }
 
 async function referralStatements(env: TalismanEnv, order: { id: string; referralCode: string | null },
   now: number, disputeLost = false) {
   if (!order.referralCode) return [];
   const policy = await getReferralPolicy(env);
-  return referralReversalStatements(env, order.id, { minOrderCents: policy.minOrderCents, now, disputeLost });
+  return referralReversalStatements(order.id, { minOrderCents: policy.minOrderCents, now, disputeLost });
 }
 
 type DisputedOrder = { id: string; currency: string; referralCode: string | null };
 
 /** Runs an order's dispute statements in one batch and returns the order's status after them. */
-async function orderBatch(env: TalismanEnv, orderId: string, statements: D1PreparedStatement[]) {
-  const results = await env.DB.batch<{ status: string }>([...statements,
-    env.DB.prepare(`SELECT status FROM _ecommerce_orders WHERE id = ?`).bind(orderId)]);
-  return results[results.length - 1]?.results?.[0]?.status ?? null;
+async function orderBatch(env: TalismanEnv, orderId: string, statements: SQL[]) {
+  const db = commerceDb(env);
+  const items: BatchItem<'sqlite'>[] = [...statements.map((statement) => db.run(statement)),
+    db.get<{ status: string }>(sql`SELECT status FROM _ecommerce_orders WHERE id = ${orderId}`)];
+  const results = await db.batch(items as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+  return (results[results.length - 1] as { status: string } | undefined)?.status ?? null;
 }
 
 /** A dispute holds a paid order as 'disputed', which the fulfillment guard refuses, until it closes. */
 async function openOrderDispute(env: TalismanEnv, order: DisputedOrder, dispute: ProviderDispute, now: number) {
   return orderBatch(env, order.id, [
-    recordStatement(env, dispute, { kind: 'order', id: order.id, currency: order.currency }, { closedAt: null, now }),
-    env.DB.prepare(`UPDATE _ecommerce_orders SET status = 'disputed', updated_at = ?
-      WHERE id = ? AND status IN ('paid', 'fulfilled', 'partially_refunded')
-        AND EXISTS (SELECT 1 FROM _ecommerce_disputes WHERE id = ? AND order_id = ? AND closed_at IS NULL)`)
-      .bind(now, order.id, dispute.id, order.id),
+    recordStatement(dispute, { kind: 'order', id: order.id, currency: order.currency }, { closedAt: null, now }),
+    sql`UPDATE _ecommerce_orders SET status = 'disputed', updated_at = ${now}
+      WHERE id = ${order.id} AND status IN ('paid', 'fulfilled', 'partially_refunded')
+        AND EXISTS (SELECT 1 FROM _ecommerce_disputes WHERE id = ${dispute.id} AND order_id = ${order.id} AND closed_at IS NULL)`,
   ]);
 }
 
@@ -103,19 +103,17 @@ async function openOrderDispute(env: TalismanEnv, order: DisputedOrder, dispute:
  * order's status, then 'refunded'; whatever else a refund triggers, such as a tax reversal, runs in
  * applyStripeEvent (api.ts), which holds the payment adapter and answers with that status.
  */
-async function settleLostOrderDispute(env: TalismanEnv, order: DisputedOrder, record: D1PreparedStatement,
+async function settleLostOrderDispute(env: TalismanEnv, order: DisputedOrder, record: SQL,
   disputeId: string, now: number) {
   return orderBatch(env, order.id, [
     record,
-    env.DB.prepare(`UPDATE _ecommerce_orders SET status = 'refunded', updated_at = ?
-      WHERE id = ? AND status IN ('paid', 'fulfilled', 'partially_refunded', 'disputed')
-        AND EXISTS (SELECT 1 FROM _ecommerce_disputes WHERE id = ? AND order_id = ? AND status = 'lost')`)
-      .bind(now, order.id, disputeId, order.id),
-    env.DB.prepare(`UPDATE _ecommerce_payments SET status = 'refunded'
-      WHERE order_id = ? AND provider = 'stripe'
-        AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'refunded')`)
-      .bind(order.id, order.id),
-    ...fullRefundStatements(env, order.id, now),
+    sql`UPDATE _ecommerce_orders SET status = 'refunded', updated_at = ${now}
+      WHERE id = ${order.id} AND status IN ('paid', 'fulfilled', 'partially_refunded', 'disputed')
+        AND EXISTS (SELECT 1 FROM _ecommerce_disputes WHERE id = ${disputeId} AND order_id = ${order.id} AND status = 'lost')`,
+    sql`UPDATE _ecommerce_payments SET status = 'refunded'
+      WHERE order_id = ${order.id} AND provider = 'stripe'
+        AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ${order.id} AND status = 'refunded')`,
+    ...fullRefundStatements(order.id, now),
     ...await referralStatements(env, order, now, true),
   ]);
 }
@@ -128,29 +126,26 @@ async function settleLostOrderDispute(env: TalismanEnv, order: DisputedOrder, re
  */
 async function closeOrderDispute(env: TalismanEnv, order: DisputedOrder, dispute: ProviderDispute,
   closedAt: number, now: number) {
-  const record = recordStatement(env, dispute, { kind: 'order', id: order.id, currency: order.currency },
-    { closedAt, now });
+  const record = recordStatement(dispute, { kind: 'order', id: order.id, currency: order.currency }, { closedAt, now });
   if (dispute.status === 'lost') return settleLostOrderDispute(env, order, record, dispute.id, now);
   return orderBatch(env, order.id, [
     record,
-    env.DB.prepare(`UPDATE _ecommerce_orders SET status = CASE
+    sql`UPDATE _ecommerce_orders SET status = CASE
         WHEN total_amount > 0 AND provider_refunded_cents >= total_amount THEN 'refunded'
         WHEN provider_refunded_cents > 0 THEN 'partially_refunded'
-        ELSE (SELECT status_before FROM _ecommerce_disputes WHERE id = ?) END,
-      updated_at = ?
-      WHERE id = ? AND status = 'disputed'
-        AND EXISTS (SELECT 1 FROM _ecommerce_disputes WHERE id = ? AND order_id = ? AND status <> 'lost')
-        AND NOT EXISTS (SELECT 1 FROM _ecommerce_disputes WHERE order_id = ? AND closed_at IS NULL)`)
-      .bind(dispute.id, now, order.id, dispute.id, order.id, order.id),
+        ELSE (SELECT status_before FROM _ecommerce_disputes WHERE id = ${dispute.id}) END,
+      updated_at = ${now}
+      WHERE id = ${order.id} AND status = 'disputed'
+        AND EXISTS (SELECT 1 FROM _ecommerce_disputes WHERE id = ${dispute.id} AND order_id = ${order.id} AND status <> 'lost')
+        AND NOT EXISTS (SELECT 1 FROM _ecommerce_disputes WHERE order_id = ${order.id} AND closed_at IS NULL)`,
     // The previous release copies the order's status onto its payment when it sees a refund, so a
     // rollback during the dispute can leave the payment 'disputed', which reports leave out.
-    env.DB.prepare(`UPDATE _ecommerce_payments SET status = CASE o.status
+    sql`UPDATE _ecommerce_payments SET status = CASE o.status
         WHEN 'refunded' THEN 'refunded' WHEN 'partially_refunded' THEN 'partially_refunded' ELSE 'success' END
       FROM _ecommerce_orders o
-      WHERE _ecommerce_payments.order_id = o.id AND o.id = ? AND o.status <> 'disputed'
-        AND _ecommerce_payments.provider = 'stripe' AND _ecommerce_payments.status = 'disputed'`)
-      .bind(order.id),
-    ...fullRefundStatements(env, order.id, now),
+      WHERE _ecommerce_payments.order_id = o.id AND o.id = ${order.id} AND o.status <> 'disputed'
+        AND _ecommerce_payments.provider = 'stripe' AND _ecommerce_payments.status = 'disputed'`,
+    ...fullRefundStatements(order.id, now),
     ...await referralStatements(env, order, now),
   ]);
 }
@@ -162,14 +157,12 @@ type DisputedPurchase = { id: string; currency: string };
  * included, so their value cannot be spent while the dispute is open.
  */
 async function openPurchaseDispute(env: TalismanEnv, purchase: DisputedPurchase, dispute: ProviderDispute, now: number) {
-  await env.DB.batch([
-    recordStatement(env, dispute, { kind: 'purchase', id: purchase.id, currency: purchase.currency },
-      { closedAt: null, now }),
-    env.DB.prepare(`UPDATE _ecommerce_gift_card_purchases SET status = 'review', updated_at = ?
-      WHERE id = ? AND status IN ('paid', 'partially_refunded', 'refunded')
-        AND EXISTS (SELECT 1 FROM _ecommerce_disputes WHERE id = ? AND gift_card_purchase_id = ? AND closed_at IS NULL)`)
-      .bind(now, purchase.id, dispute.id, purchase.id),
-    ...giftCardPurchaseHoldStatements(env, purchase.id, now),
+  await runStatements(commerceDb(env), [
+    recordStatement(dispute, { kind: 'purchase', id: purchase.id, currency: purchase.currency }, { closedAt: null, now }),
+    sql`UPDATE _ecommerce_gift_card_purchases SET status = 'review', updated_at = ${now}
+      WHERE id = ${purchase.id} AND status IN ('paid', 'partially_refunded', 'refunded')
+        AND EXISTS (SELECT 1 FROM _ecommerce_disputes WHERE id = ${dispute.id} AND gift_card_purchase_id = ${purchase.id} AND closed_at IS NULL)`,
+    ...giftCardPurchaseHoldStatements(purchase.id, now),
   ]);
 }
 
@@ -183,19 +176,18 @@ async function openPurchaseDispute(env: TalismanEnv, purchase: DisputedPurchase,
  */
 async function closePurchaseDispute(env: TalismanEnv, purchase: DisputedPurchase, dispute: ProviderDispute,
   closedAt: number, now: number) {
-  const record = recordStatement(env, dispute, { kind: 'purchase', id: purchase.id, currency: purchase.currency },
-    { closedAt, now });
+  const db = commerceDb(env);
+  const record = recordStatement(dispute, { kind: 'purchase', id: purchase.id, currency: purchase.currency }, { closedAt, now });
   if (dispute.status === 'lost') {
-    await env.DB.batch([
+    await runStatements(db, [
       record,
       // Held first, so nothing more is spent from the cards while a checkout in progress delays the void.
-      env.DB.prepare(`UPDATE _ecommerce_gift_card_purchases SET status = 'review', updated_at = ?
-        WHERE id = ? AND status IN ('paid', 'partially_refunded', 'refunded')`)
-        .bind(now, purchase.id),
-      ...giftCardPurchaseHoldStatements(env, purchase.id, now),
-      ...giftCardPurchaseChargebackStatements(env, purchase.id, now),
+      sql`UPDATE _ecommerce_gift_card_purchases SET status = 'review', updated_at = ${now}
+        WHERE id = ${purchase.id} AND status IN ('paid', 'partially_refunded', 'refunded')`,
+      ...giftCardPurchaseHoldStatements(purchase.id, now),
+      ...giftCardPurchaseChargebackStatements(purchase.id, now),
     ]);
-    const current = await commerceDb(env).select({ status: giftCardPurchases.status }).from(giftCardPurchases)
+    const current = await db.select({ status: giftCardPurchases.status }).from(giftCardPurchases)
       .where(eq(giftCardPurchases.id, purchase.id)).get();
     if (current?.status === 'review') {
       throw new WebhookRetryLaterError('A checkout in progress holds value on the disputed purchase\'s card; '
@@ -203,20 +195,19 @@ async function closePurchaseDispute(env: TalismanEnv, purchase: DisputedPurchase
     }
     return;
   }
-  await env.DB.batch([
+  await runStatements(db, [
     record,
-    env.DB.prepare(`UPDATE _ecommerce_gift_card_purchases SET status = CASE
+    sql`UPDATE _ecommerce_gift_card_purchases SET status = CASE
         WHEN provider_refunded_cents > refund_adjusted_cents THEN 'review'
         WHEN d.status_before IN ('paid', 'partially_refunded', 'refunded') THEN d.status_before
         WHEN provider_refunded_cents >= amount_cents THEN 'refunded'
         WHEN provider_refunded_cents > 0 THEN 'partially_refunded'
         ELSE 'paid' END,
-      updated_at = ?
-      FROM (SELECT status_before FROM _ecommerce_disputes WHERE id = ? AND status <> 'lost') AS d
-      WHERE id = ? AND status = 'review'
-        AND NOT EXISTS (SELECT 1 FROM _ecommerce_disputes WHERE gift_card_purchase_id = ? AND closed_at IS NULL)`)
-      .bind(now, dispute.id, purchase.id, purchase.id),
-    ...giftCardPurchaseReleaseStatements(env, purchase.id, now),
+      updated_at = ${now}
+      FROM (SELECT status_before FROM _ecommerce_disputes WHERE id = ${dispute.id} AND status <> 'lost') AS d
+      WHERE id = ${purchase.id} AND status = 'review'
+        AND NOT EXISTS (SELECT 1 FROM _ecommerce_disputes WHERE gift_card_purchase_id = ${purchase.id} AND closed_at IS NULL)`,
+    ...giftCardPurchaseReleaseStatements(purchase.id, now),
   ]);
 }
 

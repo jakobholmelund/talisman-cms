@@ -3,6 +3,8 @@ import { createHash, webcrypto } from 'node:crypto';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/d1';
 import { getTableConfig } from 'drizzle-orm/sqlite-core';
 import { applyAllMigrations } from './helpers/migrations.mjs';
 
@@ -677,15 +679,17 @@ test('the exported hold statements suspend every card a purchase funds, for reus
   const purchase = await buyGiftCard(sqlite, env, 6000, 'pi_hold');
   const replacement = await issueAdminGiftCard(env, 'admin-1', { amountCents: 6000,
     reason: 'Replacement for a lost code', replacesPurchaseId: purchase.id });
-  // As a later refund path would: move the purchase to review in the same batch.
+  // As a later refund path would: move the purchase to review in the same batch. The statements are
+  // Drizzle `sql` templates, run through the client's batch.
+  const db = drizzle(DB);
   const timestamp = Math.floor(Date.now() / 1000);
-  await DB.batch([DB.prepare(`UPDATE _ecommerce_gift_card_purchases SET status = 'review' WHERE id = ?`).bind(purchase.id),
-    ...giftCardPurchaseHoldStatements(env, purchase.id, timestamp)]);
+  await db.batch([db.run(sql`UPDATE _ecommerce_gift_card_purchases SET status = 'review' WHERE id = ${purchase.id}`),
+    ...giftCardPurchaseHoldStatements(purchase.id, timestamp).map((statement) => db.run(statement))]);
   assert.deepEqual(cardRow(sqlite, replacement.id), { status: 'suspended', balance_cents: 6000, held_for_review: 1 });
   assert.equal(cardRow(sqlite, purchase.card.id).status, 'void');
   assert.equal(purchaseRow(sqlite, purchase.id).status, 'review');
   // Applying them again changes nothing.
-  await DB.batch(giftCardPurchaseHoldStatements(env, purchase.id, timestamp));
+  await db.batch(giftCardPurchaseHoldStatements(purchase.id, timestamp).map((statement) => db.run(statement)));
   assert.deepEqual(cardRow(sqlite, replacement.id), { status: 'suspended', balance_cents: 6000, held_for_review: 1 });
   sqlite.close();
 });

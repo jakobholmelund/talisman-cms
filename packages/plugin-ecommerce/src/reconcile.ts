@@ -1,3 +1,4 @@
+import { sql, type SQL } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import type { PaymentProviderAdapter } from './payments';
 import { runtimeStripeMode, stripeSessionMode } from './stripe-mode';
@@ -160,17 +161,19 @@ export async function completedCheckoutReturn(adapter: Pick<PaymentProviderAdapt
 }
 
 /**
- * SQL that records an administrator's `action` on the order or gift card purchase named by the last
- * parameter while `condition` holds for it, with the failure it was parked with. Binds, in order: the
- * decision id, how a completed checkout's payment return was established (or null), the administrator,
- * the reason, the time and the record's id.
+ * The statement that records an administrator's `action` on the order or gift card purchase
+ * `decision.recordId` while `condition` holds for it, with the failure it was parked with and, for a
+ * release of a completed checkout, how the payment's return was established.
  */
-export function decisionInsert(kind: ReconcileKind, action: 'retry' | 'release', condition: string) {
+export function decisionInsert(kind: ReconcileKind, action: 'retry' | 'release', condition: SQL, decision: {
+  id: string; paymentReturned: PaymentReturn | null; actor: string; reason: string; at: number; recordId: string;
+}): SQL {
   const [orderId, purchaseId] = kind === 'order' ? ['id', 'NULL'] : ['NULL', 'id'];
-  return `INSERT INTO _ecommerce_reconcile_decisions
+  return sql`INSERT INTO _ecommerce_reconcile_decisions
       (id, order_id, purchase_id, action, failure, payment_returned, admin_actor, reason, created_at)
-    SELECT ?, ${orderId}, ${purchaseId}, '${action}', reconcile_last_error, ?, ?, ?, ?
-    FROM ${RECONCILE_TABLES[kind]} WHERE id = ? AND ${condition}`;
+    SELECT ${decision.id}, ${sql.raw(orderId)}, ${sql.raw(purchaseId)}, ${action}, reconcile_last_error, ${decision.paymentReturned},
+      ${decision.actor}, ${decision.reason}, ${decision.at}
+    FROM ${sql.raw(RECONCILE_TABLES[kind])} WHERE id = ${decision.recordId} AND ${condition}`;
 }
 
 /** The longest wait between two attempts on one row. */

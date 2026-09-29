@@ -1,9 +1,11 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, exists, isNull, notInArray, sql } from 'drizzle-orm';
+import type { BatchItem } from 'drizzle-orm/batch';
 import type { CommerceContext } from './commerce-context';
+import { commitBatch } from './db';
 import * as schema from './schema';
 import { PURCHASED_ORDER_STATUSES } from './accounts';
 import { deliverCommerceEmail } from './commerce-emails';
-import { canonicalEmail, canonicalEmailSql, canonicalEmails, canonicalPurchaseParams, canonicalPurchaseSql } from './email-identity';
+import { canonicalEmail, canonicalEmailSql, canonicalEmails, canonicalPurchase } from './email-identity';
 import { commerceEmailStatement } from './email-deliveries';
 import { fulfillCommerceOrder } from './fulfillment';
 import { INVENTORY_COLUMNS } from './inventory';
@@ -20,6 +22,13 @@ import { WebhookMismatchError } from './webhook-errors';
 // Orders after checkout: reading them, confirming their payment, recording provider refunds, and
 // releasing a pending one with its reservations. Checkout itself is in checkout.ts, and the Stripe
 // events that drive payment and refunds in stripe-events.ts.
+
+/** A time in Unix seconds as the schema's timestamp columns take it. */
+const at = (seconds: number) => new Date(seconds * 1000);
+
+/** SQL: the order `id` has the status `status`. */
+const orderIn = (db: CommerceContext['db'], id: string, status: string) =>
+  exists(db.select({ one: sql`1` }).from(schema.orders).where(and(eq(schema.orders.id, id), eq(schema.orders.status, status))));
 
 /** The answer to a shopper who asks about, or tries to release, a checkout parked for review. */
 export const PARKED_CHECKOUT_MESSAGE = 'The store is reviewing the payment for this checkout. Contact the store to release it.';
@@ -159,22 +168,24 @@ export async function finalizeOrderPayment(ctx: CommerceContext, params: {
     emailPattern.test(normalizedEmail) ? `acct_${order.id}` : null;
   const accountName = typeof order.shippingAddress?.name === 'string'
     ? order.shippingAddress.name.trim().slice(0, 160) : null;
-  const statements: D1PreparedStatement[] = [
-    env.DB.prepare(`UPDATE _ecommerce_orders SET status = 'paid', updated_at = ?, customer_email = ?, payment_intent_id = ?
-      WHERE id = ? AND status = 'pending' AND checkout_session_id = ? AND total_amount = ?`)
-      .bind(timestamp, email, params.paymentIntentId ?? null, params.orderId, params.providerId, order.totalAmount),
+  const paid = orderIn(db, params.orderId, 'paid');
+  const paidBySession = exists(db.select({ one: sql`1` }).from(schema.orders).where(and(eq(schema.orders.id, params.orderId),
+    eq(schema.orders.status, 'paid'), eq(schema.orders.checkoutSessionId, params.providerId))));
+  const statements: BatchItem<'sqlite'>[] = [
+    db.update(schema.orders).set({ status: 'paid', updatedAt: at(timestamp), customerEmail: email, paymentIntentId: params.paymentIntentId ?? null })
+      .where(and(eq(schema.orders.id, params.orderId), eq(schema.orders.status, 'pending'),
+        eq(schema.orders.checkoutSessionId, params.providerId), eq(schema.orders.totalAmount, order.totalAmount))),
   ];
   if (newAccountId) {
-    statements.push(env.DB.prepare(`INSERT INTO _ecommerce_customer_accounts
+    statements.push(db.run(sql`INSERT INTO _ecommerce_customer_accounts
       (id, email, email_normalized, name, created_at, updated_at)
-      SELECT ?, ?, ?, ?, ?, ? FROM _ecommerce_orders
-      WHERE id = ? AND status = 'paid' AND checkout_session_id = ?
-      ON CONFLICT(email_normalized) DO NOTHING`)
-      .bind(newAccountId, email, normalizedEmail, accountName, timestamp, timestamp, params.orderId, params.providerId));
-    statements.push(env.DB.prepare(`UPDATE _ecommerce_orders
-      SET user_id = (SELECT id FROM _ecommerce_customer_accounts WHERE email_normalized = ?)
-      WHERE id = ? AND status = 'paid' AND user_id IS NULL`)
-      .bind(normalizedEmail, params.orderId));
+      SELECT ${newAccountId}, ${email}, ${normalizedEmail}, ${accountName}, ${timestamp}, ${timestamp} FROM _ecommerce_orders
+      WHERE id = ${params.orderId} AND status = 'paid' AND checkout_session_id = ${params.providerId}
+      ON CONFLICT(email_normalized) DO NOTHING`));
+    const accountId = db.select({ id: schema.customerAccounts.id }).from(schema.customerAccounts)
+      .where(eq(schema.customerAccounts.emailNormalized, normalizedEmail));
+    statements.push(db.update(schema.orders).set({ userId: sql`(${accountId})` })
+      .where(and(eq(schema.orders.id, params.orderId), eq(schema.orders.status, 'paid'), isNull(schema.orders.userId))));
   }
   if (order.referralCode && order.referralRewardCents > 0 && params.provider !== 'admin_test') {
     // The referral is recorded for the buyer's first purchase only: the order's account (new, signed up
@@ -194,64 +205,56 @@ export async function finalizeOrderPayment(ctx: CommerceContext, params: {
     const buyerCanonicals = canonicalEmails([checkoutEmail, normalizedEmail, buyerAccount?.emailNormalized]);
     const referrerCanonical = canonicalEmail(referrer?.emailNormalized);
     if (referrerCanonical && buyerCanonicals.length && !buyerCanonicals.includes(referrerCanonical)) {
-      const purchased = PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(', ');
-      statements.push(env.DB.prepare(`INSERT INTO _ecommerce_referrals
+      const purchased = sql.raw(PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(', '));
+      statements.push(db.run(sql`INSERT INTO _ecommerce_referrals
         (id, code, referrer_account_id, referred_account_id, order_id, reward_cents, currency, status, created_at, updated_at)
-        SELECT ?, rc.code, rc.account_id, o.user_id, o.id, ?, o.currency, 'approved', ?, ?
+        SELECT ${`ref_${order.id}`}, rc.code, rc.account_id, o.user_id, o.id, ${order.referralRewardCents}, o.currency, 'approved', ${timestamp}, ${timestamp}
         FROM _ecommerce_orders o
         JOIN _ecommerce_referral_codes rc ON rc.code = o.referral_code
         JOIN _ecommerce_customer_accounts referrer ON referrer.id = rc.account_id
         JOIN _ecommerce_customer_accounts buyer ON buyer.id = o.user_id
-        WHERE o.id = ? AND o.status = 'paid' AND rc.account_id <> o.user_id
-          AND referrer.email_normalized NOT IN (?, ?, buyer.email_normalized)
+        WHERE o.id = ${params.orderId} AND o.status = 'paid' AND rc.account_id <> o.user_id
+          AND referrer.email_normalized NOT IN (${normalizedEmail}, ${checkoutEmail}, buyer.email_normalized)
           AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders prior
             WHERE prior.id <> o.id AND prior.status IN (${purchased})
               AND COALESCE(prior.payment_provider, 'stripe') <> 'admin_test'
-              AND (prior.user_id = o.user_id OR lower(prior.customer_email) IN (?, ?, buyer.email_normalized)
-                OR prior.user_id IN (SELECT id FROM _ecommerce_customer_accounts WHERE email_normalized IN (?, ?))))
-          AND NOT ${canonicalPurchaseSql(buyerCanonicals.length)}
+              AND (prior.user_id = o.user_id OR lower(prior.customer_email) IN (${normalizedEmail}, ${checkoutEmail}, buyer.email_normalized)
+                OR prior.user_id IN (SELECT id FROM _ecommerce_customer_accounts WHERE email_normalized IN (${normalizedEmail}, ${checkoutEmail}))))
+          AND NOT ${canonicalPurchase(buyerCanonicals, params.orderId)}
           AND (SELECT COUNT(*) FROM _ecommerce_referrals recent
             JOIN _ecommerce_customer_accounts recent_referrer ON recent_referrer.id = recent.referrer_account_id
-            WHERE recent.status = 'approved' AND recent.created_at > ?
+            WHERE recent.status = 'approved' AND recent.created_at > ${timestamp - policy.periodDays * 24 * 60 * 60}
               AND (recent.referrer_account_id = rc.account_id
-                OR ${canonicalEmailSql('recent_referrer.email_normalized')} = ?)) < ?
-        ON CONFLICT DO NOTHING`)
-        .bind(`ref_${order.id}`, order.referralRewardCents, timestamp, timestamp, params.orderId,
-          normalizedEmail, checkoutEmail, normalizedEmail, checkoutEmail, normalizedEmail, checkoutEmail,
-          ...canonicalPurchaseParams(buyerCanonicals, params.orderId),
-          timestamp - policy.periodDays * 24 * 60 * 60, referrerCanonical, policy.maxPerPeriod));
+                OR ${sql.raw(canonicalEmailSql('recent_referrer.email_normalized'))} = ${referrerCanonical})) < ${policy.maxPerPeriod}
+        ON CONFLICT DO NOTHING`));
     }
   }
   statements.push(
-    env.DB.prepare(`UPDATE _ecommerce_discount_redemptions SET status = 'confirmed', updated_at = ?
-      WHERE order_id = ? AND status = 'reserved'
-        AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'paid')`)
-      .bind(timestamp, params.orderId, params.orderId),
-    env.DB.prepare(`UPDATE _ecommerce_gift_card_redemptions SET status = 'confirmed', updated_at = ?
-      WHERE order_id = ? AND status = 'reserved'
-        AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'paid')`)
-      .bind(timestamp, params.orderId, params.orderId),
-    env.DB.prepare(`UPDATE _ecommerce_carts SET closed = 1, closed_at = ?, updated_at = ?,
-      user_id = COALESCE(user_id, (SELECT user_id FROM _ecommerce_orders WHERE id = ?))
-      WHERE id = ? AND EXISTS (SELECT 1 FROM _ecommerce_orders
-        WHERE id = ? AND status = 'paid' AND checkout_session_id = ?)`)
-      .bind(timestamp, timestamp, params.orderId, order.cartId, params.orderId, params.providerId),
-    env.DB.prepare(`INSERT INTO _ecommerce_payments
+    db.update(schema.discountRedemptions).set({ status: 'confirmed', updatedAt: at(timestamp) })
+      .where(and(eq(schema.discountRedemptions.orderId, params.orderId), eq(schema.discountRedemptions.status, 'reserved'), paid)),
+    db.update(schema.giftCardRedemptions).set({ status: 'confirmed', updatedAt: at(timestamp) })
+      .where(and(eq(schema.giftCardRedemptions.orderId, params.orderId), eq(schema.giftCardRedemptions.status, 'reserved'), paid)),
+    db.run(sql`INSERT INTO _ecommerce_payments
       (id, order_id, provider, provider_id, status, amount, created_at)
-      SELECT ?, id, ?, ?, 'success', total_amount, ? FROM _ecommerce_orders
-      WHERE id = ? AND status = 'paid' AND checkout_session_id = ?
+      SELECT ${`pay_${crypto.randomUUID()}`}, id, ${params.provider}, ${params.providerId}, 'success', total_amount, ${timestamp} FROM _ecommerce_orders
+      WHERE id = ${params.orderId} AND status = 'paid' AND checkout_session_id = ${params.providerId}
       ON CONFLICT(provider, provider_id) DO NOTHING`)
-      .bind(`pay_${crypto.randomUUID()}`, params.provider, params.providerId, timestamp, params.orderId, params.providerId)
   );
+  if (order.cartId) {
+    // The basket closes with the payment and, for a guest checkout, takes the buyer's new account.
+    const buyer = db.select({ userId: schema.orders.userId }).from(schema.orders).where(eq(schema.orders.id, params.orderId));
+    statements.push(db.update(schema.carts)
+      .set({ closed: true, closedAt: at(timestamp), updatedAt: at(timestamp), userId: sql`COALESCE(${schema.carts.userId}, (${buyer}))` })
+      .where(and(eq(schema.carts.id, order.cartId), paidBySession)));
+  }
   // One confirmation per paid real order, whichever path confirms the payment and however often.
   const confirms = params.provider !== 'admin_test';
   if (confirms) {
-    statements.push(commerceEmailStatement(env, 'order_confirmation', params.orderId, timestamp, {
-      sql: `EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'paid' AND checkout_session_id = ?
-        AND COALESCE(payment_provider, 'stripe') <> 'admin_test')`,
-      params: [params.orderId, params.providerId] }));
+    statements.push(db.run(commerceEmailStatement('order_confirmation', params.orderId, timestamp,
+      sql`EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ${params.orderId} AND status = 'paid' AND checkout_session_id = ${params.providerId}
+        AND COALESCE(payment_provider, 'stripe') <> 'admin_test')`)));
   }
-  await env.DB.batch(statements);
+  await commitBatch(db, statements);
   const current = await db.select().from(schema.orders).where(eq(schema.orders.id, params.orderId)).get();
   if (current?.status !== 'paid') throw new Error('Order is no longer pending');
   // The tax is recorded only once the payment is in. A failure never undoes the confirmation: it
@@ -293,41 +296,36 @@ export async function recordProviderRefund(ctx: CommerceContext, params: {
   const now = Math.floor(Date.now() / 1000);
   const full = params.amountRefunded === order.totalAmount;
   const referralPolicy = order.referralCode ? await getReferralPolicy(env) : null;
-  const refundable = `id = ? AND payment_intent_id = ? AND provider_refunded_cents < ?
+  const refundable = sql`id = ${order.id} AND payment_intent_id = ${params.paymentIntentId} AND provider_refunded_cents < ${params.amountRefunded}
     AND status IN ('paid', 'fulfilled', 'partially_refunded', 'disputed')`;
-  const statements: D1PreparedStatement[] = [
+  const statements: BatchItem<'sqlite'>[] = [
     // First the part of the total that this event adds, read from the stored total under the guard
     // of the update below: a retried or out-of-order event adds no row, and the rows add up to the total.
-    env.DB.prepare(`INSERT INTO _ecommerce_provider_refunds
+    db.run(sql`INSERT INTO _ecommerce_provider_refunds
       (id, order_id, provider, provider_refund_id, amount_cents, created_at)
-      SELECT ?, id, 'stripe', ?, ? - provider_refunded_cents, ?
+      SELECT ${`prf_${order.id}_${params.amountRefunded}`}, id, 'stripe', ${params.providerRefundId ?? null}, ${params.amountRefunded} - provider_refunded_cents, ${params.refundedAt ?? now}
       FROM _ecommerce_orders WHERE ${refundable}
-      ON CONFLICT(id) DO NOTHING`)
-      .bind(`prf_${order.id}_${params.amountRefunded}`, params.providerRefundId ?? null, params.amountRefunded,
-        params.refundedAt ?? now, order.id, params.paymentIntentId, params.amountRefunded),
+      ON CONFLICT(id) DO NOTHING`),
     // A dispute keeps the order disputed; closing it applies the refund status.
-    env.DB.prepare(`UPDATE _ecommerce_orders
-      SET provider_refunded_cents = ?, status = CASE WHEN status = 'disputed' THEN status ELSE ? END, updated_at = ?
-      WHERE ${refundable}`)
-      .bind(params.amountRefunded, full ? 'refunded' : 'partially_refunded', now,
-        order.id, params.paymentIntentId, params.amountRefunded),
+    db.update(schema.orders).set({ providerRefundedCents: params.amountRefunded, updatedAt: at(now),
+      status: sql`CASE WHEN ${schema.orders.status} = 'disputed' THEN ${schema.orders.status} ELSE ${full ? 'refunded' : 'partially_refunded'} END` })
+      .where(refundable),
     // The payment shows the refund, taken from the amounts while the order is disputed.
-    env.DB.prepare(`UPDATE _ecommerce_payments
+    db.run(sql`UPDATE _ecommerce_payments
       SET status = COALESCE((SELECT CASE WHEN o.status IN ('partially_refunded', 'refunded') THEN o.status
           WHEN o.provider_refunded_cents >= o.total_amount THEN 'refunded'
           WHEN o.provider_refunded_cents > 0 THEN 'partially_refunded' END
-        FROM _ecommerce_orders o WHERE o.id = ?), status)
-      WHERE order_id = ? AND provider = 'stripe'`)
-      .bind(order.id, order.id),
+        FROM _ecommerce_orders o WHERE o.id = ${order.id}), status)
+      WHERE order_id = ${order.id} AND provider = 'stripe'`),
   ];
-  if (full) statements.push(...fullRefundStatements(env, order.id, now));
+  if (full) statements.push(...fullRefundStatements(order.id, now).map((statement) => db.run(statement)));
   // A full refund, or a partial one that leaves less than the minimum paid, voids the referral and
   // reverses released awards.
   if (referralPolicy) {
-    statements.push(...referralReversalStatements(env, order.id,
-      { minOrderCents: referralPolicy.minOrderCents, now }));
+    statements.push(...referralReversalStatements(order.id, { minOrderCents: referralPolicy.minOrderCents, now })
+      .map((statement) => db.run(statement)));
   }
-  await env.DB.batch(statements);
+  await commitBatch(db, statements);
   return { success: true, orderId: order.id,
     status: order.status === 'disputed' ? 'disputed' : full ? 'refunded' : 'partially_refunded' };
 }
@@ -408,73 +406,58 @@ export async function cancelOrder(ctx: CommerceContext, id: string, options: {
       }
     }
   }
-  const statements: D1PreparedStatement[] = [
-    env.DB.prepare(`UPDATE _ecommerce_orders SET status = 'cancelled', updated_at = ?
-      WHERE id = ? AND status NOT IN (${PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(', ')})`)
-      .bind(timestamp, id)
+  const released = orderIn(db, id, 'cancelled');
+  const statements: BatchItem<'sqlite'>[] = [
+    db.update(schema.orders).set({ status: 'cancelled', updatedAt: at(timestamp) })
+      .where(and(eq(schema.orders.id, id), notInArray(schema.orders.status, [...PURCHASED_ORDER_STATUSES]))),
+    db.update(schema.discountRedemptions).set({ status: 'cancelled', updatedAt: at(timestamp) })
+      .where(and(eq(schema.discountRedemptions.orderId, id), eq(schema.discountRedemptions.status, 'reserved'), released)),
+    db.update(schema.giftCardRedemptions).set({ status: 'cancelled', updatedAt: at(timestamp) })
+      .where(and(eq(schema.giftCardRedemptions.orderId, id), eq(schema.giftCardRedemptions.status, 'reserved'), released)),
   ];
-  statements.push(env.DB.prepare(`UPDATE _ecommerce_discount_redemptions
-    SET status = 'cancelled', updated_at = ?
-    WHERE order_id = ? AND status = 'reserved'
-      AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'cancelled')`)
-    .bind(timestamp, id, id));
-  statements.push(env.DB.prepare(`UPDATE _ecommerce_gift_card_redemptions
-    SET status = 'cancelled', updated_at = ?
-    WHERE order_id = ? AND status = 'reserved'
-      AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'cancelled')`)
-    .bind(timestamp, id, id));
   if (order.creditApplied > 0) {
-    statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
+    statements.push(db.run(sql`INSERT INTO _ecommerce_credit_ledger
       (id, account_id, order_id, kind, amount_cents, created_at)
-      SELECT ?, user_id, id, 'checkout_release', credit_applied, ?
-      FROM _ecommerce_orders WHERE id = ? AND status = 'cancelled' AND user_id IS NOT NULL
-      ON CONFLICT(order_id, kind) DO NOTHING`)
-      .bind(`credit_release_${id}`, timestamp, id));
+      SELECT ${`credit_release_${id}`}, user_id, id, 'checkout_release', credit_applied, ${timestamp}
+      FROM _ecommerce_orders WHERE id = ${id} AND status = 'cancelled' AND user_id IS NOT NULL
+      ON CONFLICT(order_id, kind) DO NOTHING`));
   }
   // Like reservations, releases move the stock rows' updated_at, so a stale admin save is refused.
   for (const reservation of reservations) {
-    statements.push(env.DB.prepare(`UPDATE _ecommerce_components
+    statements.push(db.run(sql`UPDATE _ecommerce_components
       SET quantity = quantity + (SELECT quantity FROM _ecommerce_component_reservations
-        WHERE id = ? AND released_at IS NULL), updated_at = MAX(updated_at + 1, ?)
-      WHERE id = ? AND EXISTS (SELECT 1 FROM _ecommerce_component_reservations
-        WHERE id = ? AND released_at IS NULL)
-        AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'cancelled')`)
-      .bind(reservation.id, timestamp, reservation.componentId, reservation.id, id));
-    statements.push(env.DB.prepare(`UPDATE _ecommerce_component_reservations SET released_at = ?
-      WHERE id = ? AND released_at IS NULL
-        AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'cancelled')`)
-      .bind(timestamp, reservation.id, id));
+        WHERE id = ${reservation.id} AND released_at IS NULL), updated_at = MAX(updated_at + 1, ${timestamp})
+      WHERE id = ${reservation.componentId} AND EXISTS (SELECT 1 FROM _ecommerce_component_reservations
+        WHERE id = ${reservation.id} AND released_at IS NULL)
+        AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ${id} AND status = 'cancelled')`));
+    statements.push(db.update(schema.componentReservations).set({ releasedAt: at(timestamp) })
+      .where(and(eq(schema.componentReservations.id, reservation.id), isNull(schema.componentReservations.releasedAt), released)));
   }
   for (const reservation of inventoryReservations) {
     const [table, column] = INVENTORY_COLUMNS[reservation.targetType];
-    statements.push(env.DB.prepare(`UPDATE ${table}
-      SET ${column} = ${column} + (SELECT quantity FROM _ecommerce_inventory_reservations
-        WHERE id = ? AND released_at IS NULL), updated_at = MAX(updated_at + 1, ?)
-      WHERE id = ? AND EXISTS (SELECT 1 FROM _ecommerce_inventory_reservations
-        WHERE id = ? AND released_at IS NULL)
-        AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'cancelled')`)
-      .bind(reservation.id, timestamp, reservation.targetId, reservation.id, id));
-    statements.push(env.DB.prepare(`UPDATE _ecommerce_inventory_reservations SET released_at = ?
-      WHERE id = ? AND released_at IS NULL
-        AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'cancelled')`)
-      .bind(timestamp, reservation.id, id));
+    statements.push(db.run(sql`UPDATE ${sql.raw(table)}
+      SET ${sql.raw(column)} = ${sql.raw(column)} + (SELECT quantity FROM _ecommerce_inventory_reservations
+        WHERE id = ${reservation.id} AND released_at IS NULL), updated_at = MAX(updated_at + 1, ${timestamp})
+      WHERE id = ${reservation.targetId} AND EXISTS (SELECT 1 FROM _ecommerce_inventory_reservations
+        WHERE id = ${reservation.id} AND released_at IS NULL)
+        AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ${id} AND status = 'cancelled')`));
+    statements.push(db.update(schema.inventoryReservations).set({ releasedAt: at(timestamp) })
+      .where(and(eq(schema.inventoryReservations.id, reservation.id), isNull(schema.inventoryReservations.releasedAt), released)));
   }
   if (order.cartId) {
-    statements.push(env.DB.prepare(`UPDATE _ecommerce_carts
-      SET checkout_session_id = NULL, updated_at = ?
-      WHERE id = ? AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'cancelled')`)
-      .bind(timestamp, order.cartId, id));
-    statements.push(env.DB.prepare(`UPDATE _ecommerce_orders SET cart_id = NULL
-      WHERE id = ? AND status = 'cancelled'`).bind(id));
+    statements.push(db.update(schema.carts).set({ checkoutSessionId: null, updatedAt: at(timestamp) })
+      .where(and(eq(schema.carts.id, order.cartId), released)));
+    statements.push(db.update(schema.orders).set({ cartId: null })
+      .where(and(eq(schema.orders.id, id), eq(schema.orders.status, 'cancelled'))));
   }
   if (options.reviewRelease) {
     // The administrator's decision is kept with the release: this batch records it whenever it leaves
     // the order cancelled, and a failed record rolls the whole release back.
     const { decision } = options.reviewRelease;
-    statements.push(env.DB.prepare(decisionInsert('order', 'release', `status = 'cancelled'`))
-      .bind(decision.id, paymentReturned, decision.actor, decision.reason, timestamp, id));
+    statements.push(db.run(decisionInsert('order', 'release', sql`status = 'cancelled'`,
+      { id: decision.id, paymentReturned, actor: decision.actor, reason: decision.reason, at: timestamp, recordId: id })));
   }
-  await env.DB.batch(statements);
+  await commitBatch(db, statements);
 
   const cancelled = await findOrder(ctx, id);
   // A cancelled checkout's single-use discount is deleted, whichever path cancelled it. A session of

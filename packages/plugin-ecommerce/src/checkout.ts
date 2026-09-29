@@ -1,5 +1,7 @@
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, lt, notExists, sql } from 'drizzle-orm';
+import type { BatchItem } from 'drizzle-orm/batch';
 import type { CommerceContext } from './commerce-context';
+import { commitBatch, errorText } from './db';
 import * as schema from './schema';
 import { hasPurchaseHistory } from './accounts';
 import { aggregateComponentDemand, loadBasketCatalog, requireVariantChoice, resolveSelectedVariant,
@@ -22,9 +24,9 @@ import { calculateOrderTax, taxAddressFor, taxableLines } from './tax';
 // and opening the provider session in one atomic step, and following a pending checkout until its
 // payment is confirmed or it is released.
 
-/** The rows of a JSON list of reservations bound as the statement's last parameter. */
-const RESERVATION_ROWS = `SELECT json_extract(value, '$.target') AS target, json_extract(value, '$.amount') AS amount
-  FROM json_each(?)`;
+/** The rows of a JSON list of reservations. */
+const reservationRows = (list: string) => sql`SELECT json_extract(value, '$.target') AS target, json_extract(value, '$.amount') AS amount
+  FROM json_each(${list})`;
 
 export async function createOrderFromCart(ctx: CommerceContext, cartId: string, options: {
   customerEmail: string; 
@@ -253,41 +255,34 @@ export async function createOrderFromCart(ctx: CommerceContext, cartId: string, 
   });
   if (!session.providerSessionId || !session.url) throw new Error('Payment provider did not return a checkout session');
   const checkoutSessionId = session.providerSessionId;
-  const statements: D1PreparedStatement[] = [
-    env.DB.prepare(`INSERT INTO _ecommerce_orders
-      (id, cart_id, user_id, checkout_session_id, payment_provider, status, items, total_amount, subtotal_amount, credit_applied, discount_code, discount_amount, gift_card_id, gift_card_applied, referral_code, referral_reward_cents, currency,
-       shipping_amount, shipping_rate_id, shipping_label, tax_amount, tax_behavior, tax_calculation_id,
-       customer_email, shipping_address, billing_address, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) `)
-      .bind(orderId, cartId, cart.userId, checkoutSessionId, internallyPaid ? 'gift_card' : defaultAdapter.providerId,
-        JSON.stringify(orderItems.map(({ name, ...rest }) => rest)), totalAmount,
-        subtotalAmount, creditApplied, discount?.code ?? null, discountAmount,
-        giftCard?.id ?? null, giftCardApplied,
-        referralCode, referralCode ? referralsPolicy.rewardCents : 0, currency,
-        shippingAmount, shippingRate?.id ?? null, shippingRate?.label ?? null,
-        tax?.amount ?? 0, tax?.behavior ?? null, tax?.calculationId ?? null,
-        options.customerEmail, shippingAddress ? JSON.stringify(shippingAddress) : null,
-        billingAddress ? JSON.stringify(billingAddress) : null,
-        timestamp, timestamp)
+  const statements: BatchItem<'sqlite'>[] = [
+    db.insert(schema.orders).values({
+      id: orderId, cartId, userId: cart.userId, checkoutSessionId, paymentProvider: internallyPaid ? 'gift_card' : defaultAdapter.providerId,
+      status: 'pending', items: orderItems.map(({ name, ...rest }) => rest), totalAmount,
+      subtotalAmount, creditApplied, discountCode: discount?.code ?? null, discountAmount,
+      giftCardId: giftCard?.id ?? null, giftCardApplied,
+      referralCode, referralRewardCents: referralCode ? referralsPolicy.rewardCents : 0, currency,
+      shippingAmount, shippingRateId: shippingRate?.id ?? null, shippingLabel: shippingRate?.label ?? null,
+      taxAmount: tax?.amount ?? 0, taxBehavior: tax?.behavior ?? null, taxCalculationId: tax?.calculationId ?? null,
+      customerEmail: options.customerEmail, shippingAddress: shippingAddress ?? null, billingAddress: billingAddress ?? null,
+      createdAt: now, updatedAt: now,
+    }),
   ];
   if (discount) {
-    statements.push(env.DB.prepare(`INSERT INTO _ecommerce_discount_redemptions
-      (id, code, order_id, account_id, email_normalized, amount_cents, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'reserved', ?, ?)`)
-      .bind(`dred_${orderId}`, discount.code, orderId, cart.userId,
-        discount.emailNormalized, discount.amount, timestamp, timestamp));
+    statements.push(db.insert(schema.discountRedemptions).values({
+      id: `dred_${orderId}`, code: discount.code, orderId, accountId: cart.userId, emailNormalized: discount.emailNormalized,
+      amountCents: discount.amount, status: 'reserved', createdAt: now, updatedAt: now,
+    }));
   }
   if (giftCard) {
-    statements.push(env.DB.prepare(`INSERT INTO _ecommerce_gift_card_redemptions
-      (id,card_id,order_id,amount_cents,status,created_at,updated_at)
-      VALUES (?,?,?,?,'reserved',?,?)`)
-      .bind(`gcr_${orderId}`, giftCard.id, orderId, giftCardApplied, timestamp, timestamp));
+    statements.push(db.insert(schema.giftCardRedemptions).values({
+      id: `gcr_${orderId}`, cardId: giftCard.id, orderId, amountCents: giftCardApplied, status: 'reserved', createdAt: now, updatedAt: now,
+    }));
   }
   if (creditApplied && cart.userId) {
-    statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
-      (id, account_id, order_id, kind, amount_cents, created_at)
-      VALUES (?, ?, ?, 'checkout_reserve', ?, ?)`)
-      .bind(`credit_hold_${orderId}`, cart.userId, orderId, -creditApplied, timestamp));
+    statements.push(db.insert(schema.creditLedger).values({
+      id: `credit_hold_${orderId}`, accountId: cart.userId, orderId, kind: 'checkout_reserve', amountCents: -creditApplied, createdAt: now,
+    }));
   }
   // One statement per table whatever the size of the basket: each reads its rows from a JSON list.
   // Stock writes move updated_at by at least a second, so an admin save of stock loaded before
@@ -297,49 +292,46 @@ export async function createOrderFromCart(ctx: CommerceContext, cartId: string, 
     ({ id: crypto.randomUUID(), target, amount: demand.quantity })) : [];
   if (componentReservations.length) {
     const list = JSON.stringify(componentReservations);
-    statements.push(env.DB.prepare(`UPDATE _ecommerce_components
-      SET quantity = quantity - demand.amount, updated_at = MAX(updated_at + 1, ?)
-      FROM (${RESERVATION_ROWS}) AS demand WHERE _ecommerce_components.id = demand.target`)
-      .bind(timestamp, list));
-    statements.push(env.DB.prepare(`INSERT INTO _ecommerce_component_reservations
+    statements.push(db.run(sql`UPDATE _ecommerce_components
+      SET quantity = quantity - demand.amount, updated_at = MAX(updated_at + 1, ${timestamp})
+      FROM (${reservationRows(list)}) AS demand WHERE _ecommerce_components.id = demand.target`));
+    statements.push(db.run(sql`INSERT INTO _ecommerce_component_reservations
       (id, order_id, component_id, quantity)
-      SELECT json_extract(value, '$.id'), ?, json_extract(value, '$.target'), json_extract(value, '$.amount')
-      FROM json_each(?)`)
-      .bind(orderId, list));
+      SELECT json_extract(value, '$.id'), ${orderId}, json_extract(value, '$.target'), json_extract(value, '$.amount')
+      FROM json_each(${list})`));
   }
   const inventoryReservations = reserves ? [...inventoryDemand.values()].map((demand) =>
     ({ id: crypto.randomUUID(), type: demand.type, target: demand.id, amount: demand.quantity })) : [];
   for (const [type, [table, column]] of Object.entries(INVENTORY_COLUMNS)) {
     const list = inventoryReservations.filter((reservation) => reservation.type === type);
     if (!list.length) continue;
-    statements.push(env.DB.prepare(`UPDATE ${table}
-      SET ${column} = ${column} - demand.amount, updated_at = MAX(updated_at + 1, ?)
-      FROM (${RESERVATION_ROWS}) AS demand WHERE ${table}.id = demand.target`)
-      .bind(timestamp, JSON.stringify(list)));
+    statements.push(db.run(sql`UPDATE ${sql.raw(table)}
+      SET ${sql.raw(column)} = ${sql.raw(column)} - demand.amount, updated_at = MAX(updated_at + 1, ${timestamp})
+      FROM (${reservationRows(JSON.stringify(list))}) AS demand WHERE ${sql.raw(table)}.id = demand.target`));
   }
   if (inventoryReservations.length) {
-    statements.push(env.DB.prepare(`INSERT INTO _ecommerce_inventory_reservations
+    statements.push(db.run(sql`INSERT INTO _ecommerce_inventory_reservations
       (id, order_id, target_type, target_id, quantity)
-      SELECT json_extract(value, '$.id'), ?, json_extract(value, '$.type'), json_extract(value, '$.target'),
+      SELECT json_extract(value, '$.id'), ${orderId}, json_extract(value, '$.type'), json_extract(value, '$.target'),
         json_extract(value, '$.amount')
-      FROM json_each(?)`)
-      .bind(orderId, JSON.stringify(inventoryReservations)));
+      FROM json_each(${JSON.stringify(inventoryReservations)})`));
   }
-  statements.push(env.DB.prepare(`UPDATE _ecommerce_carts SET checkout_session_id = ?, updated_at = ?
-    WHERE id = ? AND checkout_session_id = ?`)
-    .bind(checkoutSessionId, timestamp, cartId, preparationLock));
+  statements.push(db.update(schema.carts).set({ checkoutSessionId, updatedAt: now })
+    .where(and(eq(schema.carts.id, cartId), eq(schema.carts.checkoutSessionId, preparationLock))));
   // D1 batches are atomic; nonnegative constraints reject competing reservations.
   try {
-    await env.DB.batch(statements);
+    await commitBatch(db, statements);
     committed = true;
   } catch (cause) {
-    if (cause instanceof Error && cause.message.includes('Discount code is no longer available')) {
+    // The database's refusal, a trigger's or a constraint's message, is under the query error.
+    const refused = errorText(cause);
+    if (refused.includes('Discount code is no longer available')) {
       throw new Error('Discount code is no longer available', { cause });
     }
-    if (cause instanceof Error && cause.message.includes('Insufficient store credit')) {
+    if (refused.includes('Insufficient store credit')) {
       throw new Error('Store credit changed during checkout; please try again', { cause });
     }
-    if (cause instanceof Error && cause.message.includes('Gift card is no longer available')) {
+    if (refused.includes('Gift card is no longer available')) {
       throw new Error('Gift card is no longer available', { cause });
     }
     throw new Error('Insufficient stock or checkout already started', { cause });
@@ -386,12 +378,14 @@ export async function resumeCheckout(ctx: CommerceContext, cartId: string, optio
     // Stripe sessions created by this plugin expire after 31 minutes. A Worker can
     // stop between locking the basket and persisting the provider session; only
     // release that orphaned lock after the possible session has expired.
-    const cutoff = Math.floor(Date.now() / 1000) - 35 * 60;
-    await env.DB.prepare(`UPDATE _ecommerce_carts SET checkout_session_id = NULL,
-      updated_at = ?, version = version + 1 WHERE id = ? AND checkout_session_id = ?
-      AND updated_at < ? AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders
-        WHERE cart_id = _ecommerce_carts.id AND status = 'pending')`)
-      .bind(Math.floor(Date.now() / 1000), cartId, cart.checkoutSessionId, cutoff).run();
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const cutoff = nowSeconds - 35 * 60;
+    const pendingOrder = db.select({ one: sql`1` }).from(schema.orders)
+      .where(and(eq(schema.orders.cartId, schema.carts.id), eq(schema.orders.status, 'pending')));
+    await db.update(schema.carts)
+      .set({ checkoutSessionId: null, updatedAt: new Date(nowSeconds * 1000), version: sql`${schema.carts.version} + 1` })
+      .where(and(eq(schema.carts.id, cartId), eq(schema.carts.checkoutSessionId, cart.checkoutSessionId),
+        lt(schema.carts.updatedAt, new Date(cutoff * 1000)), notExists(pendingOrder)));
     return null;
   }
   const order = await db.select().from(schema.orders)

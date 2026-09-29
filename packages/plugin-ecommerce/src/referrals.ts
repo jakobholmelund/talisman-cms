@@ -1,6 +1,6 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
-import { commerceDb } from './db';
+import { commerceDb, runStatements } from './db';
 import { readSetting } from 'talisman-cms/env';
 import type { PaymentProviderAdapter } from './payments';
 import { creditLedger, customerAccounts, orders, referralCodes, referrals, referralSettings } from './schema';
@@ -118,13 +118,15 @@ export function referralOrderQualifies(order: QualifyingOrder, minOrderCents: nu
 
 /**
  * SQL for `referralOrderQualifies` on the order `alias`, with the reward from the SQL expression
- * `reward`; binds the minimum order once.
+ * `reward` and the minimum order bound once.
  */
-function qualifyingOrderSql(alias: string, reward: string) {
-  return `(${alias}.status IN (${QUALIFYING_STATUSES.map((status) => `'${status}'`).join(', ')})
-    AND ${alias}.subtotal_amount - ${alias}.discount_amount - ${alias}.provider_refunded_cents
-      - ${alias}.gift_card_refunded_cents
-      >= MAX(MIN(?, ${alias}.subtotal_amount - ${alias}.discount_amount), 2 * ${reward}))`;
+function qualifyingOrder(alias: string, reward: string, minOrderCents: number): SQL {
+  const column = (name: string) => sql.raw(`${alias}.${name}`);
+  const statuses = sql.raw(QUALIFYING_STATUSES.map((status) => `'${status}'`).join(', '));
+  return sql`(${column('status')} IN (${statuses})
+    AND ${column('subtotal_amount')} - ${column('discount_amount')} - ${column('provider_refunded_cents')}
+      - ${column('gift_card_refunded_cents')}
+      >= MAX(MIN(${minOrderCents}, ${column('subtotal_amount')} - ${column('discount_amount')}), 2 * ${sql.raw(reward)}))`;
 }
 
 /**
@@ -132,28 +134,25 @@ function qualifyingOrderSql(alias: string, reward: string) {
  * when the order no longer qualifies at `minOrderCents` and the award's reward, or a dispute was lost. Idempotent; they read
  * the order as it is when they run, so add them after the statements that change it.
  */
-export function referralReversalStatements(env: TalismanEnv, orderId: string,
-  options: { minOrderCents: number; now: number; disputeLost?: boolean }) {
+export function referralReversalStatements(orderId: string,
+  options: { minOrderCents: number; now: number; disputeLost?: boolean }): SQL[] {
   const lost = options.disputeLost ? 1 : 0;
-  const statements: D1PreparedStatement[] = [];
+  const statements: SQL[] = [];
   for (const [awardKind, reversalKind] of [
     ['referral_award', 'referral_reversal'], ['welcome_award', 'welcome_reversal']
   ]) {
-    statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
+    statements.push(sql`INSERT INTO _ecommerce_credit_ledger
       (id, account_id, order_id, kind, amount_cents, created_at)
-      SELECT ?, l.account_id, l.order_id, ?, -l.amount_cents, ?
+      SELECT ${`credit_${reversalKind}_${orderId}`}, l.account_id, l.order_id, ${reversalKind}, -l.amount_cents, ${options.now}
       FROM _ecommerce_credit_ledger l
       JOIN _ecommerce_orders o ON o.id = l.order_id
-      WHERE l.order_id = ? AND l.kind = ? AND (? = 1 OR NOT ${qualifyingOrderSql('o', 'l.amount_cents')})
-      ON CONFLICT DO NOTHING`)
-      .bind(`credit_${reversalKind}_${orderId}`, reversalKind, options.now, orderId, awardKind,
-        lost, options.minOrderCents));
+      WHERE l.order_id = ${orderId} AND l.kind = ${awardKind} AND (${lost} = 1 OR NOT ${qualifyingOrder('o', 'l.amount_cents', options.minOrderCents)})
+      ON CONFLICT DO NOTHING`);
   }
-  statements.push(env.DB.prepare(`UPDATE _ecommerce_referrals SET status = 'void', updated_at = ?
-    WHERE order_id = ? AND status = 'approved'
-      AND (? = 1 OR EXISTS (SELECT 1 FROM _ecommerce_orders o
-        WHERE o.id = ? AND NOT ${qualifyingOrderSql('o', '_ecommerce_referrals.reward_cents')}))`)
-    .bind(options.now, orderId, lost, orderId, options.minOrderCents));
+  statements.push(sql`UPDATE _ecommerce_referrals SET status = 'void', updated_at = ${options.now}
+    WHERE order_id = ${orderId} AND status = 'approved'
+      AND (${lost} = 1 OR EXISTS (SELECT 1 FROM _ecommerce_orders o
+        WHERE o.id = ${orderId} AND NOT ${qualifyingOrder('o', '_ecommerce_referrals.reward_cents', options.minOrderCents)}))`);
   return statements;
 }
 
@@ -161,7 +160,7 @@ export function referralReversalStatements(env: TalismanEnv, orderId: string,
 export async function reverseReferralForOrder(env: TalismanEnv, orderId: string,
   options: { now?: Date; disputeLost?: boolean } = {}) {
   const policy = await getReferralPolicy(env);
-  await env.DB.batch(referralReversalStatements(env, orderId, { minOrderCents: policy.minOrderCents,
+  await runStatements(commerceDb(env), referralReversalStatements(orderId, { minOrderCents: policy.minOrderCents,
     now: Math.floor((options.now ?? new Date()).getTime() / 1000), disputeLost: options.disputeLost }));
 }
 
@@ -186,19 +185,18 @@ export async function releaseReferralAwards(options: { env: TalismanEnv; payment
   const limit = Math.max(1, Math.min(50, Math.floor(run.limit ?? 10)));
   const policy = await getReferralPolicy(env);
   // Held awards are touched, so the oldest untouched ones come first and a held one never blocks the rest.
-  const due = await env.DB.prepare(`SELECT r.id, r.order_id AS orderId, r.reward_cents AS rewardCents
+  const due = await db.all<{ id: string; orderId: string; rewardCents: number }>(sql`SELECT r.id, r.order_id AS orderId, r.reward_cents AS rewardCents
     FROM _ecommerce_referrals r
-    WHERE r.status = 'approved' AND r.created_at <= ?
+    WHERE r.status = 'approved' AND r.created_at <= ${now - policy.holdDays * DAY_SECONDS}
       AND NOT EXISTS (SELECT 1 FROM _ecommerce_credit_ledger l
         WHERE l.order_id = r.order_id AND l.kind = 'referral_award')
-    ORDER BY r.updated_at, r.created_at LIMIT ?`)
-    .bind(now - policy.holdDays * DAY_SECONDS, limit).all<{ id: string; orderId: string; rewardCents: number }>();
+    ORDER BY r.updated_at, r.created_at LIMIT ${limit}`);
   const results: ReferralReleaseResult[] = [];
-  for (const row of due.results ?? []) {
+  for (const row of due) {
     try {
       const order = await db.select().from(orders).where(eq(orders.id, row.orderId)).get();
       if (!order || !referralOrderQualifies(order, policy.minOrderCents, row.rewardCents)) {
-        await env.DB.batch(referralReversalStatements(env, row.orderId, { minOrderCents: policy.minOrderCents, now }));
+        await runStatements(db, referralReversalStatements(row.orderId, { minOrderCents: policy.minOrderCents, now }));
         results.push({ id: row.id, status: 'referral_void' });
         continue;
       }
@@ -209,7 +207,7 @@ export async function releaseReferralAwards(options: { env: TalismanEnv; payment
         : adapter?.getDisputeStatus && order.paymentIntentId ? await adapter.getDisputeStatus(order.paymentIntentId)
         : provider === 'stripe' ? 'unknown' : 'none';
       if (dispute === 'lost') {
-        await env.DB.batch(referralReversalStatements(env, row.orderId,
+        await runStatements(db, referralReversalStatements(row.orderId,
           { minOrderCents: policy.minOrderCents, now, disputeLost: true }));
         results.push({ id: row.id, status: 'referral_void' });
         continue;
@@ -222,17 +220,16 @@ export async function releaseReferralAwards(options: { env: TalismanEnv; payment
       }
       // Each insert is guarded, so a referral voided or an order refunded in the meantime gets nothing
       // and a rerun adds nothing.
-      await env.DB.batch([
+      await runStatements(db, [
         ['referral_award', 'referrer_account_id', `credit_ref_${row.orderId}`],
         ['welcome_award', 'referred_account_id', `credit_welcome_${row.orderId}`],
-      ].map(([kind, account, id]) => env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
+      ].map(([kind, account, id]) => sql`INSERT INTO _ecommerce_credit_ledger
         (id, account_id, order_id, kind, amount_cents, created_at)
-        SELECT ?, r.${account}, r.order_id, ?, r.reward_cents, ?
+        SELECT ${id}, r.${sql.raw(account)}, r.order_id, ${kind}, r.reward_cents, ${now}
         FROM _ecommerce_referrals r JOIN _ecommerce_orders o ON o.id = r.order_id
-        WHERE r.id = ? AND r.status = 'approved' AND r.reward_cents > 0 AND ${qualifyingOrderSql('o', 'r.reward_cents')}
+        WHERE r.id = ${row.id} AND r.status = 'approved' AND r.reward_cents > 0 AND ${qualifyingOrder('o', 'r.reward_cents', policy.minOrderCents)}
           AND o.status <> 'disputed'
-        ON CONFLICT DO NOTHING`)
-        .bind(id, kind, now, row.id, policy.minOrderCents)));
+        ON CONFLICT DO NOTHING`));
       const released = await db.select({ id: creditLedger.id }).from(creditLedger)
         .where(and(eq(creditLedger.orderId, row.orderId), eq(creditLedger.kind, 'referral_award'))).get();
       const current = await db.select({ status: referrals.status }).from(referrals).where(eq(referrals.id, row.id)).get();

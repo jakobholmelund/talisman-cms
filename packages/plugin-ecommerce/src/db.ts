@@ -1,3 +1,4 @@
+import type { SQL } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
 import { relations } from './schema';
@@ -49,3 +50,17 @@ export async function batchGroups<Groups extends Record<string, BatchItem<'sqlit
   return Object.fromEntries(Object.entries(groups).map(([name, list]) =>
     [name, results.slice(offset, offset += list.length).flat()])) as { [Name in keyof Groups]: Rows<Groups[Name][number]> };
 }
+
+/**
+ * Runs builder queries and `db.run(sql)` items as one D1 batch, atomic as a whole. Every write batch
+ * of the plugin goes through here: a statement the builder expresses is a builder query, and one it
+ * does not (`INSERT ... SELECT`, a correlated subquery, a dynamic table) is a `sql` template run with
+ * `db.run`, so both sit in one batch. An empty list runs nothing.
+ */
+export async function commitBatch(db: CommerceDb, items: BatchItem<'sqlite'>[]) {
+  if (!items.length) return [];
+  return db.batch(items as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+}
+
+/** Runs `sql` statements as one D1 batch. */
+export const runStatements = (db: CommerceDb, statements: SQL[]) => commitBatch(db, statements.map((statement) => db.run(statement)));

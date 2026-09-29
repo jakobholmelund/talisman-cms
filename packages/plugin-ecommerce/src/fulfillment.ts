@@ -1,11 +1,11 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { TalismanEnv } from 'talisman-cms/client';
-import { batchGroups, chunked, commerceDb } from './db';
+import { batchGroups, chunked, commerceDb, errorText } from './db';
 import { ORDER_AMOUNT_COLUMNS, describeOrderItems, orderAmounts } from './order-items';
 import { deliverCommerceEmail } from './commerce-emails';
 import { COMMERCE_EMAIL_LEASE_SECONDS, commerceEmailStatement } from './email-deliveries';
-import { orders as ordersTable } from './schema';
+import { fulfillments, orders as ordersTable } from './schema';
 
 /** Orders per page of the admin orders queue unless a request asks for another size. */
 export const ORDERS_PAGE_SIZE = 50;
@@ -228,8 +228,9 @@ export async function listCommerceOrdersAdmin(env: TalismanEnv, options: {
 }
 
 /** The trigger's own message for its refusal; D1 wraps it in driver text. */
+/** The database's refusal (a trigger's message) as the error the caller sees, or the failure as it was. */
 function refusal(cause: unknown, message: string) {
-  return cause instanceof Error && cause.message.includes(message) ? new Error(message, { cause }) : cause;
+  return cause instanceof Error && errorText(cause).includes(message) ? new Error(message, { cause }) : cause;
 }
 
 /**
@@ -255,13 +256,11 @@ export async function fulfillCommerceOrder(env: TalismanEnv, actor: string, inpu
   const now = Math.floor(Date.now() / 1000);
   try {
     // The notice is recorded with the shipment, so a shipment is never recorded without it.
-    await env.DB.batch([
-      env.DB.prepare(`INSERT INTO _ecommerce_fulfillments
-        (id, order_id, kind, completes_order, admin_actor, carrier, tracking_number, note, created_at)
-        VALUES (?, ?, 'shipment', ?, ?, ?, ?, ?, ?)`)
-        .bind(id, values.orderId, values.completesOrder ? 1 : 0, actor, values.carrier, values.trackingNumber,
-          values.note, now),
-      commerceEmailStatement(env, 'shipment', id, now),
+    await db.batch([
+      db.insert(fulfillments).values({ id, orderId: values.orderId, kind: 'shipment', completesOrder: values.completesOrder,
+        adminActor: actor, carrier: values.carrier, trackingNumber: values.trackingNumber, note: values.note,
+        createdAt: new Date(now * 1000) }),
+      db.run(commerceEmailStatement('shipment', id, now)),
     ]);
   } catch (cause) {
     throw refusal(cause, 'Order is not ready for fulfillment');
@@ -301,17 +300,16 @@ export async function correctCommerceFulfillment(env: TalismanEnv, actor: string
   }
   const id = `ful_${crypto.randomUUID()}`;
   const now = Math.floor(Date.now() / 1000);
+  const db = commerceDb(env);
   try {
-    await env.DB.batch([
-      env.DB.prepare(`INSERT INTO _ecommerce_fulfillments
-        (id, order_id, kind, corrects_id, completes_order, admin_actor, carrier, tracking_number, note, created_at)
-        VALUES (?, ?, 'correction', ?, 0, ?, ?, ?, ?, ?)`)
-        .bind(id, shipment.order_id, shipment.id, actor, values.carrier, values.trackingNumber, values.reason, now),
-      commerceEmailStatement(env, 'shipment_update', id, now, {
-        sql: `EXISTS (SELECT 1 FROM _ecommerce_email_deliveries WHERE kind = 'shipment' AND subject_id = ?
-          AND (status = 'sent' OR (status = 'pending' AND claimed_at > ?)))`,
-        // Only a live lease means the notice is being sent; after a stale one the notice carries the correction.
-        params: [shipment.id, now - COMMERCE_EMAIL_LEASE_SECONDS] }),
+    await db.batch([
+      db.insert(fulfillments).values({ id, orderId: shipment.order_id, kind: 'correction', correctsId: shipment.id,
+        completesOrder: false, adminActor: actor, carrier: values.carrier, trackingNumber: values.trackingNumber,
+        note: values.reason, createdAt: new Date(now * 1000) }),
+      // Only a live lease means the notice is being sent; after a stale one the notice carries the correction.
+      db.run(commerceEmailStatement('shipment_update', id, now,
+        sql`EXISTS (SELECT 1 FROM _ecommerce_email_deliveries WHERE kind = 'shipment' AND subject_id = ${shipment.id}
+          AND (status = 'sent' OR (status = 'pending' AND claimed_at > ${now - COMMERCE_EMAIL_LEASE_SECONDS})))`)),
     ]);
   } catch (cause) {
     throw refusal(cause, 'Shipment cannot be corrected');

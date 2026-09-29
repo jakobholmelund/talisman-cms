@@ -1,4 +1,4 @@
-import { and, eq, isNull, lte, or, sql } from 'drizzle-orm';
+import { and, eq, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb } from './db';
 import { isEmailDeliveryError, parseAddress, resolveEmailProvider, sendEmail, type EmailProvider } from 'talisman-cms/email';
@@ -231,15 +231,13 @@ export async function applyEmailTemplate<T>(setup: CommerceEmailSetup, name: key
 
 /**
  * The statement that asks for an email; add it to the batch that makes the email due. `condition` is
- * an SQL expression, with its parameters, that must hold for the row to be written. A row for the same
- * kind and subject is never written twice.
+ * an SQL expression that must hold for the row to be written. A row for the same kind and subject is
+ * never written twice.
  */
-export function commerceEmailStatement(env: TalismanEnv, kind: CommerceEmailKind, subjectId: string, now: number,
-  condition?: { sql: string; params: unknown[] }) {
-  return env.DB.prepare(`INSERT INTO _ecommerce_email_deliveries (id, kind, subject_id, next_attempt_at, created_at)
-    SELECT ?, ?, ?, ?, ? WHERE ${condition?.sql ?? '1'}
-    ON CONFLICT (kind, subject_id) DO NOTHING`)
-    .bind(`mail_${crypto.randomUUID()}`, kind, subjectId, now, now, ...(condition?.params ?? []));
+export function commerceEmailStatement(kind: CommerceEmailKind, subjectId: string, now: number, condition?: SQL): SQL {
+  return sql`INSERT INTO _ecommerce_email_deliveries (id, kind, subject_id, next_attempt_at, created_at)
+    SELECT ${`mail_${crypto.randomUUID()}`}, ${kind}, ${subjectId}, ${now}, ${now} WHERE ${condition ?? sql`1`}
+    ON CONFLICT (kind, subject_id) DO NOTHING`;
 }
 
 /** The condition, for a write that must happen only while the claim stamped `stamp` still holds the email. */

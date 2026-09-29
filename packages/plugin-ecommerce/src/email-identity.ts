@@ -1,4 +1,6 @@
+import { sql, type SQL } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
+import { commerceDb } from './db';
 import { PURCHASED_ORDER_STATUSES } from './accounts';
 
 /** Domains whose mailboxes ignore dots in the local part and share one inbox. */
@@ -46,24 +48,19 @@ export function canonicalEmailSql(address: string) {
 }
 
 /**
- * SQL `EXISTS (...)` that holds when a purchase other than order `?` was made under an address whose
- * canonical form is one of `count` bound values: the order's checkout email or its account's email.
- * Purchases are the statuses in PURCHASED_ORDER_STATUSES, never admin test orders. It binds the
- * excluded order ID twice, then the canonical addresses; `canonicalPurchaseParams` builds that list.
+ * SQL `EXISTS (...)` that holds when a purchase other than order `excludeOrderId` was made under an
+ * address whose canonical form is one of `canonicals`: the order's checkout email or its account's
+ * email. Purchases are the statuses in PURCHASED_ORDER_STATUSES, never admin test orders.
  */
-export function canonicalPurchaseSql(count: number) {
-  const statuses = PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(', ');
-  const purchased = `o.status IN (${statuses}) AND COALESCE(o.payment_provider, 'stripe') <> 'admin_test' AND o.id <> ?`;
-  return `EXISTS (SELECT 1 FROM (
+export function canonicalPurchase(canonicals: string[], excludeOrderId?: string | null): SQL {
+  const statuses = sql.raw(PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(', '));
+  const purchased = sql`o.status IN (${statuses}) AND COALESCE(o.payment_provider, 'stripe') <> 'admin_test' AND o.id <> ${excludeOrderId ?? ''}`;
+  return sql`EXISTS (SELECT 1 FROM (
       SELECT o.customer_email AS address FROM _ecommerce_orders o WHERE ${purchased}
       UNION ALL
       SELECT a.email_normalized FROM _ecommerce_orders o
         JOIN _ecommerce_customer_accounts a ON a.id = o.user_id WHERE ${purchased})
-    WHERE ${canonicalEmailSql('address')} IN (${Array.from({ length: count }, () => '?').join(', ')}))`;
-}
-
-export function canonicalPurchaseParams(canonicals: string[], excludeOrderId?: string | null) {
-  return [excludeOrderId ?? '', excludeOrderId ?? '', ...canonicals];
+    WHERE ${sql.raw(canonicalEmailSql('address'))} IN (${sql.join(canonicals.map((canonical) => sql`${canonical}`), sql`, `)}))`;
 }
 
 /**
@@ -74,7 +71,6 @@ export async function hasCanonicalPurchase(env: TalismanEnv, emails: Array<strin
   excludeOrderId?: string | null) {
   const canonicals = canonicalEmails(emails);
   if (!canonicals.length) return false;
-  const found = await env.DB.prepare(`SELECT ${canonicalPurchaseSql(canonicals.length)} AS found`)
-    .bind(...canonicalPurchaseParams(canonicals, excludeOrderId)).first<{ found: number }>();
+  const found = await commerceDb(env).get<{ found: number }>(sql`SELECT ${canonicalPurchase(canonicals, excludeOrderId)} AS found`);
   return Boolean(found?.found);
 }

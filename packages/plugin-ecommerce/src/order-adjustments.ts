@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { batchGroups, chunked, commerceDb } from './db';
@@ -29,24 +29,21 @@ function parseInput<T extends z.ZodTypeAny>(schema: T, input: unknown): z.output
  * order's status and repeats safely, so add them after the statement that refunds the order. A
  * provider refund of the whole charge and a lost dispute both use them.
  */
-export function fullRefundStatements(env: TalismanEnv, orderId: string, now: number): D1PreparedStatement[] {
-  const refunded = `EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ? AND status = 'refunded')`;
+export function fullRefundStatements(orderId: string, now: number): SQL[] {
+  const refunded = sql`EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ${orderId} AND status = 'refunded')`;
   return [
-    env.DB.prepare(`UPDATE _ecommerce_discount_redemptions
-      SET status = 'refunded', updated_at = ?
-      WHERE order_id = ? AND status = 'confirmed' AND ${refunded}`)
-      .bind(now, orderId, orderId),
-    env.DB.prepare(`UPDATE _ecommerce_gift_card_redemptions
-      SET status = 'refunded', updated_at = ?
-      WHERE order_id = ? AND status = 'confirmed' AND ${refunded}`)
-      .bind(now, orderId, orderId),
-    env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
+    sql`UPDATE _ecommerce_discount_redemptions
+      SET status = 'refunded', updated_at = ${now}
+      WHERE order_id = ${orderId} AND status = 'confirmed' AND ${refunded}`,
+    sql`UPDATE _ecommerce_gift_card_redemptions
+      SET status = 'refunded', updated_at = ${now}
+      WHERE order_id = ${orderId} AND status = 'confirmed' AND ${refunded}`,
+    sql`INSERT INTO _ecommerce_credit_ledger
       (id, account_id, order_id, kind, amount_cents, created_at)
-      SELECT ?, user_id, id, 'purchase_credit_refund', credit_applied, ?
-      FROM _ecommerce_orders WHERE id = ? AND status = 'refunded'
+      SELECT ${`credit_refund_${orderId}`}, user_id, id, 'purchase_credit_refund', credit_applied, ${now}
+      FROM _ecommerce_orders WHERE id = ${orderId} AND status = 'refunded'
         AND credit_applied > 0 AND user_id IS NOT NULL
-      ON CONFLICT(order_id, kind) DO NOTHING`)
-      .bind(`credit_refund_${orderId}`, now, orderId),
+      ON CONFLICT(order_id, kind) DO NOTHING`,
   ];
 }
 

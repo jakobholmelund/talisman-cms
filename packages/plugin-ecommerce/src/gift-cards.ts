@@ -1,7 +1,7 @@
-import { and, eq, gt, isNull, sql } from 'drizzle-orm';
+import { and, eq, gt, isNull, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import type { TalismanEnv } from 'talisman-cms/client';
-import { commerceDb } from './db';
+import { commerceDb, runStatements } from './db';
 import { readSetting } from 'talisman-cms/env';
 import { giftCardClaims, giftCardPurchases, giftCards, orders } from './schema';
 import type { PaymentProviderAdapter } from './payments';
@@ -492,26 +492,22 @@ export async function confirmGiftCardPurchase(env: TalismanEnv, session: {
   const cardId = `gift_${crypto.randomUUID()}`;
   const secret = await newCardSecret(env, cardId);
   const timestamp = Math.floor(Date.now() / 1000);
-  await env.DB.batch([
-    env.DB.prepare(`UPDATE _ecommerce_gift_card_purchases
-      SET status = 'paid',payment_intent_id = ?,updated_at = ?
-      WHERE id = ? AND status = 'pending' AND provider_session_id = ?`)
-      .bind(session.payment_intent, timestamp, id, session.id),
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_cards
+  await runStatements(db, [
+    sql`UPDATE _ecommerce_gift_card_purchases
+      SET status = 'paid',payment_intent_id = ${session.payment_intent},updated_at = ${timestamp}
+      WHERE id = ${id} AND status = 'pending' AND provider_session_id = ${session.id}`,
+    sql`INSERT INTO _ecommerce_gift_cards
       (id,code_hash,code_suffix,encrypted_code,source,purchase_id,initial_cents,balance_cents,currency,status,created_at,updated_at)
-      SELECT ?,?,?,?,'purchase',id,amount_cents,0,currency,'active',?,?
-      FROM _ecommerce_gift_card_purchases WHERE id = ? AND status = 'paid'
-      ON CONFLICT(purchase_id) DO NOTHING`)
-      .bind(cardId, secret.codeHash, secret.codeSuffix, secret.encryptedCode, timestamp, timestamp, id),
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_card_ledger
+      SELECT ${cardId},${secret.codeHash},${secret.codeSuffix},${secret.encryptedCode},'purchase',id,amount_cents,0,currency,'active',${timestamp},${timestamp}
+      FROM _ecommerce_gift_card_purchases WHERE id = ${id} AND status = 'paid'
+      ON CONFLICT(purchase_id) DO NOTHING`,
+    sql`INSERT INTO _ecommerce_gift_card_ledger
       (id,card_id,purchase_id,kind,amount_cents,created_at)
-      SELECT 'gcl_issue_' || id,id,purchase_id,'issue',initial_cents,?
-      FROM _ecommerce_gift_cards WHERE purchase_id = ? ON CONFLICT(id) DO NOTHING`)
-      .bind(timestamp, id),
+      SELECT 'gcl_issue_' || id,id,purchase_id,'issue',initial_cents,${timestamp}
+      FROM _ecommerce_gift_cards WHERE purchase_id = ${id} ON CONFLICT(id) DO NOTHING`,
     // The buyer gets a claim link once, however often the payment is confirmed.
-    commerceEmailStatement(env, 'gift_card_claim', id, timestamp, {
-      sql: `EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases WHERE id = ? AND status = 'paid' AND provider_session_id = ?)`,
-      params: [id, session.id] }),
+    commerceEmailStatement('gift_card_claim', id, timestamp,
+      sql`EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases WHERE id = ${id} AND status = 'paid' AND provider_session_id = ${session.id})`),
   ]);
   await sendCommerceEmailNow(env, 'gift_card_claim', id, composeGiftCardClaimEmail);
   return { success: true, purchaseId: id };
@@ -745,37 +741,33 @@ export async function getPurchasedGiftCard(env: TalismanEnv, id: string, accessT
  * them is reversed and they are voided. A purchase with no card left to hold leaves review as refunded
  * or partially refunded. Add them to the batch that moves the purchase to 'review'.
  */
-export function giftCardPurchaseHoldStatements(env: TalismanEnv, purchaseId: string, timestamp: number) {
+export function giftCardPurchaseHoldStatements(purchaseId: string, timestamp: number): SQL[] {
   // Reversals of earlier refunds and moves to a replacement are not spending; orders are, including a
   // checkout in progress (its reservation is in the ledger until released).
-  const unspentFullRefund = `EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p
-    WHERE p.id = ? AND p.status = 'review' AND p.provider_refunded_cents >= p.amount_cents
-      AND NOT ${pendingCheckout('p.id')}
+  const unspentFullRefund = sql`EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p
+    WHERE p.id = ${purchaseId} AND p.status = 'review' AND p.provider_refunded_cents >= p.amount_cents
+      AND NOT ${sql.raw(pendingCheckout('p.id'))}
       AND (SELECT COALESCE(SUM(l.amount_cents),0) FROM _ecommerce_gift_card_ledger l
         JOIN _ecommerce_gift_cards f ON f.id = l.card_id
         WHERE (f.purchase_id = p.id OR f.replaces_purchase_id = p.id)
           AND l.kind IN ('reserve','release','refund_restore')) = 0)`;
   return [
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_card_ledger
+    sql`INSERT INTO _ecommerce_gift_card_ledger
       (id,card_id,purchase_id,kind,amount_cents,created_at)
-      SELECT 'gcl_purchase_reversal_' || c.id,c.id,?,'purchase_reversal',-c.balance_cents,?
-      FROM _ecommerce_gift_cards c WHERE (c.purchase_id = ? OR c.replaces_purchase_id = ?)
+      SELECT 'gcl_purchase_reversal_' || c.id,c.id,${purchaseId},'purchase_reversal',-c.balance_cents,${timestamp}
+      FROM _ecommerce_gift_cards c WHERE (c.purchase_id = ${purchaseId} OR c.replaces_purchase_id = ${purchaseId})
         AND c.status <> 'void' AND c.balance_cents > 0 AND ${unspentFullRefund}
-      ON CONFLICT(id) DO NOTHING`)
-      .bind(purchaseId, timestamp, purchaseId, purchaseId, purchaseId),
-    env.DB.prepare(`UPDATE _ecommerce_gift_cards SET status = 'void',held_for_review = 0,updated_at = ?
-      WHERE (purchase_id = ? OR replaces_purchase_id = ?) AND status <> 'void' AND ${unspentFullRefund}`)
-      .bind(timestamp, purchaseId, purchaseId, purchaseId),
-    env.DB.prepare(`UPDATE _ecommerce_gift_card_purchases
+      ON CONFLICT(id) DO NOTHING`,
+    sql`UPDATE _ecommerce_gift_cards SET status = 'void',held_for_review = 0,updated_at = ${timestamp}
+      WHERE (purchase_id = ${purchaseId} OR replaces_purchase_id = ${purchaseId}) AND status <> 'void' AND ${unspentFullRefund}`,
+    sql`UPDATE _ecommerce_gift_card_purchases
       SET status = CASE WHEN provider_refunded_cents >= amount_cents THEN 'refunded' ELSE 'partially_refunded' END,
-        refund_adjusted_cents = provider_refunded_cents,updated_at = ?
-      WHERE id = ? AND status = 'review' AND NOT EXISTS (SELECT 1 FROM _ecommerce_gift_cards c
-        WHERE (c.purchase_id = ? OR c.replaces_purchase_id = ?) AND c.status <> 'void')`)
-      .bind(timestamp, purchaseId, purchaseId, purchaseId),
-    env.DB.prepare(`UPDATE _ecommerce_gift_cards SET status = 'suspended',held_for_review = 1,updated_at = ?
-      WHERE (purchase_id = ? OR replaces_purchase_id = ?) AND status = 'active'
-        AND EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p WHERE p.id = ? AND p.status = 'review')`)
-      .bind(timestamp, purchaseId, purchaseId, purchaseId),
+        refund_adjusted_cents = provider_refunded_cents,updated_at = ${timestamp}
+      WHERE id = ${purchaseId} AND status = 'review' AND NOT EXISTS (SELECT 1 FROM _ecommerce_gift_cards c
+        WHERE (c.purchase_id = ${purchaseId} OR c.replaces_purchase_id = ${purchaseId}) AND c.status <> 'void')`,
+    sql`UPDATE _ecommerce_gift_cards SET status = 'suspended',held_for_review = 1,updated_at = ${timestamp}
+      WHERE (purchase_id = ${purchaseId} OR replaces_purchase_id = ${purchaseId}) AND status = 'active'
+        AND EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p WHERE p.id = ${purchaseId} AND p.status = 'review')`,
   ];
 }
 
@@ -784,12 +776,11 @@ export function giftCardPurchaseHoldStatements(env: TalismanEnv, purchaseId: str
  * active again, and a card an administrator suspended stays so. Add them after the statement that moves
  * the purchase out of review; while it is still held they change nothing.
  */
-export function giftCardPurchaseReleaseStatements(env: TalismanEnv, purchaseId: string, timestamp: number) {
+export function giftCardPurchaseReleaseStatements(purchaseId: string, timestamp: number): SQL[] {
   return [
-    env.DB.prepare(`UPDATE _ecommerce_gift_cards SET status = 'active',held_for_review = 0,updated_at = ?
-      WHERE (purchase_id = ? OR replaces_purchase_id = ?) AND status = 'suspended' AND held_for_review = 1
-        AND EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p WHERE p.id = ? AND ${settledPurchase})`)
-      .bind(timestamp, purchaseId, purchaseId, purchaseId),
+    sql`UPDATE _ecommerce_gift_cards SET status = 'active',held_for_review = 0,updated_at = ${timestamp}
+      WHERE (purchase_id = ${purchaseId} OR replaces_purchase_id = ${purchaseId}) AND status = 'suspended' AND held_for_review = 1
+        AND EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p WHERE p.id = ${purchaseId} AND ${sql.raw(settledPurchase)})`,
   ];
 }
 
@@ -799,25 +790,22 @@ export function giftCardPurchaseReleaseStatements(env: TalismanEnv, purchaseId: 
  * stays spent. While a checkout in progress holds value on the cards, nothing changes, like the review
  * 'void' outcome; add the hold statements first, so nothing more is spent meanwhile.
  */
-export function giftCardPurchaseChargebackStatements(env: TalismanEnv, purchaseId: string, timestamp: number) {
-  const clear = `NOT EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p WHERE p.id = ? AND ${pendingCheckout('p.id')})`;
+export function giftCardPurchaseChargebackStatements(purchaseId: string, timestamp: number): SQL[] {
+  const clear = sql`NOT EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p WHERE p.id = ${purchaseId} AND ${sql.raw(pendingCheckout('p.id'))})`;
   return [
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_card_ledger
+    sql`INSERT INTO _ecommerce_gift_card_ledger
       (id,card_id,purchase_id,kind,amount_cents,created_at)
-      SELECT 'gcl_chargeback_' || c.id,c.id,?,'purchase_reversal',-c.balance_cents,?
-      FROM _ecommerce_gift_cards c WHERE (c.purchase_id = ? OR c.replaces_purchase_id = ?)
+      SELECT 'gcl_chargeback_' || c.id,c.id,${purchaseId},'purchase_reversal',-c.balance_cents,${timestamp}
+      FROM _ecommerce_gift_cards c WHERE (c.purchase_id = ${purchaseId} OR c.replaces_purchase_id = ${purchaseId})
         AND c.status <> 'void' AND c.balance_cents > 0 AND ${clear}
-      ON CONFLICT(id) DO NOTHING`)
-      .bind(purchaseId, timestamp, purchaseId, purchaseId, purchaseId),
-    env.DB.prepare(`UPDATE _ecommerce_gift_cards SET status = 'void',held_for_review = 0,updated_at = ?
-      WHERE (purchase_id = ? OR replaces_purchase_id = ?) AND status <> 'void' AND ${clear}`)
-      .bind(timestamp, purchaseId, purchaseId, purchaseId),
-    env.DB.prepare(`UPDATE _ecommerce_gift_card_purchases
-      SET status = 'refunded',refund_adjusted_cents = provider_refunded_cents,updated_at = ?
-      WHERE id = ? AND status IN ('paid','partially_refunded','refunded','review')
+      ON CONFLICT(id) DO NOTHING`,
+    sql`UPDATE _ecommerce_gift_cards SET status = 'void',held_for_review = 0,updated_at = ${timestamp}
+      WHERE (purchase_id = ${purchaseId} OR replaces_purchase_id = ${purchaseId}) AND status <> 'void' AND ${clear}`,
+    sql`UPDATE _ecommerce_gift_card_purchases
+      SET status = 'refunded',refund_adjusted_cents = provider_refunded_cents,updated_at = ${timestamp}
+      WHERE id = ${purchaseId} AND status IN ('paid','partially_refunded','refunded','review')
         AND NOT EXISTS (SELECT 1 FROM _ecommerce_gift_cards c
-          WHERE (c.purchase_id = ? OR c.replaces_purchase_id = ?) AND c.status <> 'void')`)
-      .bind(timestamp, purchaseId, purchaseId, purchaseId),
+          WHERE (c.purchase_id = ${purchaseId} OR c.replaces_purchase_id = ${purchaseId}) AND c.status <> 'void')`,
   ];
 }
 
@@ -838,11 +826,10 @@ export async function recordGiftCardPurchaseRefund(env: TalismanEnv, params: {
   const timestamp = Math.floor(Date.now() / 1000);
   // Each new refund total holds the purchase for review, including one already resolved. The hold
   // statements work from the stored state, so a stale or repeated event only reapplies it.
-  await env.DB.batch([
-    env.DB.prepare(`UPDATE _ecommerce_gift_card_purchases SET status = 'review',provider_refunded_cents = ?,updated_at = ?
-      WHERE id = ? AND provider_refunded_cents < ?`)
-      .bind(params.amountRefunded, timestamp, purchase.id, params.amountRefunded),
-    ...giftCardPurchaseHoldStatements(env, purchase.id, timestamp),
+  await runStatements(db, [
+    sql`UPDATE _ecommerce_gift_card_purchases SET status = 'review',provider_refunded_cents = ${params.amountRefunded},updated_at = ${timestamp}
+      WHERE id = ${purchase.id} AND provider_refunded_cents < ${params.amountRefunded}`,
+    ...giftCardPurchaseHoldStatements(purchase.id, timestamp),
   ]);
   const current = await db.select({ status: giftCardPurchases.status }).from(giftCardPurchases)
     .where(eq(giftCardPurchases.id, purchase.id)).get();
@@ -969,16 +956,15 @@ export async function refundGiftCardTender(env: TalismanEnv, actor: string, inpu
   if (!values.amountCents || values.amountCents > remaining) throw new Error('Refund exceeds gift card payment');
   const id = `gfr_${crypto.randomUUID()}`;
   const now = Math.floor(Date.now() / 1000);
-  const statements: D1PreparedStatement[] = [env.DB.prepare(`INSERT INTO _ecommerce_gift_card_refunds
+  const statements: SQL[] = [sql`INSERT INTO _ecommerce_gift_card_refunds
     (id,card_id,order_id,amount_cents,admin_actor,reason,created_at)
-    VALUES (?,?,?,?,?,?,?)`)
-    .bind(id, current.giftCardId, values.orderId, values.amountCents, actor, values.reason, now)];
+    VALUES (${id},${current.giftCardId},${values.orderId},${values.amountCents},${actor},${values.reason},${now})`];
   // A refund that leaves less than the referral minimum paid voids the referral and reverses released awards.
   if (current.referralCode) {
     const policy = await getReferralPolicy(env);
-    statements.push(...referralReversalStatements(env, values.orderId, { minOrderCents: policy.minOrderCents, now }));
+    statements.push(...referralReversalStatements(values.orderId, { minOrderCents: policy.minOrderCents, now }));
   }
-  await env.DB.batch(statements);
+  await runStatements(commerceDb(env), statements);
   return { id, orderId: values.orderId, amountCents: values.amountCents };
 }
 
