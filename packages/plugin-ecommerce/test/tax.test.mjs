@@ -752,6 +752,39 @@ test('taxed checkout needs an address to tax, and a failed calculation stops it 
   sqlite.close();
 });
 
+test('the shipping country decides tax, shipping rate and delivery, whatever the billing address says', async () => {
+  const { sqlite, DB } = database();
+  const { adapter, calls } = taxingProvider();
+  const api = bindCommerceApi({ env: { DB, ...inclusive, TALISMAN_COMMERCE_DELIVERY_COUNTRIES: 'US, DE',
+    TALISMAN_COMMERCE_SHIPPING_RATES: JSON.stringify([
+      { id: 'us', label: 'US shipping', amount: 500, countries: ['US'] },
+      { id: 'de', label: 'EU shipping', amount: 900, countries: ['DE'] }]) }, paymentAdapters: [adapter] });
+  const frame = [{ productId: 'frame', quantity: 1 }];
+  const taxedFor = (index) => [calls.calculations[index].address.country, calls.calculations[index].addressSource,
+    calls.calculations[index].shippingAmount];
+  const stored = (order) => sqlite.prepare('SELECT shipping_rate_id, shipping_address FROM _ecommerce_orders WHERE id = ?').get(order.id);
+
+  // Shipped to Germany and billed in the US: Germany is taxed, at Germany's rate.
+  const german = await placeOrder(api, 'de-browser', frame, {
+    shippingAddress: { ...shippingAddress, city: 'Berlin', state: undefined, postalCode: '10115', country: 'de' },
+    billingAddress: { name: 'Test Shopper', country: 'US' } });
+  assert.deepEqual(taxedFor(0), ['DE', 'shipping', 900]);
+  assert.equal(stored(german).shipping_rate_id, 'de');
+  assert.equal(JSON.parse(stored(german).shipping_address).country, 'DE');
+
+  // The other way round, on another basket: the shipping country still decides.
+  const american = await placeOrder(api, 'us-browser', frame, { billingAddress: { name: 'Test Shopper', country: 'DE' } });
+  assert.deepEqual(taxedFor(1), ['US', 'shipping', 500]);
+  assert.equal(stored(american).shipping_rate_id, 'us');
+
+  // A country outside the delivery list is refused even when the billing country is on it, before any tax calculation.
+  await assert.rejects(placeOrder(api, 'fr-browser', frame, {
+    shippingAddress: { ...shippingAddress, city: 'Paris', state: undefined, postalCode: '75001', country: 'FR' },
+    billingAddress: { name: 'Test Shopper', country: 'DE' } }), { message: 'We do not deliver to this country' });
+  assert.equal(calls.calculations.length, 2);
+  sqlite.close();
+});
+
 test('the Stripe adapter calculates, records and reverses tax with the Stripe Tax parameters', async () => {
   const adapter = new StripePaymentAdapter({ secretKey: 'sk_test_fake' });
   const calls = [];

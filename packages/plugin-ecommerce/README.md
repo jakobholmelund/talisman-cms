@@ -355,6 +355,8 @@ Checkout accepts only the 249 officially assigned ISO 3166-1 alpha-2 codes, in a
 
 `TALISMAN_COMMERCE_DELIVERY_COUNTRIES` applies only when the basket needs shipping: the shipping country must be one of the codes, or checkout answers HTTP 400 "We do not deliver to this country". A basket with nothing to ship is not checked against the list. The billing country is checked as a code but never restricted to the list. Unset, any assigned code is accepted. The checkout route, the `checkout` action, `createFromCart` and the admin test checkout apply the same rules, for every payment provider.
 
+The shipping country is the order's market. The delivery check, the shipping rate that serves the country and the tax address (see [Tax](#tax)) all come from the shipping address the shopper submits, and nothing else a request carries changes them. A country the storefront detects for the visitor, such as `request.cf.country` or `resolveMarket` from `talisman-cms/locale`, may preselect the country field, but checkout uses the country the shopper submits, and it wins when the two differ. A storefront that shows anything by market before checkout, such as a price note, must treat it as provisional until the shipping address is known.
+
 `COUNTRY_CODES` lists the assigned codes, sorted, and `isCountryCode(code)` checks one; it is case-sensitive, so trim and uppercase input first. Both come from the package root, which is not meant for browser bundles: build a country select on the server from `readStoreSettings(env).deliveryCountries`, or from `COUNTRY_CODES` when that is `null`.
 
 ### Shipping rates
