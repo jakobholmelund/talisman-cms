@@ -9,15 +9,20 @@
  */
 declare const DEFAULT_LOCALE_COOKIE = "talisman-locale";
 declare const DEFAULT_MARKET_COOKIE = "talisman-market";
-interface LocaleConfig {
+interface MarketConfig {
+    /** ISO 3166-1 alpha-2 codes the site sells to. Omit to accept any country. */
+    markets?: readonly string[];
+    /** Used when the visitor's market is unknown or not in `markets`. Required when `markets` is set, and must be one of them. */
+    defaultMarket?: string;
+    cookie?: {
+        market?: string;
+    };
+}
+interface LocaleConfig extends MarketConfig {
     /** Supported language tags, such as `['da', 'en']`. Each gets its own URL prefix. */
     locales: readonly string[];
     /** Used when nothing else picks a language, and for crawlers. Must be one of `locales`. */
     defaultLocale: string;
-    /** ISO 3166-1 alpha-2 codes the site sells to. Omit to accept any country. */
-    markets?: readonly string[];
-    /** Used when the visitor's market is unknown or not in `markets`. Must be one of `markets` when both are set. */
-    defaultMarket?: string;
     cookie?: {
         locale?: string;
         market?: string;
@@ -29,13 +34,17 @@ interface ResolveLocaleOptions {
     /** Set for a verified crawler (`request.cf.botManagement.verifiedBot`); the user agent decides otherwise. */
     crawler?: boolean;
 }
-interface ResolvedLocale {
-    locale: string;
+interface ResolvedMarket {
     /** The market's country code, or null when nothing resolved one and the config has no default. */
     market: string | null;
+    source: 'cookie' | 'geo' | 'default';
+}
+interface ResolvedLocale {
+    locale: string;
+    market: ResolvedMarket['market'];
     source: {
         locale: 'path' | 'cookie' | 'header' | 'default';
-        market: 'cookie' | 'geo' | 'default';
+        market: ResolvedMarket['source'];
     };
     /** Set for a GET or HEAD request to a path without a language prefix; answer it with a redirect (302). */
     redirectTo?: string;
@@ -69,15 +78,20 @@ declare function localeCookie(name: string, value: string, opts?: {
     maxAge?: number;
 }): string;
 /**
+ * Resolve the visitor's market: the market cookie, then the country, then the default. With `markets` set, a
+ * country outside it falls back to the default; crawlers always get the default. For a site with one language,
+ * or one that settles its language elsewhere: it never redirects and reads no language.
+ */
+declare function resolveMarket(request: Request, config: MarketConfig, opts?: ResolveLocaleOptions): ResolvedMarket;
+/**
  * Resolve the language and market for a request.
  *
- * Language: the path prefix, then the visitor's cookie, then `Accept-Language`, then the default. Market: the
- * visitor's cookie, then the country, then the default; with `markets` set, a market outside it falls back to
- * the default. Crawlers get the default language and market and are never redirected.
+ * Language: the path prefix, then the visitor's cookie, then `Accept-Language`, then the default. Market: as
+ * `resolveMarket`. Crawlers get the default language and market and are never redirected.
  *
  * `redirectTo` is set for a GET or HEAD request to a path without a language prefix, so every language has its
  * own cacheable URL. Call this only for page routes: leave assets, the admin and the API alone.
  */
 declare function resolveLocale(request: Request, config: LocaleConfig, opts?: ResolveLocaleOptions): ResolvedLocale;
 
-export { DEFAULT_LOCALE_COOKIE, DEFAULT_MARKET_COOKIE, type LocaleConfig, type ResolveLocaleOptions, type ResolvedLocale, hreflangLinks, localeCookie, localizedPath, parseAcceptLanguage, resolveLocale, splitLocalePath };
+export { DEFAULT_LOCALE_COOKIE, DEFAULT_MARKET_COOKIE, type LocaleConfig, type MarketConfig, type ResolveLocaleOptions, type ResolvedLocale, type ResolvedMarket, hreflangLinks, localeCookie, localizedPath, parseAcceptLanguage, resolveLocale, resolveMarket, splitLocalePath };

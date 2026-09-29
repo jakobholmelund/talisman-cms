@@ -11,7 +11,7 @@ var COOKIE_VALUE = /^[A-Za-z0-9_-]+$/;
 var CRAWLER_AGENT = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|whatsapp|telegram/i;
 var MAX_ACCEPT_LANGUAGE = 1e3;
 var MAX_ACCEPT_ENTRIES = 32;
-function normalize(config) {
+function normalizeLocales(config) {
   const locales = [...config.locales];
   if (!locales.length) throw new Error("LocaleConfig.locales needs at least one language.");
   const seen = /* @__PURE__ */ new Set();
@@ -22,6 +22,11 @@ function normalize(config) {
   }
   const defaultLocale = locales.find((tag) => tag.toLowerCase() === config.defaultLocale?.toLowerCase());
   if (!defaultLocale) throw new Error(`LocaleConfig.defaultLocale "${config.defaultLocale}" is not in locales.`);
+  const localeCookie2 = config.cookie?.locale ?? DEFAULT_LOCALE_COOKIE;
+  if (!COOKIE_NAME.test(localeCookie2)) throw new Error(`LocaleConfig.cookie: "${localeCookie2}" is not a cookie name.`);
+  return { locales, defaultLocale, localeCookie: localeCookie2 };
+}
+function normalizeMarkets(config) {
   let markets = null;
   if (config.markets) {
     markets = config.markets.map((code) => code.toUpperCase());
@@ -39,12 +44,9 @@ function normalize(config) {
   } else if (markets) {
     throw new Error("LocaleConfig.defaultMarket is required when markets is set.");
   }
-  const localeCookie2 = config.cookie?.locale ?? DEFAULT_LOCALE_COOKIE;
   const marketCookie = config.cookie?.market ?? DEFAULT_MARKET_COOKIE;
-  for (const name of [localeCookie2, marketCookie]) {
-    if (!COOKIE_NAME.test(name)) throw new Error(`LocaleConfig.cookie: "${name}" is not a cookie name.`);
-  }
-  return { locales, defaultLocale, markets, defaultMarket, localeCookie: localeCookie2, marketCookie };
+  if (!COOKIE_NAME.test(marketCookie)) throw new Error(`LocaleConfig.cookie: "${marketCookie}" is not a cookie name.`);
+  return { markets, defaultMarket, marketCookie };
 }
 function primary(tag) {
   return tag.split("-")[0].toLowerCase();
@@ -88,7 +90,7 @@ function normalizeCountry(value) {
   return code && COUNTRY.test(code) && !UNKNOWN_COUNTRIES.has(code) ? code : void 0;
 }
 function splitLocalePath(path, config) {
-  const { locales } = normalize(config);
+  const { locales } = normalizeLocales(config);
   return splitPath(path, locales);
 }
 function splitPath(path, locales) {
@@ -99,14 +101,14 @@ function splitPath(path, locales) {
   return { locale, path: `/${rest.join("/")}` };
 }
 function localizedPath(path, locale, config) {
-  const { locales } = normalize(config);
+  const { locales } = normalizeLocales(config);
   const tag = locales.find((candidate) => candidate.toLowerCase() === locale.toLowerCase());
   if (!tag) throw new RangeError(`"${locale}" is not one of the configured locales.`);
   const { path: bare } = splitPath(path, locales);
   return bare === "/" ? `/${tag}` : `/${tag}${bare}`;
 }
 function hreflangLinks(path, siteUrl, config) {
-  const { locales, defaultLocale } = normalize(config);
+  const { locales, defaultLocale } = normalizeLocales(config);
   const href = (locale) => new URL(localizedPath(path, locale, config), siteUrl).toString();
   return [
     ...locales.map((locale) => ({ hreflang: locale, href: href(locale) })),
@@ -120,11 +122,28 @@ function localeCookie(name, value, opts = {}) {
   if (opts.secure !== false) attributes.push("Secure");
   return attributes.join("; ");
 }
+function isCrawler(request, opts) {
+  return opts.crawler ?? CRAWLER_AGENT.test(request.headers.get("user-agent") ?? "");
+}
+function pickMarket(request, settings, opts, crawler) {
+  if (!crawler) {
+    const allowed = (code) => code && (!settings.markets || settings.markets.includes(code)) ? code : void 0;
+    const cookie = allowed(normalizeCountry(readCookie(request.headers.get("cookie"), settings.marketCookie)));
+    if (cookie) return { market: cookie, source: "cookie" };
+    const geo = allowed(normalizeCountry(opts.country ?? request.headers.get("cf-ipcountry")));
+    if (geo) return { market: geo, source: "geo" };
+  }
+  return { market: settings.defaultMarket, source: "default" };
+}
+function resolveMarket(request, config, opts = {}) {
+  return pickMarket(request, normalizeMarkets(config), opts, isCrawler(request, opts));
+}
 function resolveLocale(request, config, opts = {}) {
-  const settings = normalize(config);
+  const settings = normalizeLocales(config);
+  const markets = normalizeMarkets(config);
   const url = new URL(request.url);
   const headers = request.headers;
-  const crawler = opts.crawler ?? CRAWLER_AGENT.test(headers.get("user-agent") ?? "");
+  const crawler = isCrawler(request, opts);
   const cookies = headers.get("cookie");
   const fromPath = splitPath(url.pathname, settings.locales).locale;
   let locale = settings.defaultLocale;
@@ -148,20 +167,7 @@ function resolveLocale(request, config, opts = {}) {
       }
     }
   }
-  const allowed = (code) => code && (!settings.markets || settings.markets.includes(code)) ? code : void 0;
-  let market = settings.defaultMarket;
-  let marketSource = "default";
-  if (!crawler) {
-    const cookie = allowed(normalizeCountry(readCookie(cookies, settings.marketCookie)));
-    const geo = allowed(normalizeCountry(opts.country ?? headers.get("cf-ipcountry")));
-    if (cookie) {
-      market = cookie;
-      marketSource = "cookie";
-    } else if (geo) {
-      market = geo;
-      marketSource = "geo";
-    }
-  }
+  const { market, source: marketSource } = pickMarket(request, markets, opts, crawler);
   const resolved = { locale, market, source: { locale: localeSource, market: marketSource } };
   if (!fromPath && !crawler && (request.method === "GET" || request.method === "HEAD")) {
     resolved.redirectTo = `${localizedPath(url.pathname, locale, config)}${url.search}`;
@@ -179,5 +185,6 @@ export {
   localizedPath,
   parseAcceptLanguage,
   resolveLocale,
+  resolveMarket,
   splitLocalePath
 };
