@@ -11,15 +11,19 @@
 export const DEFAULT_LOCALE_COOKIE = 'talisman-locale';
 export const DEFAULT_MARKET_COOKIE = 'talisman-market';
 
-export interface LocaleConfig {
+export interface MarketConfig {
+  /** ISO 3166-1 alpha-2 codes the site sells to. Omit to accept any country. */
+  markets?: readonly string[];
+  /** Used when the visitor's market is unknown or not in `markets`. Required when `markets` is set, and must be one of them. */
+  defaultMarket?: string;
+  cookie?: { market?: string };
+}
+
+export interface LocaleConfig extends MarketConfig {
   /** Supported language tags, such as `['da', 'en']`. Each gets its own URL prefix. */
   locales: readonly string[];
   /** Used when nothing else picks a language, and for crawlers. Must be one of `locales`. */
   defaultLocale: string;
-  /** ISO 3166-1 alpha-2 codes the site sells to. Omit to accept any country. */
-  markets?: readonly string[];
-  /** Used when the visitor's market is unknown or not in `markets`. Must be one of `markets` when both are set. */
-  defaultMarket?: string;
   cookie?: { locale?: string; market?: string };
 }
 
@@ -30,13 +34,18 @@ export interface ResolveLocaleOptions {
   crawler?: boolean;
 }
 
-export interface ResolvedLocale {
-  locale: string;
+export interface ResolvedMarket {
   /** The market's country code, or null when nothing resolved one and the config has no default. */
   market: string | null;
+  source: 'cookie' | 'geo' | 'default';
+}
+
+export interface ResolvedLocale {
+  locale: string;
+  market: ResolvedMarket['market'];
   source: {
     locale: 'path' | 'cookie' | 'header' | 'default';
-    market: 'cookie' | 'geo' | 'default';
+    market: ResolvedMarket['source'];
   };
   /** Set for a GET or HEAD request to a path without a language prefix; answer it with a redirect (302). */
   redirectTo?: string;
@@ -51,16 +60,19 @@ const CRAWLER_AGENT = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedl
 const MAX_ACCEPT_LANGUAGE = 1000;
 const MAX_ACCEPT_ENTRIES = 32;
 
-interface Normalized {
+interface NormalizedLocales {
   locales: string[];
   defaultLocale: string;
+  localeCookie: string;
+}
+
+interface NormalizedMarkets {
   markets: string[] | null;
   defaultMarket: string | null;
-  localeCookie: string;
   marketCookie: string;
 }
 
-function normalize(config: LocaleConfig): Normalized {
+function normalizeLocales(config: LocaleConfig): NormalizedLocales {
   const locales = [...config.locales];
   if (!locales.length) throw new Error('LocaleConfig.locales needs at least one language.');
   const seen = new Set<string>();
@@ -71,7 +83,12 @@ function normalize(config: LocaleConfig): Normalized {
   }
   const defaultLocale = locales.find((tag) => tag.toLowerCase() === config.defaultLocale?.toLowerCase());
   if (!defaultLocale) throw new Error(`LocaleConfig.defaultLocale "${config.defaultLocale}" is not in locales.`);
+  const localeCookie = config.cookie?.locale ?? DEFAULT_LOCALE_COOKIE;
+  if (!COOKIE_NAME.test(localeCookie)) throw new Error(`LocaleConfig.cookie: "${localeCookie}" is not a cookie name.`);
+  return { locales, defaultLocale, localeCookie };
+}
 
+function normalizeMarkets(config: MarketConfig): NormalizedMarkets {
   let markets: string[] | null = null;
   if (config.markets) {
     markets = config.markets.map((code) => code.toUpperCase());
@@ -89,13 +106,9 @@ function normalize(config: LocaleConfig): Normalized {
   } else if (markets) {
     throw new Error('LocaleConfig.defaultMarket is required when markets is set.');
   }
-
-  const localeCookie = config.cookie?.locale ?? DEFAULT_LOCALE_COOKIE;
   const marketCookie = config.cookie?.market ?? DEFAULT_MARKET_COOKIE;
-  for (const name of [localeCookie, marketCookie]) {
-    if (!COOKIE_NAME.test(name)) throw new Error(`LocaleConfig.cookie: "${name}" is not a cookie name.`);
-  }
-  return { locales, defaultLocale, markets, defaultMarket, localeCookie, marketCookie };
+  if (!COOKIE_NAME.test(marketCookie)) throw new Error(`LocaleConfig.cookie: "${marketCookie}" is not a cookie name.`);
+  return { markets, defaultMarket, marketCookie };
 }
 
 function primary(tag: string): string {
@@ -150,7 +163,7 @@ function normalizeCountry(value: string | null | undefined): string | undefined 
 
 /** Split a leading language prefix off a path: `/da/shop` gives `{ locale: 'da', path: '/shop' }`. */
 export function splitLocalePath(path: string, config: LocaleConfig): { locale?: string; path: string } {
-  const { locales } = normalize(config);
+  const { locales } = normalizeLocales(config);
   return splitPath(path, locales);
 }
 
@@ -164,7 +177,7 @@ function splitPath(path: string, locales: readonly string[]): { locale?: string;
 
 /** Prefix a path with a language, replacing a prefix it already has. The root is `/da`, not `/da/`. */
 export function localizedPath(path: string, locale: string, config: LocaleConfig): string {
-  const { locales } = normalize(config);
+  const { locales } = normalizeLocales(config);
   const tag = locales.find((candidate) => candidate.toLowerCase() === locale.toLowerCase());
   if (!tag) throw new RangeError(`"${locale}" is not one of the configured locales.`);
   const { path: bare } = splitPath(path, locales);
@@ -176,7 +189,7 @@ export function localizedPath(path: string, locale: string, config: LocaleConfig
  * language. `path` is the page's path with or without a language prefix, without a query string.
  */
 export function hreflangLinks(path: string, siteUrl: string, config: LocaleConfig): Array<{ hreflang: string; href: string }> {
-  const { locales, defaultLocale } = normalize(config);
+  const { locales, defaultLocale } = normalizeLocales(config);
   const href = (locale: string) => new URL(localizedPath(path, locale, config), siteUrl).toString();
   return [
     ...locales.map((locale) => ({ hreflang: locale, href: href(locale) })),
@@ -196,21 +209,45 @@ export function localeCookie(name: string, value: string, opts: { secure?: boole
   return attributes.join('; ');
 }
 
+function isCrawler(request: Request, opts: ResolveLocaleOptions): boolean {
+  return opts.crawler ?? CRAWLER_AGENT.test(request.headers.get('user-agent') ?? '');
+}
+
+function pickMarket(request: Request, settings: NormalizedMarkets, opts: ResolveLocaleOptions, crawler: boolean): ResolvedMarket {
+  if (!crawler) {
+    const allowed = (code: string | undefined) => (code && (!settings.markets || settings.markets.includes(code)) ? code : undefined);
+    const cookie = allowed(normalizeCountry(readCookie(request.headers.get('cookie'), settings.marketCookie)));
+    if (cookie) return { market: cookie, source: 'cookie' };
+    const geo = allowed(normalizeCountry(opts.country ?? request.headers.get('cf-ipcountry')));
+    if (geo) return { market: geo, source: 'geo' };
+  }
+  return { market: settings.defaultMarket, source: 'default' };
+}
+
+/**
+ * Resolve the visitor's market: the market cookie, then the country, then the default. With `markets` set, a
+ * country outside it falls back to the default; crawlers always get the default. For a site with one language,
+ * or one that settles its language elsewhere: it never redirects and reads no language.
+ */
+export function resolveMarket(request: Request, config: MarketConfig, opts: ResolveLocaleOptions = {}): ResolvedMarket {
+  return pickMarket(request, normalizeMarkets(config), opts, isCrawler(request, opts));
+}
+
 /**
  * Resolve the language and market for a request.
  *
- * Language: the path prefix, then the visitor's cookie, then `Accept-Language`, then the default. Market: the
- * visitor's cookie, then the country, then the default; with `markets` set, a market outside it falls back to
- * the default. Crawlers get the default language and market and are never redirected.
+ * Language: the path prefix, then the visitor's cookie, then `Accept-Language`, then the default. Market: as
+ * `resolveMarket`. Crawlers get the default language and market and are never redirected.
  *
  * `redirectTo` is set for a GET or HEAD request to a path without a language prefix, so every language has its
  * own cacheable URL. Call this only for page routes: leave assets, the admin and the API alone.
  */
 export function resolveLocale(request: Request, config: LocaleConfig, opts: ResolveLocaleOptions = {}): ResolvedLocale {
-  const settings = normalize(config);
+  const settings = normalizeLocales(config);
+  const markets = normalizeMarkets(config);
   const url = new URL(request.url);
   const headers = request.headers;
-  const crawler = opts.crawler ?? CRAWLER_AGENT.test(headers.get('user-agent') ?? '');
+  const crawler = isCrawler(request, opts);
   const cookies = headers.get('cookie');
 
   const fromPath = splitPath(url.pathname, settings.locales).locale;
@@ -236,21 +273,7 @@ export function resolveLocale(request: Request, config: LocaleConfig, opts: Reso
     }
   }
 
-  const allowed = (code: string | undefined) => (code && (!settings.markets || settings.markets.includes(code)) ? code : undefined);
-  let market: string | null = settings.defaultMarket;
-  let marketSource: ResolvedLocale['source']['market'] = 'default';
-  if (!crawler) {
-    const cookie = allowed(normalizeCountry(readCookie(cookies, settings.marketCookie)));
-    const geo = allowed(normalizeCountry(opts.country ?? headers.get('cf-ipcountry')));
-    if (cookie) {
-      market = cookie;
-      marketSource = 'cookie';
-    } else if (geo) {
-      market = geo;
-      marketSource = 'geo';
-    }
-  }
-
+  const { market, source: marketSource } = pickMarket(request, markets, opts, crawler);
   const resolved: ResolvedLocale = { locale, market, source: { locale: localeSource, market: marketSource } };
   if (!fromPath && !crawler && (request.method === 'GET' || request.method === 'HEAD')) {
     resolved.redirectTo = `${localizedPath(url.pathname, locale, config)}${url.search}`;

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_LOCALE_COOKIE, DEFAULT_MARKET_COOKIE, hreflangLinks, localeCookie, localizedPath,
-  parseAcceptLanguage, resolveLocale, splitLocalePath,
+  parseAcceptLanguage, resolveLocale, resolveMarket, splitLocalePath,
 } from '../dist/locale.js';
 
 const config = { locales: ['da', 'en'], defaultLocale: 'en', markets: ['DK', 'SE', 'US'], defaultMarket: 'US' };
@@ -93,6 +93,35 @@ test('without markets any country is accepted and the market may be null', () =>
   assert.equal(resolveLocale(request('/en'), open, { country: 'JP' }).market, 'JP');
   const none = resolveLocale(request('/en'), open);
   assert.deepEqual([none.market, none.source.market], [null, 'default']);
+});
+
+test('resolveMarket resolves the market alone, with no language config and no redirect', () => {
+  const market = { markets: ['DK', 'SE', 'US'], defaultMarket: 'US' };
+  assert.deepEqual(resolveMarket(request('/shop', { cookie: `${DEFAULT_MARKET_COOKIE}=se` }), market, { country: 'DK' }), { market: 'SE', source: 'cookie' });
+  assert.deepEqual(resolveMarket(request('/shop'), market, { country: 'dk' }), { market: 'DK', source: 'geo' });
+  assert.deepEqual(resolveMarket(request('/shop', { 'cf-ipcountry': 'SE' }), market), { market: 'SE', source: 'geo' });
+  assert.deepEqual(resolveMarket(request('/shop'), market, { country: 'JP' }), { market: 'US', source: 'default' });
+  assert.deepEqual(resolveMarket(request('/shop', { 'user-agent': 'Googlebot/2.1' }), market, { country: 'DK' }), { market: 'US', source: 'default' });
+  assert.deepEqual(resolveMarket(request('/shop'), {}, { country: 'JP' }), { market: 'JP', source: 'geo' });
+  assert.deepEqual(resolveMarket(request('/shop'), {}), { market: null, source: 'default' });
+  assert.deepEqual(resolveMarket(request('/shop', { cookie: 'shop=DK' }), { cookie: { market: 'shop' } }), { market: 'DK', source: 'cookie' });
+});
+
+test('resolveMarket and resolveLocale agree on the market', () => {
+  const headers = { cookie: `${DEFAULT_MARKET_COOKIE}=SE` };
+  for (const country of ['DK', 'JP', 'XX', undefined]) {
+    for (const cookie of [headers, {}]) {
+      const both = resolveLocale(request('/da', cookie), config, { country });
+      assert.deepEqual(resolveMarket(request('/da', cookie), config, { country }), { market: both.market, source: both.source.market });
+    }
+  }
+});
+
+test('resolveMarket refuses a bad market configuration', () => {
+  assert.throws(() => resolveMarket(request('/'), { markets: ['DK'] }), /defaultMarket is required/);
+  assert.throws(() => resolveMarket(request('/'), { markets: ['DK'], defaultMarket: 'SE' }), /not in markets/);
+  assert.throws(() => resolveMarket(request('/'), { markets: ['Denmark'], defaultMarket: 'DK' }), /not a country code/);
+  assert.throws(() => resolveMarket(request('/'), { cookie: { market: 'a b' } }), /cookie name/);
 });
 
 test('custom cookie names are read', () => {

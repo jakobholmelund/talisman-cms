@@ -428,4 +428,15 @@ export const onRequest = defineMiddleware((context, next) => {
 - **Remembering a choice:** when a visitor picks a language or country, answer with `Set-Cookie: ${localeCookie('talisman-locale', 'da')}`. `cookie: { locale, market }` in the config renames the cookies. The cookie is `Secure` unless you pass `{ secure: false }` for plain-HTTP local development.
 - **Links:** `localizedPath('/shop', 'da', config)` gives `/da/shop` (the root is `/da`), `splitLocalePath` takes the prefix off, and `hreflangLinks(path, siteUrl, config)` returns the `<link rel="alternate" hreflang>` entries with an `x-default` for the default language.
 
+A site with one language, or one that settles its language some other way, needs only the market. `resolveMarket(request, { markets, defaultMarket }, { country })` applies the same market rules, returns `{ market, source }` and never redirects, so it can pick the delivery country a checkout form starts with:
+
+```ts
+import { resolveMarket } from 'talisman-cms/locale';
+
+const cf = (Astro.request as Request & { cf?: IncomingRequestCfProperties }).cf;
+const { market } = resolveMarket(Astro.request, { markets: deliveryCountries, defaultMarket: 'US' }, { country: cf?.country });
+```
+
+`request.cf` is set on the `Request` that `@astrojs/cloudflare` passes to Astro's middleware and routes (in `astro dev` and in the built Worker), so the code above needs no `locals` plumbing.
+
 This resolves the language and market only. Localized content (per-language fields or entries) is separate work.
