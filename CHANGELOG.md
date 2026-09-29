@@ -38,6 +38,10 @@
 - Better-auth's default role is `customer`: a user created without an explicit role has no CMS access. Every built-in path names its role.
 - `GET <adminPath>/api/auth/setup` answers `{ required: false }` under hybrid, Access and dev auth instead of HTTP 404, so the sign-in panel no longer logs a failed request on every load. Setup itself stays unavailable outside local auth.
 
+### Localization
+
+- `talisman-cms/locale` resolves a request's language and market for a localized site: `resolveLocale(request, config, { country, crawler })` picks the language from the path prefix, the `talisman-locale` cookie, `Accept-Language` and the default, and the market from the `talisman-market` cookie, the visitor's country (`request.cf.country`, or the `CF-IPCountry` header) and the default, limited to the configured `markets`. A GET or HEAD request to an unprefixed path gets a `redirectTo` that keeps the query string, and crawlers get the default language and market without a redirect. `parseAcceptLanguage`, `localizedPath`, `splitLocalePath`, `hreflangLinks` and `localeCookie` are exported beside it. The helpers are pure and add no setting, binding or migration; checkout still validates the delivery country on the server. Localized content is not part of this change.
+
 ### Ecommerce plugin
 
 - The product editor's **Options & stock** panel loads only the product's variant groups, values, stock and component rows, through the entries API's `where` filter, instead of every row of those tables and the products table; the commerce describer no longer asks the editor to load the product flow for products. A refused read shows as an error rather than an empty product.

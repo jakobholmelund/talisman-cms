@@ -394,3 +394,38 @@ Page speed also depends on each site's fonts, CSS, JavaScript, image dimensions 
 In an Astro layout, call `resolveSeo({ siteUrl, path, site, page, publicIndexing })` and render its canonical URL, robots directive, Open Graph/Twitter metadata and `jsonLd` (escaped with `serializeJsonLd`). `seoPageFromGlobal(site, 'home')` reads the matching fixed-page override. The deployment-owned `publicIndexing` flag always wins over CMS settings when false, so an editor cannot accidentally launch a draft site. Keep an `X-Robots-Tag` noindex response header and any static-asset noindex headers in sync with that launch gate.
 
 Use `renderRobotsTxt()` and `renderSitemapXml()` in site routes. Include only public canonical URLs in the sitemap, and return 404 for the sitemap before launch. The robots helper can control `OAI-SearchBot` separately from training crawlers (`GPTBot` and `Google-Extended`). A draft site should remain crawlable by general search crawlers so they can see `noindex`; `robots.txt` alone does not keep a URL out of results. No special AI markup or text file is required for Google AI search features. Accurate, useful visible text and matching structured data remain the priority.
+
+## Language and market
+
+`talisman-cms/locale` resolves which language to render and which market (country) applies to a request. It is a set of pure functions: it reads no bindings and makes no lookups, so it runs in Astro middleware and in tests alike. Language and market are separate on purpose. The language is the visitor's text and never comes from geography (a Dane in Spain still wants Danish); the market picks the currency, delivery countries and tax, and may come from the visitor's country.
+
+```ts
+// src/middleware.ts
+import { defineMiddleware } from 'astro:middleware';
+import { resolveLocale, type LocaleConfig } from 'talisman-cms/locale';
+
+const config: LocaleConfig = {
+  locales: ['da', 'en'],
+  defaultLocale: 'en',
+  markets: ['DK', 'SE', 'US'],
+  defaultMarket: 'US',
+};
+
+export const onRequest = defineMiddleware((context, next) => {
+  if (context.url.pathname.startsWith('/admin') || context.url.pathname.startsWith('/api')) return next();
+  const cf = (context.request as Request & { cf?: IncomingRequestCfProperties }).cf;
+  const resolved = resolveLocale(context.request, config, { country: cf?.country });
+  if (resolved.redirectTo) return context.redirect(resolved.redirectTo, 302);
+  context.locals.locale = resolved.locale;
+  context.locals.market = resolved.market;
+  return next();
+});
+```
+
+- **Language:** the path prefix (`/da/shop`), then the visitor's `talisman-locale` cookie, then `Accept-Language` (`da-DK` matches `da`), then `defaultLocale`.
+- **Market:** the `talisman-market` cookie, then the country, then `defaultMarket`. The country is the `country` option, or the `CF-IPCountry` header when it is missing; `XX` and `T1` count as unknown. With `markets` set, a country outside it falls back to `defaultMarket`. The market is a hint for display: checkout still validates the delivery country on the server (`TALISMAN_COMMERCE_DELIVERY_COUNTRIES`).
+- **One URL per language:** every language has its own path, so pages stay cacheable and indexable without `Vary`. A GET or HEAD request to a path without a prefix gets `redirectTo`, which keeps the query string. Crawlers (a verified-bot flag from `crawler`, or the user agent) get the default language and market and are never redirected, so search engines see every language at its own URL.
+- **Remembering a choice:** when a visitor picks a language or country, answer with `Set-Cookie: ${localeCookie('talisman-locale', 'da')}`. `cookie: { locale, market }` in the config renames the cookies. The cookie is `Secure` unless you pass `{ secure: false }` for plain-HTTP local development.
+- **Links:** `localizedPath('/shop', 'da', config)` gives `/da/shop` (the root is `/da`), `splitLocalePath` takes the prefix off, and `hreflangLinks(path, siteUrl, config)` returns the `<link rel="alternate" hreflang>` entries with an `x-default` for the default language.
+
+This resolves the language and market only. Localized content (per-language fields or entries) is separate work.

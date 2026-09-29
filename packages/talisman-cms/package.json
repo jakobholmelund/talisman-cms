@@ -69,6 +69,10 @@
       "types": "./dist/seo.d.ts",
       "import": "./dist/seo.js"
     },
+    "./locale": {
+      "types": "./dist/locale.d.ts",
+      "import": "./dist/locale.js"
+    },
     "./ui-library-manifest": {
       "types": "./dist/ui-library-manifest.d.ts",
       "import": "./dist/ui-library-manifest.js"
