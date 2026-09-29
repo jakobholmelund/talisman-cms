@@ -1,4 +1,4 @@
-import { and, eq, gt } from 'drizzle-orm';
+import { and, eq, gt, lte, sql } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb } from './db';
 import { rateLimits } from './schema';
@@ -53,13 +53,13 @@ export async function countRequest(env: TalismanEnv, key: string, now: number, w
   if (!(windowSeconds > 0 && windowSeconds <= MAX_RATE_LIMIT_WINDOW_SECONDS)) {
     throw new RangeError('Rate-limit windows must be between 1 second and 24 hours');
   }
-  const limit = await env.DB.prepare(`INSERT INTO _ecommerce_rate_limits (key, count, window_start)
-    VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET
-      count = CASE WHEN window_start <= ? THEN 1 ELSE count + 1 END,
-      window_start = CASE WHEN window_start <= ? THEN ? ELSE window_start END
-    RETURNING count`)
-    .bind(key, now, now - windowSeconds, now - windowSeconds, now)
-    .first<{ count: number }>();
+  // One statement: a window that has ended restarts at `now`, a live one counts one more.
+  const ended = sql`${rateLimits.windowStart} <= ${now - windowSeconds}`;
+  const [limit] = await commerceDb(env).insert(rateLimits).values({ key, count: 1, windowStart: now })
+    .onConflictDoUpdate({ target: rateLimits.key, set: {
+      count: sql`CASE WHEN ${ended} THEN 1 ELSE ${rateLimits.count} + 1 END`,
+      windowStart: sql`CASE WHEN ${ended} THEN ${now} ELSE ${rateLimits.windowStart} END`,
+    } }).returning({ count: rateLimits.count });
   return limit?.count;
 }
 
@@ -96,11 +96,9 @@ export async function claimInterval(env: TalismanEnv, key: string, intervalSecon
   if (!(intervalSeconds > 0 && intervalSeconds <= MAX_RATE_LIMIT_WINDOW_SECONDS)) {
     throw new RangeError('Rate-limit windows must be between 1 second and 24 hours');
   }
-  const claimed = await env.DB.prepare(`INSERT INTO _ecommerce_rate_limits (key, count, window_start)
-    VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET count = 1, window_start = excluded.window_start
-      WHERE _ecommerce_rate_limits.window_start <= ?
-    RETURNING window_start`)
-    .bind(key, now, now - intervalSeconds)
-    .first<{ window_start: number }>();
+  const [claimed] = await commerceDb(env).insert(rateLimits).values({ key, count: 1, windowStart: now })
+    .onConflictDoUpdate({ target: rateLimits.key, set: { count: 1, windowStart: sql`excluded.window_start` },
+      setWhere: lte(rateLimits.windowStart, now - intervalSeconds) })
+    .returning({ windowStart: rateLimits.windowStart });
   return Boolean(claimed);
 }

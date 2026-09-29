@@ -1,7 +1,13 @@
-import { sql, type SQL } from 'drizzle-orm';
+import { and, eq, isNull, sql, type SQL } from 'drizzle-orm';
+import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 import type { TalismanEnv } from 'talisman-cms/client';
+import { commerceDb, type CommerceDb } from './db';
 import type { PaymentProviderAdapter } from './payments';
+import { giftCardPurchases, orders } from './schema';
 import { runtimeStripeMode, stripeSessionMode } from './stripe-mode';
+
+/** A time in Unix seconds as the schema's timestamp columns take it. */
+const at = (seconds: number) => new Date(seconds * 1000);
 
 /** Why a reconciliation attempt failed. Only these codes are stored, never provider text or personal data. */
 export type ReconcileFailureCode = 'session_missing' | 'session_mode_mismatch' | 'payment_mismatch'
@@ -113,9 +119,12 @@ export function assertStoreStripeMode(env: object, sessionId: string | null | un
 
 export type ReconcileKind = 'order' | 'gift_card_purchase';
 
-export const RECONCILE_TABLES: Record<ReconcileKind, '_ecommerce_orders' | '_ecommerce_gift_card_purchases'> = {
-  order: '_ecommerce_orders',
-  gift_card_purchase: '_ecommerce_gift_card_purchases',
+/** The two tables reconciliation works on. Both carry the `reconcile_*` columns of the schema's `reconcileColumns()`. */
+export type ReconcileTable = typeof orders | typeof giftCardPurchases;
+
+export const RECONCILE_TABLES: Record<ReconcileKind, ReconcileTable> = {
+  order: orders,
+  gift_card_purchase: giftCardPurchases,
 };
 
 /**
@@ -173,7 +182,7 @@ export function decisionInsert(kind: ReconcileKind, action: 'retry' | 'release',
       (id, order_id, purchase_id, action, failure, payment_returned, admin_actor, reason, created_at)
     SELECT ${decision.id}, ${sql.raw(orderId)}, ${sql.raw(purchaseId)}, ${action}, reconcile_last_error, ${decision.paymentReturned},
       ${decision.actor}, ${decision.reason}, ${decision.at}
-    FROM ${sql.raw(RECONCILE_TABLES[kind])} WHERE id = ${decision.recordId} AND ${condition}`;
+    FROM ${RECONCILE_TABLES[kind]} WHERE id = ${decision.recordId} AND ${condition}`;
 }
 
 /** The longest wait between two attempts on one row. */
@@ -191,28 +200,27 @@ export function uncheckedSessionRefusal(checkoutStartedAt: number, now = Math.fl
     + `Release it after ${new Date(releasable * 1000).toISOString()}, 35 minutes after the checkout started.`);
 }
 
+/** The columns a backoff reads: how many attempts a row had and when the last one ran, and what orders rows never tried. */
+export type BackoffColumns = { attempts: AnySQLiteColumn; lastAt: AnySQLiteColumn; createdAt: AnySQLiteColumn; id: AnySQLiteColumn };
+
 /**
- * SQL for the backoff of rows that count their attempts in `<columns>_attempts` and date the last one
- * in `<columns>_last_at`, on the table `alias` names in a join. `due`: the row is due at the time bound
- * to its one parameter; after an attempt it waits 2^attempts minutes, at most six hours. The shift is
- * capped: from 58 places on it overflows to a negative number or 0, and the row would never wait.
- * `order`: rows never tried first, then those tried longest ago, then the oldest.
+ * The backoff of rows that count their attempts in `columns.attempts` and date the last one in
+ * `columns.lastAt`, for a query's `where` and `orderBy`. `due`: the row is due at `now`; after an
+ * attempt it waits 2^attempts minutes, at most six hours. The shift is capped: from 58 places on it
+ * overflows to a negative number or 0, and the row would never wait. `order`: rows never tried first,
+ * then those tried longest ago, then the oldest.
  */
-export function backoffSql(columns: string, alias?: string) {
-  const column = (name: string) => alias ? `${alias}.${name}` : name;
-  const lastAt = column(`${columns}_last_at`);
+export function backoff(columns: BackoffColumns, now: number) {
   return {
-    due: `(${lastAt} IS NULL
-  OR ${lastAt} <= ? - MIN(${RECONCILE_MAX_BACKOFF_SECONDS}, 60 << MIN(${column(`${columns}_attempts`)}, 9)))`,
-    order: `COALESCE(${lastAt}, 0), ${column('created_at')}, ${column('id')}`,
+    due: sql`(${columns.lastAt} IS NULL
+      OR ${columns.lastAt} <= ${now} - MIN(${sql.raw(String(RECONCILE_MAX_BACKOFF_SECONDS))}, 60 << MIN(${columns.attempts}, 9)))`,
+    order: [sql`COALESCE(${columns.lastAt}, 0)`, columns.createdAt, columns.id] as const,
   };
 }
 
-const RECONCILE_BACKOFF = backoffSql('reconcile');
-/** SQL: a pending row is due at the time bound to its one parameter (see backoffSql). */
-export const RECONCILE_DUE = RECONCILE_BACKOFF.due;
-/** SQL: pending rows never tried first, then those tried longest ago, then the oldest. */
-export const RECONCILE_ORDER = RECONCILE_BACKOFF.order;
+/** The backoff of a pending order's or gift card purchase's reconciliation, on its `reconcile_*` columns. */
+export const reconcileBackoff = (table: ReconcileTable, now: number) => backoff({ attempts: table.reconcileAttempts,
+  lastAt: table.reconcileLastAt, createdAt: table.createdAt, id: table.id }, now);
 
 /** A reconciliation result as the scheduled Worker reads it: only `status: 'error'` is a failure. */
 export type ReconcileResult = {
@@ -227,21 +235,20 @@ export type ReconcileResult = {
  * Nothing is recorded on a row that an overlapping run parked in the meantime, so a late outcome never
  * rewrites why it was parked, nor is a row that left 'pending' parked; such an attempt is 'skipped'.
  */
-async function recordAttempt(env: TalismanEnv, kind: ReconcileKind, id: string, now: number,
+async function recordAttempt(db: CommerceDb, kind: ReconcileKind, id: string, now: number,
   failure: ReconcileFailure | null): Promise<'recorded' | 'parked' | 'skipped'> {
   const table = RECONCILE_TABLES[kind];
+  const attempt = { reconcileAttempts: sql`${table.reconcileAttempts} + 1`, reconcileLastAt: at(now),
+    reconcileLastError: failure?.code ?? null };
   if (failure?.permanent) {
     // Only a row that is still pending and not parked yet is parked, so each is parked, and reported, once.
-    const parked = await env.DB.prepare(`UPDATE ${table} SET reconcile_attempts = reconcile_attempts + 1,
-        reconcile_last_at = ?, reconcile_last_error = ?, reconcile_review_at = ?
-      WHERE id = ? AND status = 'pending' AND reconcile_review_at IS NULL RETURNING id`)
-      .bind(now, failure.code, now, id).all();
-    return parked.results?.length ? 'parked' : 'skipped';
+    const parked = await db.update(table).set({ ...attempt, reconcileReviewAt: at(now) })
+      .where(and(eq(table.id, id), eq(table.status, 'pending'), isNull(table.reconcileReviewAt))).returning({ id: table.id });
+    return parked.length ? 'parked' : 'skipped';
   }
-  const recorded = await env.DB.prepare(`UPDATE ${table} SET reconcile_attempts = reconcile_attempts + 1,
-      reconcile_last_at = ?, reconcile_last_error = ?
-    WHERE id = ? AND reconcile_review_at IS NULL RETURNING id`).bind(now, failure?.code ?? null, id).all();
-  return recorded.results?.length ? 'recorded' : 'skipped';
+  const recorded = await db.update(table).set(attempt)
+    .where(and(eq(table.id, id), isNull(table.reconcileReviewAt))).returning({ id: table.id });
+  return recorded.length ? 'recorded' : 'skipped';
 }
 
 /**
@@ -262,11 +269,12 @@ export async function reconcileAttempt(env: TalismanEnv, kind: ReconcileKind, id
     result = { id, status: 'error', error: failure.message, code: failure.code };
   }
   try {
-    const recorded = await recordAttempt(env, kind, id, now, failure);
+    const db = commerceDb(env);
+    const recorded = await recordAttempt(db, kind, id, now, failure);
     if (recorded === 'parked') result.parked = true;
     if (recorded === 'skipped' && failure) {
-      const row = await env.DB.prepare(`SELECT status FROM ${RECONCILE_TABLES[kind]} WHERE id = ?`).bind(id)
-        .first<{ status: string }>();
+      const table = RECONCILE_TABLES[kind];
+      const row = await db.select({ status: table.status }).from(table).where(eq(table.id, id)).get();
       return { id, status: row?.status ?? 'unchanged' };
     }
   } catch {

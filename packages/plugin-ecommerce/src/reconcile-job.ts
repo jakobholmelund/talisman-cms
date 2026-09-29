@@ -1,11 +1,12 @@
-import { and, eq, lt, or } from 'drizzle-orm';
+import { and, eq, gte, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import { commerceContext, type CommerceApiOptions } from './commerce-context';
+import { batchGroups } from './db';
 import * as schema from './schema';
 import { reconcilePendingOrder, resumeCheckout } from './checkout';
 import { deliverPendingCommerceEmails } from './commerce-emails';
 import { reconcileGiftCardPurchase } from './gift-cards';
 import { cancelOrder } from './orders';
-import { RECONCILE_DUE, RECONCILE_ORDER, reconcileAttempt, reconcileFailure, type ReconcileResult } from './reconcile';
+import { reconcileAttempt, reconcileBackoff, reconcileFailure, type ReconcileResult } from './reconcile';
 import { releaseReferralAwards } from './referrals';
 import { recordMissingTaxTransactions, resendPendingTaxReversals, reverseUnreversedTax } from './tax';
 
@@ -36,34 +37,37 @@ export async function reconcileCommerce(options: CommerceApiOptions, limit = 10)
   const ctx = commerceContext(options);
   const now = Math.floor(Date.now() / 1000);
   const { db } = ctx;
-  // The queue selections below stay raw SQL: the tests pin their text and query plans, and the order
-  // queries need their status literal for the partial index `_ecommerce_orders_pending_idx`. ';' follows ':', so the
-  // range holds exactly the ids that start with 'preparing:', read from the unique index on
-  // checkout_session_id. LIKE cannot use that index: it ignores case.
-  const preparations = await env.DB.prepare(`SELECT id FROM _ecommerce_carts
-    WHERE checkout_session_id >= 'preparing:' AND checkout_session_id < 'preparing;' AND updated_at < ?
-    ORDER BY updated_at LIMIT ?`).bind(now - 35 * 60, count).all<{ id: string }>();
+  const stale = at(now - 15 * 60);
   // Without the simulated provider a stale admin_test order cannot be settled. It is released instead,
   // so it never keeps the admin's basket locked or crowds real orders out of this batch.
   const settlesAdminTest = options.paymentAdapters?.some(adapter => adapter.providerId === 'admin_test') ?? false;
   // Both order queries state `status = 'pending'` as a literal, which lets them use the partial index
-  // `_ecommerce_orders_pending_idx`.
-  const pending = await env.DB.prepare(`SELECT id FROM _ecommerce_orders
-    WHERE status = 'pending' AND created_at < ? AND reconcile_review_at IS NULL AND ${RECONCILE_DUE}
-      AND (? = 1 OR COALESCE(payment_provider, 'stripe') <> 'admin_test')
-    ORDER BY ${RECONCILE_ORDER} LIMIT ?`)
-    .bind(now - 15 * 60, now, settlesAdminTest ? 1 : 0, count).all<{ id: string }>();
-  const abandonedTests = settlesAdminTest ? { results: [] } : await env.DB.prepare(`SELECT id FROM _ecommerce_orders
-    WHERE status = 'pending' AND payment_provider = 'admin_test' AND created_at < ?
-    ORDER BY created_at LIMIT ?`)
-    .bind(now - 15 * 60, count).all<{ id: string }>();
-  const giftPurchases = await env.DB.prepare(`SELECT id FROM _ecommerce_gift_card_purchases
-    WHERE status = 'pending' AND provider_session_id IS NOT NULL AND created_at < ?
-      AND reconcile_review_at IS NULL AND ${RECONCILE_DUE}
-    ORDER BY ${RECONCILE_ORDER} LIMIT ?`)
-    .bind(now - 15 * 60, now, count).all<{ id: string }>();
+  // `_ecommerce_orders_pending_idx`; a bound parameter would not.
+  const pendingOrder = sql`${schema.orders.status} = 'pending'`;
+  const orderWait = reconcileBackoff(schema.orders, now);
+  const purchaseWait = reconcileBackoff(schema.giftCardPurchases, now);
+  // The four queues are read in one round trip.
+  const queue = await batchGroups(db, {
+    // ';' follows ':', so the range holds exactly the ids that start with 'preparing:', read from the
+    // unique index on checkout_session_id. LIKE cannot use that index: it ignores case.
+    preparations: [db.select({ id: schema.carts.id }).from(schema.carts)
+      .where(and(gte(schema.carts.checkoutSessionId, 'preparing:'), lt(schema.carts.checkoutSessionId, 'preparing;'),
+        lt(schema.carts.updatedAt, at(now - 35 * 60))))
+      .orderBy(schema.carts.updatedAt).limit(count)],
+    pending: [db.select({ id: schema.orders.id }).from(schema.orders)
+      .where(and(pendingOrder, lt(schema.orders.createdAt, stale), isNull(schema.orders.reconcileReviewAt), orderWait.due,
+        settlesAdminTest ? undefined : sql`COALESCE(${schema.orders.paymentProvider}, 'stripe') <> 'admin_test'`))
+      .orderBy(...orderWait.order).limit(count)],
+    abandonedTests: settlesAdminTest ? [] : [db.select({ id: schema.orders.id }).from(schema.orders)
+      .where(and(pendingOrder, eq(schema.orders.paymentProvider, 'admin_test'), lt(schema.orders.createdAt, stale)))
+      .orderBy(schema.orders.createdAt).limit(count)],
+    giftPurchases: [db.select({ id: schema.giftCardPurchases.id }).from(schema.giftCardPurchases)
+      .where(and(eq(schema.giftCardPurchases.status, 'pending'), isNotNull(schema.giftCardPurchases.providerSessionId),
+        lt(schema.giftCardPurchases.createdAt, stale), isNull(schema.giftCardPurchases.reconcileReviewAt), purchaseWait.due))
+      .orderBy(...purchaseWait.order).limit(count)],
+  });
   const results: ReconcileResult[] = [];
-  for (const row of preparations.results ?? []) {
+  for (const row of queue.preparations) {
     try {
       await resumeCheckout(ctx, row.id);
       results.push({ id: row.id, status: 'preparation_checked' });
@@ -71,10 +75,10 @@ export async function reconcileCommerce(options: CommerceApiOptions, limit = 10)
       results.push({ id: row.id, status: 'error', error: error instanceof Error ? error.message : 'Recovery failed' });
     }
   }
-  for (const row of pending.results ?? []) {
+  for (const row of queue.pending) {
     results.push(await reconcileAttempt(env, 'order', row.id, now, () => reconcilePendingOrder(ctx, row.id)));
   }
-  for (const row of abandonedTests.results ?? []) {
+  for (const row of queue.abandonedTests) {
     try {
       const cancelled = await cancelOrder(ctx, row.id);
       results.push({ id: row.id, status: cancelled?.status ?? 'unchanged' });
@@ -83,7 +87,7 @@ export async function reconcileCommerce(options: CommerceApiOptions, limit = 10)
     }
   }
   const stripe = options.paymentAdapters?.find(adapter => adapter.providerId === 'stripe');
-  for (const row of giftPurchases.results ?? []) {
+  for (const row of queue.giftPurchases) {
     results.push(await reconcileAttempt(env, 'gift_card_purchase', row.id, now,
       () => reconcileGiftCardPurchase(env, stripe, row.id)));
   }

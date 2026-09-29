@@ -223,15 +223,19 @@ function whileBuildingClaimEmail(store, during) {
   let pending = during;
   store.DB.prepare = (sql) => {
     const statement = prepare(sql);
-    if (pending && sql.includes('LEFT JOIN _ecommerce_gift_cards c ON c.id')) {
+    // The claim target read: the purchase joined to the card that holds its value, which the builder reads as rows.
+    if (pending && sql.includes('left join "_ecommerce_gift_cards" on')) {
       const run = pending;
       pending = null;
-      const first = statement.first.bind(statement);
-      statement.first = async () => { await run(); return first(); };
+      const raw = statement.raw.bind(statement);
+      statement.raw = async () => { await run(); return raw(); };
     }
     return statement;
   };
 }
+
+/** The reads of pending emails by the scheduled job: they state the status as a literal, for the partial index. */
+const DUE_EMAIL_READ = /from "_ecommerce_email_deliveries" where \(\("_ecommerce_email_deliveries"\."status" = 'pending'\)/;
 
 // --- Order confirmation -------------------------------------------------------------------------
 
@@ -416,7 +420,8 @@ test('emails that wait for a setting never hold back the others', async (t) => {
       error: 'Gift card claim emails need an https public origin (TALISMAN_PUBLIC_ORIGIN); 5 or more emails are waiting' },
     { id: `order_confirmation:${order.id}`, status: 'email_sent' },
   ]);
-  const reads = store.recorded.filter(([sql]) => /FROM _ecommerce_email_deliveries\s+WHERE status = 'pending'/.test(sql));
+  const reads = store.recorded.filter(([sql]) => DUE_EMAIL_READ.test(sql));
+  assert.ok(reads.length >= 2, 'the expiry pass and the due emails');
   for (const [sql, values] of reads) {
     const plan = rows(store.sqlite, `EXPLAIN QUERY PLAN ${sql}`, ...values).map((step) => step.detail).join(' | ');
     assert.match(plan, /USING INDEX _ecommerce_email_deliveries_due_idx/, plan);
@@ -942,7 +947,7 @@ test('the scheduled job reads due emails through the index of pending emails, no
   t.mock.timers.tick(10 * 60 * 1000);
   store.recorded.length = 0;
   assert.equal((await deliverPendingCommerceEmails({ env: store.env })).length, 1);
-  const reads = store.recorded.filter(([sql]) => /FROM _ecommerce_email_deliveries\s+WHERE status = 'pending'/.test(sql));
+  const reads = store.recorded.filter(([sql]) => DUE_EMAIL_READ.test(sql));
   assert.equal(reads.length, 2, 'the expiry pass and the due emails');
   for (const [sql, values] of reads) {
     const plan = rows(store.sqlite, `EXPLAIN QUERY PLAN ${sql}`, ...values).map((step) => step.detail).join(' | ');

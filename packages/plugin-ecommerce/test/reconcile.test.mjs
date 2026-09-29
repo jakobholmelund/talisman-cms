@@ -40,7 +40,11 @@ const checkoutRoute = (await import('../dist/routes/ecommerce-checkout.js')).POS
 const ORIGIN = 'https://shop.test';
 const STOCK = 20;
 
-/** An in-memory D1 stand-in. `recorded` collects every statement run, with its parameters. */
+/**
+ * An in-memory D1 stand-in. `recorded` collects every statement run, with its parameters. A batch runs
+ * without yielding, so concurrent runs interleave between statements and batches but never inside a
+ * batch, as on D1.
+ */
 function database() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
@@ -52,7 +56,8 @@ function database() {
       let values = [];
       return {
         bind(...params) { values = params; return this; },
-        async all() { recorded.push([sql, values]); return { results: prepared.all(...values) }; },
+        rows() { recorded.push([sql, values]); return { results: prepared.all(...values) }; },
+        async all() { return this.rows(); },
         async first() { recorded.push([sql, values]); return prepared.get(...values) ?? null; },
         async raw() {
           recorded.push([sql, values]);
@@ -66,8 +71,7 @@ function database() {
     async batch(statements) {
       sqlite.exec('BEGIN');
       try {
-        const result = [];
-        for (const statement of statements) result.push(await statement.all());
+        const result = statements.map((statement) => statement.rows());
         sqlite.exec('COMMIT');
         return result;
       } catch (error) {
@@ -656,23 +660,24 @@ test('reconciliation, the parked list and checkout resume read through indexes',
     .run(Math.floor(Date.now() / 1000) - 60 * 60, locked.id);
   recorded.length = 0;
   await reconcile(DB);
-  const statement = (start) => {
-    const found = recorded.find(([sql]) => sql.replace(/\s+/g, ' ').trim().startsWith(start));
-    assert.ok(found, start);
+  const statement = (pattern) => {
+    const found = recorded.find(([sql]) => pattern.test(sql.replace(/\s+/g, ' ').trim()));
+    assert.ok(found, String(pattern));
     return found;
   };
-  assert.match(plan(sqlite, statement('SELECT id FROM _ecommerce_carts WHERE checkout_session_id >=')),
+  // The queue reads state the order status as a literal, so the partial index of pending orders serves them.
+  assert.match(plan(sqlite, statement(/^select "id" from "_ecommerce_carts" where .*"checkout_session_id" >= \?/)),
     /SEARCH _ecommerce_carts USING INDEX _ecommerce_carts_checkout_session_id_unique \(checkout_session_id>\? AND checkout_session_id<\?\)/);
-  assert.match(plan(sqlite, statement("SELECT id FROM _ecommerce_orders WHERE status = 'pending' AND created_at < ? AND reconcile_review_at")),
+  assert.match(plan(sqlite, statement(/^select "id" from "_ecommerce_orders" where .*"status" = 'pending'.*"reconcile_review_at" is null/)),
     /SEARCH _ecommerce_orders USING INDEX _ecommerce_orders_pending_idx \(created_at<\?\)/);
-  assert.match(plan(sqlite, statement("SELECT id FROM _ecommerce_orders WHERE status = 'pending' AND payment_provider = 'admin_test'")),
+  assert.match(plan(sqlite, statement(/^select "id" from "_ecommerce_orders" where .*"status" = 'pending'.*"payment_provider" = \?/)),
     /SEARCH _ecommerce_orders USING INDEX _ecommerce_orders_pending_idx \(created_at<\?\)/);
-  assert.match(plan(sqlite, statement('SELECT id FROM _ecommerce_gift_card_purchases')),
+  assert.match(plan(sqlite, statement(/^select "id" from "_ecommerce_gift_card_purchases"/)),
     /SEARCH _ecommerce_gift_card_purchases USING INDEX _ecommerce_gift_card_purchases_status_created_idx \(status=\? AND created_at<\?\)/);
 
   recorded.length = 0;
   await admin(DB);
-  const listing = plan(sqlite, statement("SELECT 'order' AS kind"));
+  const listing = plan(sqlite, statement(/^SELECT 'order' AS kind/));
   assert.match(listing, /SCAN _ecommerce_orders USING INDEX _ecommerce_orders_pending_idx/);
   assert.match(listing, /SEARCH _ecommerce_gift_card_purchases USING INDEX _ecommerce_gift_card_purchases_status_created_idx \(status=\?\)/);
 
@@ -910,11 +915,15 @@ test('only the session lookup parks a row as missing: a 404 later in the attempt
   const order = await placeOrder(DB, 'later-404-browser');
   backdate(sqlite, '_ecommerce_orders', order.id, 20 * 60);
   answers.set(order.checkoutSessionId, paid(order.totalAmount, `pi_${order.id}`));
-  // A provider call made while the payment is recorded, such as a tax record, answers 404 once.
+  // A provider call made while the payment is recorded, such as a tax record, answers 404 once. The run's
+  // first batch reads its queues; the failure is injected into the next one, which records the payment.
   const batch = DB.batch;
-  DB.batch = async () => {
-    DB.batch = batch;
-    throw Object.assign(new Error('No such tax calculation'), { type: 'StripeInvalidRequestError', code: 'resource_missing', statusCode: 404 });
+  DB.batch = async (statements) => {
+    DB.batch = async () => {
+      DB.batch = batch;
+      throw Object.assign(new Error('No such tax calculation'), { type: 'StripeInvalidRequestError', code: 'resource_missing', statusCode: 404 });
+    };
+    return batch.call(DB, statements);
   };
 
   const [failed] = await reconcile(DB);

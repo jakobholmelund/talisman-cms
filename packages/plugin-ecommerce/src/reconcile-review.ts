@@ -1,12 +1,12 @@
 import { z } from 'zod';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql, type SQL } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb } from './db';
 import { bindCommerceApi, type CommerceApiOptions } from './api';
 import { RECONCILE_FAILURE_MESSAGES, RECONCILE_TABLES, completedCheckoutReturn, decisionInsert, isMissingSessionError,
   isOtherStripeModeSession, isProviderError, reconcileFailure, uncheckedSessionRefusal, type PaymentReturn, type ReconcileDecision,
-  type ReconcileFailureCode, type ReconcileKind } from './reconcile';
-import { reconcileDecisions } from './schema';
+  type ReconcileFailureCode, type ReconcileKind, type ReconcileTable } from './reconcile';
+import { giftCardPurchases, orders, reconcileDecisions } from './schema';
 import { runtimeStripeMode, stripeSessionMode } from './stripe-mode';
 
 /** Invalid input to a review action. The admin route answers it with 400. */
@@ -49,7 +49,9 @@ function newDecision(actor: string, reason: string): ReconcileDecision {
 }
 
 /** SQL: the record is still pending and parked for review. */
-const PARKED = sql`status = 'pending' AND reconcile_review_at IS NOT NULL`;
+const parked = (table: ReconcileTable): SQL => sql`${table.status} = 'pending' AND ${table.reconcileReviewAt} IS NOT NULL`;
+/** A time in Unix seconds as the schema's timestamp columns take it. */
+const at = (seconds: number) => new Date(seconds * 1000);
 /** SQL: the decision was recorded in this batch. */
 const recorded = (decisionId: string) => sql`EXISTS (SELECT 1 FROM _ecommerce_reconcile_decisions WHERE id = ${decisionId})`;
 
@@ -78,14 +80,14 @@ export async function listParkedCommerce(env: TalismanEnv) {
         reconcile_last_at AS last_at, reconcile_last_error AS last_error, reconcile_review_at AS review_at,
         checkout_session_id AS session_id, COALESCE(payment_provider, 'stripe') AS provider,
         total_amount AS amount_cents, currency
-      FROM _ecommerce_orders WHERE ${PARKED}
+      FROM _ecommerce_orders WHERE ${parked(orders)}
       UNION ALL
       SELECT 'gift_card_purchase', id, created_at, reconcile_attempts, reconcile_last_at, reconcile_last_error,
         reconcile_review_at, provider_session_id, 'stripe', amount_cents, currency
-      FROM _ecommerce_gift_card_purchases WHERE ${PARKED}
+      FROM _ecommerce_gift_card_purchases WHERE ${parked(giftCardPurchases)}
       ORDER BY review_at, id LIMIT ${PARKED_LIST_LIMIT}`),
-    db.get<{ count: number }>(sql`SELECT (SELECT COUNT(*) FROM _ecommerce_orders WHERE ${PARKED})
-      + (SELECT COUNT(*) FROM _ecommerce_gift_card_purchases WHERE ${PARKED}) AS count`),
+    db.get<{ count: number }>(sql`SELECT (SELECT COUNT(*) FROM _ecommerce_orders WHERE ${parked(orders)})
+      + (SELECT COUNT(*) FROM _ecommerce_gift_card_purchases WHERE ${parked(giftCardPurchases)}) AS count`),
   ]);
   const storeMode = runtimeStripeMode(env);
   return {
@@ -117,12 +119,12 @@ export async function retryParkedCommerce(env: TalismanEnv, actor: string, input
   const decision = newDecision(actor, reason);
   const timestamp = Math.floor(Date.now() / 1000);
   const db = commerceDb(env);
+  const table = RECONCILE_TABLES[kind];
   const [, retried] = await db.batch([
-    db.run(decisionInsert(kind, 'retry', PARKED, { id: decision.id, paymentReturned: null, actor: decision.actor,
+    db.run(decisionInsert(kind, 'retry', parked(table), { id: decision.id, paymentReturned: null, actor: decision.actor,
       reason: decision.reason, at: timestamp, recordId: id })),
-    db.all<{ id: string }>(sql`UPDATE ${sql.raw(RECONCILE_TABLES[kind])} SET reconcile_review_at = NULL,
-        reconcile_attempts = 0, reconcile_last_at = NULL, reconcile_last_error = NULL
-      WHERE id = ${id} AND ${PARKED} AND ${recorded(decision.id)} RETURNING id`),
+    db.update(table).set({ reconcileReviewAt: null, reconcileAttempts: 0, reconcileLastAt: null, reconcileLastError: null })
+      .where(and(eq(table.id, id), parked(table), recorded(decision.id))).returning({ id: table.id }),
   ]);
   if (!retried.length) throw new Error(notParked(kind));
   // Who returned what, without personal data: the administrator's user id and the record's id.
@@ -157,10 +159,11 @@ export async function releaseParkedCommerce(options: CommerceApiOptions, actor: 
   const decision = newDecision(actor, reason);
   const { env } = options;
   const db = commerceDb(env);
-  const row = await db.get<{ session_id: string | null; created_at: number }>(sql`SELECT ${sql.raw(kind === 'order' ? 'checkout_session_id' : 'provider_session_id')} AS session_id,
-      created_at FROM ${sql.raw(RECONCILE_TABLES[kind])} WHERE id = ${id} AND ${PARKED}`);
+  const table = RECONCILE_TABLES[kind];
+  const row = await db.select({ sessionId: kind === 'order' ? orders.checkoutSessionId : giftCardPurchases.providerSessionId,
+    createdAt: table.createdAt }).from(table).where(and(eq(table.id, id), parked(table))).get();
   if (!row) throw new Error(notParked(kind));
-  const otherMode = isOtherStripeModeSession(env, row.session_id);
+  const otherMode = isOtherStripeModeSession(env, row.sessionId);
   const decided = () => db.select({ paymentReturned: reconcileDecisions.paymentReturned })
     .from(reconcileDecisions).where(eq(reconcileDecisions.id, decision.id)).get();
   let paymentReturned: PaymentReturn | null = null;
@@ -176,14 +179,14 @@ export async function releaseParkedCommerce(options: CommerceApiOptions, actor: 
     if (!outcome) throw new Error('The order changed while it was being released; reload the list');
     paymentReturned = outcome.paymentReturned;
   } else {
-    if (row.session_id) {
+    if (row.sessionId) {
       const stripe = options.paymentAdapters?.find((adapter) => adapter.providerId === 'stripe');
       if (!stripe?.getCheckoutSession || !stripe.expireCheckoutSession) {
         throw new Error('Stripe must be configured to check this checkout session before the purchase is released');
       }
       // A session this key cannot read or expire may still be paid; the release waits until it has expired.
       const refuseUnchecked = () => {
-        const refusal = uncheckedSessionRefusal(row.created_at);
+        const refusal = uncheckedSessionRefusal(Math.floor(row.createdAt.getTime() / 1000));
         if (refusal) throw refusal;
       };
       if (otherMode) refuseUnchecked();
@@ -191,14 +194,14 @@ export async function releaseParkedCommerce(options: CommerceApiOptions, actor: 
         try {
           let session: Awaited<ReturnType<NonNullable<typeof stripe.getCheckoutSession>>> | null = null;
           try {
-            session = await stripe.getCheckoutSession(row.session_id);
+            session = await stripe.getCheckoutSession(row.sessionId);
           } catch (error) {
             if (!isMissingSessionError(error)) throw error;
             refuseUnchecked();
           }
           // A refund leaves the session complete and paid, so the payment itself is asked about.
           if (session?.status === 'complete') paymentReturned = await completedCheckoutReturn(stripe, session, confirmPaymentReturned);
-          else if (session && session.status !== 'expired') await stripe.expireCheckoutSession(row.session_id);
+          else if (session && session.status !== 'expired') await stripe.expireCheckoutSession(row.sessionId);
         } catch (error) {
           throw releaseRefusal(error);
         }
@@ -206,10 +209,10 @@ export async function releaseParkedCommerce(options: CommerceApiOptions, actor: 
     }
     const timestamp = Math.floor(Date.now() / 1000);
     const [, released] = await db.batch([
-      db.run(decisionInsert(kind, 'release', PARKED, { id: decision.id, paymentReturned, actor: decision.actor,
+      db.run(decisionInsert(kind, 'release', parked(table), { id: decision.id, paymentReturned, actor: decision.actor,
         reason: decision.reason, at: timestamp, recordId: id })),
-      db.all<{ id: string }>(sql`UPDATE _ecommerce_gift_card_purchases SET status = 'cancelled', updated_at = ${timestamp}
-        WHERE id = ${id} AND ${PARKED} AND ${recorded(decision.id)} RETURNING id`),
+      db.update(giftCardPurchases).set({ status: 'cancelled', updatedAt: at(timestamp) })
+        .where(and(eq(giftCardPurchases.id, id), parked(giftCardPurchases), recorded(decision.id))).returning({ id: giftCardPurchases.id }),
     ]);
     if (!released.length) throw new Error('The purchase changed while it was being released; reload the list');
   }

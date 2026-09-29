@@ -651,19 +651,20 @@ test('the tax passes find their rows through partial indexes', async () => {
     return DB.prepare(sql);
   } };
   await reconcileCommerce({ env: { DB: recording, ...exclusive }, paymentAdapters: [adapter] });
-  const statement = (start) => {
-    const found = statements.find((sql) => sql.startsWith(start));
-    assert.ok(found, start);
+  const statement = (pattern) => {
+    const found = statements.find((sql) => pattern.test(sql));
+    assert.ok(found, String(pattern));
     return found;
   };
-  // Paid orders without a transaction, from the partial index of migration 0025.
-  assert.match(queryPlan(sqlite, statement('SELECT id FROM _ecommerce_orders WHERE status IN (')),
+  // Paid orders without a transaction, from the partial index `_ecommerce_orders_tax_transaction_missing_idx`.
+  assert.match(queryPlan(sqlite, statement(/^select "id" from "_ecommerce_orders" where .*"tax_calculation_id" is not null/)),
     /SEARCH _ecommerce_orders USING INDEX _ecommerce_orders_tax_transaction_missing_idx \(status=\?\)/);
-  // Unsent reversals and refunded orders with a transaction, from those of migration 0029.
-  assert.match(queryPlan(sqlite, statement('SELECT r.order_id, r.reference')),
-    /SEARCH r USING INDEX _ecommerce_tax_reversals_unsent_idx \(created_at<\?\)/);
-  assert.match(queryPlan(sqlite, statement('SELECT o.id FROM _ecommerce_orders o WHERE o.status IN (')),
-    /SCAN o USING INDEX _ecommerce_orders_tax_refunded_idx/);
+  // Unsent reversals, from their partial index, and refunded orders with a transaction, from theirs: both
+  // reads state the index's literals.
+  assert.match(queryPlan(sqlite, statement(/^select .* from "_ecommerce_tax_reversals" inner join "_ecommerce_orders"/)),
+    /SEARCH _ecommerce_tax_reversals USING INDEX _ecommerce_tax_reversals_unsent_idx \(created_at<\?\)/);
+  assert.match(queryPlan(sqlite, statement(/^select "id" from "_ecommerce_orders" where .*"status" IN \('partially_refunded', 'refunded'\)/)),
+    /SCAN _ecommerce_orders USING INDEX _ecommerce_orders_tax_refunded_idx/);
   sqlite.close();
 });
 

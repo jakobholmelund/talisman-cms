@@ -536,7 +536,7 @@ test('the queue queries use the orders and fulfillments indexes', async () => {
   const plans = async (options) => {
     recorded.length = 0;
     await listCommerceOrdersAdmin({ DB }, options);
-    return recorded.filter(([sql]) => /FROM _ecommerce_orders|from "_ecommerce_fulfillments"/.test(sql)).map(([sql, values]) => ({
+    return recorded.filter(([sql]) => /from "_ecommerce_orders"|from "_ecommerce_fulfillments"/.test(sql)).map(([sql, values]) => ({
       sql: sql.replace(/\s+/g, ' ').trim().slice(0, 40),
       plan: sqlite.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...values).map((step) => step.detail).join(' | '),
     }));

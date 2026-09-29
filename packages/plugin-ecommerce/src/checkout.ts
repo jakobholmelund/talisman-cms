@@ -302,12 +302,12 @@ export async function createOrderFromCart(ctx: CommerceContext, cartId: string, 
   }
   const inventoryReservations = reserves ? [...inventoryDemand.values()].map((demand) =>
     ({ id: crypto.randomUUID(), type: demand.type, target: demand.id, amount: demand.quantity })) : [];
-  for (const [type, [table, column]] of Object.entries(INVENTORY_COLUMNS)) {
+  for (const [type, { table, quantity }] of Object.entries(INVENTORY_COLUMNS)) {
     const list = inventoryReservations.filter((reservation) => reservation.type === type);
     if (!list.length) continue;
-    statements.push(db.run(sql`UPDATE ${sql.raw(table)}
-      SET ${sql.raw(column)} = ${sql.raw(column)} - demand.amount, updated_at = MAX(updated_at + 1, ${timestamp})
-      FROM (${reservationRows(JSON.stringify(list))}) AS demand WHERE ${sql.raw(table)}.id = demand.target`));
+    statements.push(db.run(sql`UPDATE ${table}
+      SET ${sql.identifier(quantity.name)} = ${sql.identifier(quantity.name)} - demand.amount, updated_at = MAX(updated_at + 1, ${timestamp})
+      FROM (${reservationRows(JSON.stringify(list))}) AS demand WHERE ${table}.id = demand.target`));
   }
   if (inventoryReservations.length) {
     statements.push(db.run(sql`INSERT INTO _ecommerce_inventory_reservations

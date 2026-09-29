@@ -1,4 +1,4 @@
-import { and, count, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, count, eq, gt, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb } from './db';
 import { ensureVerifiedEmailIdentity } from 'talisman-cms/auth/identity';
@@ -133,19 +133,18 @@ export async function activateNewCustomer(_env: TalismanEnv, _orderId: string, _
 export async function hasPurchaseHistory(env: TalismanEnv, shopper: { emails?: Array<string | null | undefined>; accountIds?: Array<string | null | undefined> }) {
   const emails = [...new Set((shopper.emails ?? []).flatMap((email) => email?.trim() ? [email.trim().toLowerCase()] : []))];
   const accountIds = [...new Set((shopper.accountIds ?? []).flatMap((id) => id ? [id] : []))];
-  const matches: string[] = [];
-  if (emails.length) {
-    const list = emails.map(() => '?').join(', ');
-    matches.push(`lower(customer_email) IN (${list})`,
-      `user_id IN (SELECT id FROM _ecommerce_customer_accounts WHERE email_normalized IN (${list}))`);
-  }
-  if (accountIds.length) matches.push(`user_id IN (${accountIds.map(() => '?').join(', ')})`);
+  const db = commerceDb(env);
+  const matches = [
+    // Order emails have an index on lower(customer_email), `_ecommerce_orders_customer_email_idx`.
+    ...(emails.length ? [inArray(sql`lower(${orders.customerEmail})`, emails),
+      inArray(orders.userId, db.select({ id: customerAccounts.id }).from(customerAccounts)
+        .where(inArray(customerAccounts.emailNormalized, emails)))] : []),
+    ...(accountIds.length ? [inArray(orders.userId, accountIds)] : []),
+  ];
   if (!matches.length) return false;
-  const statuses = PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(', ');
-  const prior = await env.DB.prepare(`SELECT 1 AS found FROM _ecommerce_orders
-    WHERE status IN (${statuses}) AND COALESCE(payment_provider, 'stripe') <> 'admin_test'
-      AND (${matches.join(' OR ')}) LIMIT 1`)
-    .bind(...emails, ...emails, ...accountIds).first<{ found: number }>();
+  const prior = await db.select({ id: orders.id }).from(orders)
+    .where(and(inArray(orders.status, [...PURCHASED_ORDER_STATUSES]), sql`COALESCE(${orders.paymentProvider}, 'stripe') <> 'admin_test'`,
+      or(...matches))).limit(1).get();
   return Boolean(prior);
 }
 

@@ -434,9 +434,9 @@ export async function cancelOrder(ctx: CommerceContext, id: string, options: {
       .where(and(eq(schema.componentReservations.id, reservation.id), isNull(schema.componentReservations.releasedAt), released)));
   }
   for (const reservation of inventoryReservations) {
-    const [table, column] = INVENTORY_COLUMNS[reservation.targetType];
-    statements.push(db.run(sql`UPDATE ${sql.raw(table)}
-      SET ${sql.raw(column)} = ${sql.raw(column)} + (SELECT quantity FROM _ecommerce_inventory_reservations
+    const { table, quantity } = INVENTORY_COLUMNS[reservation.targetType];
+    statements.push(db.run(sql`UPDATE ${table}
+      SET ${sql.identifier(quantity.name)} = ${sql.identifier(quantity.name)} + (SELECT quantity FROM _ecommerce_inventory_reservations
         WHERE id = ${reservation.id} AND released_at IS NULL), updated_at = MAX(updated_at + 1, ${timestamp})
       WHERE id = ${reservation.targetId} AND EXISTS (SELECT 1 FROM _ecommerce_inventory_reservations
         WHERE id = ${reservation.id} AND released_at IS NULL)

@@ -1,9 +1,12 @@
-import { and, eq, gt, isNull, sql, type SQL } from 'drizzle-orm';
+import { and, count, eq, exists, gt, inArray, isNull, lt, ne, not, or, sql, type SQL } from 'drizzle-orm';
+import type { BatchItem } from 'drizzle-orm/batch';
+import { alias, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
 import type { TalismanEnv } from 'talisman-cms/client';
-import { commerceDb, runStatements } from './db';
+import { commerceDb, commitBatch, type CommerceDb } from './db';
 import { readSetting } from 'talisman-cms/env';
-import { giftCardClaims, giftCardPurchases, giftCards, orders } from './schema';
+import { creditLedger, discountRedemptions, giftCardClaims, giftCardOrderRefunds, giftCardPurchases, giftCardRedemptions,
+  giftCardRefunds, giftCards, orders, payments } from './schema';
 import type { PaymentProviderAdapter } from './payments';
 import { getReferralPolicy, referralReversalStatements } from './referrals';
 import { readStoreSettings } from './store-settings';
@@ -179,39 +182,51 @@ export async function getGiftCardKeyStatus(env: TalismanEnv) {
     return null;
   }
   const prefix = `v2:${current.id}:`;
-  const row = await env.DB.prepare(`SELECT
-      COALESCE(SUM(substr(encrypted_code,1,3) = 'v2:' AND substr(encrypted_code,1,?) <> ?),0) AS previousKeyCodes,
-      COALESCE(SUM(substr(encrypted_code,1,3) <> 'v2:'),0) AS legacyCodes
-    FROM _ecommerce_gift_cards`).bind(prefix.length, prefix)
-    .first<{ previousKeyCodes: number; legacyCodes: number }>();
+  const row = await commerceDb(env).select({
+    previousKeyCodes: sql<number>`COALESCE(SUM(substr(${giftCards.encryptedCode},1,3) = 'v2:'
+      AND substr(${giftCards.encryptedCode},1,${prefix.length}) <> ${prefix}),0)`,
+    legacyCodes: sql<number>`COALESCE(SUM(substr(${giftCards.encryptedCode},1,3) <> 'v2:'),0)`,
+  }).from(giftCards).get();
   return { keyId: current.id, previousKeyCodes: row?.previousKeyCodes ?? 0, legacyCodes: row?.legacyCodes ?? 0 };
 }
 
+// The purchase and card rows as the statements below alias them, so the fragments name their columns
+// through the schema; in a sql template with `FROM _ecommerce_gift_card_purchases p` they render as "p".
+const p = alias(giftCardPurchases, 'p');
+const c = alias(giftCards, 'c');
+/**
+ * The purchase row's id for a subquery in a select's fields, as text: in a select from one table the
+ * builder writes every column object in its fields unqualified, so `p.id` would become `"id"` and name
+ * the subquery's own table. In a `where` and in a sql template the column object renders as "p"."id".
+ */
+const P_ID = sql.raw('p.id');
+/** A purchase row: the aliased one, or the table in a statement that names it directly. */
+type PurchaseRow = typeof p | typeof giftCardPurchases;
+/** A reference to a purchase's id: a row's id column, the text `P_ID`, or a bound id. */
+type PurchaseRef = AnySQLiteColumn | SQL;
 // Paid, or refunded with nothing left to decide: not held for review, and every refund taken off its cards.
-const settledPurchase = `(p.status = 'paid' OR (p.status IN ('partially_refunded','refunded')
-  AND p.refund_adjusted_cents = p.provider_refunded_cents))`;
+const settledPurchase = (purchase: PurchaseRow) => sql`(${purchase.status} = 'paid' OR (${purchase.status} IN ('partially_refunded','refunded')
+  AND ${purchase.refundAdjustedCents} = ${purchase.providerRefundedCents}))`;
 // The cards a purchase funds are its purchased card and the replacements that took over its value. The
 // one that holds the value now is the card that is not void, newest replacement first: each replacement
 // voids the cards it replaces, so there is normally only one.
-const currentCard = (purchase: string) => `SELECT k.id FROM _ecommerce_gift_cards k
+const currentCard = (purchase: PurchaseRef) => sql`(SELECT k.id FROM _ecommerce_gift_cards k
   WHERE (k.purchase_id = ${purchase} OR k.replaces_purchase_id = ${purchase}) AND k.status <> 'void'
-  ORDER BY k.source = 'admin' DESC,k.created_at DESC,k.id DESC LIMIT 1`;
+  ORDER BY k.source = 'admin' DESC,k.created_at DESC,k.id DESC LIMIT 1)`;
 // A checkout in progress holds value on one of the purchase's cards. Its release would credit that card,
 // so the card must not be voided before the checkout completes or expires.
-const pendingCheckout = (purchase: string) => `EXISTS (SELECT 1 FROM _ecommerce_gift_card_redemptions r
+const pendingCheckout = (purchase: PurchaseRef) => sql`EXISTS (SELECT 1 FROM _ecommerce_gift_card_redemptions r
   JOIN _ecommerce_gift_cards f ON f.id = r.card_id
   WHERE (f.purchase_id = ${purchase} OR f.replaces_purchase_id = ${purchase}) AND r.status = 'reserved')`;
-const cardValue = (purchase: string) => `(SELECT COALESCE(SUM(f.balance_cents),0) FROM _ecommerce_gift_cards f
+const cardValue = (purchase: PurchaseRef) => sql<number>`(SELECT COALESCE(SUM(f.balance_cents),0) FROM _ecommerce_gift_cards f
   WHERE (f.purchase_id = ${purchase} OR f.replaces_purchase_id = ${purchase}) AND f.status <> 'void')`;
 
 const units = (cents: number, currency: string) => `${(cents / 100).toFixed(2)} ${currency.toUpperCase()}`;
 
 /** Explains why a purchase's card cannot be replaced by a card of this amount. */
-async function assertReplaceable(env: TalismanEnv, purchaseId: string, amountCents: number) {
-  const purchase = await env.DB.prepare(`SELECT p.status,p.currency,${settledPurchase} AS settled,
-      ${cardValue('p.id')} AS value,${pendingCheckout('p.id')} AS pending
-    FROM _ecommerce_gift_card_purchases p WHERE p.id = ?`).bind(purchaseId)
-    .first<{ status: string; currency: string; settled: number; value: number; pending: number }>();
+async function assertReplaceable(db: CommerceDb, purchaseId: string, amountCents: number) {
+  const purchase = await db.select({ status: p.status, currency: p.currency, settled: settledPurchase(p),
+    value: cardValue(P_ID), pending: pendingCheckout(P_ID) }).from(p).where(eq(p.id, purchaseId)).get();
   if (!purchase?.settled || !['paid', 'partially_refunded'].includes(purchase.status)) {
     throw new Error('Only the card of a paid purchase that is not held for review can be replaced');
   }
@@ -242,42 +257,37 @@ export async function issueAdminGiftCard(env: TalismanEnv, actor: string, input:
   const { amountCents, reason, replacesPurchaseId } = adminIssueSchema.parse(input);
   if (!actor.trim()) throw new Error('Administrator identity is required');
   const replaces = replacesPurchaseId ?? null;
-  if (replaces) await assertReplaceable(env, replaces, amountCents);
+  const db = commerceDb(env);
+  if (replaces) await assertReplaceable(db, replaces, amountCents);
   const id = `gift_${crypto.randomUUID()}`;
   const secret = await newCardSecret(env, id);
   const timestamp = Math.floor(Date.now() / 1000);
   // A replacement takes over exactly the value left on the purchase's cards, which are emptied and voided
   // in the same batch, so the purchase never funds two spendable cards and the lost code stops working.
-  const statements = [
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_cards
+  const replacementIssued = sql`EXISTS (SELECT 1 FROM _ecommerce_gift_cards n WHERE n.id = ${id})`;
+  const [inserted] = await db.batch([
+    db.all<{ id: string }>(sql`INSERT INTO _ecommerce_gift_cards
       (id,code_hash,code_suffix,encrypted_code,source,admin_actor,admin_reason,replaces_purchase_id,initial_cents,balance_cents,currency,status,created_at,updated_at)
-      SELECT ?,?,?,?,'admin',?,?,?,?,0,?,'active',?,?
-      WHERE ? IS NULL OR EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p
-        WHERE p.id = ? AND p.currency = ? AND p.status IN ('paid','partially_refunded') AND ${settledPurchase}
-          AND NOT ${pendingCheckout('p.id')} AND ${cardValue('p.id')} = ?)
-      RETURNING id`)
-      .bind(id, secret.codeHash, secret.codeSuffix, secret.encryptedCode, actor, reason, replaces, amountCents,
-        currency, timestamp, timestamp, replaces, replaces, currency, amountCents),
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_card_ledger
+      SELECT ${id},${secret.codeHash},${secret.codeSuffix},${secret.encryptedCode},'admin',${actor},${reason},${replaces},${amountCents},0,${currency},'active',${timestamp},${timestamp}
+      WHERE ${replaces} IS NULL OR EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p
+        WHERE p.id = ${replaces} AND p.currency = ${currency} AND p.status IN ('paid','partially_refunded') AND ${settledPurchase(p)}
+          AND NOT ${pendingCheckout(p.id)} AND ${cardValue(p.id)} = ${amountCents})
+      RETURNING id`),
+    db.run(sql`INSERT INTO _ecommerce_gift_card_ledger
       (id,card_id,purchase_id,kind,amount_cents,created_at)
-      SELECT ?,id,replaces_purchase_id,'issue',initial_cents,? FROM _ecommerce_gift_cards WHERE id = ?`)
-      .bind(`gcl_issue_${id}`, timestamp, id),
-  ];
-  if (replaces) {
-    const replacementIssued = `EXISTS (SELECT 1 FROM _ecommerce_gift_cards n WHERE n.id = ?)`;
-    statements.push(
-      env.DB.prepare(`INSERT INTO _ecommerce_gift_card_ledger
+      SELECT ${`gcl_issue_${id}`},id,replaces_purchase_id,'issue',initial_cents,${timestamp} FROM _ecommerce_gift_cards WHERE id = ${id}`),
+    ...(replaces ? [
+      db.run(sql`INSERT INTO _ecommerce_gift_card_ledger
         (id,card_id,purchase_id,kind,amount_cents,created_at)
-        SELECT 'gcl_replaced_' || c.id,c.id,?,'purchase_reversal',-c.balance_cents,?
-        FROM _ecommerce_gift_cards c WHERE (c.purchase_id = ? OR c.replaces_purchase_id = ?) AND c.id <> ?
-          AND c.status <> 'void' AND c.balance_cents > 0 AND ${replacementIssued}`)
-        .bind(replaces, timestamp, replaces, replaces, id, id),
-      env.DB.prepare(`UPDATE _ecommerce_gift_cards SET status = 'void',held_for_review = 0,updated_at = ?
-        WHERE (purchase_id = ? OR replaces_purchase_id = ?) AND id <> ? AND status <> 'void' AND ${replacementIssued}`)
-        .bind(timestamp, replaces, replaces, id, id));
-  }
-  const [inserted] = await env.DB.batch<{ id: string }>(statements);
-  if (!inserted.results?.length) throw new Error('The purchase changed while its card was being replaced; reload and try again');
+        SELECT 'gcl_replaced_' || c.id,c.id,${replaces},'purchase_reversal',-c.balance_cents,${timestamp}
+        FROM _ecommerce_gift_cards c WHERE (c.purchase_id = ${replaces} OR c.replaces_purchase_id = ${replaces}) AND c.id <> ${id}
+          AND c.status <> 'void' AND c.balance_cents > 0 AND ${replacementIssued}`),
+      db.update(giftCards).set({ status: 'void', heldForReview: false, updatedAt: at(timestamp) })
+        .where(and(or(eq(giftCards.purchaseId, replaces), eq(giftCards.replacesPurchaseId, replaces)), ne(giftCards.id, id),
+          ne(giftCards.status, 'void'), replacementIssued)),
+    ] : []),
+  ]);
+  if (!inserted.length) throw new Error('The purchase changed while its card was being replaced; reload and try again');
   return { id, code: secret.code, amountCents, currency, replacesPurchaseId: replaces };
 }
 
@@ -329,27 +339,26 @@ export async function getGiftCardsAdmin(env: TalismanEnv) {
 
 // A purchase as the review screen shows it: its refunds, the card that holds its value, what was spent
 // from its cards on orders (checkouts in progress included), and what checkouts in progress hold.
-const reviewSelect = `SELECT p.id AS purchaseId,p.status,p.amount_cents AS amountCents,p.currency,
-    p.provider_refunded_cents AS refundedCents,p.refund_adjusted_cents AS adjustedCents,
-    c.id AS cardId,c.code_suffix AS codeSuffix,c.status AS cardStatus,c.held_for_review AS cardHeld,
-    c.replaces_purchase_id IS NOT NULL AS cardReplacement,c.balance_cents AS balanceCents,
-    (SELECT -COALESCE(SUM(l.amount_cents),0) FROM _ecommerce_gift_card_ledger l
-      JOIN _ecommerce_gift_cards f ON f.id = l.card_id
-      WHERE (f.purchase_id = p.id OR f.replaces_purchase_id = p.id)
-        AND l.kind IN ('reserve','release','refund_restore')) AS spentCents,
-    (SELECT COALESCE(SUM(r.amount_cents),0) FROM _ecommerce_gift_card_redemptions r
-      JOIN _ecommerce_gift_cards f ON f.id = r.card_id
-      WHERE (f.purchase_id = p.id OR f.replaces_purchase_id = p.id) AND r.status = 'reserved') AS pendingCents,
-    (SELECT COUNT(*) FROM _ecommerce_gift_cards f WHERE f.replaces_purchase_id = p.id) AS replacementCount
-  FROM _ecommerce_gift_card_purchases p LEFT JOIN _ecommerce_gift_cards c ON c.id = (${currentCard('p.id')})`;
-type ReviewRow = { purchaseId: string; status: string; amountCents: number; currency: string;
-  refundedCents: number; adjustedCents: number; cardId: string | null; codeSuffix: string | null;
-  cardStatus: 'active' | 'suspended' | null; cardHeld: number | null; cardReplacement: number | null;
-  balanceCents: number | null; spentCents: number; pendingCents: number; replacementCount: number };
-const reviewView = (row: ReviewRow) => ({ ...row, cardHeld: row.cardHeld === 1, cardReplacement: row.cardReplacement === 1 });
+const reviewQuery = (db: CommerceDb) => db.select({
+  purchaseId: p.id, status: p.status, amountCents: p.amountCents, currency: p.currency,
+  refundedCents: p.providerRefundedCents, adjustedCents: p.refundAdjustedCents,
+  cardId: c.id, codeSuffix: c.codeSuffix, cardStatus: c.status, cardHeld: c.heldForReview,
+  cardReplacement: sql<boolean>`${c.replacesPurchaseId} IS NOT NULL`.mapWith(Boolean), balanceCents: c.balanceCents,
+  spentCents: sql<number>`(SELECT -COALESCE(SUM(l.amount_cents),0) FROM _ecommerce_gift_card_ledger l
+    JOIN _ecommerce_gift_cards f ON f.id = l.card_id
+    WHERE (f.purchase_id = ${P_ID} OR f.replaces_purchase_id = ${P_ID})
+      AND l.kind IN ('reserve','release','refund_restore'))`,
+  pendingCents: sql<number>`(SELECT COALESCE(SUM(r.amount_cents),0) FROM _ecommerce_gift_card_redemptions r
+    JOIN _ecommerce_gift_cards f ON f.id = r.card_id
+    WHERE (f.purchase_id = ${P_ID} OR f.replaces_purchase_id = ${P_ID}) AND r.status = 'reserved')`,
+  replacementCount: sql<number>`(SELECT COUNT(*) FROM _ecommerce_gift_cards f WHERE f.replaces_purchase_id = ${P_ID})`,
+}).from(p).leftJoin(c, eq(c.id, currentCard(p.id)));
+type ReviewRow = Awaited<ReturnType<typeof reviewQuery>>[number];
+/** A purchase without a card left has no hold to show. */
+const reviewView = (row: ReviewRow) => ({ ...row, cardHeld: row.cardHeld === true });
 
 // A purchase under an open payment dispute is held until the dispute closes, not by a decision.
-const openDispute = (purchase: string) => `EXISTS (SELECT 1 FROM _ecommerce_disputes d
+const openDispute = (purchase: PurchaseRef) => sql<number>`EXISTS (SELECT 1 FROM _ecommerce_disputes d
   WHERE d.gift_card_purchase_id = ${purchase} AND d.closed_at IS NULL)`;
 
 /**
@@ -357,11 +366,12 @@ const openDispute = (purchase: string) => `EXISTS (SELECT 1 FROM _ecommerce_disp
  * Purchases held by an open payment dispute wait for its outcome and are left out.
  */
 export async function getGiftCardReviewsAdmin(env: TalismanEnv) {
-  const rows = await env.DB.prepare(`${reviewSelect}
-    WHERE p.status = 'review' AND NOT ${openDispute('p.id')} ORDER BY p.updated_at,p.id LIMIT 100`).all<ReviewRow>();
-  const total = await env.DB.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_gift_card_purchases p
-    WHERE p.status = 'review' AND NOT ${openDispute('p.id')}`).first<{ count: number }>();
-  return { reviews: (rows.results ?? []).map(reviewView), reviewCount: total?.count ?? 0 };
+  const db = commerceDb(env);
+  const held = and(eq(p.status, 'review'), not(openDispute(p.id)));
+  // Read apart: D1 returns a batch's rows keyed by column name, so a joined select loses its second `id`.
+  const rows = await reviewQuery(db).where(held).orderBy(p.updatedAt, p.id).limit(100);
+  const total = await db.select({ count: count() }).from(p).where(held).get();
+  return { reviews: rows.map(reviewView), reviewCount: total?.count ?? 0 };
 }
 
 export async function setGiftCardActive(env: TalismanEnv, id: string, active: boolean) {
@@ -373,14 +383,14 @@ export async function setGiftCardActive(env: TalismanEnv, id: string, active: bo
   // its purchase is paid or its refund is resolved. Either choice replaces a review hold, so reinstating
   // the purchase later leaves the card as the administrator set it.
   const timestamp = Math.floor(Date.now() / 1000);
-  const result = await env.DB.prepare(`UPDATE _ecommerce_gift_cards SET status = ?,held_for_review = 0,updated_at = ?
-    WHERE id = ? AND status <> 'void' AND (? = 0 OR (
-      (purchase_id IS NULL OR EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p
-        WHERE p.id = _ecommerce_gift_cards.purchase_id AND ${settledPurchase}))
-      AND (replaces_purchase_id IS NULL OR EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p
-        WHERE p.id = _ecommerce_gift_cards.replaces_purchase_id AND ${settledPurchase}))))
-    RETURNING id`).bind(active ? 'active' : 'suspended', timestamp, id, active ? 1 : 0).all();
-  if (!result.results?.length) throw new Error('Gift card purchase requires review');
+  const settled = (purchaseId: AnySQLiteColumn) => exists(db.select({ one: sql`1` }).from(giftCardPurchases)
+    .where(and(eq(giftCardPurchases.id, purchaseId), settledPurchase(giftCardPurchases))));
+  const reactivatable = and(or(isNull(giftCards.purchaseId), settled(giftCards.purchaseId)),
+    or(isNull(giftCards.replacesPurchaseId), settled(giftCards.replacesPurchaseId)));
+  const result = await db.update(giftCards).set({ status: active ? 'active' : 'suspended', heldForReview: false, updatedAt: at(timestamp) })
+    .where(and(eq(giftCards.id, id), ne(giftCards.status, 'void'), active ? reactivatable : undefined))
+    .returning({ id: giftCards.id });
+  if (!result.length) throw new Error('Gift card purchase requires review');
   return { id, status: active ? 'active' : 'suspended' };
 }
 
@@ -492,22 +502,21 @@ export async function confirmGiftCardPurchase(env: TalismanEnv, session: {
   const cardId = `gift_${crypto.randomUUID()}`;
   const secret = await newCardSecret(env, cardId);
   const timestamp = Math.floor(Date.now() / 1000);
-  await runStatements(db, [
-    sql`UPDATE _ecommerce_gift_card_purchases
-      SET status = 'paid',payment_intent_id = ${session.payment_intent},updated_at = ${timestamp}
-      WHERE id = ${id} AND status = 'pending' AND provider_session_id = ${session.id}`,
-    sql`INSERT INTO _ecommerce_gift_cards
+  await commitBatch(db, [
+    db.update(giftCardPurchases).set({ status: 'paid', paymentIntentId: session.payment_intent, updatedAt: at(timestamp) })
+      .where(and(eq(giftCardPurchases.id, id), eq(giftCardPurchases.status, 'pending'), eq(giftCardPurchases.providerSessionId, session.id))),
+    db.run(sql`INSERT INTO _ecommerce_gift_cards
       (id,code_hash,code_suffix,encrypted_code,source,purchase_id,initial_cents,balance_cents,currency,status,created_at,updated_at)
       SELECT ${cardId},${secret.codeHash},${secret.codeSuffix},${secret.encryptedCode},'purchase',id,amount_cents,0,currency,'active',${timestamp},${timestamp}
       FROM _ecommerce_gift_card_purchases WHERE id = ${id} AND status = 'paid'
-      ON CONFLICT(purchase_id) DO NOTHING`,
-    sql`INSERT INTO _ecommerce_gift_card_ledger
+      ON CONFLICT(purchase_id) DO NOTHING`),
+    db.run(sql`INSERT INTO _ecommerce_gift_card_ledger
       (id,card_id,purchase_id,kind,amount_cents,created_at)
       SELECT 'gcl_issue_' || id,id,purchase_id,'issue',initial_cents,${timestamp}
-      FROM _ecommerce_gift_cards WHERE purchase_id = ${id} ON CONFLICT(id) DO NOTHING`,
+      FROM _ecommerce_gift_cards WHERE purchase_id = ${id} ON CONFLICT(id) DO NOTHING`),
     // The buyer gets a claim link once, however often the payment is confirmed.
-    commerceEmailStatement('gift_card_claim', id, timestamp,
-      sql`EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases WHERE id = ${id} AND status = 'paid' AND provider_session_id = ${session.id})`),
+    db.run(commerceEmailStatement('gift_card_claim', id, timestamp,
+      sql`EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases WHERE id = ${id} AND status = 'paid' AND provider_session_id = ${session.id})`)),
   ]);
   await sendCommerceEmailNow(env, 'gift_card_claim', id, composeGiftCardClaimEmail);
   return { success: true, purchaseId: id };
@@ -522,40 +531,38 @@ const CLAIM_TOKEN = /^[0-9a-f]{64}$/;
 /** The storefront page a claim link opens. The token is in the fragment, so it never reaches the server's logs. */
 const claimUrl = (origin: string, token: string) => `${origin}/gift-cards/claim#token=${token}`;
 
-type ClaimTarget = { id: string; buyer_email: string; amount_cents: number; currency: string;
-  card_id: string | null; card_status: string | null };
-
 /** The purchase, its buyer and the card that holds its value now: the purchased card or its replacement. */
-function claimTarget(env: TalismanEnv, purchaseId: string) {
-  return env.DB.prepare(`SELECT p.id,p.buyer_email,p.amount_cents,p.currency,c.id AS card_id,c.status AS card_status
-    FROM _ecommerce_gift_card_purchases p LEFT JOIN _ecommerce_gift_cards c ON c.id = (${currentCard('p.id')})
-    WHERE p.id = ?`).bind(purchaseId).first<ClaimTarget>();
+function claimTarget(db: CommerceDb, purchaseId: string) {
+  return db.select({ id: giftCardPurchases.id, buyerEmail: giftCardPurchases.buyerEmail, amountCents: giftCardPurchases.amountCents,
+    currency: giftCardPurchases.currency, cardId: giftCards.id, cardStatus: giftCards.status })
+    .from(giftCardPurchases).leftJoin(giftCards, eq(giftCards.id, currentCard(giftCardPurchases.id)))
+    .where(eq(giftCardPurchases.id, purchaseId)).get();
 }
+type ClaimTarget = NonNullable<Awaited<ReturnType<typeof claimTarget>>>;
 
 /**
  * A new claim link for a card; only the token's hash is stored, so the token is returned this once.
  * The statement returns the link's id when it made the link, and makes none unless `condition` holds.
  */
-async function newClaimLink(env: TalismanEnv, target: ClaimTarget & { card_id: string }, now: number,
-  { resend, condition }: { resend?: { actor: string; reason: string }; condition?: { sql: string; params: unknown[] } } = {}) {
+async function newClaimLink(target: ClaimTarget & { cardId: string }, now: number,
+  { resend, condition }: { resend?: { actor: string; reason: string }; condition?: SQL } = {}) {
   const token = randomHex(32);
   const id = `gclaim_${crypto.randomUUID()}`;
   const expiresAt = now + GIFT_CARD_CLAIM_SECONDS;
-  return { id, token, expiresAt, statement: env.DB.prepare(`INSERT INTO _ecommerce_gift_card_claims
+  return { id, token, expiresAt, statement: sql`INSERT INTO _ecommerce_gift_card_claims
       (id,token_hash,purchase_id,card_id,expires_at,created_at,created_by,reason)
-      SELECT ?,?,?,?,?,?,?,? WHERE ${condition?.sql ?? '1'} RETURNING id`)
-    .bind(id, await hashGiftCardSecret(token), target.id, target.card_id, expiresAt, now,
-      resend?.actor ?? null, resend?.reason ?? null, ...(condition?.params ?? [])) };
+      SELECT ${id},${await hashGiftCardSecret(token)},${target.id},${target.cardId},${expiresAt},${now},
+        ${resend?.actor ?? null},${resend?.reason ?? null} WHERE ${condition ?? sql`1`} RETURNING id` };
 }
 
-const revokeClaimLinkStatement = (env: TalismanEnv, id: string) => env.DB.prepare(`UPDATE _ecommerce_gift_card_claims
-  SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`).bind(Math.floor(Date.now() / 1000), id);
-const revokeClaimLink = (env: TalismanEnv, id: string) => revokeClaimLinkStatement(env, id).run();
+/** Revokes a claim link that was not used; a batch item. */
+const revokeClaimLinkStatement = (db: CommerceDb, id: string) => db.update(giftCardClaims).set({ revokedAt: new Date() })
+  .where(and(eq(giftCardClaims.id, id), isNull(giftCardClaims.revokedAt)));
 
 function claimEmail(setup: CommerceEmailSetup, target: ClaimTarget, link: { token: string; expiresAt: number }) {
   const email: GiftCardClaimEmail = {
     store: setup.store,
-    purchase: { id: target.id, amountCents: target.amount_cents, currency: target.currency },
+    purchase: { id: target.id, amountCents: target.amountCents, currency: target.currency },
     claim: { url: claimUrl(setup.store.origin!, link.token), expiresAt: new Date(link.expiresAt * 1000) },
   };
   return applyEmailTemplate(setup, 'giftCardClaim', email, giftCardClaimEmail(email));
@@ -567,17 +574,18 @@ function claimEmail(setup: CommerceEmailSetup, target: ClaimTarget, link: { toke
  * is no longer active gets no link.
  */
 export const composeGiftCardClaimEmail: CommerceEmailComposer = async (env, purchaseId, setup, now) => {
-  const target = await claimTarget(env, purchaseId);
+  const db = commerceDb(env);
+  const target = await claimTarget(db, purchaseId);
   if (!target) return { cancel: 'not_found' };
-  if (!target.card_id || target.card_status !== 'active') return { cancel: 'not_claimable' };
-  const to = bareEmailAddress(target.buyer_email);
+  if (!target.cardId || target.cardStatus !== 'active') return { cancel: 'not_claimable' };
+  const to = bareEmailAddress(target.buyerEmail);
   if (!to) return { fail: 'invalid_recipient' };
   // Only while this Worker still holds the email: one whose lease ran out, and whose email another Worker
   // or an administrator's resend took over, makes no link and sends nothing.
-  const link = await newClaimLink(env, { ...target, card_id: target.card_id }, now,
+  const link = await newClaimLink({ ...target, cardId: target.cardId }, now,
     { condition: commerceEmailHeld('gift_card_claim', purchaseId, now) });
-  if (!await link.statement.first()) return { cancel: 'superseded' };
-  return { to, message: await claimEmail(setup, target, link), onFailure: () => revokeClaimLink(env, link.id) };
+  if (!await db.get<{ id: string }>(link.statement)) return { cancel: 'superseded' };
+  return { to, message: await claimEmail(setup, target, link), onFailure: () => revokeClaimLinkStatement(db, link.id).run() };
 };
 
 /**
@@ -589,7 +597,8 @@ export const composeGiftCardClaimEmail: CommerceEmailComposer = async (env, purc
 export async function claimGiftCardCode(env: TalismanEnv, token: unknown) {
   if (typeof token !== 'string' || !CLAIM_TOKEN.test(token)) return null;
   const now = Math.floor(Date.now() / 1000);
-  const claim = await commerceDb(env).select({ id: giftCardClaims.id, cardId: giftCardClaims.cardId,
+  const db = commerceDb(env);
+  const claim = await db.select({ id: giftCardClaims.id, cardId: giftCardClaims.cardId,
     codeHash: giftCards.codeHash, encryptedCode: giftCards.encryptedCode, balanceCents: giftCards.balanceCents,
     currency: giftCards.currency })
     .from(giftCardClaims).innerJoin(giftCards, eq(giftCards.id, giftCardClaims.cardId))
@@ -599,11 +608,12 @@ export async function claimGiftCardCode(env: TalismanEnv, token: unknown) {
   // Decrypted before the link is used up, so a missing key leaves the link working.
   const code = await decryptCardSecret(await giftCardKeyring(env),
     { id: claim.cardId, codeHash: claim.codeHash, encryptedCode: claim.encryptedCode });
-  const used = await env.DB.prepare(`UPDATE _ecommerce_gift_card_claims SET used_at = ?
-    WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?
-      AND EXISTS (SELECT 1 FROM _ecommerce_gift_cards WHERE id = ? AND status = 'active')
-    RETURNING id`).bind(now, claim.id, now, claim.cardId).all();
-  if (!used.results?.length) return null;
+  const used = await db.update(giftCardClaims).set({ usedAt: at(now) })
+    .where(and(eq(giftCardClaims.id, claim.id), isNull(giftCardClaims.usedAt), isNull(giftCardClaims.revokedAt),
+      gt(giftCardClaims.expiresAt, at(now)),
+      exists(db.select({ one: sql`1` }).from(giftCards).where(and(eq(giftCards.id, claim.cardId), eq(giftCards.status, 'active'))))))
+    .returning({ id: giftCardClaims.id });
+  if (!used.length) return null;
   return { code, balanceCents: claim.balanceCents, currency: claim.currency };
 }
 
@@ -628,31 +638,32 @@ export async function resendGiftCardClaimLink(env: TalismanEnv, actor: string, i
   const setup = await commerceEmailSetup(env);
   const missing = missingEmailSettings(setup, 'gift_card_claim');
   if (missing.length) throw new Error(`Email needs ${missing.join(', ')} before a claim link can be sent`);
-  const target = await claimTarget(env, values.purchaseId);
+  const db = commerceDb(env);
+  const target = await claimTarget(db, values.purchaseId);
   if (!target) throw new Error('Gift card purchase not found');
-  if (!target.card_id || target.card_status !== 'active') {
+  if (!target.cardId || target.cardStatus !== 'active') {
     throw new Error('A claim link can be sent only while the card that holds the purchase\'s value is active');
   }
-  const to = bareEmailAddress(target.buyer_email);
+  const to = bareEmailAddress(target.buyerEmail);
   if (!to) throw new Error('The purchase has no valid buyer address');
   const now = Math.floor(Date.now() / 1000);
   const hold = await holdCommerceEmail(env, 'gift_card_claim', values.purchaseId, now);
   if (hold === 'busy') {
     throw new Error('The claim email is being sent right now; reload in a few minutes and resend it only if it was not sent');
   }
-  const release = hold === null ? [] : [releaseCommerceEmailStatement(env, 'gift_card_claim', values.purchaseId, hold)];
-  const link = await newClaimLink(env, { ...target, card_id: target.card_id }, now, { resend: { actor, reason: values.reason } });
+  const release = hold === null ? [] : [releaseCommerceEmailStatement(db, 'gift_card_claim', values.purchaseId, hold)];
+  const link = await newClaimLink({ ...target, cardId: target.cardId }, now, { resend: { actor, reason: values.reason } });
   try {
-    await link.statement.first();
+    await db.get(link.statement);
   } catch (cause) {
-    if (release.length) await env.DB.batch(release);
+    await commitBatch(db, release);
     throw new Error('The purchase\'s card changed while the link was being made; reload and try again', { cause });
   }
   try {
     await sendCommerceMessage(env, setup, 'gift_card_claim', to, await claimEmail(setup, target, link));
   } catch (error) {
     // The new link was in no email, so it is harmless if this fails; the hold then ends with its lease.
-    await env.DB.batch([revokeClaimLinkStatement(env, link.id), ...release]).catch(() => undefined);
+    await commitBatch(db, [revokeClaimLinkStatement(db, link.id), ...release]).catch(() => undefined);
     const code = emailErrorCode(error);
     console.warn('[commerce] Gift card claim link not sent', { purchase: values.purchaseId, code });
     throw new Error(`The claim email could not be sent (${code}); earlier links still work. Try again later`);
@@ -660,11 +671,11 @@ export async function resendGiftCardClaimLink(env: TalismanEnv, actor: string, i
   // Links made before this one stop working, by insertion order, so of two resends at once the later
   // link is the one that keeps working.
   try {
-    await env.DB.batch([
-      env.DB.prepare(`UPDATE _ecommerce_gift_card_claims SET revoked_at = ?
-        WHERE purchase_id = ? AND used_at IS NULL AND revoked_at IS NULL
-          AND rowid < (SELECT rowid FROM _ecommerce_gift_card_claims WHERE id = ?)`).bind(now, values.purchaseId, link.id),
-      ...(hold === null ? [] : [supersedeCommerceEmailStatement(env, 'gift_card_claim', values.purchaseId, hold)]),
+    await commitBatch(db, [
+      db.update(giftCardClaims).set({ revokedAt: at(now) })
+        .where(and(eq(giftCardClaims.purchaseId, values.purchaseId), isNull(giftCardClaims.usedAt), isNull(giftCardClaims.revokedAt),
+          lt(sql`rowid`, db.select({ rowid: sql<number>`rowid` }).from(giftCardClaims).where(eq(giftCardClaims.id, link.id))))),
+      ...(hold === null ? [] : [supersedeCommerceEmailStatement(db, 'gift_card_claim', values.purchaseId, hold)]),
     ]);
   } catch (cause) {
     throw new Error('The claim email was sent, but earlier links still work; resend it again to stop them', { cause });
@@ -746,7 +757,7 @@ export function giftCardPurchaseHoldStatements(purchaseId: string, timestamp: nu
   // checkout in progress (its reservation is in the ledger until released).
   const unspentFullRefund = sql`EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p
     WHERE p.id = ${purchaseId} AND p.status = 'review' AND p.provider_refunded_cents >= p.amount_cents
-      AND NOT ${sql.raw(pendingCheckout('p.id'))}
+      AND NOT ${pendingCheckout(p.id)}
       AND (SELECT COALESCE(SUM(l.amount_cents),0) FROM _ecommerce_gift_card_ledger l
         JOIN _ecommerce_gift_cards f ON f.id = l.card_id
         WHERE (f.purchase_id = p.id OR f.replaces_purchase_id = p.id)
@@ -780,7 +791,7 @@ export function giftCardPurchaseReleaseStatements(purchaseId: string, timestamp:
   return [
     sql`UPDATE _ecommerce_gift_cards SET status = 'active',held_for_review = 0,updated_at = ${timestamp}
       WHERE (purchase_id = ${purchaseId} OR replaces_purchase_id = ${purchaseId}) AND status = 'suspended' AND held_for_review = 1
-        AND EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p WHERE p.id = ${purchaseId} AND ${sql.raw(settledPurchase)})`,
+        AND EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p WHERE p.id = ${purchaseId} AND ${settledPurchase(p)})`,
   ];
 }
 
@@ -791,7 +802,7 @@ export function giftCardPurchaseReleaseStatements(purchaseId: string, timestamp:
  * 'void' outcome; add the hold statements first, so nothing more is spent meanwhile.
  */
 export function giftCardPurchaseChargebackStatements(purchaseId: string, timestamp: number): SQL[] {
-  const clear = sql`NOT EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p WHERE p.id = ${purchaseId} AND ${sql.raw(pendingCheckout('p.id'))})`;
+  const clear = sql`NOT EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p WHERE p.id = ${purchaseId} AND ${pendingCheckout(p.id)})`;
   return [
     sql`INSERT INTO _ecommerce_gift_card_ledger
       (id,card_id,purchase_id,kind,amount_cents,created_at)
@@ -826,10 +837,10 @@ export async function recordGiftCardPurchaseRefund(env: TalismanEnv, params: {
   const timestamp = Math.floor(Date.now() / 1000);
   // Each new refund total holds the purchase for review, including one already resolved. The hold
   // statements work from the stored state, so a stale or repeated event only reapplies it.
-  await runStatements(db, [
-    sql`UPDATE _ecommerce_gift_card_purchases SET status = 'review',provider_refunded_cents = ${params.amountRefunded},updated_at = ${timestamp}
-      WHERE id = ${purchase.id} AND provider_refunded_cents < ${params.amountRefunded}`,
-    ...giftCardPurchaseHoldStatements(purchase.id, timestamp),
+  await commitBatch(db, [
+    db.update(giftCardPurchases).set({ status: 'review', providerRefundedCents: params.amountRefunded, updatedAt: at(timestamp) })
+      .where(and(eq(giftCardPurchases.id, purchase.id), lt(giftCardPurchases.providerRefundedCents, params.amountRefunded))),
+    ...giftCardPurchaseHoldStatements(purchase.id, timestamp).map((statement) => db.run(statement)),
   ]);
   const current = await db.select({ status: giftCardPurchases.status }).from(giftCardPurchases)
     .where(eq(giftCardPurchases.id, purchase.id)).get();
@@ -855,9 +866,10 @@ const reviewSchema = z.object({
 export async function resolveGiftCardReview(env: TalismanEnv, actor: string, input: unknown) {
   const values = reviewSchema.parse(input);
   if (!actor.trim()) throw new Error('Administrator identity is required');
-  const purchase = await env.DB.prepare(`${reviewSelect} WHERE p.id = ?`).bind(values.purchaseId).first<ReviewRow>();
+  const db = commerceDb(env);
+  const purchase = await reviewQuery(db).where(eq(p.id, values.purchaseId)).get();
   if (purchase?.status !== 'review') throw new Error('Gift card purchase is not held for review');
-  const disputed = await env.DB.prepare(`SELECT ${openDispute('?')} AS open`).bind(values.purchaseId).first<{ open: number }>();
+  const disputed = await db.select({ open: openDispute(P_ID) }).from(p).where(eq(p.id, values.purchaseId)).get();
   if (disputed?.open) throw new Error('A payment dispute is open for this purchase; its cards stay held until the dispute closes');
   if (purchase.refundedCents !== values.refundedCents) {
     throw new Error('Another refund was recorded for this purchase; reload and review it again');
@@ -876,60 +888,52 @@ export async function resolveGiftCardReview(env: TalismanEnv, actor: string, inp
   // Every statement repeats the state the administrator decided on: the purchase is still held for
   // review at the refund total they saw, and this review was recorded. A refund recorded in between
   // makes the whole batch change nothing.
-  const held = `EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases
-    WHERE id = ? AND status = 'review' AND provider_refunded_cents = ?)`;
-  const recorded = `EXISTS (SELECT 1 FROM _ecommerce_gift_card_reviews WHERE id = ?)`;
-  const guard = [values.purchaseId, values.refundedCents, reviewId] as const;
-  const funded = [values.purchaseId, values.purchaseId] as const;
-  const statements = values.outcome === 'reinstate' ? [
+  const held = sql`EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases
+    WHERE id = ${values.purchaseId} AND status = 'review' AND provider_refunded_cents = ${values.refundedCents})`;
+  const recorded = sql`EXISTS (SELECT 1 FROM _ecommerce_gift_card_reviews WHERE id = ${reviewId})`;
+  const funded = or(eq(giftCards.purchaseId, values.purchaseId), eq(giftCards.replacesPurchaseId, values.purchaseId));
+  const review = values.outcome === 'reinstate'
     // Recorded only while the card that holds the purchase's value covers the refund not yet taken off.
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_card_reviews
+    ? db.all<{ adjustment_cents: number }>(sql`INSERT INTO _ecommerce_gift_card_reviews
       (id,purchase_id,card_id,outcome,refunded_cents,adjustment_cents,admin_actor,reason,created_at)
-      SELECT ?,p.id,c.id,'reinstate',p.provider_refunded_cents,p.provider_refunded_cents - p.refund_adjusted_cents,?,?,?
-      FROM _ecommerce_gift_card_purchases p JOIN _ecommerce_gift_cards c ON c.id = (${currentCard('p.id')})
-      WHERE p.id = ? AND p.status = 'review' AND p.provider_refunded_cents = ?
-        AND c.balance_cents >= p.provider_refunded_cents - p.refund_adjusted_cents AND NOT ${openDispute('p.id')}
+      SELECT ${reviewId},p.id,c.id,'reinstate',p.provider_refunded_cents,p.provider_refunded_cents - p.refund_adjusted_cents,${actor},${values.reason},${timestamp}
+      FROM _ecommerce_gift_card_purchases p JOIN _ecommerce_gift_cards c ON c.id = ${currentCard(p.id)}
+      WHERE p.id = ${values.purchaseId} AND p.status = 'review' AND p.provider_refunded_cents = ${values.refundedCents}
+        AND c.balance_cents >= p.provider_refunded_cents - p.refund_adjusted_cents AND NOT ${openDispute(p.id)}
       RETURNING adjustment_cents`)
-      .bind(reviewId, actor, values.reason, timestamp, values.purchaseId, values.refundedCents),
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_card_ledger
-      (id,card_id,purchase_id,kind,amount_cents,created_at)
-      SELECT 'gcl_' || r.id,r.card_id,r.purchase_id,'purchase_reversal',-r.adjustment_cents,r.created_at
-      FROM _ecommerce_gift_card_reviews r WHERE r.id = ? AND r.adjustment_cents > 0 AND ${held}`)
-      .bind(reviewId, values.purchaseId, values.refundedCents),
-    env.DB.prepare(`UPDATE _ecommerce_gift_cards SET status = 'active',held_for_review = 0,updated_at = ?
-      WHERE (purchase_id = ? OR replaces_purchase_id = ?) AND status = 'suspended' AND held_for_review = 1
-        AND ${held} AND ${recorded}`)
-      .bind(timestamp, ...funded, ...guard),
-  ] : [
     // Recorded only while no checkout in progress holds value on the purchase's cards, so nothing is
     // released onto them once they are void.
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_card_reviews
+    : db.all<{ adjustment_cents: number }>(sql`INSERT INTO _ecommerce_gift_card_reviews
       (id,purchase_id,card_id,outcome,refunded_cents,adjustment_cents,admin_actor,reason,created_at)
-      SELECT ?,p.id,COALESCE((${currentCard('p.id')}),
+      SELECT ${reviewId},p.id,COALESCE(${currentCard(p.id)},
           (SELECT o.id FROM _ecommerce_gift_cards o WHERE o.purchase_id = p.id)),
-        'void',p.provider_refunded_cents,${cardValue('p.id')},?,?,?
+        'void',p.provider_refunded_cents,${cardValue(p.id)},${actor},${values.reason},${timestamp}
       FROM _ecommerce_gift_card_purchases p
-      WHERE p.id = ? AND p.status = 'review' AND p.provider_refunded_cents = ? AND NOT ${pendingCheckout('p.id')}
-        AND NOT ${openDispute('p.id')}
-      RETURNING adjustment_cents`)
-      .bind(reviewId, actor, values.reason, timestamp, values.purchaseId, values.refundedCents),
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_card_ledger
+      WHERE p.id = ${values.purchaseId} AND p.status = 'review' AND p.provider_refunded_cents = ${values.refundedCents}
+        AND NOT ${pendingCheckout(p.id)} AND NOT ${openDispute(p.id)}
+      RETURNING adjustment_cents`);
+  const effects: BatchItem<'sqlite'>[] = values.outcome === 'reinstate' ? [
+    db.run(sql`INSERT INTO _ecommerce_gift_card_ledger
       (id,card_id,purchase_id,kind,amount_cents,created_at)
-      SELECT ? || '_' || id,id,?,'purchase_reversal',-balance_cents,?
-      FROM _ecommerce_gift_cards WHERE (purchase_id = ? OR replaces_purchase_id = ?) AND status <> 'void'
-        AND balance_cents > 0 AND ${held} AND ${recorded}`)
-      .bind(`gcl_${reviewId}`, values.purchaseId, timestamp, ...funded, ...guard),
-    env.DB.prepare(`UPDATE _ecommerce_gift_cards SET status = 'void',held_for_review = 0,updated_at = ?
-      WHERE (purchase_id = ? OR replaces_purchase_id = ?) AND status <> 'void' AND ${held} AND ${recorded}`)
-      .bind(timestamp, ...funded, ...guard),
+      SELECT 'gcl_' || r.id,r.card_id,r.purchase_id,'purchase_reversal',-r.adjustment_cents,r.created_at
+      FROM _ecommerce_gift_card_reviews r WHERE r.id = ${reviewId} AND r.adjustment_cents > 0 AND ${held}`),
+    db.update(giftCards).set({ status: 'active', heldForReview: false, updatedAt: at(timestamp) })
+      .where(and(funded, eq(giftCards.status, 'suspended'), eq(giftCards.heldForReview, true), held, recorded)),
+  ] : [
+    db.run(sql`INSERT INTO _ecommerce_gift_card_ledger
+      (id,card_id,purchase_id,kind,amount_cents,created_at)
+      SELECT ${`gcl_${reviewId}`} || '_' || id,id,${values.purchaseId},'purchase_reversal',-balance_cents,${timestamp}
+      FROM _ecommerce_gift_cards WHERE (purchase_id = ${values.purchaseId} OR replaces_purchase_id = ${values.purchaseId})
+        AND status <> 'void' AND balance_cents > 0 AND ${held} AND ${recorded}`),
+    db.update(giftCards).set({ status: 'void', heldForReview: false, updatedAt: at(timestamp) })
+      .where(and(funded, ne(giftCards.status, 'void'), held, recorded)),
   ];
-  statements.push(env.DB.prepare(`UPDATE _ecommerce_gift_card_purchases
-    SET status = CASE WHEN provider_refunded_cents >= amount_cents THEN 'refunded' ELSE 'partially_refunded' END,
-      refund_adjusted_cents = provider_refunded_cents,updated_at = ?
-    WHERE id = ? AND status = 'review' AND provider_refunded_cents = ? AND ${recorded}`)
-    .bind(timestamp, values.purchaseId, values.refundedCents, reviewId));
-  const [review] = await env.DB.batch<{ adjustment_cents: number }>(statements);
-  const adjustment = review.results?.[0];
+  const settled = db.update(giftCardPurchases).set({
+    status: sql`CASE WHEN ${giftCardPurchases.providerRefundedCents} >= ${giftCardPurchases.amountCents} THEN 'refunded' ELSE 'partially_refunded' END`,
+    refundAdjustedCents: giftCardPurchases.providerRefundedCents, updatedAt: at(timestamp),
+  }).where(and(eq(giftCardPurchases.id, values.purchaseId), eq(giftCardPurchases.status, 'review'),
+    eq(giftCardPurchases.providerRefundedCents, values.refundedCents), recorded));
+  const [[adjustment]] = await db.batch([review, ...effects, settled]);
   if (!adjustment) throw new Error('The purchase changed while it was being resolved; reload and review it again');
   return { id: reviewId, purchaseId: values.purchaseId, outcome: values.outcome,
     adjustmentCents: adjustment.adjustment_cents,
@@ -946,7 +950,8 @@ const refundSchema = z.object({
 export async function refundGiftCardTender(env: TalismanEnv, actor: string, input: unknown) {
   const values = refundSchema.parse(input);
   if (!actor.trim()) throw new Error('Administrator identity is required');
-  const current = await commerceDb(env).select({ giftCardId: orders.giftCardId, giftCardApplied: orders.giftCardApplied,
+  const db = commerceDb(env);
+  const current = await db.select({ giftCardId: orders.giftCardId, giftCardApplied: orders.giftCardApplied,
     giftCardRefundedCents: orders.giftCardRefundedCents, status: orders.status, referralCode: orders.referralCode })
     .from(orders).where(eq(orders.id, values.orderId)).get();
   if (!current?.giftCardId || !['paid', 'fulfilled', 'partially_refunded'].includes(current.status)) {
@@ -956,15 +961,15 @@ export async function refundGiftCardTender(env: TalismanEnv, actor: string, inpu
   if (!values.amountCents || values.amountCents > remaining) throw new Error('Refund exceeds gift card payment');
   const id = `gfr_${crypto.randomUUID()}`;
   const now = Math.floor(Date.now() / 1000);
-  const statements: SQL[] = [sql`INSERT INTO _ecommerce_gift_card_refunds
-    (id,card_id,order_id,amount_cents,admin_actor,reason,created_at)
-    VALUES (${id},${current.giftCardId},${values.orderId},${values.amountCents},${actor},${values.reason},${now})`];
+  const statements: BatchItem<'sqlite'>[] = [db.insert(giftCardRefunds).values({ id, cardId: current.giftCardId, orderId: values.orderId,
+    amountCents: values.amountCents, adminActor: actor, reason: values.reason, createdAt: at(now) })];
   // A refund that leaves less than the referral minimum paid voids the referral and reverses released awards.
   if (current.referralCode) {
     const policy = await getReferralPolicy(env);
-    statements.push(...referralReversalStatements(values.orderId, { minOrderCents: policy.minOrderCents, now }));
+    statements.push(...referralReversalStatements(values.orderId, { minOrderCents: policy.minOrderCents, now })
+      .map((statement) => db.run(statement)));
   }
-  await runStatements(commerceDb(env), statements);
+  await commitBatch(db, statements);
   return { id, orderId: values.orderId, amountCents: values.amountCents };
 }
 
@@ -972,38 +977,32 @@ export async function refundGiftCardTender(env: TalismanEnv, actor: string, inpu
 export async function refundGiftCardOnlyOrder(env: TalismanEnv, actor: string, input: unknown) {
   const values = refundSchema.parse(input);
   if (!actor.trim() || values.amountCents !== undefined) throw new Error('Invalid full refund request');
-  const order = await commerceDb(env).select({ id: orders.id, giftCardId: orders.giftCardId,
+  const db = commerceDb(env);
+  const order = await db.select({ id: orders.id, giftCardId: orders.giftCardId,
     giftCardApplied: orders.giftCardApplied, giftCardRefundedCents: orders.giftCardRefundedCents,
     creditApplied: orders.creditApplied, paymentProvider: orders.paymentProvider, totalAmount: orders.totalAmount,
     status: orders.status, userId: orders.userId }).from(orders).where(eq(orders.id, values.orderId)).get();
-  if (!order || order.paymentProvider !== 'gift_card' || order.totalAmount !== 0 ||
+  if (!order?.giftCardId || order.paymentProvider !== 'gift_card' || order.totalAmount !== 0 ||
     !['paid', 'partially_refunded', 'fulfilled'].includes(order.status)) {
     throw new Error('Only paid gift-card-only orders can be refunded here');
   }
   const now = Math.floor(Date.now() / 1000);
   const remaining = order.giftCardApplied - order.giftCardRefundedCents;
-  const statements: D1PreparedStatement[] = [
-    env.DB.prepare(`INSERT INTO _ecommerce_gift_card_order_refunds
-      (order_id,admin_actor,reason,created_at) VALUES (?,?,?,?)`)
-      .bind(order.id, actor, values.reason, now),
-  ];
-  if (remaining > 0) statements.push(env.DB.prepare(`INSERT INTO _ecommerce_gift_card_refunds
-    (id,card_id,order_id,amount_cents,admin_actor,reason,created_at)
-    VALUES (?,?,?,?,?,?,?)`)
-    .bind(`gfr_full_${order.id}`, order.giftCardId, order.id, remaining, actor, values.reason, now));
-  statements.push(env.DB.prepare(`UPDATE _ecommerce_orders SET status = 'refunded',updated_at = ?
-    WHERE id = ? AND payment_provider = 'gift_card' AND total_amount = 0
-      AND status IN ('paid','fulfilled','partially_refunded')`).bind(now, order.id));
-  statements.push(env.DB.prepare(`UPDATE _ecommerce_gift_card_redemptions SET status = 'refunded',updated_at = ?
-    WHERE order_id = ? AND status = 'confirmed'`).bind(now, order.id));
-  statements.push(env.DB.prepare(`UPDATE _ecommerce_discount_redemptions SET status = 'refunded',updated_at = ?
-    WHERE order_id = ? AND status = 'confirmed'`).bind(now, order.id));
-  if (order.creditApplied > 0 && order.userId) statements.push(env.DB.prepare(`INSERT INTO _ecommerce_credit_ledger
-    (id,account_id,order_id,kind,amount_cents,created_at)
-    VALUES (?, ?, ?, 'purchase_credit_refund', ?, ?) ON CONFLICT(order_id,kind) DO NOTHING`)
-    .bind(`credit_refund_${order.id}`, order.userId, order.id, order.creditApplied, now));
-  statements.push(env.DB.prepare(`UPDATE _ecommerce_payments SET status = 'refunded' WHERE order_id = ?`)
-    .bind(order.id));
-  await env.DB.batch(statements);
+  const confirmed = (redemptions: typeof giftCardRedemptions | typeof discountRedemptions) =>
+    and(eq(redemptions.orderId, order.id), eq(redemptions.status, 'confirmed'));
+  await commitBatch(db, [
+    db.insert(giftCardOrderRefunds).values({ orderId: order.id, adminActor: actor, reason: values.reason, createdAt: at(now) }),
+    ...(remaining > 0 ? [db.insert(giftCardRefunds).values({ id: `gfr_full_${order.id}`, cardId: order.giftCardId, orderId: order.id,
+      amountCents: remaining, adminActor: actor, reason: values.reason, createdAt: at(now) })] : []),
+    db.update(orders).set({ status: 'refunded', updatedAt: at(now) })
+      .where(and(eq(orders.id, order.id), eq(orders.paymentProvider, 'gift_card'), eq(orders.totalAmount, 0),
+        inArray(orders.status, ['paid', 'fulfilled', 'partially_refunded']))),
+    db.update(giftCardRedemptions).set({ status: 'refunded', updatedAt: at(now) }).where(confirmed(giftCardRedemptions)),
+    db.update(discountRedemptions).set({ status: 'refunded', updatedAt: at(now) }).where(confirmed(discountRedemptions)),
+    ...(order.creditApplied > 0 && order.userId ? [db.insert(creditLedger).values({ id: `credit_refund_${order.id}`,
+      accountId: order.userId, orderId: order.id, kind: 'purchase_credit_refund', amountCents: order.creditApplied, createdAt: at(now) })
+      .onConflictDoNothing({ target: [creditLedger.orderId, creditLedger.kind] })] : []),
+    db.update(payments).set({ status: 'refunded' }).where(eq(payments.orderId, order.id)),
+  ]);
   return { orderId: order.id, status: 'refunded' };
 }

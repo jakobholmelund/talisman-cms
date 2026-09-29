@@ -1,6 +1,6 @@
 import { and, eq, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
-import { commerceDb } from './db';
+import { commerceDb, type CommerceDb } from './db';
 import { isEmailDeliveryError, parseAddress, resolveEmailProvider, sendEmail, type EmailProvider } from 'talisman-cms/email';
 import { readSetting } from 'talisman-cms/env';
 import { emailLink, type CommerceEmailMessage, type CommerceEmailStore, type CommerceEmailTemplates } from './emails';
@@ -82,7 +82,7 @@ const at = (seconds: number) => new Date(seconds * 1000);
 const pendingEmail = (kind: CommerceEmailKind, subjectId: string) => and(eq(emailDeliveries.kind, kind),
   eq(emailDeliveries.subjectId, subjectId), eq(emailDeliveries.status, 'pending'));
 /** No Worker holds the email, or the lease it took had run out at `now`. */
-const unclaimedAt = (now: number) => or(isNull(emailDeliveries.claimedAt),
+export const unclaimedAt = (now: number) => or(isNull(emailDeliveries.claimedAt),
   lte(emailDeliveries.claimedAt, at(now - COMMERCE_EMAIL_LEASE_SECONDS)));
 
 function originOf(value: string | undefined) {
@@ -241,9 +241,9 @@ export function commerceEmailStatement(kind: CommerceEmailKind, subjectId: strin
 }
 
 /** The condition, for a write that must happen only while the claim stamped `stamp` still holds the email. */
-export function commerceEmailHeld(kind: CommerceEmailKind, subjectId: string, stamp: number) {
-  return { sql: `EXISTS (SELECT 1 FROM _ecommerce_email_deliveries
-    WHERE kind = ? AND subject_id = ? AND status = 'pending' AND claimed_at = ?)`, params: [kind, subjectId, stamp] };
+export function commerceEmailHeld(kind: CommerceEmailKind, subjectId: string, stamp: number): SQL {
+  return sql`EXISTS (SELECT 1 FROM _ecommerce_email_deliveries
+    WHERE kind = ${kind} AND subject_id = ${subjectId} AND status = 'pending' AND claimed_at = ${stamp})`;
 }
 
 /**
@@ -261,17 +261,19 @@ export async function holdCommerceEmail(env: TalismanEnv, kind: CommerceEmailKin
   return pending ? 'busy' as const : null;
 }
 
-/** Ends a hold and leaves the email as it was, still waiting for its next attempt. */
-export function releaseCommerceEmailStatement(env: TalismanEnv, kind: CommerceEmailKind, subjectId: string, stamp: number) {
-  return env.DB.prepare(`UPDATE _ecommerce_email_deliveries SET claimed_at = NULL
-    WHERE kind = ? AND subject_id = ? AND status = 'pending' AND claimed_at = ?`).bind(kind, subjectId, stamp);
+/** The email of this kind and subject while the hold stamped `stamp` still holds it. */
+const heldBy = (kind: CommerceEmailKind, subjectId: string, stamp: number) =>
+  and(pendingEmail(kind, subjectId), eq(emailDeliveries.claimedAt, at(stamp)));
+
+/** Ends a hold and leaves the email as it was, still waiting for its next attempt. A batch item. */
+export function releaseCommerceEmailStatement(db: CommerceDb, kind: CommerceEmailKind, subjectId: string, stamp: number) {
+  return db.update(emailDeliveries).set({ claimedAt: null }).where(heldBy(kind, subjectId, stamp));
 }
 
-/** Ends a hold by cancelling the email: another message sent in its place made it unnecessary. */
-export function supersedeCommerceEmailStatement(env: TalismanEnv, kind: CommerceEmailKind, subjectId: string, stamp: number) {
-  return env.DB.prepare(`UPDATE _ecommerce_email_deliveries SET status = 'cancelled', last_error = 'superseded',
-      claimed_at = NULL
-    WHERE kind = ? AND subject_id = ? AND status = 'pending' AND claimed_at = ?`).bind(kind, subjectId, stamp);
+/** Ends a hold by cancelling the email: another message sent in its place made it unnecessary. A batch item. */
+export function supersedeCommerceEmailStatement(db: CommerceDb, kind: CommerceEmailKind, subjectId: string, stamp: number) {
+  return db.update(emailDeliveries).set({ status: 'cancelled', lastError: 'superseded', claimedAt: null })
+    .where(heldBy(kind, subjectId, stamp));
 }
 
 /** Sends a composed email from the store's sender, with the support address as Reply-To when one is set. */

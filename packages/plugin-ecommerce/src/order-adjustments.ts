@@ -1,9 +1,12 @@
-import { eq, sql, type SQL } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { batchGroups, chunked, commerceDb } from './db';
-import { INVENTORY_COLUMNS } from './inventory';
-import { orders as ordersTable } from './schema';
+import { STOCK_COLUMNS } from './inventory';
+import { componentReservations, inventoryReservations, orders as ordersTable, restocks } from './schema';
+
+/** A time in Unix seconds as the schema's timestamp columns take it. */
+const at = (seconds: number) => new Date(seconds * 1000);
 
 /** Invalid input to an order adjustment. The admin route answers it with 400. */
 export class OrderAdjustmentInputError extends Error {
@@ -242,56 +245,52 @@ export async function restockOrder(env: TalismanEnv, actor: string, input: unkno
     throw new OrderAdjustmentInputError('Each item can be chosen once');
   }
 
+  const db = commerceDb(env);
   const now = Math.floor(Date.now() / 1000);
   const list = JSON.stringify(chosen.map((row) => ({ id: `rstk_${crypto.randomUUID()}`, type: row.type, reservation: row.id })));
+  /** The ids of the audit rows this restock writes, read back from `list`. */
+  const written = sql`(SELECT json_extract(value, '$.id') FROM json_each(${list}))`;
   // The audit rows come first, and only for rows of this order that no restock or cancellation returned
   // yet, while the order may be restocked; the unique key stops a second restock of the same row.
-  const allowed = `EXISTS (SELECT 1 FROM _ecommerce_orders o WHERE o.id = ?
+  const allowed = sql`EXISTS (SELECT 1 FROM _ecommerce_orders o WHERE o.id = ${values.orderId}
     AND o.status IN ('refunded','partially_refunded') AND COALESCE(o.payment_provider, 'stripe') <> 'admin_test')`;
-  const picked = `SELECT json_extract(value, '$.id') AS id, json_extract(value, '$.reservation') AS reservation
-    FROM json_each(?) WHERE json_extract(value, '$.type') = ?`;
-  const returning = 'RETURNING reservation_type, reservation_id, target_type, target_id, quantity';
-  const statements: D1PreparedStatement[] = [
-    env.DB.prepare(`INSERT INTO _ecommerce_restocks
-      (id, order_id, reservation_type, reservation_id, target_type, target_id, quantity, admin_actor, reason, created_at)
-      SELECT c.id, r.order_id, 'inventory', r.id, r.target_type, r.target_id, r.quantity, ?, ?, ?
-      FROM (${picked}) AS c JOIN _ecommerce_inventory_reservations r ON r.id = c.reservation
-      WHERE r.order_id = ? AND r.released_at IS NULL AND ${allowed}
-        AND CASE r.target_type
-          WHEN 'product' THEN EXISTS (SELECT 1 FROM _ecommerce_products WHERE id = r.target_id)
-          WHEN 'variant' THEN EXISTS (SELECT 1 FROM _ecommerce_product_variants WHERE id = r.target_id)
-          ELSE EXISTS (SELECT 1 FROM _ecommerce_stocks WHERE id = r.target_id) END
-      ON CONFLICT DO NOTHING ${returning}`)
-      .bind(actor, values.reason, now, list, 'inventory', values.orderId, values.orderId),
-    env.DB.prepare(`INSERT INTO _ecommerce_restocks
-      (id, order_id, reservation_type, reservation_id, target_type, target_id, quantity, admin_actor, reason, created_at)
-      SELECT c.id, r.order_id, 'component', r.id, 'component', r.component_id, r.quantity, ?, ?, ?
-      FROM (${picked}) AS c JOIN _ecommerce_component_reservations r ON r.id = c.reservation
-      WHERE r.order_id = ? AND r.released_at IS NULL AND ${allowed}
-      ON CONFLICT DO NOTHING ${returning}`)
-      .bind(actor, values.reason, now, list, 'component', values.orderId, values.orderId),
-  ];
+  const picked = (type: ReservationType) => sql`SELECT json_extract(value, '$.id') AS id, json_extract(value, '$.reservation') AS reservation
+    FROM json_each(${list}) WHERE json_extract(value, '$.type') = ${type}`;
+  const returning = sql`RETURNING reservation_type, reservation_id, target_type, target_id, quantity`;
+  const inventoryRestocks = db.all<RestockedRow>(sql`INSERT INTO _ecommerce_restocks
+    (id, order_id, reservation_type, reservation_id, target_type, target_id, quantity, admin_actor, reason, created_at)
+    SELECT c.id, r.order_id, 'inventory', r.id, r.target_type, r.target_id, r.quantity, ${actor}, ${values.reason}, ${now}
+    FROM (${picked('inventory')}) AS c JOIN _ecommerce_inventory_reservations r ON r.id = c.reservation
+    WHERE r.order_id = ${values.orderId} AND r.released_at IS NULL AND ${allowed}
+      AND CASE r.target_type
+        WHEN 'product' THEN EXISTS (SELECT 1 FROM _ecommerce_products WHERE id = r.target_id)
+        WHEN 'variant' THEN EXISTS (SELECT 1 FROM _ecommerce_product_variants WHERE id = r.target_id)
+        ELSE EXISTS (SELECT 1 FROM _ecommerce_stocks WHERE id = r.target_id) END
+    ON CONFLICT DO NOTHING ${returning}`);
+  const componentRestocks = db.all<RestockedRow>(sql`INSERT INTO _ecommerce_restocks
+    (id, order_id, reservation_type, reservation_id, target_type, target_id, quantity, admin_actor, reason, created_at)
+    SELECT c.id, r.order_id, 'component', r.id, 'component', r.component_id, r.quantity, ${actor}, ${values.reason}, ${now}
+    FROM (${picked('component')}) AS c JOIN _ecommerce_component_reservations r ON r.id = c.reservation
+    WHERE r.order_id = ${values.orderId} AND r.released_at IS NULL AND ${allowed}
+    ON CONFLICT DO NOTHING ${returning}`);
   // Stock goes back once for each audit row written above, added to the current value. Like checkout,
   // the write moves updated_at by at least a second, so an admin save of stock loaded before is refused.
-  const written = `SELECT target_id, SUM(quantity) AS amount FROM _ecommerce_restocks
-    WHERE order_id = ? AND target_type = ? AND id IN (SELECT json_extract(value, '$.id') FROM json_each(?))
-    GROUP BY target_id`;
-  const stockColumns = { ...INVENTORY_COLUMNS, component: ['_ecommerce_components', 'quantity'] } as const;
-  for (const [type, [table, column]] of Object.entries(stockColumns)) {
-    statements.push(env.DB.prepare(`UPDATE ${table}
-      SET ${column} = ${column} + returned.amount, updated_at = MAX(updated_at + 1, ?)
-      FROM (${written}) AS returned WHERE ${table}.id = returned.target_id`)
-      .bind(now, values.orderId, type, list));
-  }
-  const reservationTables = { inventory: '_ecommerce_inventory_reservations', component: '_ecommerce_component_reservations' };
-  for (const [type, table] of Object.entries(reservationTables)) {
-    statements.push(env.DB.prepare(`UPDATE ${table} SET released_at = ?
-      WHERE released_at IS NULL AND id IN (SELECT reservation_id FROM _ecommerce_restocks
-        WHERE order_id = ? AND reservation_type = ? AND id IN (SELECT json_extract(value, '$.id') FROM json_each(?)))`)
-      .bind(now, values.orderId, type, list));
-  }
-  const [inventory, component] = await env.DB.batch<RestockedRow>(statements);
-  const restocked = [...inventory.results ?? [], ...component.results ?? []].map((row) => ({ type: row.reservation_type,
+  const stockUpdates = Object.entries(STOCK_COLUMNS).map(([type, { table, quantity }]) => db.run(sql`UPDATE ${table}
+    SET ${sql.identifier(quantity.name)} = ${sql.identifier(quantity.name)} + returned.amount, updated_at = MAX(updated_at + 1, ${now})
+    FROM (SELECT target_id, SUM(quantity) AS amount FROM _ecommerce_restocks
+      WHERE order_id = ${values.orderId} AND target_type = ${type} AND id IN ${written} GROUP BY target_id) AS returned
+    WHERE ${table}.id = returned.target_id`));
+  // Each reservation row restocked above is marked released, so it never goes back twice.
+  const restockedReservations = (type: ReservationType) => db.select({ id: restocks.reservationId }).from(restocks)
+    .where(and(eq(restocks.orderId, values.orderId), eq(restocks.reservationType, type), inArray(restocks.id, written)));
+  const releases = [
+    db.update(inventoryReservations).set({ releasedAt: at(now) })
+      .where(and(isNull(inventoryReservations.releasedAt), inArray(inventoryReservations.id, restockedReservations('inventory')))),
+    db.update(componentReservations).set({ releasedAt: at(now) })
+      .where(and(isNull(componentReservations.releasedAt), inArray(componentReservations.id, restockedReservations('component')))),
+  ];
+  const [inventory, component] = await db.batch([inventoryRestocks, componentRestocks, ...stockUpdates, ...releases]);
+  const restocked = [...inventory, ...component].map((row) => ({ type: row.reservation_type,
     reservationId: row.reservation_id, targetType: row.target_type, targetId: row.target_id, quantity: row.quantity }));
   if (!restocked.length) {
     throw new OrderAdjustmentRefusedError('The order or its items changed while they were being restocked; reload and try again');

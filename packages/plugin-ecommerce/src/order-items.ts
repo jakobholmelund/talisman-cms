@@ -1,5 +1,6 @@
 import type { TalismanEnv } from 'talisman-cms/client';
 import { batchGroups, chunked, commerceDb } from './db';
+import { orders } from './schema';
 
 /** The ids an order item stores. */
 export type OrderItemReference = { productId: string; variantId?: string | null };
@@ -7,19 +8,20 @@ export type OrderItemReference = { productId: string; variantId?: string | null 
 export type OrderItemDescription = { productName: string | null; variantLabel: string | null; sku: string | null };
 
 /**
- * The order columns `orderAmounts` reads. Every query that feeds it selects this list, so an amount
- * added here reaches the admin orders queue and the order confirmation alike.
+ * The order columns `orderAmounts` reads, as fields of a select. Every query that feeds it spreads
+ * them into its fields, so an amount added here reaches the admin orders queue and the order
+ * confirmation alike.
  */
-export const ORDER_AMOUNT_COLUMNS = `subtotal_amount, discount_code, discount_amount, credit_applied, shipping_amount,
-  shipping_label, tax_amount, tax_behavior, gift_card_applied, total_amount, provider_refunded_cents, gift_card_refunded_cents`;
-
-/** The order columns `orderAmounts` reads, as D1 returns them. */
-export type OrderAmountsRow = {
-  subtotal_amount: number; total_amount: number; discount_code: string | null; discount_amount: number;
-  credit_applied: number; shipping_amount: number; shipping_label: string | null; tax_amount: number;
-  tax_behavior: 'inclusive' | 'exclusive' | null; gift_card_applied: number; provider_refunded_cents: number;
-  gift_card_refunded_cents: number;
+export const orderAmountColumns = {
+  subtotalAmount: orders.subtotalAmount, discountCode: orders.discountCode, discountAmount: orders.discountAmount,
+  creditApplied: orders.creditApplied, shippingAmount: orders.shippingAmount, shippingLabel: orders.shippingLabel,
+  taxAmount: orders.taxAmount, taxBehavior: orders.taxBehavior, giftCardApplied: orders.giftCardApplied,
+  totalAmount: orders.totalAmount, providerRefundedCents: orders.providerRefundedCents,
+  giftCardRefundedCents: orders.giftCardRefundedCents,
 };
+
+/** The order columns `orderAmounts` reads, as a select returns them. */
+export type OrderAmountsRow = Pick<typeof orders.$inferSelect, keyof typeof orderAmountColumns>;
 export type OrderAmount = { key: string; label: string; cents: number };
 
 /**
@@ -28,28 +30,28 @@ export type OrderAmount = { key: string; label: string; cents: number };
  */
 export function orderAmounts(row: OrderAmountsRow): OrderAmount[] {
   // An order without a stored subtotal had no deductions, so its charged total is its items subtotal.
-  const amounts = [{ key: 'itemsSubtotal', label: 'Items subtotal', cents: row.subtotal_amount || row.total_amount }];
-  if (row.discount_amount > 0) {
-    amounts.push({ key: 'discount', label: row.discount_code ? `Discount (${row.discount_code})` : 'Discount', cents: -row.discount_amount });
+  const amounts = [{ key: 'itemsSubtotal', label: 'Items subtotal', cents: row.subtotalAmount || row.totalAmount }];
+  if (row.discountAmount > 0) {
+    amounts.push({ key: 'discount', label: row.discountCode ? `Discount (${row.discountCode})` : 'Discount', cents: -row.discountAmount });
   }
-  if (row.credit_applied > 0) amounts.push({ key: 'storeCredit', label: 'Store credit', cents: -row.credit_applied });
+  if (row.creditApplied > 0) amounts.push({ key: 'storeCredit', label: 'Store credit', cents: -row.creditApplied });
   // A free rate still shows, so the admin and the buyer see which one was chosen.
-  if (row.shipping_amount > 0 || row.shipping_label) {
-    amounts.push({ key: 'shipping', label: row.shipping_label ? `Shipping (${row.shipping_label})` : 'Shipping', cents: row.shipping_amount });
+  if (row.shippingAmount > 0 || row.shippingLabel) {
+    amounts.push({ key: 'shipping', label: row.shippingLabel ? `Shipping (${row.shippingLabel})` : 'Shipping', cents: row.shippingAmount });
   }
   // Inclusive tax is already inside the prices above, so it is shown but adds nothing.
-  if (row.tax_amount > 0) {
-    amounts.push(row.tax_behavior === 'inclusive'
-      ? { key: 'taxIncluded', label: 'Tax included in the prices', cents: row.tax_amount }
-      : { key: 'tax', label: 'Tax', cents: row.tax_amount });
+  if (row.taxAmount > 0) {
+    amounts.push(row.taxBehavior === 'inclusive'
+      ? { key: 'taxIncluded', label: 'Tax included in the prices', cents: row.taxAmount }
+      : { key: 'tax', label: 'Tax', cents: row.taxAmount });
   }
-  if (row.gift_card_applied > 0) amounts.push({ key: 'giftCard', label: 'Gift card', cents: -row.gift_card_applied });
-  amounts.push({ key: 'charged', label: 'Charged by the payment provider', cents: row.total_amount });
-  if (row.provider_refunded_cents > 0) {
-    amounts.push({ key: 'providerRefunded', label: 'Refunded by the payment provider', cents: row.provider_refunded_cents });
+  if (row.giftCardApplied > 0) amounts.push({ key: 'giftCard', label: 'Gift card', cents: -row.giftCardApplied });
+  amounts.push({ key: 'charged', label: 'Charged by the payment provider', cents: row.totalAmount });
+  if (row.providerRefundedCents > 0) {
+    amounts.push({ key: 'providerRefunded', label: 'Refunded by the payment provider', cents: row.providerRefundedCents });
   }
-  if (row.gift_card_refunded_cents > 0) {
-    amounts.push({ key: 'giftCardRefunded', label: 'Refunded to the gift card', cents: row.gift_card_refunded_cents });
+  if (row.giftCardRefundedCents > 0) {
+    amounts.push({ key: 'giftCardRefunded', label: 'Refunded to the gift card', cents: row.giftCardRefundedCents });
   }
   return amounts;
 }

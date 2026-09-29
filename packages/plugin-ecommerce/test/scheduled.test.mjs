@@ -59,7 +59,7 @@ function database() {
 const day = 24 * 60 * 60;
 const tick = (DB) => ({ cron: '*/10 * * * *', scheduledTime: Date.now(), env: { DB }, waitUntil() {} });
 // Reconciliation also removes expired shopper sessions, so the purge is recognised by a table only it touches.
-const reconciledStatement = (sql) => /FROM _ecommerce_orders/.test(sql) && /status = 'pending'/.test(sql);
+const reconciledStatement = (sql) => /from "_ecommerce_orders"/.test(sql) && /"status" = 'pending'/.test(sql);
 const purgeStatement = (sql) => /DELETE FROM _ecommerce_rate_limits/.test(sql);
 const reconciled = (statements) => statements.some(reconciledStatement);
 const purged = (statements) => statements.some(purgeStatement);
@@ -99,7 +99,7 @@ test('a failing reconciliation never skips the purge, and the thrown error names
   const errors = t.mock.method(console, 'error', () => {});
   const { sqlite, DB, statements, refuse } = database();
   // Reconciliation opens with the orphaned checkout locks; the purge opens with the idle baskets.
-  refuse(/checkout_session_id >= 'preparing:'|DELETE FROM _ecommerce_carts/);
+  refuse(/"checkout_session_id" >= \?|DELETE FROM _ecommerce_carts/);
 
   await assert.rejects(scheduled(tick(DB)), { message: 'Checkout reconciliation failed; Data retention cleanup failed' });
 
@@ -109,6 +109,8 @@ test('a failing reconciliation never skips the purge, and the thrown error names
     '[Commerce] Checkout reconciliation failed',
     '[Commerce] Data retention cleanup failed',
   ]);
-  assert.match(errors.mock.calls[0].arguments[1].message, /D1 is unavailable/);
+  // A failed statement arrives as a DrizzleQueryError; D1's own message is its cause.
+  const failure = errors.mock.calls[0].arguments[1];
+  assert.match(`${failure.message}\n${failure.cause?.message ?? ''}`, /D1 is unavailable/);
   sqlite.close();
 });
