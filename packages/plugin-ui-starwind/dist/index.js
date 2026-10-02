@@ -1,7 +1,7 @@
 import {
   starwindUiLibrary,
   starwindUiPlugin
-} from "./chunk-EPKEURGZ.js";
+} from "./chunk-A3RBLLOP.js";
 
 // src/renderers/sanitize.ts
 var SAFE_URL_SCHEMES = /* @__PURE__ */ new Set(["http", "https", "mailto", "tel"]);

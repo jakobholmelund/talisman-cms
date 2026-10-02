@@ -1,7 +1,7 @@
 import {
   starwindUiLibrary,
   starwindUiPlugin
-} from "./chunk-EPKEURGZ.js";
+} from "./chunk-A3RBLLOP.js";
 export {
   starwindUiLibrary,
   starwindUiPlugin
