@@ -1,0 +1,15 @@
+# Admin UI behavior
+
+Overview provides links to content, media and account settings rather than unavailable performance metrics. Collections are configured by the site's developer; the collection index explains that workflow.
+
+Administrators can delete existing writable entries and media assets. Confirmation starts on Cancel, warns about unsaved edits and unrepaired references, and traps keyboard focus. Cancel and failed requests preserve the editor's draft. A failed request stays in the dialog with recovery guidance; successful deletion opens the collection list or removes the media card and returns focus to Refresh. These controls use the existing admin-only entry deletion route. Check references before deletion: the UI cannot provide a complete usage inventory.
+
+Relationship controls read pages of 30 records and use the entries API's `where[field][text]` operator with a limit and opaque cursor. The search field is explicit; changing it starts a new search. Load more exposes every remaining page, including each target of a polymorphic relationship. Selected labels load independently by record ID and remain visible when the selected record is outside the current page. Errors preserve selections and offer Retry. Deploy the backend text-search support together with this UI.
+
+The component catalog loads for preset authoring when needed, while rich text and page-builder controls retain their lazy loading. Global field configuration loads within the global editor loader. Further reduction of the initial navigation configuration requires a lightweight integration-generated navigation module with collection names, slugs, section/access rules and admin links; that integration contract belongs to the backend workstream.
+
+Tiptap uses the bundled admin stylesheet instead of injecting an inline stylesheet under strict CSP. Page-builder controls identify their block and item. Error-summary links open closed inspectors before focusing nested controls; preset validation paths map to their rendered prop controls. Media refresh/load-more buttons keep keyboard focus while busy.
+
+Run `node --test packages/talisman-cms/test/admin-ui-lib.test.mjs`, the UI TypeScript check, and `node e2e/admin-flows.mjs` against a built isolated playground. The browser suite covers deletion, relationship search/pagination, selected labels, session expiry, editor permissions, nested inspector/preset errors, rich-text CSP, media busy focus, conflict recovery and the existing editing flows. `--artifacts` captures representative UI views for visual inspection. All fixtures must use a throwaway local database.
+
+For a local hybrid-auth rehearsal, build a throwaway playground with `HybridAuthAdapter`, seed an editor account while using local auth, then run the browser script with `--auth-mode hybrid-editor --admin-email <fixture-editor-email> --admin-password <fixture-password>`. This checks local editor sign-in, draft writes, admin-only action restrictions and sign-out. It does not exercise an external Cloudflare Access identity or production dashboard configuration.
