@@ -1,24 +1,23 @@
 # @talisman-cms/plugin-ui-starwind
 
-Four page-builder blocks and components for Talisman CMS, registered as the `starwind` UI library. They are Talisman's own Astro components written with Tailwind utility classes; they do not use `@starwind/ui` components. The package also keeps a snapshot of the upstream Starwind UI catalog, so future adapters can be tracked against it. No upstream component is mapped yet.
+**Two custom Talisman blocks and two custom components, styled with Tailwind CSS. No upstream Starwind component is implemented.** The `starwind` library ID and existing slugs are retained for stored content, while the editor names the library **Starwind (Talisman compositions)** and labels each item **(custom)**.
 
-## What It Adds
+This package does not import `@starwind/ui`, require Starwind styles, or provide its 46 upstream components. The checked-in upstream snapshot is an inventory of unsupported entries, not a list of available page-builder items.
 
-`starwindUiPlugin()` (plugin name `@talisman-cms/plugin-ui-starwind`) registers one UI library and nothing else: no global, admin screen, endpoint or page.
+## Shipped compositions
 
-| Kind | Name | Fields |
-| --- | --- | --- |
-| UI library | `starwind` ("Starwind UI") | |
-| Block | `starwindSplitFeature` ("Split Feature") | `eyebrow`, `title`, `description`, `mediaUrl`; slots `links` (`starwindTextLink`) and `metrics` (`starwindMetric`) |
-| Block | `starwindMetricsBand` ("Metrics Band") | `title`, `description`; slot `items` (`starwindMetric`) |
-| Component | `starwindMetric` ("Metric Stat") | `value`, `label`, `summary`; preset `starwind-growth-metric` |
-| Component | `starwindTextLink` ("Text Link") | `label`, `href` |
+| Kind | Stable slug | Editor name | Content and composition |
+| --- | --- | --- | --- |
+| Block | `starwindSplitFeature` | Split Feature (custom) | `eyebrow`, required `title` and `description`, optional `mediaUrl` and `mediaAlt`; `links` accepts Text Link, `metrics` accepts Metric Stat |
+| Block | `starwindMetricsBand` | Metrics Band (custom) | required `title`, optional `description`; `items` accepts Metric Stat |
+| Component | `starwindMetric` | Metric Stat (custom) | required `value` and `label`, optional `summary`; Growth Metric example preset |
+| Component | `starwindTextLink` | Text Link (custom) | required `label` and `href` |
 
-Add the block slugs to a `blocks` field's `blocksFromPlugins`, and render entries with `talisman-cms/render/BlocksRenderer.astro`, which finds the plugin's renderers in `@talisman-cms/plugin-ui-starwind/renderers/*`. The renderers use fixed slate and cyan Tailwind colours, so the site's Tailwind build must scan them; with Tailwind v4, add an `@source` line that points at `node_modules/@talisman-cms/plugin-ui-starwind/src/renderers`. Links pass through `safeHref`, which is also exported: relative, `http(s)`, `mailto` and `tel` URLs are kept and anything else becomes `#`.
+Both blocks accept inline components and saved component presets in their slots. These are editorial and storefront compositions, with responsive layouts, wrapping text and visible keyboard focus on links. They do not add commerce behavior or enable checkout. `starwindUiPlugin()` registers only this library; it adds no endpoint, global or admin screen.
 
 ## Setup
 
-Install the plugin. The renderers need only Tailwind CSS.
+Install in an existing Talisman Astro site with Tailwind CSS v4.1 or later (the consumer checks use v4.3.3):
 
 ```bash
 pnpm add @talisman-cms/plugin-ui-starwind
@@ -30,40 +29,60 @@ import { starwindUiPlugin } from '@talisman-cms/plugin-ui-starwind';
 
 talismanCms({
   plugins: [starwindUiPlugin()],
+  collections: [{
+    slug: 'pages',
+    name: 'Pages',
+    fields: [{
+      name: 'layout',
+      label: 'Page Layout',
+      type: 'blocks',
+      blocksFromPlugins: ['starwindSplitFeature', 'starwindMetricsBand'],
+    }],
+  }],
 });
 ```
 
-The checked-in manifest lists two optional requirements for future upstream adapters; the current components need neither:
+The renderer scan is the library's only setup requirement. For a stylesheet at `src/styles/global.css`, add:
 
-- Install `@starwind/ui` when you want the upstream package available
-- Import the Starwind CSS layer used by your site
+```css
+@import "tailwindcss";
+@source "../../node_modules/@talisman-cms/plugin-ui-starwind/src/renderers";
+```
 
-## Mapping
+Adjust the path relative to your stylesheet. Tailwind normally ignores dependencies in `node_modules`; installing the plugin alone does not produce its CSS. Import the stylesheet in your layout. The manifest includes this actual requirement, with no optional upstream package or style requirements.
 
-The canonical source of truth is [`catalog.manifest.json`](./catalog.manifest.json). `src/generated.ts` is derived from it.
+## Editing and rendering
 
-- Official upstream components are cataloged in [`catalog.upstream.json`](./catalog.upstream.json)
-- The currently shipped Talisman adapters are intentionally marked as `custom` because they are composed blocks and components rather than direct one-to-one upstream exports
+Choose **Split Feature (custom)** or **Metrics Band (custom)** from the block library. Use the block inspector for its content, then add inline components or a saved preset from the outline's slots. Text Link is suitable for Split Feature's `links`; Metric Stat is suitable for both metric slots. Create reusable content in **Component Presets**, choosing **Starwind (Talisman compositions)** and the component type. The Growth Metric definition is an example; saved preset records supply the actual preset references used by the renderer.
 
-## Coverage
+Render page entries using the core renderer. For saved presets, pass a map of fetched `_ui_component_presets` records so the core resolves their serialized props:
 
-Coverage is audited against the upstream snapshot.
+```astro
+---
+import BlocksRenderer from 'talisman-cms/render/BlocksRenderer.astro';
+import { buildPresetMap } from 'talisman-cms/render';
+const { blocks, presetEntries } = Astro.props;
+---
+<BlocksRenderer blocks={blocks} presetsById={buildPresetMap(presetEntries)} />
+```
 
-- Total upstream items: 46
-- Complete: 0
-- Partial: 0
-- Unsupported: 46
-- Custom Talisman items: 4
+The plugin registers the module paths automatically. You can also import any shipped renderer directly from `@talisman-cms/plugin-ui-starwind/renderers/StarwindMetric.astro` (or the other filenames in `src/renderers`). Blocks rendered directly still use the registered core slot renderers.
 
-Every upstream item is classified in the manifest, but none is implemented: the 46 upstream items are `unsupported`, and the plugin's four items are the `custom` Talisman components above.
+Text is escaped by Astro, and malformed non-text values are omitted. Text Link supports relative URLs, fragments, queries, HTTP(S), `mailto` and `tel`. An empty or unsupported URL renders the label as plain text; an empty label renders nothing. The exported `safeHref(value, fallback = '#')` helper retains its existing fallback API. Image sources accept relative and HTTP(S) URLs. Describe meaningful images with `mediaAlt`; an empty description makes the image decorative (`alt=""`). Existing content can add this optional field without a data migration.
 
-## Known Limitations
+## Catalog and coverage
 
-- No official Starwind upstream component is mapped directly yet.
-- The current blocks and components are Talisman-specific compositions.
-- The plugin does not fetch or scrape Starwind docs at runtime.
+[`catalog.manifest.json`](./catalog.manifest.json) is the registration source of truth, and `src/generated.ts` is generated from it. [`catalog.upstream.json`](./catalog.upstream.json) is the checked-in upstream inventory. No scraping or upstream downloads occur.
 
-## Commands
+| Scope | Complete | Partial | Unsupported |
+| --- | ---: | ---: | ---: |
+| Upstream Starwind snapshot (46 entries) | 0 | 0 | 46 |
+
+The four shipped compositions have `catalogOrigin: "custom"`. Their implementation status applies only to these Talisman compositions. Unsupported upstream entries have no renderer, adapter or setup requirements and are never registered. Passing the coverage command means the catalog is classified and shipped renderers exist; it does not mean upstream component support is complete.
+
+## Verification commands
+
+Run builds and tests in a sanitized repository copy as described in the root contribution instructions:
 
 ```bash
 pnpm run import-catalog
@@ -71,6 +90,18 @@ pnpm run generate
 pnpm run coverage
 pnpm run coverage:json
 pnpm run test
+pnpm run test:packed
 ```
 
-`import-catalog` merges the checked-in upstream snapshot into the manifest while preserving handwritten adapter metadata. `generate` rewrites `src/generated.ts` and creates missing renderer stubs for supported entries. `coverage` is the CI gate.
+`import-catalog` merges the local snapshot while preserving custom metadata. `generate` checks every supported renderer before writing registrations and never creates a placeholder. `coverage` distinguishes upstream implementation from shipped custom compositions and fails for a missing renderer or generated stub.
+
+`test` includes a real Astro build and Chrome browser checks of all four renderers, inline and saved-preset composition, hostile or malformed content, links, image descriptions, repeat instances, keyboard navigation and narrow-screen layout. Set `CHROME_PATH` when Chrome is not at the platform default. `test:packed` sequentially packs core and this plugin, installs one disposable npm consumer using pinned workspace versions, and repeats the checks with Tailwind scanning only the installed renderer source. It requires registry access and removes its own consumer and cache afterwards. The render harness supplies virtual registries from the real generated module paths; it does not test the admin integration.
+
+For the actual page builder, prepare a fresh local playground build, apply its existing migrations locally and start its preview as the root instructions describe. Then run:
+
+```bash
+STARWIND_E2E_BASE_URL=http://127.0.0.1:8793 \
+STARWIND_E2E_SETUP_TOKEN=<fresh-playground-setup-token> pnpm run test:editor
+```
+
+This local-only flow creates a throwaway admin if needed, authors a metric preset, composes both custom blocks with inline components and a preset, saves and reloads the page, and removes its created page and preset. It reports shared core picker issues separately. It uses fixed test account credentials and is intended for a disposable database. No publication, remote migration, payment, email or deployment gate is exercised by these checks.
