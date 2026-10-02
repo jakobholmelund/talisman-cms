@@ -449,7 +449,8 @@ test('a real paid checkout requires email proof before granting an account sessi
   assert.equal(await findCustomerSession({ DB }, activated.token), null);
 
   await api.carts.getOrCreate('paid-browser', activated.account.id);
-  assert.equal(await api.orders.findForSession(order.id, 'paid-browser'), null);
+  assert.equal((await api.orders.findForSession(order.id, 'paid-browser')).id, order.id, 'the original guest credential survives a later basket');
+  assert.equal(await api.orders.findForSession(order.id, 'unrelated-browser'), null);
   assert.equal((await api.orders.findForSession(order.id, undefined, activated.account.id)).id, order.id);
 
   const later = await api.carts.getOrCreate('later-browser');
@@ -491,7 +492,9 @@ test('fulfillment is audited once and only accepts confirmed real orders', async
   const [listed] = (await listCommerceOrdersAdmin({ DB }, { view: 'recent' })).orders;
   assert.deepEqual([listed.id, listed.shipments[0].adminActor], [order.id, 'admin-1']);
   assert.deepEqual((await listCommerceOrdersAdmin({ DB })).orders, [], 'a shipped order leaves the queue');
-  await assert.rejects(fulfillCommerceOrder({ DB }, 'admin-1', input), /Order has already shipped in full/);
+  const retried = await fulfillCommerceOrder({ DB }, 'admin-1', input);
+  assert.equal(retried.fulfillmentId, result.fulfillmentId);
+  assert.equal(retried.duplicate, true);
   // The trigger refuses a second completing shipment written straight to the table, too.
   assert.throws(() => sqlite.prepare(`INSERT INTO _ecommerce_fulfillments
     (id, order_id, admin_actor, note, created_at) VALUES ('ful_again', ?, 'admin-1', 'Parcel handed to carrier', 0)`)

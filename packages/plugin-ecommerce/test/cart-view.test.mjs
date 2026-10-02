@@ -20,6 +20,7 @@ class FakeElement {
   replaceChildren(...nodes) { this.rendered = nodes; }
   addEventListener(type, listener) { this.listeners.set(type, listener); }
   closest() { return this; }
+  setAttribute() {}
   get content() { return { cloneNode: () => ({ firstElementChild: new FakeElement() }) }; }
 }
 
@@ -49,7 +50,7 @@ test('the cart view shows prices in the basket currency, scaled by its minor uni
     assert.equal(article.querySelector('[data-cart-unit-price]').textContent, `${shown(1250, 'JPY')} each`);
 
     // A quantity change renders the basket again in its currency while it is saved.
-    globalThis.fetch = async () => Response.json({ items: [{ quantity: 3 }] });
+    globalThis.fetch = async () => Response.json({ items: [{ productId: 'poster', quantity: 3 }] });
     const increment = new FakeElement();
     increment.dataset = { cartAction: 'increment', productId: 'poster', variantId: '' };
     await yen.listeners.get('click')({ target: increment });
@@ -65,4 +66,40 @@ test('the cart view shows prices in the basket currency, scaled by its minor uni
   } finally {
     Object.assign(globalThis, saved);
   }
+});
+
+test('rapid cart intents queue behind the server reply and render its authoritative quantities/prices', { skip: needsTypeStripping }, async () => {
+  const saved = { document: globalThis.document, HTMLElement: globalThis.HTMLElement, Element: globalThis.Element };
+  Object.assign(globalThis, { document: { querySelectorAll: () => [] }, HTMLElement: FakeElement, Element: FakeElement });
+  try {
+    const { createCartUpdateQueue } = await import('../src/components/cart-view.ts');
+    let complete; const held = new Promise(resolve => { complete = resolve; }); const sent = []; const rendered = [];
+    const state = { items: [{ ...poster }], locked: false, currency: 'usd' };
+    const queue = createCartUpdateQueue(state, async items => {
+      sent.push(items.map(item => item.quantity));
+      if (sent.length === 1) await held;
+      return { items: [{ productId: 'poster', quantity: sent.length === 1 ? 4 : items[0].quantity }],
+        quote: { currency: 'usd', lines: [{ productId: 'poster', unitAmount: 1500, lineTotal: 1500 * (sent.length === 1 ? 4 : items[0].quantity) }] } };
+    }, () => rendered.push([state.items[0].quantity, state.items[0].lineTotal]), () => {});
+    const first = queue('increment', 'poster'); const second = queue('increment', 'poster');
+    await Promise.resolve(); assert.deepEqual(sent, [[3]], 'only one request is in flight');
+    complete(); await Promise.all([first, second]);
+    assert.deepEqual(sent, [[3], [5]], 'second intent starts from the authoritative quantity 4');
+    assert.deepEqual(rendered, [[4,6000], [5,7500]]);
+  } finally { Object.assign(globalThis, saved); }
+});
+
+test('a lost cart reply refreshes authoritative state before the next queued intent', { skip: needsTypeStripping }, async () => {
+  const saved = { document: globalThis.document };
+  globalThis.document = { querySelectorAll: () => [] };
+  try {
+    const { createCartUpdateQueue } = await import('../src/components/cart-view.ts');
+    const state = { items: [{ ...poster }], locked: false, currency: 'usd' }; const sent = []; let refreshed = false;
+    const queue = createCartUpdateQueue(state, async items => {
+      sent.push(items[0].quantity); if (sent.length === 1) throw new Error('Reply lost');
+      assert.ok(refreshed); return { items: [{ productId: 'poster', quantity: items[0].quantity }] };
+    }, () => {}, () => {}, async () => { refreshed = true; return { items: [{ productId: 'poster', quantity: 3 }] }; });
+    await Promise.all([queue('increment', 'poster'), queue('increment', 'poster')]);
+    assert.deepEqual(sent, [3,4]); assert.equal(state.items[0].quantity, 4);
+  } finally { Object.assign(globalThis, saved); }
 });

@@ -5,8 +5,15 @@ import { listMigrationSources } from 'talisman-cms/migrations';
 // The plugin ships its migrations in drizzle/, one folder per migration as drizzle-kit writes them,
 // and so does the core; a site applies both from one assembled folder. These helpers apply them the
 // way `wrangler d1 migrations apply` does. The database helpers are the core's.
-export { T, applyMigrationFile, assertIntegrity, assertMatchesSchema, fullSchema, openDatabase, outline, row, rows, tableNames }
+export { T, applyMigrationFile, assertIntegrity, fullSchema, openDatabase, outline, row, rows, tableNames }
   from '../../../talisman-cms/test/helpers/migrations.mjs';
+
+import { assertMatchesSchema as assertCoreMatchesSchema } from '../../../talisman-cms/test/helpers/migrations.mjs';
+
+/** table_xinfo includes the generated canonical columns, which table_info deliberately omits. */
+export function assertMatchesSchema(db, tables) {
+  return assertCoreMatchesSchema({ prepare(query) { return db.prepare(query.replaceAll('pragma_table_info', 'pragma_table_xinfo')); } }, tables);
+}
 
 export const pluginMigrationsDir = fileURLToPath(new URL('../../drizzle/', import.meta.url));
 export const coreMigrationsDir = fileURLToPath(new URL('../../../talisman-cms/drizzle/', import.meta.url));

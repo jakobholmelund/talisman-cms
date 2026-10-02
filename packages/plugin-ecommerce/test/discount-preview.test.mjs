@@ -417,7 +417,7 @@ test('checkouts that carry a code count against the preview network limit', asyn
     cookies: { [CART_SESSION_COOKIE]: 'plain-browser' }, headers: { 'cf-connecting-ip': '203.0.113.9' },
     body: { customerEmail: 'fresh@example.test', shippingAddress } });
   assert.deepEqual([plain.status, plain.json],
-    [409, { error: 'A payment provider must be selected and configured before checkout' }]);
+    [503, { error: 'Checkout is unavailable right now. Please try again later.', code: 'provider_unavailable' }]);
   // Another network still has its code checks.
   const other = await checkout(DB, { discountCode: 'NOPE10' }, { basket: 'network-browser', ip: '198.51.100.4' });
   assert.deepEqual([other.status, other.json], [409, { error: REFUSED, field: 'code' }]);

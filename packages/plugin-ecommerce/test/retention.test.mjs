@@ -67,7 +67,9 @@ async function cartRoute(DB, method, { cookies = {}, body, raw, headers = {}, or
     ...(raw instanceof ReadableStream ? { duplex: 'half' } : {})
   });
   const response = await ALL({ request, cookies: jar });
-  return { status: response.status, json: await response.json(), jar, response };
+  const json = await response.json();
+  delete json.quote; delete json.pricingError;
+  return { status: response.status, json, jar, response };
 }
 
 const cartCount = (sqlite) => sqlite.prepare('SELECT COUNT(*) AS count FROM _ecommerce_carts').get().count;
@@ -197,8 +199,8 @@ test('the purge deletes idle guest baskets and keeps account, locked, checked-ou
   insert.run('stale-locked', 'anon_locked', null, 'cs_locked', 0, seconds - 40 * day, seconds - 31 * day);
   insert.run('stale-closed', 'anon_closed', null, null, 1, seconds - 40 * day, seconds - 31 * day);
   insert.run('stale-ordered', 'anon_ordered', null, null, 0, seconds - 40 * day, seconds - 31 * day);
-  sqlite.prepare(`INSERT INTO _ecommerce_orders (id, cart_id, total_amount, created_at, updated_at)
-    VALUES ('ord_draft', 'stale-ordered', 1000, ?, ?)`).run(seconds - 31 * day, seconds - 31 * day);
+  sqlite.prepare(`INSERT INTO _ecommerce_orders (id, cart_id, subtotal_amount, total_amount, created_at, updated_at)
+    VALUES ('ord_draft', 'stale-ordered', 1000, 1000, ?, ?)`).run(seconds - 31 * day, seconds - 31 * day);
 
   const deleted = await purgeStaleCommerceData({ env: { DB }, now });
   assert.deepEqual(deleted, { carts: 1, customerSessions: 0, signInTokens: 0, unverifiedAccounts: 0, rateLimits: 0,
@@ -336,10 +338,10 @@ test('the purge deletes accounts that sign-in requests used to create and keeps 
   add('verified', { verifiedAt: old });
   add('linked', { cmsUserId: 'cms-user' });
   add('brand-new', { createdAt: seconds - 3600 });
-  sqlite.prepare(`INSERT INTO _ecommerce_orders (id, user_id, status, total_amount, created_at, updated_at)
-    VALUES ('ord_1', 'with-order', 'cancelled', 1000, ?, ?)`).run(old, old);
-  sqlite.prepare(`INSERT INTO _ecommerce_orders (id, user_id, status, total_amount, created_at, updated_at)
-    VALUES ('ord_2', NULL, 'paid', 1000, ?, ?)`).run(old, old);
+  sqlite.prepare(`INSERT INTO _ecommerce_orders (id, user_id, status, subtotal_amount, total_amount, created_at, updated_at)
+    VALUES ('ord_1', 'with-order', 'cancelled', 1000, 1000, ?, ?)`).run(old, old);
+  sqlite.prepare(`INSERT INTO _ecommerce_orders (id, user_id, status, subtotal_amount, total_amount, created_at, updated_at)
+    VALUES ('ord_2', NULL, 'paid', 1000, 1000, ?, ?)`).run(old, old);
   sqlite.prepare(`INSERT INTO _ecommerce_customer_sessions (id, account_id, token_hash, expires_at, created_at, purpose)
     VALUES ('session', 'with-session', 'hash-session', ?, ?, 'session')`).run(seconds + day, old);
   sqlite.prepare(`INSERT INTO _ecommerce_customer_sessions (id, account_id, token_hash, expires_at, created_at, purpose)

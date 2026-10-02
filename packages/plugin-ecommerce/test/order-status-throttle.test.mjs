@@ -271,7 +271,7 @@ test('a pending gift-card order is settled by the status route without a provide
   const { sqlite, DB } = database();
   const order = await placeOrder(DB, 'gift-card-browser');
   // A gift card that covers the whole total leaves nothing for a payment provider to collect.
-  sqlite.prepare("UPDATE _ecommerce_orders SET payment_provider = 'gift_card', total_amount = 0 WHERE id = ?").run(order.id);
+  sqlite.prepare("UPDATE _ecommerce_orders SET payment_provider = 'gift_card', gift_card_applied = total_amount, total_amount = 0 WHERE id = ?").run(order.id);
 
   at(5);
   const read = await readStatus(DB, order, 'gift-card-browser');

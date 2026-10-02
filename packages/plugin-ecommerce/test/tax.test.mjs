@@ -489,6 +489,7 @@ test('a refund recorded between another reversal\'s read and its record is rever
 });
 
 test('a reversal the provider refused stays pending and is sent again, unchanged, by reconcileCommerce', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const logged = [];
   // Email is not configured here, so the order confirmation waits; emails.test.mjs covers that line.
   t.mock.method(console, 'error', (message, details) => { if (!waitingForEmail(message, details)) logged.push(message); });
@@ -510,7 +511,7 @@ test('a reversal the provider refused stays pending and is sent again, unchanged
   assert.deepEqual((await reconcileCommerce({ env, paymentAdapters: [adapter] }))
     .filter((result) => result.id === order.id), []);
   // Ten minutes on, both that wait and the one its counted failure started have passed.
-  sqlite.prepare('UPDATE _ecommerce_tax_reversals SET created_at = created_at - 600, tax_sync_last_at = tax_sync_last_at - 600').run();
+  t.mock.timers.tick(600_000);
   assert.deepEqual((await reconcileCommerce({ env, paymentAdapters: [adapter] }))
     .filter((result) => result.id === order.id), [{ id: order.id, status: 'tax_reversed' }]);
   assert.deepEqual(calls.reversals[1], calls.reversals[0]);

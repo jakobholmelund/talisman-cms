@@ -556,7 +556,7 @@ test('the queue queries use the orders and fulfillments indexes', async () => {
     assert.match(page.plan, index, `${JSON.stringify(options)}: ${page.plan}`);
     if (!options.query) assert.doesNotMatch(page.plan, /TEMP B-TREE/, 'the index gives the page its order');
     for (const shipments of rest) assert.match(shipments.plan, /SEARCH d0 USING INDEX _ecommerce_fulfillments_order_idx \(order_id=\?\)/);
-    assert.equal(rest.length, 1, 'shipments are read once per page');
+    assert.equal(rest.length, 2, 'shipments and progress events each read once per page');
   }
   sqlite.close();
 });

@@ -725,8 +725,8 @@ function addCustomers(sqlite) {
   sqlite.prepare(`INSERT INTO _ecommerce_customer_accounts (id, email, email_normalized, email_verified_at, created_at, updated_at)
     VALUES ('acct_verified', 'verified@example.test', 'verified@example.test', 1, 1, 1),
       ('acct_unverified', 'unverified@example.test', 'unverified@example.test', NULL, 1, 1)`).run();
-  const order = sqlite.prepare(`INSERT INTO _ecommerce_orders (id, customer_email, status, payment_provider, total_amount, created_at, updated_at)
-    VALUES (?, ?, ?, ?, 1000, 1, 1)`);
+  const order = sqlite.prepare(`INSERT INTO _ecommerce_orders (id, customer_email, status, payment_provider, total_amount, subtotal_amount, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 1000, 1000, 1, 1)`);
   order.run('ord_paid', 'Buyer@Example.test', 'paid', 'stripe');
   order.run('ord_pending', 'pending@example.test', 'pending', 'stripe');
   order.run('ord_test', 'tester@example.test', 'paid', 'admin_test');

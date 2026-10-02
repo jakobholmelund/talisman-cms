@@ -256,8 +256,8 @@ test('the batched quote keeps the checks and messages of the line-by-line one', 
     return api.orders.createFromCart(cart.id, address);
   };
 
-  await assert.rejects(quoteWith([{ productId: 'missing', quantity: 1 }]), /^Error: Product is not available: missing$/);
-  await assert.rejects(checkoutWith([{ productId: 'missing', quantity: 1 }]), /^Error: Product not found: missing$/);
+  await assert.rejects(quoteWith([{ productId: 'missing', quantity: 1 }]), /^ShopperError: Product is not available: missing$/);
+  await assert.rejects(checkoutWith([{ productId: 'missing', quantity: 1 }]), /^ShopperError: Product not found: missing$/);
   // A value or a legacy group of another product is not found, whether or not that product is in the basket.
   await assert.rejects(quoteWith([{ productId: 'p0', variantId: 'p1-value', quantity: 1 }]),
     /Variant value not found or mismatch: p1-value/);
@@ -329,7 +329,7 @@ test('a checkout aborts whole when a stock row runs out between its quote and it
   }] });
   const cart = await api.carts.getOrCreate('race');
   await api.carts.updateItems(cart.id, lines);
-  await assert.rejects(api.orders.createFromCart(cart.id, address), /^Error: Insufficient stock or checkout already started$/);
+  await assert.rejects(api.orders.createFromCart(cart.id, address), /^ShopperError: Insufficient stock or checkout already started$/);
   // The stock trigger stops the whole batch: no order, no reservation, and every other row keeps its stock.
   assert.deepEqual([count(sqlite, '_ecommerce_orders'), count(sqlite, '_ecommerce_inventory_reservations'),
     count(sqlite, '_ecommerce_component_reservations')], [0, 0, 0]);

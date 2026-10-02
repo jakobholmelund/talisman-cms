@@ -43,6 +43,35 @@ const TRIGGERS = [
   '_ecommerce_products_stock_nonnegative ON _ecommerce_products',
   '_ecommerce_stocks_nonnegative ON _ecommerce_stocks',
   '_ecommerce_variants_stock_nonnegative ON _ecommerce_product_variants',
+
+  '_ecommerce_fulfillment_progress_guard ON _ecommerce_fulfillments',
+  '_ecommerce_tax_reversal_cap ON _ecommerce_tax_reversals',
+  '_ecommerce_tax_reversal_immutable ON _ecommerce_tax_reversals',
+  '_ecommerce_tax_reversal_no_delete ON _ecommerce_tax_reversals',
+  '_ecommerce_customer_session_account_guard ON _ecommerce_customer_sessions',
+  '_ecommerce_order_account_guard ON _ecommerce_orders',
+  '_ecommerce_credit_ledger_no_update ON _ecommerce_credit_ledger',
+  '_ecommerce_credit_ledger_no_delete ON _ecommerce_credit_ledger',
+  '_ecommerce_gift_card_ledger_no_update ON _ecommerce_gift_card_ledger',
+  '_ecommerce_gift_card_ledger_no_delete ON _ecommerce_gift_card_ledger',
+  '_ecommerce_provider_refunds_no_update ON _ecommerce_provider_refunds',
+  '_ecommerce_provider_refunds_no_delete ON _ecommerce_provider_refunds',
+  '_ecommerce_gift_card_refunds_no_update ON _ecommerce_gift_card_refunds',
+  '_ecommerce_gift_card_refunds_no_delete ON _ecommerce_gift_card_refunds',
+  '_ecommerce_gift_card_reviews_no_update ON _ecommerce_gift_card_reviews',
+  '_ecommerce_gift_card_reviews_no_delete ON _ecommerce_gift_card_reviews',
+  '_ecommerce_gift_card_order_refunds_no_update ON _ecommerce_gift_card_order_refunds',
+  '_ecommerce_gift_card_order_refunds_no_delete ON _ecommerce_gift_card_order_refunds',
+  '_ecommerce_restocks_no_update ON _ecommerce_restocks',
+  '_ecommerce_restocks_no_delete ON _ecommerce_restocks',
+  '_ecommerce_fulfillments_no_update ON _ecommerce_fulfillments',
+  '_ecommerce_fulfillments_no_delete ON _ecommerce_fulfillments',
+  '_ecommerce_reconcile_decisions_no_update ON _ecommerce_reconcile_decisions',
+  '_ecommerce_reconcile_decisions_no_delete ON _ecommerce_reconcile_decisions',
+  '_ecommerce_shopper_audits_no_update ON _ecommerce_shopper_audits',
+  '_ecommerce_shopper_audits_no_delete ON _ecommerce_shopper_audits',
+  '_ecommerce_tax_sync_decisions_no_update ON _ecommerce_tax_sync_decisions',
+  '_ecommerce_tax_sync_decisions_no_delete ON _ecommerce_tax_sync_decisions',
 ].sort();
 
 // The folder a site's `migrations_dir` points at, built as the integration builds it.
@@ -101,12 +130,12 @@ function seeded() {
       ('pvv-1', 'pv-1', 'Black', 'FRAME-BLK', ${T}, ${T});
     INSERT INTO _ecommerce_stocks (id, product_variant_value_id, quantity, created_at, updated_at) VALUES ('stock-1', 'pvv-1', 2, ${T}, ${T});
     INSERT INTO _ecommerce_carts (id, session_token, items, created_at, updated_at) VALUES ('cart-1', 'anon_1', '[]', ${T}, ${T});
-    INSERT INTO _ecommerce_orders (id, cart_id, status, items, total_amount, customer_email, created_at, updated_at) VALUES
-      ('order-1', 'cart-1', 'paid', '[]', 12000, 'new@example.com', ${T}, ${T});
+    INSERT INTO _ecommerce_orders (id, cart_id, status, items, subtotal_amount, total_amount, customer_email, created_at, updated_at) VALUES
+      ('order-1', 'cart-1', 'paid', '[]', 12000, 12000, 'new@example.com', ${T}, ${T});
     INSERT INTO _ecommerce_payments (id, order_id, provider, provider_id, status, amount, created_at) VALUES
       ('pay-1', 'order-1', 'stripe', 'pi_1', 'succeeded', 12000, ${T});
-    INSERT INTO _ecommerce_orders (id, status, items, total_amount, checkout_session_id, payment_provider, created_at, updated_at) VALUES
-      ('order-pending', 'pending', '[]', 4000, 'cs_test_pending', 'stripe', ${T + 40}, ${T + 40});
+    INSERT INTO _ecommerce_orders (id, status, items, subtotal_amount, total_amount, checkout_session_id, payment_provider, created_at, updated_at) VALUES
+      ('order-pending', 'pending', '[]', 4000, 4000, 'cs_test_pending', 'stripe', ${T + 40}, ${T + 40});
     INSERT INTO _ecommerce_customer_accounts (id, email, email_normalized, email_verified_at, name, created_at, updated_at) VALUES
       ('shop-admin', 'Admin@Example.com', 'admin@example.com', ${T + 500}, 'Admin shopping', ${T}, ${T}),
       ('shop-new', 'New@Example.com', 'new@example.com', ${T + 500}, '  ', ${T}, ${T}),
@@ -175,7 +204,7 @@ test('the trigger migration holds only the commerce triggers, and no migration r
   assert.equal(triggers.length, 1);
   const statements = readFileSync(triggers[0].path, 'utf8').split('--> statement-breakpoint')
     .map((statement) => statement.replace(/^\s*--.*$/gm, '').trim()).filter(Boolean);
-  assert.equal(statements.length, TRIGGERS.length);
+  assert.equal(statements.length, 20);
   for (const statement of statements) assert.match(statement, /^CREATE TRIGGER `_ecommerce_/);
 });
 
@@ -262,6 +291,7 @@ test('the redemption guards count shipping and exclusive tax in an order\'s tota
       { id: 'inclusive-tax-added', shipping: 500, tax: 800, behavior: 'inclusive', total: 7300, balances: false },
     ];
     for (const { id, shipping, tax, behavior, total, balances } of orders) {
+      if (!balances) { assert.throws(() => insertOrder.run(id, total, shipping, tax, behavior), /orders_totals_balanced/, id); continue; }
       insertOrder.run(id, total, shipping, tax, behavior);
       const redemptions = [
         [() => redeemDiscount.run(`dr-${id}`, id), /Discount code is no longer available/],
@@ -289,18 +319,19 @@ test('shipping and tax amounts stay valid, a tax reversal is recorded once per r
   const db = openDatabase();
   try {
     applyAllMigrations(db);
-    db.exec(`INSERT INTO _ecommerce_orders (id, status, items, total_amount, created_at, updated_at) VALUES ('order-1', 'paid', '[]', 1000, ${T}, ${T})`);
+    db.exec(`INSERT INTO _ecommerce_orders (id, status, items, subtotal_amount, total_amount, created_at, updated_at) VALUES ('order-1', 'paid', '[]', 1000, 1000, ${T}, ${T})`);
     for (const assignment of ['shipping_amount = -1', 'tax_amount = -1', `tax_behavior = 'included'`, 'credit_applied = -1', 'gift_card_refunded_cents = 1', `fulfillment_status = 'shipped'`]) {
       assert.throws(() => db.exec(`UPDATE _ecommerce_orders SET ${assignment} WHERE id = 'order-1'`), /CHECK constraint failed/, assignment);
     }
 
+    db.exec(`UPDATE _ecommerce_orders SET tax_transaction_id = 'tax_1', provider_refunded_cents = 1000 WHERE id = 'order-1'`);
     const reverse = db.prepare(`INSERT INTO _ecommerce_tax_reversals (id, order_id, reference, amount, provider_reversal_id, created_at)
       VALUES (?, ?, ?, ?, ?, ${T})`);
     reverse.run('rev-1', 'order-1', 'order-1:reversal:500', 500, 'reversal-1');
     assert.throws(() => reverse.run('rev-2', 'order-1', 'order-1:reversal:500', 500, 'reversal-2'),
       /UNIQUE constraint failed: _ecommerce_tax_reversals\.reference/);
     assert.throws(() => reverse.run('rev-3', 'order-1', 'order-1:reversal:1000', 0, 'reversal-3'), /CHECK constraint failed/);
-    assert.throws(() => reverse.run('rev-4', 'order-2', 'order-2:reversal:500', 500, 'reversal-4'), /FOREIGN KEY constraint failed/);
+    assert.throws(() => reverse.run('rev-4', 'order-2', 'order-2:reversal:500', 500, 'reversal-4'), /Tax reversal exceeds refunded tender/);
     assert.throws(() => db.exec(`UPDATE _ecommerce_tax_reversals SET tax_sync_attempts = -1`), /CHECK constraint failed/);
 
     // The lookup for paid orders whose tax transaction is missing repeats the partial index's conditions.
@@ -321,9 +352,9 @@ test('an order ships in parcels, takes appended corrections, and the orders queu
   const db = openDatabase();
   try {
     applyAllMigrations(db);
-    db.exec(`INSERT INTO _ecommerce_orders (id, status, items, total_amount, payment_provider, created_at, updated_at) VALUES
-      ('order-parcels', 'partially_refunded', '[]', 9000, 'stripe', ${T}, ${T}),
-      ('order-test', 'paid', '[]', 9000, 'admin_test', ${T}, ${T})`);
+    db.exec(`INSERT INTO _ecommerce_orders (id, status, items, subtotal_amount, total_amount, payment_provider, created_at, updated_at) VALUES
+      ('order-parcels', 'partially_refunded', '[]', 9000, 9000, 'stripe', ${T}, ${T}),
+      ('order-test', 'paid', '[]', 9000, 9000, 'admin_test', ${T}, ${T})`);
     const ship = (id, orderId, completes) => db.exec(`INSERT INTO _ecommerce_fulfillments
       (id, order_id, completes_order, admin_actor, note, created_at) VALUES ('${id}', '${orderId}', ${completes}, 'admin-1', 'Parcel handed over', ${T})`);
     const state = () => row(db, `SELECT status, fulfillment_status, updated_at FROM _ecommerce_orders WHERE id = 'order-parcels'`);
@@ -339,7 +370,7 @@ test('an order ships in parcels, takes appended corrections, and the orders queu
     db.exec(`INSERT INTO _ecommerce_fulfillments (id, order_id, kind, corrects_id, completes_order, admin_actor, carrier, tracking_number, note, created_at)
       VALUES ('fix-1', 'order-parcels', 'correction', 'parcel-1', 0, 'admin-1', 'USPS', 'TRACK-2', 'Label was reprinted', ${T})`);
     // A shipment names no shipment to correct, and only a shipment completes an order.
-    db.exec(`INSERT INTO _ecommerce_orders (id, status, items, total_amount, payment_provider, created_at, updated_at) VALUES ('order-more', 'paid', '[]', 9000, 'stripe', ${T}, ${T})`);
+    db.exec(`INSERT INTO _ecommerce_orders (id, status, items, subtotal_amount, total_amount, payment_provider, created_at, updated_at) VALUES ('order-more', 'paid', '[]', 9000, 9000, 'stripe', ${T}, ${T})`);
     assert.throws(() => db.exec(`INSERT INTO _ecommerce_fulfillments (id, order_id, kind, corrects_id, completes_order, admin_actor, note, created_at)
       VALUES ('bad-1', 'order-more', 'shipment', 'parcel-1', 1, 'admin-1', 'Parcel handed over', ${T})`), /CHECK constraint failed/);
     assert.throws(() => db.exec(`INSERT INTO _ecommerce_fulfillments (id, order_id, kind, corrects_id, completes_order, admin_actor, carrier, tracking_number, note, created_at)
@@ -529,9 +560,9 @@ test('the tax passes read their indexes and count failed attempts with a backoff
     applyAllMigrations(db);
     // A paid order whose tax transaction is missing, and a partly refunded one with a reversal sent,
     // one whose request failed, and a refund not reversed yet.
-    const insertOrder = db.prepare(`INSERT INTO _ecommerce_orders (id, status, items, total_amount, payment_provider,
+    const insertOrder = db.prepare(`INSERT INTO _ecommerce_orders (id, status, items, subtotal_amount, total_amount, payment_provider,
       tax_amount, tax_behavior, tax_calculation_id, tax_transaction_id, provider_refunded_cents, created_at, updated_at)
-      VALUES (?, ?, '[]', 13200, 'stripe', 1200, 'exclusive', ?, ?, ?, ?, ?)`);
+      VALUES (?, ?, '[]', 12000, 13200, 'stripe', 1200, 'exclusive', ?, ?, ?, ?, ?)`);
     insertOrder.run('order-tax-missing', 'paid', 'taxcalc_1', null, 0, T, T);
     insertOrder.run('order-tax-refunded', 'partially_refunded', 'taxcalc_2', 'tax_2', 8000, T + 10, T + 30);
     const recordReversal = db.prepare(`INSERT INTO _ecommerce_tax_reversals
@@ -597,8 +628,8 @@ test('one email per kind and subject, and claim links only for an active card of
   const db = seeded();
   try {
     issueCards(db);
-    db.exec(`INSERT INTO _ecommerce_orders (id, status, items, total_amount, payment_provider, customer_email, created_at, updated_at)
-      VALUES ('order-paid', 'paid', '[]', 9000, 'stripe', 'buyer@example.com', ${T}, ${T})`);
+    db.exec(`INSERT INTO _ecommerce_orders (id, status, items, subtotal_amount, total_amount, payment_provider, customer_email, created_at, updated_at)
+      VALUES ('order-paid', 'paid', '[]', 9000, 9000, 'stripe', 'buyer@example.com', ${T}, ${T})`);
     db.exec(`INSERT INTO _ecommerce_fulfillments (id, order_id, kind, completes_order, admin_actor, carrier, tracking_number, note, created_at)
       VALUES ('ful-1', 'order-paid', 'shipment', 1, 'admin-1', 'UPS', '1Z999', 'Parcel handed over', ${T + 10})`);
     assert.equal(row(db, `SELECT fulfillment_status FROM _ecommerce_orders WHERE id = 'order-paid'`).fulfillment_status, 'fulfilled');
@@ -640,4 +671,57 @@ test('one email per kind and subject, and claim links only for an active card of
   } finally {
     db.close();
   }
+});
+
+test('the recovery migrations preserve populated catalog, accounts, orders, payments and ledger balances', () => {
+  const db = openDatabase();
+  try {
+    const files = migrationFiles();
+    const previous = files.filter(file => !file.name.startsWith('20261002'));
+    const additions = files.filter(file => file.name.startsWith('20261002'));
+    for (const file of previous) db.exec(readFileSync(file.path, 'utf8'));
+    db.exec(`INSERT INTO _ecommerce_products (id,name,slug,base_price,inventory_quantity,created_at,updated_at)
+      VALUES ('upgrade-product','Existing product','upgrade-product',1000,9,1,1);
+      INSERT INTO _ecommerce_customer_accounts (id,email,email_normalized,created_at,updated_at)
+      VALUES ('upgrade-account','Jane.Doe+shop@googlemail.com','jane.doe+shop@googlemail.com',1,1);
+      INSERT INTO _ecommerce_orders (id,user_id,status,subtotal_amount,total_amount,customer_email,created_at,updated_at)
+      VALUES ('upgrade-order','upgrade-account','paid',1000,1000,'Jane.Doe+shop@googlemail.com',1,1);
+      INSERT INTO _ecommerce_payments (id,order_id,provider,provider_id,status,amount,created_at)
+      VALUES ('upgrade-payment','upgrade-order','stripe','pi_upgrade','success',1000,1);
+      INSERT INTO _ecommerce_credit_ledger (id,account_id,order_id,kind,amount_cents,created_at)
+      VALUES ('upgrade-credit','upgrade-account','upgrade-order','welcome_award',100,1);
+      INSERT INTO _ecommerce_gift_cards(id,code_hash,code_suffix,encrypted_code,source,admin_actor,admin_reason,initial_cents,created_at,updated_at)
+      VALUES ('upgrade-card','fake-hash','1234','fake-encrypted','admin','admin','Existing admin issue',500,1,1);
+      INSERT INTO _ecommerce_gift_card_ledger(id,card_id,kind,amount_cents,created_at)
+      VALUES ('upgrade-gift-ledger','upgrade-card','issue',500,1);`);
+    for (const file of additions) {
+      db.exec('BEGIN');
+      try { db.exec(readFileSync(file.path, 'utf8')); db.exec('COMMIT'); }
+      catch (error) { const violations = db.prepare('PRAGMA foreign_key_check').all(); db.exec('ROLLBACK'); throw new Error(`${file.name}: ${error.message}; ${JSON.stringify(violations)}`, { cause: error }); }
+    }
+    assertIntegrity(db); assertMatchesSchema(db, tables);
+    assert.equal(row(db, "SELECT inventory_quantity FROM _ecommerce_products WHERE id='upgrade-product'").inventory_quantity, 9);
+    assert.equal(row(db, "SELECT credit_balance FROM _ecommerce_customer_accounts WHERE id='upgrade-account'").credit_balance, 100);
+    assert.equal(row(db, "SELECT customer_email_canonical FROM _ecommerce_orders WHERE id='upgrade-order'").customer_email_canonical, 'janedoe@gmail.com');
+    assert.equal(row(db, "SELECT amount FROM _ecommerce_payments WHERE id='upgrade-payment'").amount, 1000);
+    assert.equal(row(db, "SELECT amount_cents FROM _ecommerce_credit_ledger WHERE id='upgrade-credit'").amount_cents, 100);
+    assert.equal(row(db, "SELECT balance_cents FROM _ecommerce_gift_cards WHERE id='upgrade-card'").balance_cents, 500);
+    assert.equal(row(db, "SELECT amount_cents FROM _ecommerce_gift_card_ledger WHERE id='upgrade-gift-ledger'").amount_cents, 500);
+    assert.deepEqual(outline(db).triggers, TRIGGERS);
+  } finally { db.close(); }
+});
+
+test('rebuild guards refuse real foreign-key damage before clearing the deferred counter', () => {
+  const db = openDatabase();
+  try {
+    applyAllMigrations(db);
+    for (const name of ['20261002023911_shopper_recovery_invariants', '20261002024155_replacement_refunds_privacy']) {
+      const source = readFileSync(join(pluginMigrationsDir, name, 'migration.sql'), 'utf8');
+      const guard = source.slice(source.indexOf('SELECT CASE WHEN EXISTS (SELECT 1 FROM pragma_foreign_key_check)'));
+      db.exec('BEGIN'); db.exec('PRAGMA defer_foreign_keys = true');
+      db.exec("INSERT INTO _ecommerce_orders(id,cart_id,total_amount,created_at,updated_at) VALUES ('bad-reference','missing-cart',0,1,1)");
+      assert.throws(() => db.exec(guard), /malformed JSON/);
+      db.exec('ROLLBACK'); assertIntegrity(db);
+    }
+  } finally { db.close(); }
 });

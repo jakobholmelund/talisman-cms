@@ -504,7 +504,7 @@ test('raising the minimum later never voids an award whose order was not refunde
   assert.deepEqual(ledger(store, released.id), RELEASED);
 });
 
-test('after the minimum is raised, a refund is measured against the lower of it and what the order qualified with', async () => {
+test('after the minimum is raised, refunds are measured against the terms stored at checkout', async () => {
   const store = shop({});
   await saveReferralSettings(store.env, { enabled: true, ...TERMS });
   const order = await referredPurchase(store);
@@ -513,7 +513,7 @@ test('after the minimum is raised, a refund is measured against the lower of it 
   assert.equal(referralStatus(store, order.id), 'approved');
   assert.deepEqual(statuses(await release(store)), ['referral_released']);
   assert.deepEqual(ledger(store, order.id), RELEASED);
-  await refund(store, order, 4001);
+  await refund(store, order, 7001);
   assert.equal(referralStatus(store, order.id), 'void');
   assert.deepEqual(ledger(store, order.id), REVERSED);
 });

@@ -940,7 +940,7 @@ test('the plugin schema names only reconciliation columns the migrations create'
   const { sqlite } = database();
   for (const table of [schema.orders, schema.giftCardPurchases, schema.reconcileDecisions, schema.taxReversals]) {
     const { name, columns } = getTableConfig(table);
-    const created = new Set(sqlite.prepare('SELECT name FROM pragma_table_info(?)').all(name).map((column) => column.name));
+    const created = new Set(sqlite.prepare('SELECT name FROM pragma_table_xinfo(?)').all(name).map((column) => column.name));
     for (const column of columns) assert.ok(created.has(column.name), `${name}.${column.name} is declared but no migration creates it`);
   }
   sqlite.close();

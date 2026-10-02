@@ -298,7 +298,7 @@ test('with checkout enabled but Stripe unconfigured, the route never falls back 
     path: '/api/ecommerce/checkout', cookies: { [CART_SESSION_COOKIE]: 'enabled-browser' },
     body: { customerEmail: 'owner@example.test', shippingAddress } });
   assert.deepEqual([response.status, response.json],
-    [409, { error: 'A payment provider must be selected and configured before checkout' }]);
+    [503, { error: 'Checkout is unavailable right now. Please try again later.', code: 'provider_unavailable' }]);
   assert.equal(count(sqlite, '_ecommerce_orders'), 0);
   assert.equal(sqlite.prepare('SELECT checkout_session_id FROM _ecommerce_carts').get().checkout_session_id, null);
   sqlite.close();
@@ -1102,7 +1102,7 @@ test('checkout refuses a stored line without a variant for a product sold in var
   const response = await call(checkoutRoute, { ...stripeEnv(DB), TALISMAN_COMMERCE_CHECKOUT_ENABLED: 'true' }, {
     path: '/api/ecommerce/checkout', cookies: { [CART_SESSION_COOKIE]: 'legacy-browser' },
     body: { customerEmail: 'owner@example.test', shippingAddress } });
-  assert.deepEqual([response.status, response.json], [409, { error: 'Select an option for Frame' }]);
+  assert.deepEqual([response.status, response.json], [409, { error: 'Select an option for Frame', code: 'basket_conflict' }]);
   assert.equal(count(sqlite, '_ecommerce_orders'), 0);
   assert.equal(sqlite.prepare("SELECT inventory_quantity FROM _ecommerce_products WHERE id = 'frame'").get().inventory_quantity, 5);
   assert.equal(sqlite.prepare("SELECT checkout_session_id FROM _ecommerce_carts WHERE id = 'legacy'").get().checkout_session_id, null);
@@ -1113,5 +1113,75 @@ test('checkout refuses a stored line without a variant for a product sold in var
     { cookies, url: new URL(`${ORIGIN}/_actions/cart`) }),
     { code: 'BAD_REQUEST', message: 'Cart items must choose one of the variants of frame' });
   assert.deepEqual(cookies.writes, []);
+  sqlite.close();
+});
+
+test('one strict checkout schema rejects exactly the same malformed action and route inputs without reservations', async () => {
+  const { sqlite, DB } = database();
+  const api = bindCommerceApi({ env: { DB } }); const cart = await api.carts.getOrCreate('strict-checkout');
+  await api.carts.updateItems(cart.id, [{ productId: 'case', quantity: 1 }]);
+  const invalid = [
+    { ...checkoutDetails, shippingAddress: { ...shippingAddress, line1: 'x'.repeat(201) } },
+    { ...checkoutDetails, shippingAddress: { ...shippingAddress, internal: true } },
+    { ...checkoutDetails, billingAddress: { country: 'UK' } },
+    { ...checkoutDetails, customerEmail: `${'a'.repeat(250)}@example.test` },
+    { ...checkoutDetails, discountCode: 'x'.repeat(33) },
+    { ...checkoutDetails, shippingRateId: 'x'.repeat(41) },
+    { ...checkoutDetails, giftCardCode: 'x'.repeat(38) },
+    { ...checkoutDetails, shippingAddress: [] },
+    { ...checkoutDetails, unknown: true },
+    null, [], { customerEmail: 123 },
+  ];
+  // Redirect URLs are internal API options, never shopper-supplied checkout fields.
+  for (const details of invalid) {
+    const input = details && !Array.isArray(details) ? Object.fromEntries(Object.entries(details)
+      .filter(([key]) => !['successUrl', 'cancelUrl'].includes(key))) : details;
+    assert.equal(ecommerceActions.checkout.input.safeParse(input).success, false);
+    const result = await call(checkoutRoute, { DB, TALISMAN_COMMERCE_CHECKOUT_ENABLED: 'true' },
+      { cookies: { [CART_SESSION_COOKIE]: 'strict-checkout' }, body: input });
+    assert.equal(result.status, 400); assert.equal(result.json.error, input?.billingAddress?.country === 'UK'
+      ? 'Enter a valid country code' : 'Invalid checkout details');
+    assert.deepEqual(result.jar.writes, []);
+    assert.equal(count(sqlite, '_ecommerce_orders'), 0);
+    assert.equal(count(sqlite, '_ecommerce_inventory_reservations'), 0);
+    assert.equal(sqlite.prepare('SELECT checkout_session_id FROM _ecommerce_carts WHERE id=?').get(cart.id).checkout_session_id, null);
+  }
+  const badJson = await call(checkoutRoute, { DB, TALISMAN_COMMERCE_CHECKOUT_ENABLED: 'true' },
+    { cookies: { [CART_SESSION_COOKIE]: 'strict-checkout' }, raw: '{' });
+  assert.deepEqual([badJson.status, badJson.json.code], [400, 'invalid_json']); sqlite.close();
+});
+
+test('public gift-card failures use shopper-safe typed messages and never expose provider or key details', async () => {
+  const { sqlite, DB } = database();
+  const env = { ...stripeEnv(DB), TALISMAN_COMMERCE_CHECKOUT_ENABLED: 'true', TALISMAN_COMMERCE_GIFT_CARDS_ENABLED: 'true' };
+  const configuration = await call(giftCardsRoute, env, { body: { buyerEmail: 'shopper@example.test', amountCents: 1000 } });
+  assert.equal(configuration.status, 503); assert.equal(configuration.json.code, 'checkout_failed');
+  assert.doesNotMatch(JSON.stringify(configuration.json), /key|sk_test|stripe/i);
+  const malformed = await call(giftCardsRoute, env, { body: { action: 'balance', code: 'bad' } });
+  const absent = await call(giftCardsRoute, env, { body: { action: 'balance', code: `GIFT-${'A'.repeat(32)}` } });
+  assert.deepEqual([malformed.status, malformed.json], [400, { error: 'Gift card is unavailable', code: 'gift_card_unavailable' }]);
+  assert.deepEqual([absent.status, absent.json], [malformed.status, malformed.json]); sqlite.close();
+});
+
+test('exact negative basket requests neither create cookies nor alter a valid basket', async () => {
+  const { sqlite, DB } = database();
+  const invalid = [
+    [{ productId: 'case', quantity: 0 }], [{ productId: 'case', quantity: -1 }], [{ productId: 'case', quantity: 1.5 }],
+    [{ productId: 'case', quantity: '1' }], [{ productId: 'case', quantity: 100 }],
+    [{ productId: 'case', variantId: null, quantity: 1 }], [{ productId: 'case', quantity: 1 }, { productId: 'case', quantity: 1 }],
+    [{ productId: 'retired', quantity: 1 }], [{ productId: 'frame', quantity: 1 }],
+    [{ productId: 'frame', variantId: 'other-amber', quantity: 1 }], Array.from({ length: 51 }, (_, index) => ({ productId: `p${index}`, quantity: 1 })),
+  ];
+  for (const items of invalid) {
+    const result = await postCart(DB, { items }); assert.equal(result.status, 400, JSON.stringify(items));
+    assert.deepEqual(result.jar.writes, []); assert.equal(count(sqlite, '_ecommerce_carts'), 0);
+  }
+  const created = await postCart(DB, { items: [{ productId: 'case', quantity: 1 }] });
+  const cookie = Object.fromEntries(created.jar.values);
+  for (const items of invalid) {
+    const result = await postCart(DB, { items }, cookie); assert.equal(result.status, 400);
+    const cart = sqlite.prepare('SELECT items,checkout_session_id FROM _ecommerce_carts').get();
+    assert.equal(cart.items, JSON.stringify([{ productId: 'case', quantity: 1 }])); assert.equal(cart.checkout_session_id, null);
+  }
   sqlite.close();
 });
