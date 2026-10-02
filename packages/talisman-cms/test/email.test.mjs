@@ -254,7 +254,7 @@ test('talismanCms({ email }) validates the descriptor and serves it as virtual:t
     /secret/, 'a descriptor set by a plugin is validated too');
   const served = (options) => {
     let config;
-    talismanCms(options).hooks['astro:config:setup']({ injectRoute() {}, updateConfig(value) { config = value; }, addDevToolbarApp() {} });
+    talismanCms(options).hooks['astro:config:setup']({ injectRoute() {}, addMiddleware() {}, updateConfig(value) { config = value; }, addDevToolbarApp() {} });
     const plugin = config.vite.plugins.find((candidate) => candidate?.name === 'vite-plugin-talisman-cms-email');
     return plugin.load(plugin.resolveId('virtual:talisman-cms/email'));
   };

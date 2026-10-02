@@ -108,7 +108,7 @@ test('plugin endpoints and admin pages require a CMS session unless marked publi
 
   assert.equal(registered.middleware.length, 1);
   assert.equal(registered.middleware[0].order, 'post');
-  assert.match(registered.middleware[0].entrypoint, /src\/routes\/plugin-route-guard\.ts$/);
+  assert.match(registered.middleware[0].entrypoint, /dist\/routes\/plugin-route-guard\.js$/);
   const guard = await importModule(loadVirtual(registered, 'protected-routes', { consumer: 'server', ssr: true }));
   assert.equal(guard.adminPath, '/cms');
   assert.deepEqual(guard.protectedRoutes, {
@@ -117,9 +117,9 @@ test('plugin endpoints and admin pages require a CMS session unless marked publi
     '/cms/tools-preview': 'page',
   });
 
-  // Without protected plugin routes no middleware runs on the site's requests.
+  // The middleware also applies shell protections in a core-only consumer.
   const publicOnly = setup({ plugins: [{ name: 'shop', onInit: (config) => config, endpoints: [{ path: '/cart', entrypoint: 'cart.ts', public: true }] }] });
-  assert.equal(publicOnly.middleware.length, 0);
+  assert.equal(publicOnly.middleware.length, 1);
 
   assert.throws(() => talismanCms({ plugins: [{ name: 'static', onInit: (config) => config,
     routes: [{ path: '/admin/report', entrypoint: 'report.astro', prerender: true }] }] }),
@@ -161,4 +161,13 @@ test('the auth virtual module passes the integration admin path to the adapter, 
   assert.throws(() => setup({ auth: LocalAuthAdapter('/cms') }), /LocalAuthAdapter\("\/cms"\) does not match adminPath "\/admin"/);
   // DevAuthAdapter declares no admin path and is called without one.
   assert.match(authModule({ auth: DevAuthAdapter() }, 'dev'), /__talismanCmsRuntimeAuthAdapter\(\.\.\.\[\]\)/);
+});
+
+test('schema virtual modules quote module specifiers safely', async () => {
+  const moduleId = `data:text/javascript,${encodeURIComponent(`export const table = "quoted"; // 'quote'`)}`;
+  const registered = setup({ collections: [{ name: 'Quoted', slug: 'quoted', fields: [], nativeSchemaMapping: { schemaPath: moduleId, exportName: 'table' } }] });
+  const plugin = registered.vite.plugins.find(plugin => plugin.name === 'vite-plugin-talisman-cms-schemas');
+  const source = plugin.load(plugin.resolveId('virtual:talisman-cms/native-schemas')).replace(/(?:"|')talisman-cms\/db\/media(?:"|')/, JSON.stringify(new URL('../dist/db/media.js', import.meta.url).href));
+  const module = await importModule(source);
+  assert.equal(module.nativeSchemas.quoted, 'quoted');
 });

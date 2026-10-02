@@ -3,7 +3,7 @@ import { defineConfig } from 'tsup';
 const watchMode = process.argv.includes('--watch');
 
 export default defineConfig({
-  entry: ['src/integration.ts', 'src/client.ts', 'src/fields.ts', 'src/helpers.ts', 'src/env.ts', 'src/email/index.ts', 'src/email/runtime.ts', 'src/seo.ts', 'src/locale.ts', 'src/loader.ts', 'src/loader.server.ts', 'src/runtime-config.ts', 'src/migrations.ts', 'src/auth/dev.ts', 'src/auth/access.ts', 'src/auth/hybrid.ts', 'src/auth/identity.ts', 'src/auth/local-schema.ts', 'src/auth/collection-access.ts', 'src/auth/local.ts', 'src/auth/cloudflare-access.ts', 'src/auth/authorize.ts', 'src/auth/guard.ts', 'src/workflows.ts', 'src/worker.ts', 'src/versioning.ts', 'src/db/schema.ts', 'src/db/media.ts', 'src/db/media-policy.ts', 'src/render.ts', 'src/richtext.ts', 'src/ui-library-manifest.ts', 'src/toolbar/app.ts'],
+  entry: ['src/routes/api.ts', 'src/routes/api/auth/session.ts', 'src/routes/api/auth/local.ts', 'src/routes/api/auth/setup.ts', 'src/routes/api/auth/sso.ts', 'src/routes/api/media-upload.ts', 'src/routes/api/media-serve.ts', 'src/routes/plugin-route-guard.ts', 'src/integration.ts', 'src/client.ts', 'src/fields.ts', 'src/helpers.ts', 'src/env.ts', 'src/email/index.ts', 'src/email/runtime.ts', 'src/seo.ts', 'src/locale.ts', 'src/loader.ts', 'src/loader.server.ts', 'src/runtime-config.ts', 'src/migrations.ts', 'src/auth/dev.ts', 'src/auth/access.ts', 'src/auth/hybrid.ts', 'src/auth/identity.ts', 'src/auth/local-schema.ts', 'src/auth/collection-access.ts', 'src/auth/local.ts', 'src/auth/cloudflare-access.ts', 'src/auth/authorize.ts', 'src/auth/guard.ts', 'src/workflows.ts', 'src/worker.ts', 'src/versioning.ts', 'src/db/schema.ts', 'src/db/media.ts', 'src/db/media-policy.ts', 'src/render.ts', 'src/richtext.ts', 'src/ui-library-manifest.ts', 'src/toolbar/app.ts'],
   format: ['esm'],
   dts: true,
   clean: !watchMode,
@@ -18,6 +18,7 @@ export default defineConfig({
     'tailwindcss',
     '@tanstack/router-vite-plugin',
     '@tanstack/react-router',
+    'virtual:talisman-cms/protected-routes',
     'virtual:talisman-cms/auth',
     'virtual:talisman-cms/collection-hooks',
     'virtual:talisman-cms/config',
