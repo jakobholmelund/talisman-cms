@@ -28,6 +28,8 @@ interface Operators {
     /** Whether a relationship or array field holds the value. */
     contains?: Scalar;
     isNull?: boolean;
+    /** Literal, case-insensitive substring on text/textarea fields; 1–200 characters. */
+    text?: string;
 }
 /** `{ field: value }` means equality; `{ field: { op: value } }` names the comparison. */
 type WhereClause = Record<string, Scalar | Operators>;

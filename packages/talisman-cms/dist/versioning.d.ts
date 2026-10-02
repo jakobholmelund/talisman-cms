@@ -1,8 +1,8 @@
 import * as drizzle_orm_d1 from 'drizzle-orm/d1';
 import * as drizzle_orm from 'drizzle-orm';
 import { collections, entries } from './db/schema.js';
-import { T as TalismanEnv } from './client-CzSqHg9T.js';
-export { i as invalidateEntryCache } from './client-CzSqHg9T.js';
+import { T as TalismanEnv } from './client-CdExBpsX.js';
+export { i as invalidateEntryCache } from './client-CdExBpsX.js';
 import 'drizzle-orm/sqlite-core';
 import './actor-Daa_hmny.js';
 import './types-C5a-hx5D.js';
@@ -20,10 +20,12 @@ interface PublishWorkflowPayload {
     expectedRevisionId?: string | null;
 }
 declare class RevisionConflictError extends Error {
+    readonly code = "revision_conflict";
     constructor();
 }
 declare function isRevisionConflict(error: unknown): boolean;
 declare class SlugConflictError extends Error {
+    readonly code = "slug_conflict";
     constructor();
 }
 /** Also matches the message of a publish that failed inside a Workflow instance. */

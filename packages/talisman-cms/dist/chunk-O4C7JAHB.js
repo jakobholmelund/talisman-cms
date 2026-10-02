@@ -89,6 +89,7 @@ async function invalidateCollectionCache(env) {
 var DEFAULT_PUBLISHING_WORKFLOW_BINDING = "TALISMAN_PUBLISH_WORKFLOW";
 var REVISION_CONFLICT_MESSAGE = "This entry changed since it was opened. Reload it before saving.";
 var RevisionConflictError = class extends Error {
+  code = "revision_conflict";
   constructor() {
     super(REVISION_CONFLICT_MESSAGE);
     this.name = "RevisionConflictError";
@@ -99,6 +100,7 @@ function isRevisionConflict(error) {
 }
 var SLUG_CONFLICT_MESSAGE = "Another entry in this collection already uses this slug.";
 var SlugConflictError = class extends Error {
+  code = "slug_conflict";
   constructor() {
     super(SLUG_CONFLICT_MESSAGE);
     this.name = "SlugConflictError";

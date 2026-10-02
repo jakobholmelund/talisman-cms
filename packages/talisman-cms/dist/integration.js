@@ -548,12 +548,12 @@ function talismanCms(options) {
   const protectedPluginRoutes = collectProtectedPluginRoutes(finalOptions.plugins, adminPath, adminPathPrefix);
   validateAdminExtensions(finalOptions.plugins);
   const adminRoutePath = fileURLToPath(new URL("../src/routes/admin.astro", import.meta.url));
-  const apiRoutePath = fileURLToPath(new URL("../src/routes/api.ts", import.meta.url));
-  const apiAuthSessionRoutePath = fileURLToPath(new URL("../src/routes/api/auth/session.ts", import.meta.url));
-  const apiAuthLocalRoutePath = fileURLToPath(new URL("../src/routes/api/auth/local.ts", import.meta.url));
-  const apiAuthSetupRoutePath = fileURLToPath(new URL("../src/routes/api/auth/setup.ts", import.meta.url));
-  const apiAuthSsoRoutePath = fileURLToPath(new URL("../src/routes/api/auth/sso.ts", import.meta.url));
-  const pluginRouteGuardPath = fileURLToPath(new URL("../src/routes/plugin-route-guard.ts", import.meta.url));
+  const apiRoutePath = fileURLToPath(new URL("./routes/api.js", import.meta.url));
+  const apiAuthSessionRoutePath = fileURLToPath(new URL("./routes/api/auth/session.js", import.meta.url));
+  const apiAuthLocalRoutePath = fileURLToPath(new URL("./routes/api/auth/local.js", import.meta.url));
+  const apiAuthSetupRoutePath = fileURLToPath(new URL("./routes/api/auth/setup.js", import.meta.url));
+  const apiAuthSsoRoutePath = fileURLToPath(new URL("./routes/api/auth/sso.js", import.meta.url));
+  const pluginRouteGuardPath = fileURLToPath(new URL("./routes/plugin-route-guard.js", import.meta.url));
   let runtimeConfigPath = fileURLToPath(new URL("./runtime-config.js", import.meta.url));
   if (!existsSync(runtimeConfigPath)) {
     runtimeConfigPath = fileURLToPath(new URL("../src/runtime-config.ts", import.meta.url));
@@ -573,7 +573,6 @@ function talismanCms(options) {
           writeProjectMigrations(finalOptions, finalOptions.plugins || [], fileURLToPath(config.root));
           checkWranglerCronTrigger(fileURLToPath(config.root), finalOptions.plugins || []);
         }
-        console.log("[talisman-cms] Injecting admin route from:", adminRoutePath);
         let toolbarAppPath = fileURLToPath(new URL("./toolbar/app.js", import.meta.url));
         if (!existsSync(toolbarAppPath)) {
           toolbarAppPath = fileURLToPath(new URL("../src/toolbar/app.ts", import.meta.url));
@@ -622,27 +621,24 @@ function talismanCms(options) {
           entrypoint: apiAuthLocalRoutePath,
           prerender: false
         });
-        const apiMediaUploadRoutePath = fileURLToPath(new URL("../src/routes/api/media-upload.ts", import.meta.url));
+        const apiMediaUploadRoutePath = fileURLToPath(new URL("./routes/api/media-upload.js", import.meta.url));
         injectRoute({
           pattern: `${adminPathPrefix}/api/media/upload`,
           entrypoint: apiMediaUploadRoutePath,
           prerender: false
         });
-        const apiMediaServeRoutePath = fileURLToPath(new URL("../src/routes/api/media-serve.ts", import.meta.url));
+        const apiMediaServeRoutePath = fileURLToPath(new URL("./routes/api/media-serve.js", import.meta.url));
         injectRoute({
           pattern: "/api/media/[...route]",
           entrypoint: apiMediaServeRoutePath,
           prerender: false
         });
-        if (Object.keys(protectedPluginRoutes).length > 0) {
-          addMiddleware({ order: "post", entrypoint: pluginRouteGuardPath });
-        }
+        addMiddleware({ order: "post", entrypoint: pluginRouteGuardPath });
         if (finalOptions?.plugins) {
           for (const plugin of finalOptions.plugins) {
             if (plugin.endpoints) {
               for (const endpoint of plugin.endpoints) {
                 const pattern = `${endpoint.public ? "" : adminPathPrefix}/api/${endpoint.path.replace(/^\//, "")}`;
-                console.log(`[talisman-cms] Injecting plugin route: ${pattern} -> ${endpoint.entrypoint}`);
                 injectRoute({
                   pattern,
                   entrypoint: endpoint.entrypoint,
@@ -652,7 +648,6 @@ function talismanCms(options) {
             }
             if (plugin.routes) {
               for (const route of plugin.routes) {
-                console.log(`[talisman-cms] Injecting plugin page: ${route.path} -> ${route.entrypoint}`);
                 injectRoute({
                   pattern: route.path,
                   entrypoint: route.entrypoint,
@@ -769,8 +764,8 @@ function talismanCms(options) {
                       if (c.nativeSchemaMapping) {
                         const importName = `native_schema_${index}`;
                         const resolvedPath = c.nativeSchemaMapping.schemaPath;
-                        imports.push(`import { ${c.nativeSchemaMapping.exportName} as ${importName} } from '${resolvedPath}';`);
-                        exports.push(`'${c.slug}': ${importName}`);
+                        imports.push(`import { ${c.nativeSchemaMapping.exportName} as ${importName} } from ${JSON.stringify(resolvedPath)};`);
+                        exports.push(`${JSON.stringify(c.slug)}: ${importName}`);
                       }
                     });
                     return `

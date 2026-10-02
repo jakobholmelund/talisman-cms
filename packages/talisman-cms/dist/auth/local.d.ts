@@ -1,5 +1,5 @@
 import { T as TalismanAuthAdapter } from '../types-C5a-hx5D.js';
-import { T as TalismanEnv } from '../client-CzSqHg9T.js';
+import { T as TalismanEnv } from '../client-CdExBpsX.js';
 export { getAccessEmail } from './access.js';
 import 'astro';
 import 'drizzle-orm/d1';

@@ -20,7 +20,7 @@ import {
   toEditableEntry,
   triggerPublishingWorkflow,
   writeCache
-} from "./chunk-HSF22PCU.js";
+} from "./chunk-O4C7JAHB.js";
 import {
   collections,
   entries,
@@ -29,7 +29,7 @@ import {
 import {
   deleteStoredMedia,
   isMediaCollection
-} from "./chunk-WO46ICPJ.js";
+} from "./chunk-72N3XJ7X.js";
 import {
   buildZodSchemaForCollection,
   buildZodSchemaForFields,
@@ -143,7 +143,7 @@ var PreconditionRequiredError = class extends ServiceError {
 var NATIVE_RECORD_CONFLICT_MESSAGE = "This record changed since it was opened. Reload it before saving.";
 var NativeRecordConflictError = class extends ServiceError {
   constructor() {
-    super("conflict", 409, NATIVE_RECORD_CONFLICT_MESSAGE);
+    super("stale_record", 409, NATIVE_RECORD_CONFLICT_MESSAGE);
     this.name = "NativeRecordConflictError";
   }
 };
@@ -172,6 +172,39 @@ var HookError = class extends ServiceError {
 function isServiceError(error) {
   return error instanceof ServiceError;
 }
+function isDatabaseError(error) {
+  for (let current = error, depth = 0; current && depth < 5; current = current.cause, depth += 1) {
+    const message = typeof current.message === "string" ? current.message : "";
+    if (current.name === "DrizzleQueryError" || message.startsWith("Failed query:") || /D1_ERROR|SQLITE_/.test(message)) {
+      return true;
+    }
+  }
+  return false;
+}
+function constraintErrorFrom(error) {
+  if (error instanceof ConstraintError) return error;
+  for (let current = error, depth = 0; current && depth < 5; current = current.cause, depth += 1) {
+    const message = typeof current.message === "string" ? current.message : "";
+    if (message.startsWith("Failed query:")) continue;
+    const columns = message.match(/constraint failed: ([\w.]+(?:, [\w.]+)*)/)?.[1]?.split(", ").map((column) => column.split(".").pop()).join(", ");
+    if (/UNIQUE constraint failed/i.test(message)) {
+      return new ConstraintError(409, columns ? `Another record already uses this ${columns}.` : "Another record already uses this value.", { cause: error });
+    }
+    if (/NOT NULL constraint failed/i.test(message)) {
+      return new ConstraintError(400, columns ? `A value is required for ${columns}.` : "A required value is missing.", { cause: error });
+    }
+    if (/FOREIGN KEY constraint failed/i.test(message)) {
+      return new ConstraintError(409, "This change conflicts with a related record.", { cause: error });
+    }
+    if (/CHECK constraint failed/i.test(message)) {
+      return new ConstraintError(400, "A value is not allowed.", { cause: error });
+    }
+    if (/SQLITE_TOOBIG|string or blob too big/i.test(message)) {
+      return new ConstraintError(413, "This content is too large to store.", { cause: error });
+    }
+  }
+  return null;
+}
 
 // src/service/actor.ts
 var systemActor = (label) => ({ kind: "system", label });
@@ -192,6 +225,11 @@ function assertAllowed(actor, collection, operation) {
   if (operation === "create" && isMediaCollection(collection)) {
     throw new AccessDeniedError("Media records are created by uploading a file to the media library.");
   }
+}
+function assertCollectionAccess(actor, collection, access, readOnlyMessage = "This collection is read-only") {
+  if (actor.kind !== "user") return;
+  if (!canAccessCollection(collection, actor.user, access)) throw new AccessDeniedError("Collection access denied");
+  if (access !== "read" && collection.readOnly) throw new AccessDeniedError(readOnlyMessage);
 }
 function canRead(actor, collection) {
   return canAccessCollection(collection, actor.kind === "user" ? actor.user : { role: "editor" }, "read");
@@ -410,7 +448,7 @@ var MAX_WHERE_CLAUSES = 8;
 var MAX_SORT_KEYS = 2;
 var MAX_OFFSET = 1e4;
 var MAX_BOUND_PARAMETERS = 90;
-var OPERATORS = /* @__PURE__ */ new Set(["eq", "ne", "in", "lt", "lte", "gt", "gte", "contains", "isNull"]);
+var OPERATORS = /* @__PURE__ */ new Set(["eq", "ne", "in", "lt", "lte", "gt", "gte", "contains", "isNull", "text"]);
 var ORDERED_TYPES = /* @__PURE__ */ new Set(["number", "date", "timestamp"]);
 var ENTRY_SYSTEM_FIELDS = {
   id: { type: "text", column: "id" },
@@ -511,6 +549,14 @@ function compileQuery(target, query) {
           parameters += 1;
           const compare = { lt, lte, gt, gte }[operator];
           clauses.push(compare(field.expression, value));
+          break;
+        }
+        case "text": {
+          const configured = target.fields.some((candidate) => candidate.name === name || target.kind === "native" && candidate.name === field.expression.name);
+          if (!configured || field.list || !["text", "textarea"].includes(field.type)) refuse(name, "text needs a configured text or textarea field");
+          if (typeof raw !== "string" || !raw.trim() || raw.length > 200) refuse(name, "text needs 1\u2013200 characters");
+          parameters += 1;
+          clauses.push(sql`instr(lower(${field.expression}), lower(${raw.trim()})) > 0`);
           break;
         }
         case "contains": {
@@ -1104,6 +1150,7 @@ function entriesService(ctx) {
     async list(slug, query = {}) {
       const collection = await resolveCollection(ctx, slug);
       assertAllowed(ctx.actor, collection.config, "read");
+      if (Object.values(query.where ?? {}).some((value) => value && typeof value === "object" && "text" in value)) throw new InvalidInputError("text search needs a limit.");
       if (query.offset !== void 0) throw new InvalidInputError("offset needs a limit.");
       const compiled = compileQuery(queryTarget(collection, "draft"), query);
       if (collection.nativeTable) {
@@ -1291,6 +1338,7 @@ function entriesService(ctx) {
       }
       const collection = await resolveCollection(ctx, slug);
       if (!configured) assertAllowed(ctx.actor, collection.config, "read");
+      if (Object.values(options.where ?? {}).some((value) => value && typeof value === "object" && "text" in value) && (options.limit === void 0 || options.limit > MAX_PAGE_SIZE)) throw new InvalidInputError(`text search needs a limit from 1 to ${MAX_PAGE_SIZE}.`);
       const compiled = compileQuery(queryTarget(collection, versionMode), options);
       const readStartedAt = /* @__PURE__ */ new Date();
       let data;
@@ -1645,6 +1693,7 @@ function createService(env, options) {
 }
 
 export {
+  configFromModules,
   loadServiceConfig,
   ServiceError,
   ValidationError,
@@ -1659,8 +1708,17 @@ export {
   ConstraintError,
   HookError,
   isServiceError,
+  isDatabaseError,
+  constraintErrorFrom,
   systemActor,
   userActor,
+  assertAllowed,
+  assertCollectionAccess,
+  configuredCollectionFields,
+  syncCollectionDefinitions,
+  MAX_PAGE_SIZE,
+  NATIVE_PUBLISHING_MESSAGE,
+  NATIVE_REVISIONS_MESSAGE,
   createService,
   createDbClient,
   getClient

@@ -52,14 +52,21 @@ function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 function safePath(path) {
-  if (!path.startsWith("/") || path.startsWith("//")) return "/";
-  const url = new URL(path, "https://talisman.invalid");
-  return url.pathname;
+  if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) return "/";
+  try {
+    const url = new URL(path, "https://talisman.invalid");
+    return url.origin === "https://talisman.invalid" ? url.pathname : "/";
+  } catch {
+    return "/";
+  }
 }
 function siteUrl(origin, path) {
   const base = new URL(origin);
   if (base.protocol !== "https:" && base.protocol !== "http:") throw new Error("SEO site URL must use HTTP or HTTPS");
-  return new URL(safePath(path), base.origin).toString();
+  base.pathname = safePath(path);
+  base.search = "";
+  base.hash = "";
+  return base.toString();
 }
 function absoluteImage(origin, value) {
   const image = text(value);
@@ -76,7 +83,7 @@ function resolveSeo(options) {
   const siteName = text(site.siteName);
   const rawTitle = text(page.title) || siteName;
   const suffix = text(site.titleSuffix);
-  const title = suffix && rawTitle !== suffix && !rawTitle.endsWith(` \u2014 ${suffix}`) ? `${rawTitle} \u2014 ${suffix}` : rawTitle;
+  const title = rawTitle && suffix && rawTitle !== suffix && !rawTitle.endsWith(` \u2014 ${suffix}`) ? `${rawTitle} \u2014 ${suffix}` : rawTitle;
   const description = text(page.description) || text(site.defaultDescription);
   const canonical = siteUrl(options.siteUrl, page.canonicalPath || options.path);
   const image = absoluteImage(options.siteUrl, page.image || site.defaultImage);

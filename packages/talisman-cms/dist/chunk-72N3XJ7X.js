@@ -1,8 +1,10 @@
 // src/db/media-policy.ts
 var MAX_MEDIA_BYTES = 10 * 1024 * 1024;
 var MEDIA_IMAGE_WIDTHS = [320, 640, 960, 1280, 1920];
-var MEDIA_CACHE_CONTROL = "public, max-age=3600";
-var MEDIA_CACHE_KEY_VERSION = "2";
+var MEDIA_CACHE_CONTROL = "public, max-age=0, must-revalidate";
+var MEDIA_EDGE_CACHE_CONTROL = "public, max-age=3600";
+var MEDIA_FALLBACK_CACHE_CONTROL = "public, max-age=60";
+var MEDIA_CACHE_KEY_VERSION = "3";
 var MEDIA_SCHEMA_PATH = "talisman-cms/db/media";
 function isMediaCollection(collection) {
   return collection.nativeSchemaMapping?.schemaPath === MEDIA_SCHEMA_PATH;
@@ -16,8 +18,12 @@ function mediaCacheKey(origin, id, width) {
   if (width !== void 0) url.searchParams.set("w", String(width));
   return url.toString();
 }
+var mediaDeletionKey = (id) => `talisman-deleted-media/${id}`;
 async function deleteStoredMedia(env, id, origin) {
-  await env.STORAGE?.delete(id);
+  if (env.STORAGE) {
+    await env.STORAGE.put(mediaDeletionKey(id), "", { httpMetadata: { contentType: "text/plain" } });
+    await env.STORAGE.delete(id);
+  }
   if (!origin) return;
   const cache = typeof caches === "undefined" ? void 0 : caches.default;
   if (!cache) return;
@@ -70,6 +76,7 @@ function secureMediaResponse(response) {
     headers.set("Content-Type", "application/octet-stream");
     headers.set("Content-Disposition", "attachment");
   }
+  headers.set("Cache-Control", MEDIA_CACHE_CONTROL);
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Content-Security-Policy", "sandbox");
   return new Response(response.body, {
@@ -83,10 +90,13 @@ export {
   MAX_MEDIA_BYTES,
   MEDIA_IMAGE_WIDTHS,
   MEDIA_CACHE_CONTROL,
+  MEDIA_EDGE_CACHE_CONTROL,
+  MEDIA_FALLBACK_CACHE_CONTROL,
   MEDIA_SCHEMA_PATH,
   isMediaCollection,
   mediaPath,
   mediaCacheKey,
+  mediaDeletionKey,
   deleteStoredMedia,
   notModifiedResponse,
   rasterImageType,

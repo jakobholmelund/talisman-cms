@@ -1,6 +1,10 @@
+import {
+  privateResponse
+} from "./chunk-7H7KCEZW.js";
+
 // src/auth/authorize.ts
 function errorResponse(status, error) {
-  return Response.json({ error }, { status });
+  return privateResponse(Response.json({ error }, { status }));
 }
 async function authorizeCmsRequestWithAdapter(request, authAdapter, authConfigured, requiredRole) {
   if (authConfigured && !authAdapter) {

@@ -2,7 +2,7 @@ import {
   local_schema_exports,
   session,
   user
-} from "./chunk-SWN7UFQB.js";
+} from "./chunk-WHOEA75K.js";
 import {
   getAccessEmail
 } from "./chunk-FEIHHCEJ.js";
@@ -247,10 +247,10 @@ function LocalAuthAdapter(adminPath, options = {}) {
         const existing = await db.select().from(user).where(sql`lower(${user.email}) = ${normalizedEmail}`).get();
         if (existing) {
           if (existing.role !== "customer") {
-            return Response.json({ error: "This email already has a CMS account" }, { status: 409 });
+            return Response.json({ error: "This email already has a CMS account", code: "conflict" }, { status: 409 });
           }
           if (existing.banned) {
-            return Response.json({ error: "This account is disabled. Enable it in the user list before granting CMS access." }, { status: 409 });
+            return Response.json({ error: "This account is disabled. Enable it in the user list before granting CMS access.", code: "conflict" }, { status: 409 });
           }
           const auth2 = createLocalAuth(request, env, normalizedPath);
           const notGranted = await endSessionsBeforeGrant(auth2, existing.id, request.headers);

@@ -1,13 +1,13 @@
 import {
   user
-} from "../chunk-SWN7UFQB.js";
+} from "../chunk-WHOEA75K.js";
 import {
   createDbClient
-} from "../chunk-AMX3BXNH.js";
+} from "../chunk-ZX2ZZJDF.js";
 import "../chunk-7VUPBVR5.js";
-import "../chunk-HSF22PCU.js";
+import "../chunk-O4C7JAHB.js";
 import "../chunk-SHMAAJ4S.js";
-import "../chunk-WO46ICPJ.js";
+import "../chunk-72N3XJ7X.js";
 import "../chunk-GAOPNFAO.js";
 import "../chunk-OAGJMNST.js";
 import "../chunk-MLKGABMK.js";
@@ -16,7 +16,7 @@ import "../chunk-MLKGABMK.js";
 import { and, eq, sql } from "drizzle-orm";
 async function ensureVerifiedEmailIdentity(env, email, name) {
   const normalized = email.trim().toLowerCase();
-  if (normalized.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+  if (normalized.length > 254 || !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(normalized) || normalized.startsWith(".") || normalized.includes("..") || normalized.includes(".@") || normalized.split("@")[0].length > 64) {
     throw new Error("Valid verified email required");
   }
   const now = new Date(Math.floor(Date.now() / 1e3) * 1e3);
