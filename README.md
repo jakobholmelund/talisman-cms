@@ -41,7 +41,7 @@ Use `getLiveCollection()` in server-rendered pages. For `defineCollection()` and
 E-commerce interactions (`addToCart`, `getCart`, `clearCart`, `checkout`) are exposed as type-safe Astro actions via `@talisman-cms/plugin-ecommerce/actions`. Eliminate manual `fetch()` endpoints and enjoy end-to-end type safety, Zod input validation, and automatic CSRF protection.
 
 ### 📝 Next-Gen Drizzle Native Schemas
-Native Schema Mapping lets you attach your own Drizzle ORM tables to the CMS UI. You keep writing the migrations for those tables; the CMS ships its own numbered migrations, and the [migrations guide](packages/talisman-cms/README.md#database-migrations) shows how to apply both to one D1 database. The current runtime targets Cloudflare D1.
+Native Schema Mapping lets you attach your own Drizzle ORM tables to the CMS UI. You keep writing the migrations for those tables; the CMS ships timestamped core migrations and assembles those of registered plugins, and the [migrations guide](packages/talisman-cms/README.md#database-migrations) shows how to apply both to one D1 database. The current runtime targets Cloudflare D1.
 
 ### 🧩 Polymorphic Layouts & Complex Fields
 Talisman provides a comprehensive set of highly customizable fields designed for demanding modern marketing and editorial pages:
@@ -59,6 +59,8 @@ Go beyond content. Talisman features a robust plugin ecosystem allowing you to b
 * **E-commerce Plugin (`@talisman-cms/plugin-ecommerce`)**: First-class e-commerce capabilities featuring dynamic automated Cart APIs, Product Management, Order tracking, inventory logic, and seamless Stripe Integration—all manageable directly from the CMS.
 
 Checkout routes and actions are disabled by default. Enabling them requires `TALISMAN_COMMERCE_CHECKOUT_ENABLED=true` in the Worker environment and a working payment provider. Inventory reservations use D1 transactions, but live payment and store operations still need end-to-end verification before accepting orders. See the [commerce readiness review](packages/plugin-ecommerce/PRODUCTION_READINESS.md).
+
+The UI plugin catalog checks measure manifest bookkeeping. Starwind ships four custom blocks and no upstream component adapters; a catalog marked covered is not proof of rendering behavior, accessibility or feature parity. See the package-specific READMEs and tests.
 
 ### 🔐 Local CMS accounts and auth adapters
 Talisman supports local email/password accounts on D1 with admin/editor roles, plus optional Cloudflare Access verification. `HybridAuthAdapter` combines local editor passwords with Cloudflare Access SSO for admins at `/admin/sso`. Talisman also accepts custom runtime auth adapters. Private APIs fail closed without one. `DevAuthAdapter` signs every request in as an admin, so it works only under `astro dev` on a loopback host, and `astro build` fails with it. The local adapter needs `TALISMAN_AUTH_SECRET` and a one-time `TALISMAN_AUTH_SETUP_TOKEN`; see the [authentication setup](packages/talisman-cms/README.md).

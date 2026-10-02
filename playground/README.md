@@ -7,9 +7,11 @@ A local Astro site that runs Talisman CMS from this repository's source with eve
 From the repository root:
 
 ```sh
-pnpm install
+pnpm install --frozen-lockfile
+pnpm build                                              # build the linked packages
 cp playground/.dev.vars.example playground/.dev.vars   # then fill in both values
-pnpm --filter talisman-cms db:migrate:local             # applies packages/talisman-cms/drizzle to the local D1
+pnpm --filter playground exec astro sync                # assemble core + registered plugin migrations
+pnpm --filter talisman-cms db:migrate:local              # apply the assembled migrations to local D1
 pnpm dev                                                # astro dev for the playground
 ```
 
