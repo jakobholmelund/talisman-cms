@@ -78,6 +78,11 @@ declare module 'virtual:talisman-cms/email' {
   export const emailProviderFactory: EmailProviderFactory | null;
 }
 
+declare module 'virtual:talisman-cms/identity-email-change' {
+  import type { IdentityEmailChangeHook } from './auth/identity';
+  export const identityEmailChangeHooks: IdentityEmailChangeHook[];
+}
+
 declare module 'virtual:talisman-cms/native-schemas' {
   export const nativeSchemas: Record<string, any>;
   export const nativeSchemaConfig: Record<string, { idColumn: string }>;

@@ -9,6 +9,7 @@ import * as schema from './local-schema';
 import { getAccessEmail } from './access';
 import { cloudflareAccessSignIn } from './cloudflare-access';
 import { readSetting } from '../env';
+import { handleProfileAction, isProfileAction } from './profile-actions';
 
 export { getAccessEmail } from './access';
 
@@ -249,7 +250,7 @@ export function LocalAuthAdapter(adminPath?: string, options: { requireAccess?: 
         'admin/list-users', 'admin/create-user', 'admin/set-user-password',
         'admin/set-role', 'admin/ban-user', 'admin/unban-user', 'admin/remove-user',
       ]);
-      if (!allowedActions.has(action)) {
+      if (!allowedActions.has(action) && !isProfileAction(action)) {
         return new Response(null, { status: 404 });
       }
       if (options.editorOnly && action === 'change-password') {
@@ -271,6 +272,17 @@ export function LocalAuthAdapter(adminPath?: string, options: { requireAccess?: 
         if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
         if (action.startsWith('admin/') && user.role !== 'admin') {
           return Response.json({ error: 'Admin access required' }, { status: 403 });
+        }
+        if (isProfileAction(action)) {
+          const current = await createLocalAuth(request, env, normalizedPath).api.getSession({ headers: request.headers });
+          let response: Response;
+          try { response = await handleProfileAction(action, request, env, user, { editorOnly: options.editorOnly, currentSessionId: current?.session.id }); }
+          catch {
+            console.error('[talisman-cms] Profile action failed');
+            response = Response.json({ error: 'The request could not be completed. Reload the profile before retrying.' }, { status: 503 });
+          }
+          const headers = new Headers(response.headers); headers.set('Cache-Control', 'no-store');
+          return new Response(response.body, { status: response.status, headers });
         }
       }
       if (action === 'admin/create-user') {

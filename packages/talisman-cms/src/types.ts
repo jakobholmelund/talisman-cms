@@ -399,6 +399,8 @@ export interface Plugin {
    * trigger in its wrangler config.
    */
   scheduled?: { moduleId: string; exportName?: string };
+  /** Server hook returning SQL statements for linked identities, run in the email-change D1 batch. */
+  identityEmailChange?: { moduleId: string; exportName?: string };
 }
 
 const DEFAULT_BLOCK_SETTINGS_FIELD_NAME = '_settings';

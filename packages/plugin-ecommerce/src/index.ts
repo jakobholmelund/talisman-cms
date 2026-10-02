@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { existsSync } from 'node:fs';
 import * as schema from './schema';
 export { bindCommerceApi, reconcileCommerce, deliverPendingCommerceEmails, CART_MAX_LINES, CART_MAX_LINE_QUANTITY, TaxCalculationError } from './api';
+export { identityEmailChange } from './identity-email-change';
 export type { PaymentProviderAdapter, PaymentReferences, ValidatedWebhookEvent, TaxCalculation, TaxCalculationParams } from './payments';
 export { TaxAddressError } from './payments';
 export type { CommerceEmailTemplates } from './emails';
@@ -222,6 +223,7 @@ export const ecommercePlugin = (
     name: '@talisman-cms/plugin-ecommerce',
     migrations: { dir: resolveMigrationsDir() },
     scheduled: { moduleId: '@talisman-cms/plugin-ecommerce/scheduled' },
+    identityEmailChange: { moduleId: '@talisman-cms/plugin-ecommerce' },
     // The hrefs are relative to the admin path; the integration resolves them and refuses a value
     // that is not a path on the site, so an `adminPages` override is passed through as given.
     adminLinks: adminPageDefinitions.map(page => ({

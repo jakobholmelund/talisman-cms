@@ -11,6 +11,8 @@ const env = {};
 globalThis.__talismanAuthTestEnv = env;
 registerHooks({
   resolve(specifier, context, nextResolve) {
+    if (specifier === 'virtual:talisman-cms/email') return { url: 'data:text/javascript,export const emailProviderFactory = env => env.testEmailProvider ?? null;', shortCircuit: true };
+    if (specifier === 'virtual:talisman-cms/identity-email-change') return { url: 'data:text/javascript,export const identityEmailChangeHooks = [async (env, change) => env.testIdentityHook ? env.testIdentityHook(env, change) : []];', shortCircuit: true };
     if (specifier !== 'cloudflare:workers') return nextResolve(specifier, context);
     return { url: 'data:text/javascript,export const env = globalThis.__talismanAuthTestEnv;', shortCircuit: true };
   },
@@ -25,6 +27,7 @@ const ORIGIN = 'https://cms.example.test';
 const TEAM_DOMAIN = 'https://talisman-test.cloudflareaccess.com';
 const AUDIENCE = 'talisman-test-audience';
 const ADMIN_EMAIL = 'owner@example.test';
+const FEATURE_ADMIN_PASSWORD = 'feature-admin-password-2026';
 const EDITOR_PASSWORD = 'editor-password-123';
 
 const accessKey = await generateKeyPair('RS256');
@@ -54,7 +57,11 @@ function d1(sqlite) {
       return column && row ? row[column] : row;
     },
   });
-  return { prepare: (sql) => statement(sql) };
+  return { prepare: (sql) => statement(sql), async batch(statements) {
+    sqlite.exec('BEGIN');
+    try { const results = []; for (const query of statements) results.push(await query.all()); sqlite.exec('COMMIT'); return results; }
+    catch (error) { sqlite.exec('ROLLBACK'); throw error; }
+  } };
 }
 
 function setup(prefix = 'TALISMAN') {
@@ -755,7 +762,7 @@ test('the auth proxy answers only its allowlisted actions, for signed-in same-or
     await addUser(sqlite, { id: 'editor-1', email: 'editor@example.test', role: 'editor', password: EDITOR_PASSWORD });
     const editorCookie = cookieOf(await signIn(adapter, 'editor@example.test', EDITOR_PASSWORD));
 
-    for (const action of ['sign-up/email', 'admin/impersonate-user', 'admin/list-user-sessions', 'update-user', 'get-session']) {
+    for (const action of ['sign-up/email', 'admin/impersonate-user', 'admin/revoke-session', 'update-user', 'get-session']) {
       assert.equal((await adminAction(adapter, adminCookie, action, {})).status, 404, action);
     }
     assert.equal((await adminAction(adapter, '', 'admin/list-users', {})).status, 401);
@@ -816,5 +823,142 @@ test('local mode keeps at least one active admin', async () => {
 
     sqlite.prepare(`UPDATE galaxy_auth_user SET banned = 0, ban_expires = NULL WHERE id = 'admin-1'`).run();
     assert.equal((await adminAction(local, firstCookie, 'admin/set-role', { userId: 'admin-2', role: 'editor' })).status, 200);
+  } finally { sqlite.close(); }
+});
+
+async function featureFixture(sqlite) {
+  const adapter = LocalAuthAdapter('/admin', { requireAccess: false });
+  await addUser(sqlite, { id: 'feature-admin', email: 'admin@example.test', role: 'admin', password: FEATURE_ADMIN_PASSWORD });
+  await addUser(sqlite, { id: 'feature-editor', email: 'editor@example.test', role: 'editor', password: EDITOR_PASSWORD });
+  const cookie = cookieOf(await signIn(adapter, 'admin@example.test', FEATURE_ADMIN_PASSWORD));
+  const editorCookie = cookieOf(await signIn(adapter, 'editor@example.test', EDITOR_PASSWORD));
+  const sent = [];
+  env.TALISMAN_EMAIL_PROVIDER = 'custom'; env.TALISMAN_EMAIL_FROM = 'no-reply@example.test';
+  env.testEmailProvider = { id: 'test', async send(message) { sent.push(message); return { provider: 'test' }; } };
+  const profile = async (userId = 'feature-editor') => (await adminAction(adapter, cookie, 'admin/get-user-profile', { userId })).json();
+  return { adapter, cookie, editorCookie, sent, profile };
+}
+
+test('profile changes are admin only, reject extra privileges and stale writes, and keep user identities', async () => {
+  const sqlite = setup();
+  try {
+    const { adapter, cookie, editorCookie, profile } = await featureFixture(sqlite);
+    assert.equal((await adminAction(adapter, '', 'admin/get-user-profile', { userId: 'feature-editor' })).status, 401);
+    assert.equal((await adminAction(adapter, editorCookie, 'admin/update-user-profile', { userId: 'feature-admin', name: 'Changed' })).status, 403);
+    const loaded = await profile();
+    assert.equal(loaded.editable, true);
+    assert.equal((await adminAction(adapter, cookie, 'admin/update-user-profile', { userId: 'feature-editor', version: loaded.version, name: 'New name', role: 'admin' })).status, 400);
+    assert.equal((await adminAction(adapter, cookie, 'admin/update-user-profile', { userId: 'feature-editor', version: loaded.version, name: 'New name' })).status, 200);
+    assert.equal(sqlite.prepare('SELECT name FROM galaxy_auth_user WHERE id = ?').get('feature-editor').name, 'New name');
+    assert.equal((await adminAction(adapter, cookie, 'admin/update-user-profile', { userId: 'feature-editor', version: loaded.version, name: 'Stale name' })).status, 409);
+    assert.equal((await adminAction(adapter, cookie, 'admin/get-user-profile', { userId: 'missing' })).status, 404);
+    const malformed = await adapter.handle(new Request(`${ORIGIN}/admin/api/auth/admin/get-user-profile`, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'text/plain' }, body: '{}' }));
+    assert.equal(malformed.status, 415);
+  } finally { sqlite.close(); }
+});
+
+test('session pages expose metadata without tokens and revoke only the selected user session', async () => {
+  const sqlite = setup();
+  try {
+    const { adapter, cookie } = await featureFixture(sqlite);
+    const now = Math.floor(Date.now() / 1000);
+    for (let index = 0; index < 52; index++) sqlite.prepare('INSERT INTO galaxy_auth_session (id, user_id, token, created_at, updated_at, expires_at, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(`session-${String(index).padStart(3, '0')}`, 'feature-editor', `secret-${index}`, now, now, now + 3600, 'Test browser');
+    const first = await (await adminAction(adapter, cookie, 'admin/list-user-sessions', { userId: 'feature-editor' })).json();
+    assert.equal(first.sessions.length, 50); assert.equal(first.nextOffset, 50);
+    assert.ok(first.sessions.every(session => !Object.hasOwn(session, 'token') && !Object.hasOwn(session, 'userId')));
+    const second = await (await adminAction(adapter, cookie, 'admin/list-user-sessions', { userId: 'feature-editor', offset: first.nextOffset })).json();
+    assert.equal(second.sessions.length, 3); assert.equal(second.nextOffset, null);
+    await adminAction(adapter, cookie, 'admin/revoke-user-session', { userId: 'feature-admin', sessionId: 'session-000' });
+    assert.equal(sqlite.prepare('SELECT count(*) AS total FROM galaxy_auth_session WHERE id = ?').get('session-000').total, 1);
+    assert.equal((await adminAction(adapter, cookie, 'admin/revoke-user-session', { userId: 'feature-editor', sessionId: 'session-000' })).status, 200);
+    assert.equal(sqlite.prepare('SELECT count(*) AS total FROM galaxy_auth_session WHERE id = ?').get('session-000').total, 0);
+    assert.equal((await adminAction(adapter, cookie, 'admin/list-user-sessions', { userId: 'feature-editor', offset: -1 })).status, 400);
+    const ownId = sqlite.prepare('SELECT id FROM galaxy_auth_session WHERE user_id = ?').get('feature-admin').id;
+    const wrongTarget = await adminAction(adapter, cookie, 'admin/revoke-user-session', { userId: 'feature-editor', sessionId: ownId });
+    assert.equal((await wrongTarget.json()).currentSessionEnded, false);
+    assert.ok(await cmsUser(adapter, cookie));
+    const ownSession = await adminAction(adapter, cookie, 'admin/revoke-user-session', { userId: 'feature-admin', sessionId: ownId });
+    assert.equal((await ownSession.json()).currentSessionEnded, true);
+    assert.equal(await cmsUser(adapter, cookie), null);
+  } finally { sqlite.close(); }
+});
+
+test('email changes require confirmation, notify the old address, end sessions and reject replay', async () => {
+  const sqlite = setup();
+  try {
+    const { adapter, cookie, sent, profile, editorCookie } = await featureFixture(sqlite);
+    const loaded = await profile();
+    for (const email of ['.leading@example.test', 'double..dot@example.test', 'unicode🙂@example.test', 'a'.repeat(65) + '@example.test']) {
+      assert.equal((await adminAction(adapter, cookie, 'admin/request-email-change', { userId: 'feature-editor', version: loaded.version, email })).status, 400);
+    }
+    const requested = await adminAction(adapter, cookie, 'admin/request-email-change', { userId: 'feature-editor', version: loaded.version, email: 'NEW@example.test' });
+    assert.equal(requested.status, 200); assert.equal(sent.length, 2);
+    assert.equal(sent[0].to[0].email, 'new@example.test'); assert.equal(sent[1].to[0].email, 'editor@example.test');
+    const code = sent[0].text.match(/\b[a-f0-9]{48}\b/)[0];
+    assert.ok(!sqlite.prepare('SELECT value FROM galaxy_auth_verification WHERE id = ?').get('cms-email-change:feature-editor').value.includes(code));
+    assert.equal(sqlite.prepare('SELECT email FROM galaxy_auth_user WHERE id = ?').get('feature-editor').email, 'editor@example.test');
+    assert.equal((await adminAction(adapter, cookie, 'admin/confirm-email-change', { userId: 'feature-editor', code: '0'.repeat(48) })).status, 400);
+    const confirmed = await adminAction(adapter, cookie, 'admin/confirm-email-change', { userId: 'feature-editor', code });
+    assert.equal(confirmed.status, 200);
+    assert.equal(sqlite.prepare('SELECT email FROM galaxy_auth_user WHERE id = ?').get('feature-editor').email, 'new@example.test');
+    assert.equal(await cmsUser(adapter, editorCookie), null);
+    assert.equal((await adminAction(adapter, cookie, 'admin/confirm-email-change', { userId: 'feature-editor', code })).status, 400);
+    assert.equal((await signIn(adapter, 'new@example.test', EDITOR_PASSWORD)).status, 200);
+  } finally { sqlite.close(); }
+});
+
+test('failed email delivery, expired codes, stale profiles and existing addresses never change identities', async () => {
+  const sqlite = setup();
+  try {
+    const { adapter, cookie, sent, profile } = await featureFixture(sqlite);
+    let loaded = await profile();
+    assert.equal((await adminAction(adapter, cookie, 'admin/request-email-change', { userId: 'feature-editor', version: loaded.version, email: 'admin@example.test' })).status, 409);
+    env.testEmailProvider.send = async () => { throw new Error('Simulated provider failure'); };
+    assert.equal((await adminAction(adapter, cookie, 'admin/request-email-change', { userId: 'feature-editor', version: loaded.version, email: 'new@example.test' })).status, 503);
+    assert.equal(sqlite.prepare('SELECT count(*) AS total FROM galaxy_auth_verification WHERE id = ?').get('cms-email-change:feature-editor').total, 0);
+    env.testEmailProvider.send = async message => { sent.push(message); return { provider: 'test' }; };
+    await adminAction(adapter, cookie, 'admin/request-email-change', { userId: 'feature-editor', version: loaded.version, email: 'new@example.test' });
+    let code = sent[0].text.match(/\b[a-f0-9]{48}\b/)[0];
+    sqlite.prepare('UPDATE galaxy_auth_verification SET expires_at = 1 WHERE id = ?').run('cms-email-change:feature-editor');
+    assert.equal((await adminAction(adapter, cookie, 'admin/confirm-email-change', { userId: 'feature-editor', code })).status, 400);
+    sqlite.prepare('DELETE FROM galaxy_auth_verification WHERE id = ?').run('cms-email-change:feature-editor');
+    sent.length = 0;
+    await adminAction(adapter, cookie, 'admin/request-email-change', { userId: 'feature-editor', version: loaded.version, email: 'new@example.test' });
+    code = sent[0].text.match(/\b[a-f0-9]{48}\b/)[0];
+    await adminAction(adapter, cookie, 'admin/update-user-profile', { userId: 'feature-editor', version: loaded.version, name: 'Changed in another tab' });
+    assert.equal((await adminAction(adapter, cookie, 'admin/confirm-email-change', { userId: 'feature-editor', code })).status, 409);
+    assert.equal(sqlite.prepare('SELECT email FROM galaxy_auth_user WHERE id = ?').get('feature-editor').email, 'editor@example.test');
+  } finally { sqlite.close(); }
+});
+
+test('email changes roll back linked profile work and session deletion when a plugin statement fails', async () => {
+  const sqlite = setup();
+  try {
+    const { adapter, cookie, editorCookie, sent, profile } = await featureFixture(sqlite);
+    const { sql } = await import('drizzle-orm');
+    env.testIdentityHook = async (_env, change) => [sql`UPDATE galaxy_auth_user SET name = 'Should roll back' WHERE id = ${change.userId} AND ${change.condition}`, sql`INSERT INTO missing_linked_table VALUES (1)`];
+    await adminAction(adapter, cookie, 'admin/request-email-change', { userId: 'feature-editor', version: (await profile()).version, email: 'new@example.test' });
+    const code = sent[0].text.match(/\b[a-f0-9]{48}\b/)[0];
+    assert.equal((await adminAction(adapter, cookie, 'admin/confirm-email-change', { userId: 'feature-editor', code })).status, 409);
+    const row = sqlite.prepare('SELECT name, email FROM galaxy_auth_user WHERE id = ?').get('feature-editor');
+    assert.equal(row.name, 'editor@example.test'); assert.equal(row.email, 'editor@example.test');
+    assert.ok(await cmsUser(adapter, editorCookie));
+    assert.equal(sqlite.prepare('SELECT count(*) AS total FROM galaxy_auth_verification WHERE id = ?').get('cms-email-change:feature-editor').total, 1);
+  } finally { sqlite.close(); }
+});
+
+test('Cloudflare-managed and shopper identities cannot be renamed through CMS profile actions', async () => {
+  const sqlite = setup();
+  try {
+    const adapter = HybridAuthAdapter('/admin');
+    const cookie = cookieOf(await sso(await accessToken()));
+    const adminId = (await cmsUser(adapter, cookie)).id;
+    const profile = await (await adminAction(adapter, cookie, 'admin/get-user-profile', { userId: adminId })).json();
+    assert.equal(profile.editable, false);
+    assert.equal((await adminAction(adapter, cookie, 'admin/update-user-profile', { userId: adminId, version: profile.version, name: 'Changed' })).status, 403);
+    assert.equal((await adminAction(adapter, cookie, 'admin/request-email-change', { userId: adminId, version: profile.version, email: 'other@example.test' })).status, 403);
+    await addUser(sqlite, { id: 'shopper', email: 'shopper@example.test', role: 'customer' });
+    assert.equal((await adminAction(adapter, cookie, 'admin/update-user-profile', { userId: 'shopper', name: 'Changed' })).status, 403);
   } finally { sqlite.close(); }
 });

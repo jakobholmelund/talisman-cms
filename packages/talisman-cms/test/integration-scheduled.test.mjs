@@ -108,3 +108,25 @@ test('without a project root there is nothing to read, so no warning', (t) => {
   setup({ plugins: [{ name: 'jobs-plugin', scheduled: { moduleId: 'jobs-plugin/scheduled' } }] });
   assert.equal(warn.mock.callCount(), 0);
 });
+
+
+test('identity email hooks resolve default and explicit exports in registration order without changing scheduled jobs', async t => {
+  quiet(t);
+  const registered = setup({ plugins: [
+    { name: 'first-identity', identityEmailChange: { moduleId: jobModule('first', 'identityEmailChange') } },
+    { name: 'unrelated-plugin' },
+    { name: 'second-identity', identityEmailChange: { moduleId: jobModule('second', 'rename'), exportName: 'rename' } },
+  ] });
+  const plugin = registered.vite.plugins.find(candidate => candidate?.name === 'vite-plugin-talisman-cms-identity-email-change');
+  const source = plugin.load(plugin.resolveId('virtual:talisman-cms/identity-email-change'));
+  const { identityEmailChangeHooks } = await import(`data:text/javascript,${encodeURIComponent(source)}`);
+  assert.deepEqual(identityEmailChangeHooks.map(hook => hook()), ['first', 'second']);
+  assert.deepEqual((await loadScheduledModule(registered)).scheduledJobs, []);
+});
+
+test('identity hook descriptors reject invalid server modules and export names at configuration time', t => {
+  quiet(t);
+  for (const identityEmailChange of [null, {}, { moduleId: '' }, { moduleId: 42 }, { moduleId: 'fixture', exportName: 'invalid-export' }]) {
+    assert.throws(() => setup({ plugins: [{ name: 'identity-fixture', identityEmailChange }] }), /identity-fixture: identityEmailChange\.(?:moduleId|exportName)/);
+  }
+});

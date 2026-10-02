@@ -1,13 +1,26 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, sql, type SQL } from 'drizzle-orm';
 import { createDbClient, type TalismanEnv } from '../db/client';
 import { user } from './local-schema';
 
-/** Call only after proving control of the email address (for example, a consumed one-time link). */
-export async function ensureVerifiedEmailIdentity(env: TalismanEnv, email: string, name?: string | null): Promise<string> {
+/** Statements must include `condition`: it proves the confirmation is unconsumed and the identity unchanged. */
+export type IdentityEmailChangeHook = (env: TalismanEnv, change: {
+  userId: string; oldEmail: string; newEmail: string; condition: SQL;
+}) => Promise<SQL[]>;
+
+/** The sign-in format shared by staff and verified shopper identities. */
+export function normalizeIdentityEmail(email: unknown): string | null {
+  if (typeof email !== 'string') return null;
   const normalized = email.trim().toLowerCase();
   if (normalized.length > 254 || !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(normalized) || normalized.startsWith('.') || normalized.includes('..') || normalized.includes('.@') || normalized.split('@')[0].length > 64) {
-    throw new Error('Valid verified email required');
+    return null;
   }
+  return normalized;
+}
+
+/** Call only after proving control of the email address (for example, a consumed one-time link). */
+export async function ensureVerifiedEmailIdentity(env: TalismanEnv, email: string, name?: string | null): Promise<string> {
+  const normalized = normalizeIdentityEmail(email);
+  if (!normalized) throw new Error('Valid verified email required');
   const now = new Date(Math.floor(Date.now() / 1000) * 1000);
   const db = createDbClient(env);
   // A user with this address in any letter case already exists: the unique index on lower(email)

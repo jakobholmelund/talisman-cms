@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { UserProfilePanel } from '../components/UserProfilePanel';
 import { createFileRoute, useRouter } from '@tanstack/react-router';
 
 type CmsAccount = { id: string; name: string; email: string; role: string; banned?: boolean };
@@ -25,6 +26,7 @@ function UsersPage() {
   const [resetUser, setResetUser] = useState<CmsAccount | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [pending, setPending] = useState<UserAction | null>(null);
+  const [profileUser, setProfileUser] = useState<CmsAccount | null>(null);
 
   async function loadUsers(pageOffset = offset) {
     setLoading(true);
@@ -50,12 +52,12 @@ function UsersPage() {
   const noticeRef = useRef<HTMLParagraphElement | null>(null);
   const returnFocusRef = useRef(false);
   useEffect(() => {
-    if (pending || resetUser) { returnFocusRef.current = true; return; }
+    if (pending || resetUser || profileUser) { returnFocusRef.current = true; return; }
     if (!returnFocusRef.current || loading) return;
     returnFocusRef.current = false;
     const trigger = triggerRef.current;
     (trigger?.isConnected && !trigger.matches(':disabled') ? trigger : noticeRef.current)?.focus();
-  }, [pending, resetUser, loading]);
+  }, [pending, resetUser, profileUser, loading]);
   // A role picked in a row waits for its "Change role" button, so browsing the options with the arrow
   // keys (which fires change in Chrome and Firefox) does not open the confirmation.
   const [draftRoles, setDraftRoles] = useState<Record<string, 'editor' | 'admin'>>({});
@@ -143,6 +145,7 @@ function UsersPage() {
     <p role="status" ref={noticeRef} tabIndex={-1} className={notice ? 'text-green-400 focus:outline-none' : 'sr-only'}>{notice}</p>
     {warning && <p role="status" className="text-amber-300">{warning}</p>}
     <p role="status" className="sr-only">{busy ? 'Working…' : ''}</p>
+    {profileUser && <UserProfilePanel key={profileUser.id} userId={profileUser.id} base={base} onClose={() => setProfileUser(null)} onChanged={() => loadUsers()} />}
     <form onSubmit={createUser} className="grid gap-4 rounded-xl border border-white/10 bg-zinc-900/70 p-6 md:grid-cols-2">
       <h2 className="text-lg font-medium md:col-span-2">{context.isHybridAuth ? 'Add editor' : 'Add user'}</h2>
       <p className="text-sm text-zinc-400 md:col-span-2">If this email already belongs to a verified shopper, their existing identity gains editor access.</p>
@@ -164,6 +167,7 @@ function UsersPage() {
             <td className="px-4 py-3">{context.isHybridAuth || isCustomer ? <span className="capitalize">{user.role}</span> : <div className="flex items-center gap-2"><select aria-label={`Role for ${user.email}`} aria-describedby={isSelf ? 'users-self-role-note' : undefined} disabled={busy || isSelf} value={draftRoles[user.id] ?? user.role} onChange={event => setDraftRoles(current => ({ ...current, [user.id]: event.target.value as 'editor' | 'admin' }))} className="rounded-md border border-white/15 bg-zinc-950 px-2 py-1 capitalize disabled:opacity-50"><option value="editor">Editor</option><option value="admin">Admin</option></select>{isSelf ? <span id="users-self-role-note" className="sr-only">You cannot change your own role.</span> : <button type="button" disabled={busy || (draftRoles[user.id] ?? user.role) === user.role} onClick={event => { triggerRef.current = event.currentTarget.closest('td')?.querySelector<HTMLElement>('select') ?? event.currentTarget; setResetUser(null); setPending({ kind: 'role', user, role: draftRoles[user.id] }); }} className="text-indigo-300 hover:text-indigo-200 disabled:opacity-50">Change role<span className="sr-only"> for {user.email}</span></button>}</div>}</td>
             <td className="px-4 py-3">{user.banned ? <span className="text-amber-300">Disabled</span> : <span className="text-green-300">Active</span>}</td>
             <td className="px-4 py-3"><div className="flex flex-wrap gap-x-3 gap-y-1">
+              <button type="button" disabled={busy} onClick={event => { triggerRef.current = event.currentTarget; setPending(null); setResetUser(null); setProfileUser(user); }} className="text-indigo-300 hover:text-indigo-200">Profile &amp; sessions<span className="sr-only"> for {user.email}</span></button>
               {isCustomer && !user.banned && <span className="text-zinc-500">Use {context.isHybridAuth ? 'Add editor' : 'Add user'} to grant CMS access</span>}
               {isCustomer && user.banned && !isSelf && <button type="button" disabled={busy} onClick={event => { triggerRef.current = event.currentTarget; setResetUser(null); setPending({ kind: 'unban', user }); }} className="text-amber-300 hover:text-amber-200 disabled:opacity-50">Enable<span className="sr-only"> {user.email}</span></button>}
               {!isSso && !isCustomer && <button type="button" disabled={busy} onClick={event => { triggerRef.current = event.currentTarget; setPending(null); setResetUser(user); }} className="text-indigo-300 hover:text-indigo-200 disabled:opacity-50">Reset password<span className="sr-only"> {user.email}</span></button>}
