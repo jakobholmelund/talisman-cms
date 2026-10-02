@@ -1,6 +1,7 @@
 import {
+  dailyDates,
   periodBounds
-} from "./chunk-MS4TVUJ4.js";
+} from "./chunk-LADA2ONX.js";
 
 // src/commerce.ts
 var providerRefundsTable = "_ecommerce_provider_refunds";
@@ -11,17 +12,22 @@ var excludeTestModeOrders = `
         SELECT 1 FROM _ecommerce_gift_cards card
         JOIN _ecommerce_gift_card_purchases purchase ON purchase.id = card.purchase_id
         WHERE card.id = o.gift_card_id AND ${stripeTestSession("purchase.provider_session_id")}))`;
-var paidOrders = (stripeMode) => `
+var paidOrders = (stripeMode, paymentDateOnly = false) => `
   paid_orders AS (
     SELECT o.*, MIN(p.created_at) AS paid_at
     FROM _ecommerce_orders o
     JOIN _ecommerce_payments p ON p.order_id = o.id
     WHERE o.status IN ('paid', 'fulfilled', 'partially_refunded', 'refunded', 'disputed')
       AND COALESCE(o.payment_provider, 'stripe') <> 'admin_test'${stripeMode === "test" ? "" : excludeTestModeOrders}
+      AND p.created_at < ?2
       AND p.status IN ('success', 'partially_refunded', 'refunded')
     GROUP BY o.id
+    HAVING MIN(p.created_at) < ?2 AND ${paymentDateOnly ? "MIN(p.created_at) >= ?1" : `(MIN(p.created_at) >= ?1
+      OR EXISTS (SELECT 1 FROM ${providerRefundsTable} r WHERE r.order_id = o.id AND r.created_at >= ?1 AND r.created_at < ?2)
+      OR EXISTS (SELECT 1 FROM _ecommerce_gift_card_refunds r WHERE r.order_id = o.id AND r.created_at >= ?1 AND r.created_at < ?2)
+      OR EXISTS (SELECT 1 FROM _ecommerce_gift_card_order_refunds r WHERE r.order_id = o.id AND r.created_at >= ?1 AND r.created_at < ?2))`}
   )`;
-var inPeriod = (column) => `${column} >= ? AND ${column} < ?`;
+var inPeriod = (column) => `${column} >= ?1 AND ${column} < ?2`;
 var grossOf = (order) => `MAX(0, ${order}.subtotal_amount - ${order}.discount_amount)`;
 var paidOf = (order) => `(${grossOf(order)} + ${order}.shipping_amount
   + CASE WHEN ${order}.tax_behavior = 'exclusive' THEN ${order}.tax_amount ELSE 0 END)`;
@@ -49,7 +55,7 @@ var refundsByRefundDate = `
     FROM (
       SELECT id, order_id, amount, created_at FROM provider_refunds WHERE amount > 0
       UNION ALL
-      SELECT id, order_id, amount_cents, created_at FROM _ecommerce_gift_card_refunds
+      SELECT id, order_id, amount_cents, created_at FROM _ecommerce_gift_card_refunds WHERE order_id IN (SELECT id FROM paid_orders)
     )
   ),
   dated_shares AS (
@@ -74,7 +80,7 @@ var refundsByRefundDate = `
     WHERE ${refundOf("o")} > COALESCE(t.amount, 0)
   )`;
 function commerceSql(refundBasis, stripeMode = "live") {
-  const ctes = `WITH ${paidOrders(stripeMode)}, ${refundBasis === "refund_date" ? refundsByRefundDate : refundsByPaymentDate}`;
+  const ctes = `WITH ${paidOrders(stripeMode, refundBasis === "payment_date")}, ${refundBasis === "refund_date" ? refundsByRefundDate : refundsByPaymentDate}`;
   return {
     totals: `${ctes}
       SELECT currency, SUM(orders) AS order_count, SUM(gross) AS gross_sales, SUM(charged) AS charged,
@@ -97,7 +103,7 @@ function commerceSql(refundBasis, stripeMode = "live") {
         SELECT date(refunded_at, 'unixepoch'), currency, 0, 0, amount
         FROM refund_events WHERE ${inPeriod("refunded_at")}
       ) GROUP BY day, currency ORDER BY day ASC, currency ASC`,
-    products: `WITH ${paidOrders(stripeMode)}
+    products: `WITH ${paidOrders(stripeMode, true)}
       SELECT json_extract(line.value, '$.productId') AS product_id,
         MAX(product.name) AS name, LOWER(o.currency) AS currency,
         SUM(CAST(json_extract(line.value, '$.quantity') AS INTEGER)) AS units,
@@ -127,8 +133,8 @@ async function fetchCommerceRange(db, start, end, adminBase = "/admin", productC
   const refundBasis = await detectRefundBasis(db);
   const sql = commerceSql(refundBasis, stripeMode);
   const [totals, daily, products] = await Promise.all([
-    db.prepare(sql.totals).bind(from, to, from, to).all(),
-    db.prepare(sql.daily).bind(from, to, from, to).all(),
+    db.prepare(sql.totals).bind(from, to).all(),
+    db.prepare(sql.daily).bind(from, to).all(),
     db.prepare(sql.products).bind(from, to).all()
   ]);
   const totalRows = totals.results || [];
@@ -153,11 +159,9 @@ async function fetchCommerceRange(db, start, end, adminBase = "/admin", productC
         averageOrderValue: orders ? Math.round(grossSales / orders) : 0
       };
     }),
-    daily: (daily.results || []).map((row) => ({
-      date: row.day,
-      currency: row.currency,
-      orders: amount(row.order_count),
-      netSales: amount(row.net_sales)
+    daily: dailyDates(start, end).flatMap((date) => totalRows.map((total) => {
+      const row = daily.results?.find((row2) => row2.day === date && row2.currency === total.currency);
+      return { date, currency: total.currency, orders: amount(row?.order_count), netSales: amount(row?.net_sales) };
     })),
     products: (products.results || []).filter((row) => row.product_id).map((row) => ({
       id: row.product_id,

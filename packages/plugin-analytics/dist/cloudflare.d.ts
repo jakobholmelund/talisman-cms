@@ -37,14 +37,17 @@ type TrafficOverview = {
     vitalsError?: string;
 };
 type TrafficRange = Omit<TrafficOverview, 'periodDays'>;
+declare class AnalyticsSetupError extends Error {
+}
 declare function analyticsCredentials(env: Record<string, unknown>): {
     account: string;
     site: string;
     token: string;
 };
-declare function trafficQuery(account: string, site: string, start: string, end: string): string;
-declare function vitalsQuery(account: string, site: string, start: string, end: string): string;
-declare function fetchTrafficRange(env: Record<string, unknown>, start: string, end: string, fetcher?: typeof fetch): Promise<TrafficRange>;
-declare function fetchTrafficOverview(env: Record<string, unknown>, days: PeriodDays, fetcher?: typeof fetch, now?: Date): Promise<TrafficOverview>;
+declare function trafficFilter(site: string, start: string, end: string, adminBase?: string): string;
+declare function trafficQuery(account: string, site: string, start: string, end: string, adminBase?: string): string;
+declare function vitalsQuery(account: string, site: string, start: string, end: string, adminBase?: string): string;
+declare function fetchTrafficRange(env: Record<string, unknown>, start: string, end: string, fetcher?: typeof fetch, adminBase?: string, includeVitals?: boolean): Promise<TrafficRange>;
+declare function fetchTrafficOverview(env: Record<string, unknown>, days: PeriodDays, fetcher?: typeof fetch, now?: Date, adminBase?: string): Promise<TrafficOverview>;
 
-export { type PeriodDays, type TrafficOverview, type TrafficRange, analyticsCredentials, fetchTrafficOverview, fetchTrafficRange, parsePeriod, periodBounds, trafficQuery, vitalsQuery };
+export { AnalyticsSetupError, type PeriodDays, type TrafficOverview, type TrafficRange, analyticsCredentials, fetchTrafficOverview, fetchTrafficRange, parsePeriod, periodBounds, trafficFilter, trafficQuery, vitalsQuery };

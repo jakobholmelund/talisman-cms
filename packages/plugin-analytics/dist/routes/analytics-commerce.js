@@ -1,34 +1,43 @@
 import {
   fetchCommerceOverview
-} from "../chunk-C3YWJ6OH.js";
+} from "../chunk-36KO32RJ.js";
+import {
+  privateJson,
+  reportCache,
+  scopeKey
+} from "../chunk-FJDZK7OY.js";
 import {
   parsePeriod
-} from "../chunk-MS4TVUJ4.js";
+} from "../chunk-LADA2ONX.js";
 
 // src/routes/analytics-commerce.ts
 import { authorizeCmsRequest } from "talisman-cms/auth/guard";
 import { readSetting } from "talisman-cms/env";
 import { collections } from "virtual:talisman-cms/config";
+var cachedReport = reportCache();
 var GET = async ({ request }) => {
   const authorization = await authorizeCmsRequest(request, "admin");
-  if (authorization.response) return authorization.response;
+  if (authorization.response) {
+    authorization.response.headers.set("Cache-Control", "no-store");
+    return authorization.response;
+  }
   try {
     const { env } = await import("cloudflare:workers");
     const db = env.DB;
-    if (!db) return Response.json({ error: "D1 binding DB is required for Commerce analytics." }, { status: 503 });
+    if (!db) return privateJson({ error: "D1 binding DB is required for Commerce analytics." }, 503);
     const days = parsePeriod(new URL(request.url).searchParams.get("days"));
     const adminBase = new URL(request.url).pathname.split("/api/analytics/")[0];
     const productCollection = collections.find(
       (collection) => collection.nativeSchemaMapping?.schemaPath === "@talisman-cms/plugin-ecommerce/schema" && collection.nativeSchemaMapping?.exportName === "products"
     );
     const stripeMode = readSetting(env, "COMMERCE_STRIPE_MODE") === "live" ? "live" : "test";
-    const data = await fetchCommerceOverview(db, days, adminBase, productCollection?.slug || "products", stripeMode);
-    return Response.json(data, { headers: { "Cache-Control": "private, max-age=120" } });
-  } catch (error) {
-    return Response.json(
-      { error: error instanceof Error ? error.message : "Commerce analytics unavailable" },
-      { status: 502, headers: { "Cache-Control": "no-store" } }
+    const data = await cachedReport(
+      JSON.stringify([scopeKey(env, adminBase), productCollection?.slug, days]),
+      () => fetchCommerceOverview(db, days, adminBase, productCollection?.slug || "products", stripeMode)
     );
+    return Response.json(data, { headers: { "Cache-Control": "private, no-store" } });
+  } catch (error) {
+    return privateJson({ error: "Commerce analytics are unavailable. Check ecommerce migrations or try again later." }, 502);
   }
 };
 export {

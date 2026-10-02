@@ -7,6 +7,8 @@ import { TrafficRange } from './cloudflare.js';
  */
 declare function formatRange(start: string, end: string, locale?: string): string;
 
+declare class ReportInputError extends Error {
+}
 type ReportSubject = 'sales' | 'products' | 'refunds' | 'traffic' | 'traffic_and_sales' | 'unsupported';
 type ReportPeriod = 'today' | 'yesterday' | 'last_7_days' | 'last_30_days' | 'this_month' | 'last_month';
 type ReportPlan = {
@@ -37,6 +39,7 @@ type AiBinding = {
 };
 type Database = Pick<D1Database, 'prepare'>;
 declare function validateReportPlan(value: unknown): ReportPlan;
+declare function boundedAi(ai: AiBinding, input: Record<string, unknown>, timeoutMs?: number): Promise<unknown>;
 declare function planReport(question: string, ai: AiBinding): Promise<ReportPlan>;
 declare function reportWindow(period: ReportPeriod, now?: Date): DateWindow;
 /**
@@ -48,4 +51,4 @@ declare function precedingWindow(window: DateWindow, period?: ReportPeriod): Dat
 /** `stripeMode` is the store's Stripe mode (see StripeMode): test-mode orders count only in `test` mode. */
 declare function createAskReport(question: string, ai: AiBinding, db: Database, env: Record<string, unknown>, adminBase?: string, productCollectionSlug?: string, stripeMode?: StripeMode, now?: Date, fetcher?: typeof fetch): Promise<AskReport>;
 
-export { type AskReport, type DateWindow, type ReportPeriod, type ReportPlan, type ReportSubject, createAskReport, formatRange, planReport, precedingWindow, reportWindow, validateReportPlan };
+export { type AiBinding, type AskReport, type DateWindow, ReportInputError, type ReportPeriod, type ReportPlan, type ReportSubject, boundedAi, createAskReport, formatRange, planReport, precedingWindow, reportWindow, validateReportPlan };
