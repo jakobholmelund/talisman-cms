@@ -1475,6 +1475,30 @@ function colorToHex(value) {
   if (channels.some((channel) => channel === null)) return null;
   return toHex(channels.map((channel) => channel / 255));
 }
+function reapplyThemeChanges(base, edited, latest) {
+  const next = structuredClone(latest);
+  for (const mode of ["light", "dark"]) {
+    const themeKey = `${mode}Theme`;
+    const colorKey = `${mode}Colors`;
+    if (edited[themeKey] !== base[themeKey]) {
+      next[themeKey] = edited[themeKey];
+      next[colorKey] = { ...edited[colorKey] };
+    } else {
+      next[colorKey] = reapplyValues(base[colorKey], edited[colorKey], latest[colorKey]);
+    }
+  }
+  next.advanced = reapplyValues(base.advanced, edited.advanced, latest.advanced);
+  return next;
+}
+function reapplyValues(base, edited, latest) {
+  const next = { ...latest };
+  for (const key of /* @__PURE__ */ new Set([...Object.keys(base), ...Object.keys(edited)])) {
+    if (base[key] === edited[key]) continue;
+    if (edited[key] === void 0) delete next[key];
+    else next[key] = edited[key];
+  }
+  return next;
+}
 
 // src/index.ts
 function routeEntrypoint(file) {
@@ -1540,6 +1564,7 @@ export {
   cssUrl,
   daisyUiLibrary,
   daisyUiPlugin2 as daisyUiPlugin,
+  reapplyThemeChanges,
   safeCssLength,
   safeHref,
   sanitizeThemeSettings,

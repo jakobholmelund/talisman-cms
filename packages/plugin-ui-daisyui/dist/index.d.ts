@@ -71,7 +71,9 @@ declare function themeEditorPayload(state: ThemeEditorState): Required<DaisyUiTh
  * needs, dropping alpha and clipping to sRGB. Returns null for anything else.
  */
 declare function colorToHex(value: string): string | null;
+/** Reapply only local changes over a fresh read; preserve other editors' untouched values. */
+declare function reapplyThemeChanges(base: ThemeEditorState, edited: ThemeEditorState, latest: ThemeEditorState): ThemeEditorState;
 
 declare function daisyUiPlugin(): Plugin;
 
-export { DAISYUI_THEME_DEFAULTS, DAISYUI_THEME_DEFAULTS_VERSION, type DaisyUiThemeDefaults, type DaisyUiThemeSettings, type ThemeEditorState, buildThemeCss, clampInteger, colorToHex, createThemeEditorState, cssUrl, daisyUiPlugin, safeCssLength, safeHref, sanitizeThemeSettings, themeDefaultValue, themeEditorPayload };
+export { DAISYUI_THEME_DEFAULTS, DAISYUI_THEME_DEFAULTS_VERSION, type DaisyUiThemeDefaults, type DaisyUiThemeSettings, type ThemeEditorState, buildThemeCss, clampInteger, colorToHex, createThemeEditorState, cssUrl, daisyUiPlugin, reapplyThemeChanges, safeCssLength, safeHref, sanitizeThemeSettings, themeDefaultValue, themeEditorPayload };
