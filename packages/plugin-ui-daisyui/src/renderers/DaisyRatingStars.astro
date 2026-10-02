@@ -1,6 +1,7 @@
 ---
 import { clampInteger } from './sanitize';
 
+const groupName = `daisy-rating-${crypto.randomUUID()}`;
 const { value = 3, max = 5, tone = 'primary' } = Astro.props;
 const maskClass = ({
   primary: 'bg-primary',
@@ -11,12 +12,14 @@ const maskClass = ({
 const starCount = clampInteger(max, 1, 10, 5);
 ---
 
-<div class="rating">
+<div class="rating" role="radiogroup" aria-label="Rating">
   {Array.from({ length: starCount }).map((_: any, index: number) => (
     <input
       type="radio"
+      name={groupName}
+      value={String(index + 1)}
       class={`mask mask-star-2 ${maskClass}`}
-      checked={index + 1 <= value}
+      checked={index + 1 === clampInteger(value, 1, starCount, 3)}
       aria-label={`Rating ${index + 1}`}
     />
   ))}

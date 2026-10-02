@@ -1,11 +1,13 @@
 ---
+const groupName = `daisy-accordion-${crypto.randomUUID()}`;
 const { items = [] } = Astro.props;
+const openIndex = Math.max(0, items.findIndex((item: any) => item?.open === true));
 ---
 
 <div class="join join-vertical w-full">
   {items.map((item: any, index: number) => (
     <div class="collapse collapse-arrow join-item border border-base-300 bg-base-100">
-      <input type="radio" name="daisy-accordion" checked={item?.open === true || index === 0} />
+      <input type="radio" name={groupName} value={String(index)} aria-label={item?.title || `Section ${index + 1}`} checked={index === openIndex} />
       <div class="collapse-title font-semibold">{item?.title}</div>
       <div class="collapse-content text-sm text-base-content/70">
         <p>{item?.content}</p>

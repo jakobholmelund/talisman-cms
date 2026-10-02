@@ -1141,8 +1141,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a presentational calendar grid with simple day metadata.",
+      "coverageStatus": "partial",
+      "notes": "Static month/day cards; no date selection or calendar integration.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyCalendarCard.astro",
         "localFilePath": "src/renderers/DaisyCalendarCard.astro"
@@ -1415,8 +1415,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a presentational checkbox field with label and tone.",
+      "coverageStatus": "partial",
+      "notes": "Checkbox preview; host must supply submission and validation.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyCheckboxField.astro",
         "localFilePath": "src/renderers/DaisyCheckboxField.astro"
@@ -1538,8 +1538,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a presentational countdown number with optional label.",
+      "coverageStatus": "partial",
+      "notes": "Static countdown value; no clock or timer updates.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyCountdownTimer.astro",
         "localFilePath": "src/renderers/DaisyCountdownTimer.astro"
@@ -1583,8 +1583,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a before/after comparison frame using text content.",
+      "coverageStatus": "partial",
+      "notes": "CSS comparison preview; no accessible keyboard comparison control.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyDiffCompare.astro",
         "localFilePath": "src/renderers/DaisyDiffCompare.astro"
@@ -1765,8 +1765,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a checkbox-driven drawer shell with simple text body content.",
+      "coverageStatus": "partial",
+      "notes": "CSS checkbox preview; no modal focus management or Escape dismissal.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyDrawerShell.astro",
         "localFilePath": "src/renderers/DaisyDrawerShell.astro"
@@ -1831,8 +1831,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a dropdown trigger with explicit menu items.",
+      "coverageStatus": "partial",
+      "notes": "Disclosure preview; no complete menu keyboard interaction.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyDropdownMenu.astro",
         "localFilePath": "src/renderers/DaisyDropdownMenu.astro"
@@ -1906,8 +1906,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a floating action button preview.",
+      "coverageStatus": "partial",
+      "notes": "Single floating action link; no expandable action menu.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyFabButton.astro",
         "localFilePath": "src/renderers/DaisyFabButton.astro"
@@ -1977,8 +1977,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a fieldset preview with explicit fields and hint text.",
+      "coverageStatus": "partial",
+      "notes": "Static fieldset copy; no nested form controls.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyFieldsetGroup.astro",
         "localFilePath": "src/renderers/DaisyFieldsetGroup.astro"
@@ -2043,8 +2043,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a presentational file input.",
+      "coverageStatus": "partial",
+      "notes": "File selection preview; no upload integration.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyFileInputField.astro",
         "localFilePath": "src/renderers/DaisyFileInputField.astro"
@@ -2095,8 +2095,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a set of radio-like filter chips.",
+      "coverageStatus": "partial",
+      "notes": "Grouped chips preview; no content filtering integration.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyFilterChips.astro",
         "localFilePath": "src/renderers/DaisyFilterChips.astro"
@@ -2521,8 +2521,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a presentational text input preview.",
+      "coverageStatus": "partial",
+      "notes": "Text field preview; host must supply submission and validation.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyTextInput.astro",
         "localFilePath": "src/renderers/DaisyTextInput.astro"
@@ -2581,8 +2581,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a joined button or link group with explicit items.",
+      "coverageStatus": "partial",
+      "notes": "Static grouped content; no nested component composition.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyJoinGroup.astro",
         "localFilePath": "src/renderers/DaisyJoinGroup.astro"
@@ -3275,8 +3275,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a checkbox-driven modal dialog with optional CTA.",
+      "coverageStatus": "partial",
+      "notes": "CSS checkbox preview; no modal focus management or Escape dismissal.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyModalDialog.astro",
         "localFilePath": "src/renderers/DaisyModalDialog.astro"
@@ -3337,8 +3337,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a simple navbar with brand link and explicit nav items.",
+      "coverageStatus": "partial",
+      "notes": "Static navbar links; no responsive menu interaction.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyNavbarBar.astro",
         "localFilePath": "src/renderers/DaisyNavbarBar.astro"
@@ -3403,8 +3403,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a join-based pagination nav with explicit items.",
+      "coverageStatus": "partial",
+      "notes": "Static links; page state and routing belong to the host.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyPaginationNav.astro",
         "localFilePath": "src/renderers/DaisyPaginationNav.astro"
@@ -3578,8 +3578,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a radio group preview with explicit options.",
+      "coverageStatus": "partial",
+      "notes": "Native isolated radio group; host must supply form submission.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyRadioGroup.astro",
         "localFilePath": "src/renderers/DaisyRadioGroup.astro"
@@ -3658,8 +3658,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a range slider preview.",
+      "coverageStatus": "partial",
+      "notes": "Slider preview; host must supply submission and validation.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyRangeSlider.astro",
         "localFilePath": "src/renderers/DaisyRangeSlider.astro"
@@ -3720,8 +3720,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a star rating component with value, max, and tone.",
+      "coverageStatus": "partial",
+      "notes": "Native isolated rating group; host must supply persistence.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyRatingStars.astro",
         "localFilePath": "src/renderers/DaisyRatingStars.astro"
@@ -3783,8 +3783,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a select preview with explicit options.",
+      "coverageStatus": "partial",
+      "notes": "Select preview; host must supply submission and validation.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisySelectField.astro",
         "localFilePath": "src/renderers/DaisySelectField.astro"
@@ -3919,8 +3919,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a stack of simple content cards.",
+      "coverageStatus": "partial",
+      "notes": "Static stacked text cards; no nested component composition.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyStackDeck.astro",
         "localFilePath": "src/renderers/DaisyStackDeck.astro"
@@ -4177,8 +4177,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a swap toggle with simple on and off labels.",
+      "coverageStatus": "partial",
+      "notes": "Checkbox swap preview; no application action integration.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisySwapToggle.astro",
         "localFilePath": "src/renderers/DaisySwapToggle.astro"
@@ -4332,8 +4332,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a presentational tabs row with explicit items and active state.",
+      "coverageStatus": "partial",
+      "notes": "Navigation links; no ARIA tab panels or panel switching.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyTabsNav.astro",
         "localFilePath": "src/renderers/DaisyTabsNav.astro"
@@ -4408,8 +4408,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a badge-based rotating text approximation using explicit words.",
+      "coverageStatus": "partial",
+      "notes": "Static word badges; no rotating animation.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyTextRotate.astro",
         "localFilePath": "src/renderers/DaisyTextRotate.astro"
@@ -4468,8 +4468,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a textarea preview with tone and rows.",
+      "coverageStatus": "partial",
+      "notes": "Textarea preview; host must supply submission and validation.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyTextareaField.astro",
         "localFilePath": "src/renderers/DaisyTextareaField.astro"
@@ -4535,8 +4535,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a presentational theme controller radio preview.",
+      "coverageStatus": "partial",
+      "notes": "Scoped theme preview only; no page-wide theme control.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyThemeController.astro",
         "localFilePath": "src/renderers/DaisyThemeController.astro"
@@ -4723,8 +4723,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a toggle switch preview.",
+      "coverageStatus": "partial",
+      "notes": "Toggle preview; host must supply submission and validation.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyToggleSwitch.astro",
         "localFilePath": "src/renderers/DaisyToggleSwitch.astro"
@@ -4844,8 +4844,8 @@
         "slots": [],
         "usedIn": []
       },
-      "coverageStatus": "complete",
-      "notes": "Mapped to a validator input preview with state and helper message.",
+      "coverageStatus": "partial",
+      "notes": "Static validation message; no form validation integration.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-daisyui/renderers/DaisyValidatorMessage.astro",
         "localFilePath": "src/renderers/DaisyValidatorMessage.astro"

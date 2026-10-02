@@ -3,7 +3,6 @@ import process from 'node:process';
 import {
   buildCoverageReport,
   createGeneratedSource,
-  ensureRendererStubs,
   formatCoverageReport,
   mergeManifestWithUpstreamCatalog,
   readManifest,
@@ -36,7 +35,7 @@ function loadInputs() {
 
 function runGenerate() {
   const { manifest, upstreamCatalog } = loadInputs();
-  const validation = validateManifest(manifest, upstreamCatalog);
+  const validation = validateManifest(manifest, upstreamCatalog, { rendererRoot: cwd });
   if (validation.errors.length > 0) {
     exitWithErrors(validation.errors);
   }
@@ -48,16 +47,13 @@ function runGenerate() {
   });
 
   writeGeneratedSourceFile(getGeneratedFilePath(manifest), source);
-  const createdStubs = ensureRendererStubs(manifest, cwd);
   console.log(`Generated ${manifest.generation.generatedFilePath}`);
-  if (createdStubs.length > 0) {
-    console.log(`Created renderer stubs: ${createdStubs.join(', ')}`);
-  }
+
 }
 
 function runCoverage(json) {
   const { manifest, upstreamCatalog } = loadInputs();
-  const validation = validateManifest(manifest, upstreamCatalog);
+  const validation = validateManifest(manifest, upstreamCatalog, { rendererRoot: cwd });
   const report = buildCoverageReport(manifest, upstreamCatalog);
 
   if (json) {

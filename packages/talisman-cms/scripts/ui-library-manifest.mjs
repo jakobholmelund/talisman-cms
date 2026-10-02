@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 function isObject(value) {
@@ -195,7 +195,7 @@ export function buildCoverageReport(manifest, upstreamCatalog = manifest.upstrea
   };
 }
 
-export function validateManifest(manifest, upstreamCatalog = manifest.upstreamCatalog) {
+export function validateManifest(manifest, upstreamCatalog = manifest.upstreamCatalog, options = {}) {
   const errors = [];
   const report = buildCoverageReport(manifest, upstreamCatalog);
   const items = toArray(manifest.items).map(normalizeItem);
@@ -235,6 +235,17 @@ export function validateManifest(manifest, upstreamCatalog = manifest.upstreamCa
 
     if (item.catalogOrigin !== 'custom' && !upstreamIds.has(item.upstreamItemId)) {
       errors.push(`Manifest item ${item.upstreamItemId} is marked upstream but does not exist in the upstream catalog.`);
+    }
+
+    if (options.rendererRoot && item.adapter && item.coverageStatus !== 'unsupported') {
+      const local = item.rendererTarget?.localFilePath;
+      const absolute = local ? path.resolve(options.rendererRoot, local) : null;
+      const relative = absolute ? path.relative(path.resolve(options.rendererRoot), absolute) : null;
+      if (!absolute || relative === '..' || relative?.startsWith(`..${path.sep}`) || path.isAbsolute(relative || '') || !existsSync(absolute) || !statSync(absolute).isFile()) {
+        errors.push(`Mapped item ${item.upstreamItemId} is missing a local renderer inside the package.`);
+      } else if (/data-talisman-ui-stub/.test(readFileSync(absolute, 'utf8'))) {
+        errors.push(`Mapped item ${item.upstreamItemId} still uses a renderer stub.`);
+      }
     }
 
     if (item.adapter) {

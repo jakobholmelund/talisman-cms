@@ -1,4 +1,5 @@
 ---
+const groupName = `daisy-radio-${crypto.randomUUID()}`;
 const { label, options = [], value, tone = 'primary' } = Astro.props;
 const toneClass = ({
   primary: 'radio-primary',
@@ -12,7 +13,7 @@ const toneClass = ({
   <legend class="fieldset-legend">{label}</legend>
   {options.map((option: any) => (
     <label class="label cursor-pointer justify-start gap-3">
-      <input type="radio" class={`radio ${toneClass}`} checked={option?.value === value} />
+      <input type="radio" name={groupName} value={String(option?.value ?? '')} class={`radio ${toneClass}`} checked={option?.value === value} />
       <span class="label-text">{option?.label}</span>
     </label>
   ))}

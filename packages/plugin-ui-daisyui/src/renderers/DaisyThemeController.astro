@@ -1,10 +1,10 @@
 ---
+import { sanitizeThemeSettings } from '../components/theme-css';
 const { theme = 'light', label = 'Preview theme' } = Astro.props;
+const safeTheme = sanitizeThemeSettings({ lightTheme: theme }).settings.lightTheme || 'light';
 ---
 
-<div class="form-control">
-  <label class="label cursor-pointer justify-start gap-3">
-    <input type="radio" name="theme-controller-preview" class="theme-controller radio" value={theme} checked />
-    <span class="label-text">{label}: {theme}</span>
-  </label>
+<div class="form-control" data-theme={safeTheme}>
+  <p class="label">{label}: {safeTheme}</p>
+  <slot />
 </div>

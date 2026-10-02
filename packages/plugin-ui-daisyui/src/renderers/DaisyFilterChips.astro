@@ -1,9 +1,10 @@
 ---
+const groupName = `daisy-filter-${crypto.randomUUID()}`;
 const { items = [] } = Astro.props;
 ---
 
 <div class="filter gap-2">
   {items.map((item: any) => (
-    <input class="btn filter-reset" type="radio" name="daisy-filter-preview" aria-label={item?.label} checked={item?.active === true} />
+    <input class="btn filter-reset" type="radio" name={groupName} value={String(item?.label ?? '')} aria-label={item?.label} checked={item?.active === true} />
   ))}
 </div>
