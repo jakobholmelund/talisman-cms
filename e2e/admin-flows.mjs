@@ -854,9 +854,63 @@ const steps = {
     await editorPage.reload();
     await expectVisible(editorHeading(editorPage), 'the editor after reloading');
     await expectValue(labelled(editorPage, 'Title'), editorTitle, "the Title after the editor's save");
+    await page.goto(`${ADMIN_PATH}/users`);
+    const row = page.getByRole('row').filter({ hasText: editorEmail });
+    await row.getByRole('button', { name: /^Profile & sessions for / }).click();
+    const panel = page.getByRole('region', { name: `Profile and CMS sessions · ${editorEmail}` });
+    await expectVisible(panel, 'the editor profile and sessions');
+    const changedName = `Renamed editor ${ctx.runId}`;
+    await labelled(panel, 'Profile name').fill(changedName);
+    const profileSaved = await clickAndAwaitResponse(page, panel.getByRole('button', { name: 'Save profile name', exact: true }),
+      apiResponse('POST', apiPath('/auth/admin/update-user-profile')), 'saving the editor profile name');
+    if (!profileSaved.ok()) fail(`profile save refused: ${await responseSummary(profileSaved)}`);
+    await expectVisible(row.getByText(changedName, { exact: true }), 'the saved name in the user row');
+    await expectVisible(panel.getByRole('button', { name: /^End session/ }).first(), 'individual CMS session control');
+    await panel.getByRole('button', { name: /^End session/ }).first().click();
+    await panel.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await panel.getByRole('button', { name: /^End session/ }).first().click();
+    const ended = await clickAndAwaitResponse(page, panel.getByRole('button', { name: 'Confirm end session', exact: true }),
+      apiResponse('POST', apiPath('/auth/admin/revoke-user-session')), 'ending one editor session');
+    if (!ended.ok()) fail(`session end refused: ${await responseSummary(ended)}`);
+    await expectVisible(panel.getByText('No active CMS sessions.', { exact: true }), 'the empty active-session list');
+    await editorPage.goto(ADMIN_PATH);
+    await expectVisible(editorPage.getByRole('heading', { name: 'Sign in to Talisman CMS' }), 'revoked editor session requires sign-in');
+    await panel.getByRole('button', { name: 'Close', exact: true }).click();
     await editor.context.close();
     ctx.sessions = ctx.sessions.filter((session) => session !== editor.context);
-    return `${editorEmail}: no Publish or Archive button, draft saved`;
+    return `${editorEmail}: draft saved, profile renamed, individual session revoked and sign-in required`;
+  },
+
+  async 'user-email-confirmation'(ctx) {
+    const { page } = ctx.admin;
+    const email = `email-flow-${ctx.runId}@example.com`;
+    const created = await page.request.post(apiPath('/auth/admin/create-user'), { data: { name: 'Email confirmation fixture', email, password: EDITOR_PASSWORD, role: 'editor' }, headers: { Origin: ctx.options.baseUrl } });
+    if (!created.ok()) fail(`email fixture creation refused: ${await responseSummary(created)}`);
+    await page.goto(`${ADMIN_PATH}/users`);
+    await page.getByRole('row').filter({ hasText: email }).getByRole('button', { name: /^Profile & sessions for / }).click();
+    const panel = page.getByRole('region', { name: `Profile and CMS sessions · ${email}` });
+    // Provider delivery and atomic identity changes are real database tests. Here fixtures exercise
+    // the pending-code screen and a recoverable refusal without sending email from browser CI.
+    await page.route('**/api/auth/admin/request-email-change', route => route.fulfill({ json: { ok: true, message: 'Confirmation code sent.' } }));
+    await page.route('**/api/auth/admin/confirm-email-change', route => route.fulfill({ status: 400, json: { error: 'This code expired or was already used' } }));
+    try {
+      await labelled(panel, 'New sign-in email').fill('confirmed@example.com');
+      await panel.getByRole('button', { name: 'Send confirmation code', exact: true }).click();
+      const code = panel.getByRole('textbox', { name: 'Confirmation code from confirmed@example.com', exact: true });
+      await expectVisible(code, 'pending-email confirmation input');
+      await waitUntil('the confirmation input should receive focus', async () => code.evaluate(node => node === document.activeElement));
+      if (!(await panel.getByRole('button', { name: 'Confirm email change', exact: true }).isDisabled())) fail('confirmation was enabled without a code');
+      await code.fill('0'.repeat(48));
+      await panel.getByRole('button', { name: 'Confirm email change', exact: true }).click();
+      await expectVisible(panel.getByRole('alert').filter({ hasText: 'This code expired or was already used' }), 'recoverable confirmation error');
+      await expectValue(code, '0'.repeat(48), 'confirmation code retained after refusal');
+      await panel.getByRole('button', { name: 'Use another address', exact: true }).click();
+      if (await labelled(panel, 'New sign-in email').isDisabled()) fail('another address could not be entered');
+    } finally {
+      await page.unroute('**/api/auth/admin/request-email-change');
+      await page.unroute('**/api/auth/admin/confirm-email-change');
+    }
+    return 'pending confirmation, focus, empty-code guard and recoverable refusal verified with provider fixtures';
   },
 
   async 'conflict'(ctx) {
@@ -949,6 +1003,10 @@ const steps = {
   async 'media-delete-and-busy-focus'(ctx) {
     const { page } = ctx.admin;
     if (!ctx.state.mediaId) await steps['media-upload'](ctx);
+    const referenced = await page.request.post(apiPath('/collections/pages/entries'), { data: {
+      slug: `media-reference-${ctx.runId}`, data: { title: 'Media usage regression fixture', layout: [{ blockType: 'hero', heading: 'Usage fixture', backgroundImage: ctx.state.mediaId }] },
+    } });
+    if (!referenced.ok()) fail('could not create media reference fixture');
     await page.goto(`${ADMIN_PATH}/media`);
     await expectVisible(page.getByRole('heading', { name: 'Media Library', exact: true }), 'media library');
     let release;
@@ -963,6 +1021,14 @@ const steps = {
       await expectVisible(page.getByRole('link', { name: new RegExp(escapeRegExp(ctx.state.mediaFilename)) }), 'media card during refresh');
     } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
     await waitUntil('Refresh should settle', async () => (await refresh.getAttribute('aria-busy')) !== 'true');
+    const usageButton = page.getByRole('button', { name: `Where used ${ctx.state.mediaFilename}`, exact: true });
+    await usageButton.click();
+    const usageDialog = page.getByRole('dialog', { name: `Usage of ${ctx.state.mediaFilename}`, exact: true });
+    await expectVisible(usageDialog.getByRole('link', { name: 'Media usage regression fixture', exact: true }).first(), 'standalone media usage report');
+    if (await usageDialog.getByRole('checkbox').count()) fail('read-only media report asks for deletion acknowledgment');
+    await page.keyboard.press('Escape');
+    await expectHidden(usageDialog, 'closed media report');
+    if (!(await usageButton.evaluate(node => node === document.activeElement))) fail('media report did not restore focus');
     const deleteButton = page.getByRole('button', { name: `Delete ${ctx.state.mediaFilename}`, exact: true });
     await deleteButton.click();
     const dialog = page.getByRole('dialog', { name: `Delete ${ctx.state.mediaFilename}?`, exact: true });
@@ -970,6 +1036,19 @@ const steps = {
     await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expectVisible(deleteButton, 'asset after cancel');
     await deleteButton.click();
+    await expectVisible(dialog.getByRole('heading', { name: 'Where this asset is used', exact: true }), 'media usage review');
+    for (let count = 0; count < 30; count++) {
+      await waitUntil('the media usage page should settle', async () => !(await dialog.getByText('Checking references…', { exact: true }).count()));
+      const more = dialog.getByRole('button', { name: 'Check more content', exact: true });
+      if (!(await more.count())) break;
+      await more.click();
+    }
+    await expectVisible(dialog.getByRole('link', { name: 'Media usage regression fixture', exact: true }).first(), 'the draft using this asset');
+    const acknowledgment = dialog.getByRole('checkbox');
+    if (await acknowledgment.count()) {
+      if (!(await dialog.getByRole('button', { name: 'Delete permanently', exact: true }).isDisabled())) fail('media deletion did not wait for reference acknowledgment');
+      await acknowledgment.check();
+    }
     const response = await clickAndAwaitResponse(page, dialog.getByRole('button', { name: 'Delete permanently', exact: true }), apiResponse('DELETE', apiPath(`/collections/media/entries/${ctx.state.mediaId}`)), 'deleting media');
     if (!response.ok()) fail(`media delete refused: ${await responseSummary(response)}`);
     await expectHidden(deleteButton, 'deleted media card');
