@@ -73,7 +73,7 @@ jobs:
           export TALISMAN_CHROME_PATH="$(command -v google-chrome || command -v chromium)"
           TALISMAN_E2E_SETUP_TOKEN="$TOKEN" node e2e/admin-flows.mjs --base-url http://127.0.0.1:8787 --dist playground/dist --report e2e-report.json || status=$?
           if [ "$status" = 0 ]; then
-            TALISMAN_UI_BROWSER=1 pnpm --filter @talisman-cms/plugin-ui-daisyui exec node --test ./test/renderers.test.mjs ./test/theme-builder.browser.mjs || status=$?
+            TALISMAN_UI_BROWSER=1 pnpm --filter @talisman-cms/plugin-ui-daisyui exec node --test --test-concurrency=1 ./test/renderers.test.mjs ./test/theme-builder.browser.mjs || status=$?
           fi
           cat e2e-report.json
           exit "$status"

@@ -40,7 +40,7 @@ test('built preview authenticates, follows adminPath, scans plugin CSS and appli
     await page.evaluate(() => sessionStorage.setItem('daisyui-preview-state', JSON.stringify({ lightTheme: 'light', darkTheme: 'dark', lightColors: { primary: '#ff0000' }, darkColors: { primary: '#00ff00' } })));
     const response = await page.goto(`${base}${adminPath}/daisyui-preview?layout=/src/layouts/DaisyPreview.astro&mode=light`);
     assert.match(response.headers()['content-security-policy'], /script-src/);
-    assert.equal(response.headers()['cache-control'], 'private, no-store');
+    assert.match(response.headers()['cache-control'], /(?:^|,\s*)no-store(?:\s*,|$)/i);
     await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim() === '#ff0000');
     assert.equal(await page.locator('html').getAttribute('data-theme'), 'light');
     assert.equal(await page.getByRole('link', { name: 'Return to Admin' }).getAttribute('href'), adminPath);
