@@ -52,7 +52,7 @@ Talisman provides a comprehensive set of highly customizable fields designed for
 - **Polymorphic Blocks**: Create dynamic page layouts by composing arbitrary `blocks` like Hero Sections, Feature Grids, Testimonials, and plugin-provided blocks. Block fields can also attach shared presentation settings such as `className`, theme hooks, or UI-kit specific variants.
 
 ### ⚡ React 19 + TanStack Admin Panel
-The admin dashboard is a blazing fast, intuitively designed React Single Page Application injected directly into your project. Utilizing `@tanstack/react-form` and exhaustive Zod type validation, the editing experience is buttery-smooth, type-safe, and incredibly reliable.
+The admin is a React Single Page Application injected into the Astro project. It uses TanStack Router and Form with Zod validation, revision history and stale-save recovery. The [admin coverage notes](packages/talisman-cms/docs/admin-coverage.md) describe supported flows and remaining gaps.
 
 ### 🔌 Extensible Plugin Architecture
 Go beyond content. Talisman features a robust plugin ecosystem allowing you to bundle custom routes, schemas, and backend logic. A plugin is one typed object: `onInit` shapes the collections and globals, and the other fields add endpoints, pages, admin sections and screens, migrations and scheduled jobs; plugin screens build their URLs with `talisman-cms/ui/sdk`, so they follow a custom `adminPath`. [Build a plugin](packages/talisman-cms/docs/build-a-plugin.md) walks through the contract.

@@ -29,7 +29,7 @@ Since the last public commit (`0d1d72d`), `main` has gained `HybridAuthAdapter`,
 | Workstream | Purpose | Order and dependencies |
 | --- | --- | --- |
 | [Release](#release) | Publish the 0.1 preview | First. Maintainer steps only, no issues |
-| [After publish](#after-publish) | One auth copy per Worker, no route generation in installed packages, then publishing from CI instead of committing `dist/` | After the first publish. The CI publish comes last, once sites install from npm |
+| [After publish](#after-publish) | Installed-package route generation, then publishing from CI instead of committing `dist/`; runtime deduplication is already merged | After the first publish. The CI publish comes last, once sites install from npm |
 | [Commerce launch: decisions](#commerce-launch-decisions) | Plugin support for currency, tax, shipping and delivery countries | Done before the 0.1 publish; follow-ups are listed in its items |
 | [Commerce launch: order operations](#commerce-launch-order-operations) | Queue, fulfillment, refunds, reconciliation, notifications, gift cards, inventory | Done before the 0.1 publish; follow-ups are listed in its items |
 | [Commerce launch: incentives and abuse](#commerce-launch-incentives-and-abuse) | Rules for referrals, discounts, sign-in email and public endpoints | Done before the 0.1 publish; follow-ups are listed in its items |
@@ -46,17 +46,21 @@ Public checkout stays off (`TALISMAN_COMMERCE_CHECKOUT_ENABLED=false`) until the
 
 The review of `main` at `3d1168a` passed 816 tests, schema/type/build/archive/dist checks, 11 admin browser flows and packed npm/pnpm consumers with all plugins. It also found defects assigned to separate release workstreams. Those results describe that commit only; they do not complete the current fixes or the owner's payment, email, migration and deployment rehearsals. Repeat the release checks on the final combined commit. UI catalog counts record manifest classifications; Starwind's four custom items and zero upstream adapters are not upstream behavior coverage.
 
+Commerce stabilization is merged in `672519b`, `83051eb`, `53740df` and `936d2c4`, with rebuilt output in `9b157c8`. It adds detached guest-order access, account switching, queued cart updates, lost-session/fulfillment/tax recovery, replacement-card refunds, snapshotted referral terms and audited shopper data requests. The five 2 October migrations and tighter database guards passed fresh and populated local tests. Those fixes supersede the corresponding earlier follow-up descriptions below; merchant decisions and live payment/email/operational rehearsals remain open in the [commerce launch gates](packages/plugin-ecommerce/PRODUCTION_READINESS.md).
+
 The maintainer steps for the 0.1 preview are in [RELEASE.md](RELEASE.md): verify a clean checkout of `main` (`pnpm release:verify`, `node scripts/check-dist-drift.mjs`, `pnpm audit --prod --audit-level high`), push `main`, run `pnpm release:publish --dry-run` and then publish. Sites create their D1 database from 0.1's migrations before deploying the Worker, as the [deployment gate](RELEASE.md#deployment-gate) describes. The incentive and abuse rules ship in the same release and need no further migration; the deployment gate lists their settings and the Stripe webhook event to add. The currency, delivery, shipping and tax settings ship in it too; a site that sets none of them behaves as before. So do the order operations: they add the `charge.dispute.created` webhook event, and their emails need the email settings and store details.
 
-Two audit findings that were to be settled before the npm release are only partly fixed, and are accepted for 0.1: a built Worker still carries two copies of the auth modules, and builds still print route-injection lines and the playground keeps scratch pages. Their remaining work is tracked below under [After publish](#after-publish) and [Maintenance](#maintenance) (`integration-contract/src-dist-dual-auth-modules`, `release-packaging/debug-leftovers`). The third, the Drizzle schema drifting from the migrations (`migrations-schema/drizzle-kit-snapshot-drift`), is settled: the schema files are the source of truth, drizzle-kit generates the migrations from them, and `pnpm db:check` fails when they differ.
+The core runtime duplication is fixed on `main` in `86b063b`: injected routes share built modules with the published client. Route-injection messages now use debug level. Remaining installed-package route generation and playground scratch-page cleanup are tracked below under [After publish](#after-publish) and [Maintenance](#maintenance). Drizzle schema drift (`migrations-schema/drizzle-kit-snapshot-drift`) is also settled: the schema files are the source of truth, drizzle-kit generates the migrations from them, and `pnpm db:check` fails when they differ.
 
 ## After publish
 
 Until the packages are on npm, `packages/*/dist` is committed, so sites that link the workspace get built output. Every source change then needs a separate rebuild commit, and CI checks that the two match. Once sites install from npm, the build can move into CI at publish time.
 
-Order: the first two items can start right after the first publish. Publishing from CI comes last, once sites have switched to the npm packages.
+Runtime deduplication is already merged before publish. Remaining installed-package route generation can follow the first publish. Publishing from CI comes last, once sites have switched to the npm packages.
 
 ### Inject built routes so a Worker carries one copy of the auth code
+
+**Status:** Implemented before publish on `main` in `86b063b`, with runtime identity and built Worker regression checks. The committed-dist and owner publishing policies remain in effect.
 
 **Why:** The integration injects the core's own routes (SSO, setup, the API handler) from `src/`, while site code imports `dist/`. A Worker therefore bundles the auth, guard and database modules twice, and a fix that reaches one copy can miss the other.
 
@@ -440,7 +444,7 @@ Shopper data rights, and database rules that protect balances and roles.
 
 ### Default new auth users to the `customer` role
 
-**Status:** partly done with the SSO redesign: better-auth's `defaultRole` is `customer`, and every built-in path names its role. The SQL column default stays `editor`: changing it needs a rebuild of the table that sessions and credentials reference, which no code relies on. Remaining: the schema default or a trigger, with the next rebuild of that table.
+**Status:** implemented on `main` in `71739dd`. The schema and SQL default are `customer`; CMS editor/admin creation passes its role explicitly. The generated `20261002023813_customer_default_role` rebuild is part of the fresh 0.1 history. Owner database recreation and migration rehearsal remain required.
 
 **Why:** `galaxy_auth_user` now holds shoppers too, but its default role is `editor`, so any insert that forgets the role grants CMS access.
 
@@ -602,9 +606,11 @@ Depends on Plugin API v2.
 
 ### Admin UX overhaul
 
+The release stabilization in `82c16b3`/`1984b94` replaces Overview placeholders, explains configured collections, adds confirmed entry/media deletion, and uses bounded relationship search with independently loaded labels. Browser regressions cover session recovery, drafts, permissions, deletion, pagination, focus and CSP. Initial navigation-config slimming remains backend work.
+
 #### Browser tests for the admin
 
-**Status:** done on `main` before the 0.1 publish. `e2e/admin-flows.mjs` (`pnpm e2e:admin`) drives the admin in the installed Chrome with playwright-core against a built playground served by `astro preview`: first-admin setup or sign-in, a new entry saved twice, publish, an editor who sees no publish action, a 409 conflict resolved with "Load latest version", a media upload, a variant group with stock, the storefront preview following typing, a global save and the mobile drawer; it also records the client chunk sizes of the build. The GitHub workflow's `admin-browser` job runs it after the playground build. Follow-ups: the hybrid-mode editor flow and the orders screen are not covered, and the harness is a plain node script rather than a Playwright Test suite.
+**Status:** done on `main` before the 0.1 publish. `e2e/admin-flows.mjs` (`pnpm e2e:admin`) drives the admin in the installed Chrome with playwright-core against a built playground served by `astro preview`: first-admin setup or sign-in, a new entry saved twice, publish, an editor who sees no publish action, a 409 conflict resolved with "Load latest version", a media upload, a variant group with stock, the storefront preview following typing, a global save and the mobile drawer; it also records the client chunk sizes of the build. The GitHub workflow's `admin-browser` job runs it after the playground build. The stabilization adds deletion, draft/session recovery, bounded relationship search, nested validation focus and strict-CSP flows. Hybrid-editor rehearsal is available with `--only hybrid-editor`; the default CI suite does not select it. Follow-ups: the orders screen is not covered, and the harness is a plain node script rather than a Playwright Test suite.
 
 **Why:** The admin SPA has no component or browser tests; coverage is the manual `docs/admin-coverage.md`. The overhaul needs a safety net.
 
@@ -628,7 +634,7 @@ Depends on Plugin API v2.
 
 #### Code-split the admin bundle
 
-**Status:** done on `main` before the 0.1 publish. The router plugin's `autoCodeSplitting` gives each route's component its own chunk; the entry editor moved out of its route file into `ui/components/editor` (its loader into `ui/lib/entry-editor-data.ts`), because a route file's exports stay in the eager bundle; the rich text editor (Tiptap) and the page builder load on first use from the shared field renderer; and plugin admin pages are lazy imports in the admin-extensions virtual module, rendered inside Suspense. In the playground build the admin's entry chunk went from 1,433 KB to 294 KB, and what `/admin` loads at start from 1,433 KB to 688 KB, of which 233 KB is the `virtual:talisman-cms/config` module. Follow-ups: the collections list page stays eager because the commerce list route imports it; the config module is eager because the sidebar needs `collections`, while most of its weight is the UI library catalogs that only the editors read; zod loads at start because `lib/page-builder.ts` keeps the schema builders next to the helpers the loaders need; and Tiptap's default `injectCSS` trips a strict CSP (`injectCSS: false` with the ProseMirror base rules in `globals.css` would fix it).
+**Status:** done on `main` before the 0.1 publish. The router plugin's `autoCodeSplitting` gives each route's component its own chunk; the entry editor moved out of its route file into `ui/components/editor` (its loader into `ui/lib/entry-editor-data.ts`), because a route file's exports stay in the eager bundle; the rich text editor (Tiptap) and the page builder load on first use from the shared field renderer; and plugin admin pages are lazy imports in the admin-extensions virtual module, rendered inside Suspense. In the playground build the admin's entry chunk went from 1,433 KB to 294 KB, and what `/admin` loads at start from 1,433 KB to 688 KB, of which 233 KB is the `virtual:talisman-cms/config` module. Follow-ups: the collections list page stays eager because the commerce list route imports it; the config module is eager because the sidebar needs `collections`, while most of its weight is the UI library catalogs that only the editors read; zod loads at start because `lib/page-builder.ts` keeps the schema builders next to the helpers the loaders need. Tiptap CSP styling is fixed on `main` in `1984b94`; the initial navigation configuration still needs a smaller backend export.
 
 **Why:** The admin ships as one chunk of about 1.16 MB, with extensions, the rich-text editor and the page builder loaded up front.
 
@@ -652,7 +658,7 @@ Depends on Plugin API v2.
 
 #### Accessibility of the editing flows
 
-**Status:** done on `main` before the 0.1 publish. A static audit of the editors, the page builder, the pickers, the media and users screens and the sign-in panel found 29 gaps; 27 were fixed (one had gone with the shared renderer, one was not a gap). Busy controls keep focus (`aria-disabled`, `aria-busy`, a mounted `sr-only` status line and a handler guard instead of `disabled`); success, progress and error messages are live regions that stay mounted; the conflict panel is a focused region announced by a separate alert; the error summary's field names focus their fields; repeated buttons name their record, field or revision; the variant editor's validation marks its inputs; styled text became headings; the rich text toolbar is one tab stop with arrow keys; read-only records are a disabled fieldset; the Users screen confirms a role change from a "Change role" button; the shell has a skip link and moves focus to the main landmark on navigation; and `useModalDialog` can make the rest of the page inert. Follow-ups: the page builder still has two buttons named "Add Block" and two "Add to Slot" per slot; the media library's Refresh and "Load more" keep `disabled` while loading; the error summary cannot reach fields inside the block inspector or a preset's props; colour contrast was not measured; nothing has been checked with a screen reader yet.
+**Status:** done on `main` before the 0.1 publish. A static audit of the editors, the page builder, the pickers, the media and users screens and the sign-in panel found 29 gaps; 27 were fixed (one had gone with the shared renderer, one was not a gap). Busy controls keep focus (`aria-disabled`, `aria-busy`, a mounted `sr-only` status line and a handler guard instead of `disabled`); success, progress and error messages are live regions that stay mounted; the conflict panel is a focused region announced by a separate alert; the error summary's field names focus their fields; repeated buttons name their record, field or revision; the variant editor's validation marks its inputs; styled text became headings; the rich text toolbar is one tab stop with arrow keys; read-only records are a disabled fieldset; the Users screen confirms a role change from a "Change role" button; the shell has a skip link and moves focus to the main landmark on navigation; and `useModalDialog` can make the rest of the page inert. The duplicate builder labels, media loading focus and nested inspector/preset error focus are fixed on `main` in `1984b94`, with browser regressions. Remaining: comprehensive colour-contrast measurement and a screen-reader rehearsal.
 
 **Why:** Keyboard and screen reader users lost focus on every busy button, heard no outcome of a save or publish, and could edit read-only records that the mouse could not.
 
@@ -726,6 +732,8 @@ Smaller fixes that fit no workstream. Take them in any order.
 
 #### Media serving: transform fallback, deleted files everywhere, route tests
 
+**Status:** Implemented on `main` in `5a6bb47`. Transform failures serve the original with a 60-second edge fallback; R2 deletion markers are checked before cached or conditional responses. Route regressions cover negative cases. Retain markers and verify target R2 permissions during the owner rehearsal.
+
 **Why:** A failed image transform returns 500 for every width variant and is never cached. A deleted file can still be served from other data centers' caches for up to an hour. The upload and serve routes test only two cases.
 
 **Approach:** Catch transform errors and stream the original instead, caching the fallback briefly. Before serving from cache, check a deletion marker (for example a KV key written on delete) or purge by URL through the zone API. Add route tests for 401, 403, 413, 415, invalid ids and widths, and the fallback, and stop the test file from skipping itself.
@@ -735,6 +743,8 @@ Smaller fixes that fit no workstream. Take them in any order.
 **Issue:** #TBD-media-serve-hardening
 
 #### Quote virtual-module specifiers with `JSON.stringify`
+
+**Status:** Implemented on `main` in `86b063b`; specifiers and keys are serialized before entering virtual modules.
 
 **Why:** The native-schemas and admin-extension virtual modules put paths and slugs inside single quotes, which breaks on Windows paths and on quotes in names.
 
@@ -746,6 +756,8 @@ Smaller fixes that fit no workstream. Take them in any order.
 
 #### LivePreview: use Astro's `navigate`
 
+**Status:** Implemented on `main` in `34e1517`, preserving reload behavior when view transitions are unavailable.
+
 **Why:** `LivePreview.astro` checks for `astro:navigate` on `window` and calls `window.astro.navigate`, which is not Astro's API.
 
 **Approach:** Import `navigate` from `astro:transitions/client` when view transitions are enabled, and reload otherwise.
@@ -756,6 +768,8 @@ Smaller fixes that fit no workstream. Take them in any order.
 
 #### Quiet build logs and tidy the playground
 
+**Status:** Route-injection logging is at debug level on `main` in `86b063b`. Scratch-page cleanup remains open.
+
 **Why:** Every build prints "Injecting admin route/plugin route/page" with absolute paths, and the playground still has scratch pages (`test-globals`, `test-sdk`, `live-test`).
 
 **Approach:** Log through the integration logger at debug level, and remove the scratch pages or turn them into documented examples.
@@ -765,6 +779,8 @@ Smaller fixes that fit no workstream. Take them in any order.
 **Issue:** #TBD-build-logs-playground-pages
 
 #### Demo seed: seconds, and no overwrite of collections
+
+**Status:** Implemented on `main` in `7583a71`; seed timestamps use seconds and existing collection definitions are preserved.
 
 **Why:** `seeds/ecommerce-demo.sql` writes millisecond timestamps into second-based columns and overwrites collection names and fields on every run. The seeds folder is published.
 
@@ -798,6 +814,8 @@ Smaller fixes that fit no workstream. Take them in any order.
 
 #### A machine-readable `code` on HTTP 409
 
+**Status:** Implemented on `main` in `180116f`: `revision_conflict`, `slug_conflict`, `stale_record` and `conflict`; stale globals also return `version`.
+
 **Why:** The admin already reads `revision_conflict`, `stale_record`, `slug_conflict` and `constraint` from 409 bodies, but the handler sends only `error`, so the admin guesses from message text.
 
 **Approach:** Add `code` to every 409 body, optionally `fieldErrors` for constraint failures, and document it in RELEASE.md and the CHANGELOG.
@@ -807,6 +825,8 @@ Smaller fixes that fit no workstream. Take them in any order.
 **Issue:** #TBD-conflict-codes
 
 #### Accept only bare addresses in `ensureVerifiedEmailIdentity`
+
+**Status:** Implemented on `main` in `71739dd`, with invalid-address regression cases.
 
 **Why:** The identity helper validates with a loose pattern. The ecommerce plugin already passes only bare addresses, but other callers are not protected.
 
@@ -868,7 +888,7 @@ Smaller fixes that fit no workstream. Take them in any order.
 
 #### Leave admin and API paths out of traffic
 
-**Status:** Reporting filters and the custom Beacon exclusion are implemented on `main` in `5fcc114`. Automatic Cloudflare injection still needs the core admin shell's `no-transform` header and an owner check on the deployed site.
+**Status:** Reporting filters and the custom Beacon exclusion are implemented on `main` in `5fcc114`. The core admin shell now sends `no-transform` in `180116f`; an owner check of automatic injection on the deployed site remains required.
 
 **Why:** The traffic query filters only on site and time, so admin page views count as site traffic if the beacon reaches admin pages.
 
@@ -906,6 +926,8 @@ Smaller fixes that fit no workstream. Take them in any order.
 
 #### Timeouts and a current API version for plugin-stripe's client
 
+**Status:** Bounded on `main` in `9a3f845`: ten seconds per attempt and one retry. API version `2022-08-01` is retained deliberately for compatibility. Durable operation journals and verified reconciliation precede unsafe retries; real Stripe test-mode rehearsal remains an owner gate.
+
 **Why:** plugin-stripe creates its Stripe client without timeout or retry settings and with API version `2022-08-01`.
 
 **Approach:** Set `timeout`, `maxNetworkRetries` and a current `apiVersion`, as the ecommerce plugin's adapter does.
@@ -915,6 +937,8 @@ Smaller fixes that fit no workstream. Take them in any order.
 **Issue:** #TBD-stripe-client-timeouts
 
 #### daisyUI renderers: keep state inside each block
+
+**Status:** Implemented on `main` in `1bee418`; repeated groups are isolated and the theme controller is scoped. Real rendered/browser checks cover repeated instances and hostile values.
 
 **Why:** The theme-controller block switches the whole page's theme, the accordion shares one radio name across instances, and RadioGroup and Rating inputs have no name.
 
@@ -926,6 +950,8 @@ Smaller fixes that fit no workstream. Take them in any order.
 
 #### Render tests for the UI plugins
 
+**Status:** daisyUI rendering, authorization, conflict and browser regressions are implemented on `main` in `0d91778`/`1bee418`, with mapped-file validation. Starwind's four custom compositions are labeled and tested in `a1f8bf9`, including real Astro rendering and packed-consumer checks. All 46 upstream Starwind entries remain unsupported; catalog counts alone prove no behavioral parity.
+
 **Why:** Sanitizer, Theme Builder and entrypoint tests exist, but nothing renders the renderers, tests the theme API's authorization, or checks that complete catalog items point at real files.
 
 **Approach:** Add Astro container render tests with hostile strings, a theme API authorization test, and a check that every complete item's file exists without a stub marker.
@@ -935,6 +961,8 @@ Smaller fixes that fit no workstream. Take them in any order.
 **Issue:** #TBD-ui-plugin-render-tests
 
 #### daisyUI: declare daisyUI as a dev dependency
+
+**Status:** Implemented on `main` in `1bee418`: the package pins daisyUI 5.7.42, and root lockfile reconciliation includes it. Its imported router is also a declared dependency.
 
 **Why:** The `theme-defaults` script and its drift test find daisyUI through the playground and skip when it is missing, because the plugin does not declare it.
 
