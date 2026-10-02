@@ -48,6 +48,7 @@ function edgeCache() {
 
 function bucket(objects) {
   return {
+    async head(key) { return objects.has(key) ? { key } : null; },
     async get(key) {
       const bytes = objects.get(key);
       if (!bytes) return null;
@@ -58,7 +59,7 @@ function bucket(objects) {
         writeHttpMetadata(headers) { headers.set('Content-Type', 'image/png'); },
       };
     },
-    async put(key, value) { objects.set(key, new Uint8Array(value)); },
+    async put(key, value) { objects.set(key, typeof value === 'string' ? new TextEncoder().encode(value) : new Uint8Array(value)); },
     async delete(key) { objects.delete(key); },
   };
 }
@@ -83,12 +84,13 @@ test('media is cached for an hour under versioned keys and revalidated with its 
   try {
     const first = await get('/api/media/media_abc');
     assert.equal(first.status, 200);
-    assert.equal(first.headers.get('Cache-Control'), 'public, max-age=3600');
+    assert.equal(first.headers.get('Cache-Control'), 'public, max-age=0, must-revalidate');
     assert.equal(first.headers.get('ETag'), '"etag-media_abc"');
     assert.equal(first.headers.get('Content-Type'), 'image/png');
     assert.deepEqual(new Uint8Array(await first.arrayBuffer()), PNG);
     // Responses cached before this release (marked immutable for a year) sit under the old key and are not read.
-    assert.deepEqual([...cache.entries.keys()], ['https://site.test/api/media/media_abc?v=2']);
+    assert.deepEqual([...cache.entries.keys()], ['https://site.test/api/media/media_abc?v=3']);
+    assert.equal(cache.entries.values().next().value.headers.get('Cache-Control'), 'public, max-age=3600');
 
     const revalidated = await get('/api/media/media_abc', { 'If-None-Match': '"etag-media_abc"' });
     assert.equal(revalidated.status, 304);
@@ -102,8 +104,8 @@ test('media is cached for an hour under versioned keys and revalidated with its 
     };
     const resized = await get('/api/media/media_abc?w=640');
     assert.equal(resized.headers.get('ETag'), 'W/"etag-media_abc-w640"');
-    assert.equal(resized.headers.get('Cache-Control'), 'public, max-age=3600');
-    assert.ok(cache.entries.has('https://site.test/api/media/media_abc?v=2&w=640'));
+    assert.equal(resized.headers.get('Cache-Control'), 'public, max-age=0, must-revalidate');
+    assert.ok(cache.entries.has('https://site.test/api/media/media_abc?v=3&w=640'));
     assert.equal((await get('/api/media/media_abc?w=641')).status, 400);
 
     // Once the file and its cached copies are gone, the URL answers 404.
@@ -164,4 +166,46 @@ test('an upload whose record cannot be saved removes its file again', { skip }, 
   } finally {
     sqlite.close();
   }
+});
+
+test('a consumed or failed transform serves the original briefly, then retries transformation', { skip }, async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const cache = edgeCache();
+  globalThis.caches = { default: cache };
+  runtime.env = { STORAGE: bucket(new Map([['media_abc', PNG]])), IMAGES: {
+    input(body) { return { transform() { return { async output() { await new Response(body).arrayBuffer(); throw new Error('Unavailable'); } }; } }; },
+  } };
+  try {
+    const response = await get('/api/media/media_abc?w=640');
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('Content-Type'), 'image/png');
+    assert.equal(response.headers.get('Cache-Control'), 'public, max-age=0, must-revalidate');
+    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), PNG);
+    assert.equal(cache.entries.get('https://site.test/api/media/media_abc?v=3&w=640').headers.get('Cache-Control'), 'public, max-age=60');
+    cache.entries.clear(); // Simulate expiry of the short fallback.
+    runtime.env.IMAGES = { input: () => ({ transform: () => ({ output: async () => ({ response: ({ headers }) => new Response('webp', { headers }) }) }) }) };
+    const retry = await get('/api/media/media_abc?w=640');
+    assert.equal(retry.headers.get('Content-Type'), 'image/webp');
+    assert.equal(retry.headers.get('Cache-Control'), 'public, max-age=0, must-revalidate');
+  } finally { delete globalThis.caches; }
+});
+
+test('a durable tombstone denies warm caches in other locations and conditional requests', { skip }, async () => {
+  const objects = new Map([['media_abc', PNG]]);
+  runtime.env = { STORAGE: bucket(objects) };
+  const firstLocation = edgeCache();
+  const otherLocation = edgeCache();
+  globalThis.caches = { default: otherLocation };
+  try {
+    await get('/api/media/media_abc');
+    globalThis.caches = { default: firstLocation };
+    const { deleteStoredMedia } = await import('../src/db/media-policy.ts');
+    await deleteStoredMedia(runtime.env, 'media_abc', 'https://site.test');
+    globalThis.caches = { default: otherLocation };
+    assert.equal(otherLocation.entries.size, 1, 'remote cache is still warm');
+    assert.equal((await get('/api/media/media_abc')).status, 404);
+    assert.equal((await get('/api/media/media_abc', { 'If-None-Match': '*' })).status, 404);
+    for (const width of [320,640,960,1280,1920]) assert.equal((await get(`/api/media/media_abc?w=${width}`)).status, 404);
+    for (const path of ['/api/media/bad', '/api/media/media_missing', '/api/media/media_abc?w=01', '/api/media/media_abc?w=-320', '/api/media/media_abc?w=Infinity']) assert.ok([400,404].includes((await get(path)).status));
+  } finally { delete globalThis.caches; }
 });

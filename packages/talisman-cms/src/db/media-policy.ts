@@ -3,15 +3,15 @@ export const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
 /** The widths media-serve resizes images to (with an IMAGES binding) for `?w=`. */
 export const MEDIA_IMAGE_WIDTHS = [320, 640, 960, 1280, 1920] as const;
 
-/**
- * Browsers and the edge cache keep a file for an hour and then revalidate it with its ETag, so a
- * deleted file stops being served everywhere within the hour.
- */
-export const MEDIA_CACHE_CONTROL = 'public, max-age=3600';
+/** Browsers revalidate; the edge stores bytes, but checks the durable deletion marker first. */
+export const MEDIA_CACHE_CONTROL = 'public, max-age=0, must-revalidate';
+// These TTLs are for caches.default only, never for an upstream cache that bypasses the Worker.
+export const MEDIA_EDGE_CACHE_CONTROL = 'public, max-age=3600';
+export const MEDIA_FALLBACK_CACHE_CONTROL = 'public, max-age=60';
 
-// Part of every edge-cache key. Responses cached under the old keys were marked immutable for a
-// year; new keys leave them unused, so a deletion also applies to files cached before this change.
-const MEDIA_CACHE_KEY_VERSION = '2';
+// Ignore earlier edge entries, including legacy immutable representations. Every new key is
+// protected by the deletion marker check before a hit can be served.
+const MEDIA_CACHE_KEY_VERSION = '3';
 
 export const MEDIA_SCHEMA_PATH = 'talisman-cms/db/media';
 
@@ -33,15 +33,19 @@ export function mediaCacheKey(origin: string, id: string, width?: number) {
   return url.toString();
 }
 
-type MediaStorageEnv = { STORAGE?: Pick<R2Bucket, 'delete'> };
+export const mediaDeletionKey = (id: string) => `talisman-deleted-media/${id}`;
+
+type MediaStorageEnv = { STORAGE?: Pick<R2Bucket, 'delete' | 'put'> };
 
 /**
- * Removes a deleted media record's file from R2, then evicts its cached copies (the original and every
- * width) from this data center's edge cache. Other data centers drop theirs when they expire, which
- * MEDIA_CACHE_CONTROL keeps to an hour; a zone-wide purge needs Cloudflare's purge API.
+ * Write a durable R2 tombstone before removing bytes. Every cache location checks it before serving
+ * a hit; ids are never reused, so tombstones are retained. Local eviction only saves cache space.
  */
 export async function deleteStoredMedia(env: MediaStorageEnv, id: string, origin?: string) {
-  await env.STORAGE?.delete(id);
+  if (env.STORAGE) {
+    await env.STORAGE.put(mediaDeletionKey(id), '', { httpMetadata: { contentType: 'text/plain' } });
+    await env.STORAGE.delete(id);
+  }
   if (!origin) return;
 
   const cache = typeof caches === 'undefined' ? undefined : (caches as CacheStorage & { default?: Cache }).default;
@@ -51,7 +55,7 @@ export async function deleteStoredMedia(env: MediaStorageEnv, id: string, origin
     try {
       await cache.delete(key);
     } catch (error) {
-      // The file is gone from R2, so a copy left in the cache still expires within MEDIA_CACHE_CONTROL.
+      // The tombstone prevents other locations and a racing cache fill from serving these bytes.
       console.warn(`[talisman-cms] Could not evict ${key} from the edge cache`, error);
     }
   }));
@@ -106,6 +110,7 @@ export function secureMediaResponse(response: Response): Response {
     headers.set('Content-Type', 'application/octet-stream');
     headers.set('Content-Disposition', 'attachment');
   }
+  headers.set('Cache-Control', MEDIA_CACHE_CONTROL);
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('Content-Security-Policy', 'sandbox');
   return new Response(response.body, {

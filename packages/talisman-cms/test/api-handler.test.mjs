@@ -789,7 +789,7 @@ test('deleting a media record deletes its file and evicts its cached copies', { 
   const sqlite = database();
   const removed = [];
   const evicted = [];
-  runtime.env.STORAGE = { async delete(key) { removed.push(key); } };
+  runtime.env.STORAGE = { async put() {}, async delete(key) { removed.push(key); } };
   globalThis.caches = { default: { async delete(key) { evicted.push(key); return true; } } };
   try {
     const insert = sqlite.prepare(`INSERT INTO galaxy_media (id, filename, mime_type, size_bytes, url, created_at, updated_at)
@@ -805,19 +805,19 @@ test('deleting a media record deletes its file and evicts its cached copies', { 
     assert.equal(stored('media_abc'), 0);
     assert.deepEqual(removed, ['media_abc']);
     assert.deepEqual(evicted, [
-      'https://cms.test/api/media/media_abc?v=2',
-      ...[320, 640, 960, 1280, 1920].map((width) => `https://cms.test/api/media/media_abc?v=2&w=${width}`),
+      'https://cms.test/api/media/media_abc?v=3',
+      ...[320, 640, 960, 1280, 1920].map((width) => `https://cms.test/api/media/media_abc?v=3&w=${width}`),
     ]);
 
     // When the file cannot be deleted the record stays, so the delete can be repeated.
     insert.run('media_def', '/api/media/media_def', hourAgo, hourAgo);
-    runtime.env.STORAGE = { async delete() { throw new Error('R2 unavailable'); } };
+    runtime.env.STORAGE = { async put() {}, async delete() { throw new Error('R2 unavailable'); } };
     assert.equal((await call('DELETE', '/collections/media/entries/media_def')).status, 500);
     assert.equal(stored('media_def'), 1);
 
     // getClient deletes the file too.
     removed.length = 0;
-    runtime.env.STORAGE = { async delete(key) { removed.push(key); } };
+    runtime.env.STORAGE = { async put() {}, async delete(key) { removed.push(key); } };
     await getClient(runtime.env).entries.delete('media', 'media_def');
     assert.deepEqual(removed, ['media_def']);
     assert.equal(stored('media_def'), 0);

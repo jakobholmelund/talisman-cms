@@ -2,6 +2,9 @@ import type { APIRoute } from 'astro';
 import type { TalismanEnv } from '../../client';
 import {
   MEDIA_CACHE_CONTROL,
+  MEDIA_EDGE_CACHE_CONTROL,
+  MEDIA_FALLBACK_CACHE_CONTROL,
+  mediaDeletionKey,
   MEDIA_IMAGE_WIDTHS,
   mediaCacheKey,
   notModifiedResponse,
@@ -33,6 +36,10 @@ export const GET: APIRoute = async ({ request, params, locals }) => {
       const cache = typeof caches === 'undefined'
         ? undefined
         : (caches as CacheStorage & { default?: Cache }).default;
+      // R2 is strongly consistent; never cache a negative tombstone lookup.
+      if (await env.STORAGE.head(mediaDeletionKey(id))) {
+        return new Response('Media record not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
+      }
       const cached = await cache?.match(cacheKey);
       if (cached) {
         const response = secureMediaResponse(cached);
@@ -54,20 +61,39 @@ export const GET: APIRoute = async ({ request, params, locals }) => {
 
       const canTransform = width !== undefined && env.IMAGES &&
         ['image/jpeg', 'image/png', 'image/webp', 'image/avif'].includes(headers.get('Content-Type') || '');
-      const response = secureMediaResponse(canTransform
-        ? (await env.IMAGES!.input(object.body)
+      let response: Response;
+      let edgeCacheControl = MEDIA_EDGE_CACHE_CONTROL;
+      if (canTransform) {
+        try {
+          const transformed = (await env.IMAGES!.input(object.body)
             .transform({ width, fit: 'scale-down' })
             .output({ format: 'image/webp', quality: 80 }))
             .response({ headers: {
               'Content-Type': 'image/webp',
               'Cache-Control': MEDIA_CACHE_CONTROL,
-              // A resized copy is its own representation of the stored object.
               ETag: `W/"${object.etag}-w${width}"`,
-            } })
-        : new Response(object.body, { headers }));
+            } });
+          if (!transformed.ok) throw new Error('Image transform failed');
+          response = secureMediaResponse(transformed);
+        } catch (error) {
+          console.warn('[talisman-cms] Image transform failed; serving original', error);
+          // The transformer may have consumed the body. Re-read rather than buffering every upload.
+          const original = await env.STORAGE.get(id);
+          if (!original) return new Response('Object not found in bucket', { status: 404 });
+          original.writeHttpMetadata(headers);
+          headers.set('ETag', original.httpEtag);
+          edgeCacheControl = MEDIA_FALLBACK_CACHE_CONTROL;
+          response = secureMediaResponse(new Response(original.body, { headers }));
+        }
+      } else {
+        response = secureMediaResponse(new Response(object.body, { headers }));
+      }
       const cfContext = (locals as typeof locals & { cfContext?: ExecutionContext }).cfContext;
       if (cache && cfContext) {
-        cfContext.waitUntil(cache.put(cacheKey, response.clone()));
+        // Cache bytes internally, but require all browsers/upstream caches to reach the marker check.
+        const cacheHeaders = new Headers(response.headers);
+        cacheHeaders.set('Cache-Control', edgeCacheControl);
+        cfContext.waitUntil(cache.put(cacheKey, new Response(response.clone().body, { headers: cacheHeaders })));
       }
       return notModifiedResponse(request, response) ?? response;
 
