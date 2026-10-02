@@ -46,3 +46,23 @@ test('robots and sitemap only advertise public canonical pages', () => {
   assert.equal((sitemap.match(/<url>/g) || []).length, 2);
   assert.doesNotMatch(sitemap, /sort=/);
 });
+
+test('canonical, breadcrumb and sitemap paths stay on the configured origin after normalization', () => {
+  for (const path of ['/x/..//other.example/page', '/x/%2e%2e//other.example/page', '/\\other.example/page', '//other.example/page', 'https://other.example/page', '/[', null, undefined]) {
+    const result = resolveSeo({ siteUrl: 'https://example.com/base?query=1#hash', path,
+      site: {}, page: { breadcrumbs: [{ name: 'Home', path: '/' }, { name: 'Page', path }] }, publicIndexing: false });
+    assert.equal(new URL(result.canonical).origin, 'https://example.com');
+    assert.equal(new URL(result.jsonLd.at(-1).itemListElement[1].item).origin, 'https://example.com');
+    assert.doesNotMatch(renderSitemapXml('https://example.com', [path]), /<loc>https:\/\/other/);
+  }
+  assert.equal(resolveSeo({ siteUrl: 'https://example.com', path: '/', site: { titleSuffix: 'Example' }, page: {}, publicIndexing: false }).title, '');
+});
+
+test('empty page and site titles do not create a separator-only suffix title', () => {
+  assert.equal(resolveSeo({ siteUrl: 'https://example.com', path: '/', site: { titleSuffix: 'Example' }, page: { title: ' ' }, publicIndexing: false }).title, '');
+});
+
+test('malformed breadcrumb paths resolve safely instead of throwing', () => {
+  const result = resolveSeo({ siteUrl: 'https://example.com', path: '/page', site: {}, page: { breadcrumbs: [{ name: 'Home', path: '/' }, { name: 'Page', path: null }] }, publicIndexing: false });
+  assert.equal(result.jsonLd.at(-1).itemListElement[1].item, 'https://example.com/');
+});

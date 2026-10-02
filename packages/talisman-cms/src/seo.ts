@@ -91,15 +91,20 @@ function text(value: unknown): string {
 }
 
 function safePath(path: string): string {
-  if (!path.startsWith('/') || path.startsWith('//')) return '/';
-  const url = new URL(path, 'https://talisman.invalid');
-  return url.pathname;
+  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) return '/';
+  try {
+    const url = new URL(path, 'https://talisman.invalid');
+    return url.origin === 'https://talisman.invalid' ? url.pathname : '/';
+  } catch { return '/'; }
 }
 
 function siteUrl(origin: string, path: string): string {
   const base = new URL(origin);
   if (base.protocol !== 'https:' && base.protocol !== 'http:') throw new Error('SEO site URL must use HTTP or HTTPS');
-  return new URL(safePath(path), base.origin).toString();
+  base.pathname = safePath(path);
+  base.search = '';
+  base.hash = '';
+  return base.toString();
 }
 
 function absoluteImage(origin: string, value: unknown): string | undefined {
@@ -125,7 +130,7 @@ export function resolveSeo(options: {
   const siteName = text(site.siteName);
   const rawTitle = text(page.title) || siteName;
   const suffix = text(site.titleSuffix);
-  const title = suffix && rawTitle !== suffix && !rawTitle.endsWith(` — ${suffix}`)
+  const title = rawTitle && suffix && rawTitle !== suffix && !rawTitle.endsWith(` — ${suffix}`)
     ? `${rawTitle} — ${suffix}` : rawTitle;
   const description = text(page.description) || text(site.defaultDescription);
   const canonical = siteUrl(options.siteUrl, page.canonicalPath || options.path);
