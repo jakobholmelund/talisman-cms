@@ -170,13 +170,14 @@ function validateAdminExtensions(plugins) {
       }
       if (!isDirectory) fail(`the adminStyleSources directory ${dir} does not exist.`);
     }
-    if (plugin.scheduled !== void 0) {
-      const { moduleId, exportName } = plugin.scheduled ?? {};
+    for (const hook of ["scheduled", "identityEmailChange"]) {
+      if (plugin[hook] === void 0) continue;
+      const { moduleId, exportName } = plugin[hook] ?? {};
       if (typeof moduleId !== "string" || !moduleId.trim()) {
-        fail("scheduled.moduleId names the server module that exports the scheduled job; it cannot be empty.");
+        fail(`${hook}.moduleId names the server module; it cannot be empty.`);
       }
       if (exportName !== void 0 && (typeof exportName !== "string" || !JS_IDENTIFIER.test(exportName))) {
-        fail(`scheduled.exportName is the name of the export that holds the scheduled job (default "scheduled"), not ${JSON.stringify(exportName)}.`);
+        fail(`${hook}.exportName is the name of the export that holds the server hook (default "${hook}"), not ${JSON.stringify(exportName)}.`);
       }
     }
   }
@@ -445,6 +446,18 @@ function buildScheduledVirtualModule(plugins) {
     ${imports.join("\n")}
     export const scheduledJobs = [${entries.join(", ")}];
   `;
+}
+function buildIdentityEmailChangeModule(plugins) {
+  const imports = [];
+  const hooks = [];
+  plugins.forEach((plugin, index) => {
+    if (!plugin.identityEmailChange) return;
+    const name = `identity_${index}`;
+    imports.push(`import { ${plugin.identityEmailChange.exportName || "identityEmailChange"} as ${name} } from ${JSON.stringify(plugin.identityEmailChange.moduleId)};`);
+    hooks.push(name);
+  });
+  return `${imports.join("\n")}
+export const identityEmailChangeHooks = [${hooks.join(", ")}];`;
 }
 var DEFAULT_MIGRATIONS_DIR = "node_modules/.talisman-cms/migrations";
 var WRANGLER_CONFIG_FILES = ["wrangler.toml", "wrangler.json", "wrangler.jsonc"];
@@ -749,6 +762,15 @@ function talismanCms(options) {
                 },
                 load(id) {
                   if (id === "\0virtual:talisman-cms/scheduled") return buildScheduledVirtualModule(finalOptions.plugins || []);
+                }
+              },
+              {
+                name: "vite-plugin-talisman-cms-identity-email-change",
+                resolveId(id) {
+                  if (id === "virtual:talisman-cms/identity-email-change") return "\0virtual:talisman-cms/identity-email-change";
+                },
+                load(id) {
+                  if (id === "\0virtual:talisman-cms/identity-email-change") return buildIdentityEmailChangeModule(finalOptions.plugins || []);
                 }
               },
               {

@@ -4,7 +4,8 @@ import {
 import {
   createInitialAdmin,
   getLocalAuthEnv
-} from "../../../chunk-3YVFIRI3.js";
+} from "../../../chunk-ED6DT7ED.js";
+import "../../../chunk-R6I6DIQJ.js";
 import {
   user
 } from "../../../chunk-WHOEA75K.js";
@@ -12,9 +13,15 @@ import {
   getAccessEmail
 } from "../../../chunk-FEIHHCEJ.js";
 import "../../../chunk-BUMDQFAO.js";
+import "../../../chunk-T4XA2AEL.js";
+import "../../../chunk-7VUPBVR5.js";
+import "../../../chunk-O4C7JAHB.js";
+import "../../../chunk-SHMAAJ4S.js";
+import "../../../chunk-72N3XJ7X.js";
 import {
   readSetting
 } from "../../../chunk-GAOPNFAO.js";
+import "../../../chunk-OAGJMNST.js";
 import "../../../chunk-MLKGABMK.js";
 
 // src/routes/api/auth/setup.ts

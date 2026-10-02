@@ -30,13 +30,16 @@ import {
 import "./chunk-JHSJ3R6O.js";
 import "./chunk-GNU6N22K.js";
 import "./chunk-KGRQF4NN.js";
-import "./chunk-FDE2IMK7.js";
+import {
+  commerceDb
+} from "./chunk-FDE2IMK7.js";
 import {
   carts,
   categories,
   components,
   creditLedger,
   customerAccounts,
+  customerSessions,
   customers,
   discountCodes,
   discountRedemptions,
@@ -60,6 +63,7 @@ import {
   referralSettings,
   referrals,
   restocks,
+  signInTokens,
   stocks,
   tags,
   variantComponents,
@@ -81,6 +85,30 @@ import {
 import { nativeFields } from "talisman-cms/fields";
 import { fileURLToPath } from "url";
 import { existsSync } from "fs";
+
+// src/identity-email-change.ts
+import { and, eq, inArray, sql } from "drizzle-orm";
+var identityEmailChange = async (env, change) => {
+  const { userId, oldEmail, newEmail, condition } = change;
+  const db = commerceDb(env);
+  const now = /* @__PURE__ */ new Date();
+  return [
+    db.delete(customerSessions).where(and(inArray(
+      customerSessions.accountId,
+      db.select({ id: customerAccounts.id }).from(customerAccounts).where(eq(customerAccounts.cmsUserId, userId))
+    ), condition)).getSQL(),
+    db.delete(signInTokens).where(and(inArray(signInTokens.emailNormalized, [oldEmail.toLowerCase(), newEmail]), condition)).getSQL(),
+    db.update(customerAccounts).set({
+      email: newEmail,
+      emailNormalized: newEmail,
+      emailVerifiedAt: now,
+      updatedAt: now,
+      sessionVersion: sql`${customerAccounts.sessionVersion} + 1`
+    }).where(and(eq(customerAccounts.cmsUserId, userId), condition)).getSQL()
+  ];
+};
+
+// src/index.ts
 var ADMIN_OPTIONS_MODULE = "virtual:talisman-cms/ecommerce-admin";
 var EMAIL_TEMPLATES_MODULE = "virtual:talisman-cms/ecommerce-emails";
 function emailTemplatesModule(path) {
@@ -215,6 +243,7 @@ var ecommercePlugin = (config) => {
     name: "@talisman-cms/plugin-ecommerce",
     migrations: { dir: resolveMigrationsDir() },
     scheduled: { moduleId: "@talisman-cms/plugin-ecommerce/scheduled" },
+    identityEmailChange: { moduleId: "@talisman-cms/plugin-ecommerce" },
     // The hrefs are relative to the admin path; the integration resolves them and refuses a value
     // that is not a path on the site, so an `adminPages` override is passed through as given.
     adminLinks: adminPageDefinitions.map((page) => ({
@@ -979,6 +1008,7 @@ export {
   ecommercePlugin,
   formatMoney,
   fromMinorUnits,
+  identityEmailChange,
   isCountryCode,
   isSupportedCurrency,
   minimumChargeAmount,

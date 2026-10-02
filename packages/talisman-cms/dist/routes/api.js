@@ -6,16 +6,20 @@ import {
   privateRoute
 } from "../chunk-7H7KCEZW.js";
 import {
+  AccessDeniedError,
   ConflictError,
   HookError,
+  InvalidInputError,
   MAX_PAGE_SIZE,
   NATIVE_PUBLISHING_MESSAGE,
   NATIVE_REVISIONS_MESSAGE,
   NotFoundError,
   ServiceError,
   ValidationError,
+  actorRole,
   assertAllowed,
   assertCollectionAccess,
+  canRead,
   configFromModules,
   configuredCollectionFields,
   constraintErrorFrom,
@@ -24,7 +28,7 @@ import {
   isDatabaseError,
   syncCollectionDefinitions,
   userActor
-} from "../chunk-ZX2ZZJDF.js";
+} from "../chunk-T4XA2AEL.js";
 import {
   canAccessCollection
 } from "../chunk-7VUPBVR5.js";
@@ -35,18 +39,23 @@ import {
 } from "../chunk-O4C7JAHB.js";
 import {
   collections,
-  entries
+  entries,
+  entryRevisions,
+  globals,
+  media
 } from "../chunk-SHMAAJ4S.js";
 import "../chunk-72N3XJ7X.js";
 import "../chunk-GAOPNFAO.js";
 import {
+  columnKind,
   formatValidationIssues,
+  getNativeIdColumn,
   isGlobalData
 } from "../chunk-OAGJMNST.js";
 import "../chunk-MLKGABMK.js";
 
 // src/api/handler.ts
-import { count, sql } from "drizzle-orm";
+import { count, sql as sql2 } from "drizzle-orm";
 import * as configModule from "virtual:talisman-cms/config";
 import * as uiLibrariesModule from "virtual:talisman-cms/ui-libraries";
 import * as nativeSchemasModule from "virtual:talisman-cms/native-schemas";
@@ -121,6 +130,124 @@ function parseListQuery(url) {
     query.offset = Number(offset);
   }
   return query;
+}
+
+// src/service/media-usage.ts
+import { getTableColumns, sql } from "drizzle-orm";
+var PAGE_SIZE = 50;
+var SOURCES_PER_REQUEST = 10;
+function references(data, id, urls) {
+  return sql`EXISTS (SELECT 1 FROM json_tree(CASE WHEN json_valid(${data}) THEN ${data} ELSE '{}' END) AS media_ref
+    WHERE media_ref.type = 'text' AND (media_ref.value = ${id} OR
+      ${sql.join(urls.map((url) => sql`(media_ref.value = ${url} OR
+        substr(media_ref.value, 1, length(${url}) + 1) IN (${url + "?"}, ${url + "#"}))`), sql` OR `)}))`;
+}
+async function mediaUsage(ctx, id, origin, cursor) {
+  if (actorRole(ctx.actor) !== "admin") throw new AccessDeniedError("Admin access required");
+  const mediaCollection = ctx.config.collections.find((collection) => collection.slug === "media");
+  if (!mediaCollection) throw new NotFoundError("Media collection not found");
+  assertAllowed(ctx.actor, mediaCollection, "read");
+  const media2 = await ctx.db.select().from(media).where(sql`${media.id} = ${id}`).get();
+  if (!media2) throw new NotFoundError("Media not found");
+  const urls = /* @__PURE__ */ new Set([media2.url]);
+  try {
+    const url = new URL(media2.url, origin);
+    urls.add(url.href);
+    urls.add(url.pathname);
+  } catch {
+  }
+  const sources = [];
+  const excludedCollections = [];
+  for (const collection of ctx.config.collections) {
+    if (collection.slug === "media") continue;
+    if (!canRead(ctx.actor, collection)) {
+      excludedCollections.push(collection.slug);
+      continue;
+    }
+    if (collection.nativeSchemaMapping) {
+      const table = ctx.config.nativeSchemas[collection.slug];
+      if (!table) {
+        excludedCollections.push(collection.slug);
+        continue;
+      }
+      const columns = getTableColumns(table);
+      const fields = configuredCollectionFields(collection, ctx.config.nativeSchemas);
+      if (fields.length > 40) {
+        excludedCollections.push(collection.slug);
+        continue;
+      }
+      const values = fields.flatMap((field) => {
+        const column = columns[field.name];
+        if (!column) return [];
+        const kind = columnKind(column);
+        if (kind !== "string" && kind !== "json") return [];
+        const value = kind === "json" ? sql`json(CASE WHEN json_valid(${column}) THEN ${column} ELSE 'null' END)` : sql`${column}`;
+        return [sql`${field.name}`, value];
+      });
+      if (!values.length) continue;
+      const key = columns[getNativeIdColumn(collection)];
+      if (!key) {
+        excludedCollections.push(collection.slug);
+        continue;
+      }
+      const title = ["title", "name", "label", "filename"].find((name) => fields.some((field) => field.name === name) && columns[name]);
+      sources.push({ collection: collection.slug, kind: "native", query: (take, offset2) => sql`
+        SELECT CAST(${key} AS TEXT) AS id, substr(CAST(${title ? columns[title] : key} AS TEXT), 1, 200) AS title
+        FROM ${table} WHERE ${references(sql`json_object(${sql.join(values, sql`, `)})`, id, [...urls])}
+        ORDER BY ${key} LIMIT ${take} OFFSET ${offset2}` });
+      continue;
+    }
+    for (const kind of ["draft", "published"]) {
+      const data = kind === "draft" ? entries.data : entries.publishedData;
+      sources.push({ collection: collection.slug, kind, query: (take, offset2) => sql`
+        SELECT ${entries.id} AS id, substr(COALESCE(json_extract(${data}, '$.title'), ${entries.slug}), 1, 200) AS title
+        FROM ${entries} INNER JOIN ${collections} ON ${entries.collectionId} = ${collections.id}
+        WHERE ${collections.slug} = ${collection.slug} AND ${references(sql`${data}`, id, [...urls])}
+        ORDER BY ${entries.id} LIMIT ${take} OFFSET ${offset2}` });
+    }
+    sources.push({ collection: collection.slug, kind: "revision", query: (take, offset2) => sql`
+      SELECT ${entryRevisions.id} AS id, ${entryRevisions.entryId} AS entryId,
+        substr(COALESCE(json_extract(${entryRevisions.data}, '$.title'), ${entries.slug}), 1, 200) AS title
+      FROM ${entryRevisions} INNER JOIN ${entries} ON ${entryRevisions.entryId} = ${entries.id}
+      INNER JOIN ${collections} ON ${entryRevisions.collectionId} = ${collections.id}
+      WHERE ${collections.slug} = ${collection.slug} AND ${references(sql`${entryRevisions.data}`, id, [...urls])}
+      ORDER BY ${entryRevisions.id} LIMIT ${take} OFFSET ${offset2}` });
+  }
+  sources.push({ collection: null, kind: "global", query: (take, offset2) => sql`
+    SELECT ${globals.slug} AS id, ${globals.name} AS title FROM ${globals}
+    WHERE ${references(sql`${globals.data}`, id, [...urls])}
+    ORDER BY ${globals.slug} LIMIT ${take} OFFSET ${offset2}` });
+  let source = 0, offset = 0;
+  if (cursor) {
+    try {
+      const value = JSON.parse(cursor);
+      if (!value || value.id !== id || !Number.isSafeInteger(value.source) || value.source < 0 || value.source >= sources.length || !Number.isSafeInteger(value.offset) || value.offset < 0 || value.offset > 1e6) throw new Error();
+      source = value.source;
+      offset = value.offset;
+    } catch {
+      throw new InvalidInputError("Invalid media usage cursor");
+    }
+  }
+  const usages = [];
+  let queried = 0;
+  while (source < sources.length && queried++ < SOURCES_PER_REQUEST && usages.length < PAGE_SIZE) {
+    const item = sources[source];
+    const take = PAGE_SIZE - usages.length;
+    const rows = await ctx.db.all(item.query(take + 1, offset));
+    usages.push(...rows.slice(0, take).map((row) => ({ ...row, id: String(row.id), title: String(row.title || row.id), collection: item.collection, kind: item.kind })));
+    if (rows.length > take) {
+      offset += take;
+      break;
+    }
+    source++;
+    offset = 0;
+  }
+  return {
+    usages,
+    nextCursor: source < sources.length ? JSON.stringify({ id, source, offset }) : null,
+    excludedCollections,
+    scope: "CMS drafts, published snapshots, saved revisions, globals and configured native fields. Code, external sites and references embedded in HTML strings are not scanned."
+  };
 }
 
 // src/api/handler.ts
@@ -200,7 +327,7 @@ async function countNativeRows(db, collections2) {
   const counted = collections2.filter((collection) => collection.nativeSchemaMapping && nativeSchemas[collection.slug]);
   if (counted.length === 0) return counts;
   try {
-    const row = await db.get(sql`SELECT ${sql.join(counted.map((collection, index) => sql`(SELECT count(*) FROM ${nativeSchemas[collection.slug]}) AS ${sql.identifier(`c${index}`)}`), sql`, `)}`);
+    const row = await db.get(sql2`SELECT ${sql2.join(counted.map((collection, index) => sql2`(SELECT count(*) FROM ${nativeSchemas[collection.slug]}) AS ${sql2.identifier(`c${index}`)}`), sql2`, `)}`);
     counted.forEach((collection, index) => counts.set(collection.slug, Number(row?.[`c${index}`] ?? 0)));
   } catch (error) {
     console.error("[talisman-cms] Could not count native collection rows:", error);
@@ -237,6 +364,22 @@ var ALL = privateRoute(async ({ request, locals }) => {
   if (authorization.response) return authorization.response;
   const user = authorization.user;
   const actor = userActor(user, request);
+  const mediaUsageMatch = path.match(/\/api\/media\/([^/]+)\/usage$/);
+  if (mediaUsageMatch) {
+    if (user.role !== "admin") return Response.json({ error: "Admin access required" }, { status: 403 });
+    if (request.method !== "GET") return Response.json({ error: "Method not allowed" }, { status: 405 });
+    try {
+      const { env } = await import("cloudflare:workers");
+      return Response.json(await mediaUsage(
+        { env, db: createDbClient(env), config: serviceConfig, actor },
+        decodePathSegment(mediaUsageMatch[1]),
+        url.origin,
+        url.searchParams.get("cursor")
+      ));
+    } catch (error) {
+      return toErrorResponse(error, "Error checking media usage");
+    }
+  }
   if (path.endsWith("/api/collections")) {
     try {
       const { env } = await import("cloudflare:workers");

@@ -209,6 +209,9 @@ function constraintErrorFrom(error) {
 // src/service/actor.ts
 var systemActor = (label) => ({ kind: "system", label });
 var userActor = (user, request) => ({ kind: "user", user, request });
+function actorRole(actor) {
+  return actor.kind === "user" ? actor.user.role : "admin";
+}
 function assertAllowed(actor, collection, operation) {
   if (actor.kind !== "user") return;
   const { user } = actor;
@@ -1712,8 +1715,10 @@ export {
   constraintErrorFrom,
   systemActor,
   userActor,
+  actorRole,
   assertAllowed,
   assertCollectionAccess,
+  canRead,
   configuredCollectionFields,
   syncCollectionDefinitions,
   MAX_PAGE_SIZE,

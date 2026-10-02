@@ -1,4 +1,4 @@
-import { R as RelationReference, B as BlockDefinition } from './fields-DOmOKhef.js';
+import { R as RelationReference, B as BlockDefinition } from './fields-CLUM6rSy.js';
 import './actor-Daa_hmny.js';
 import './types-C5a-hx5D.js';
 import 'astro';

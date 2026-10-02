@@ -370,6 +370,11 @@ interface Plugin {
         moduleId: string;
         exportName?: string;
     };
+    /** Server hook returning SQL statements for linked identities, run in the email-change D1 batch. */
+    identityEmailChange?: {
+        moduleId: string;
+        exportName?: string;
+    };
 }
 interface FieldValidationIssue {
     path: PropertyKey[];

@@ -1,5 +1,6 @@
 import { BlockDefinition, Plugin } from 'talisman-cms';
 export { CART_MAX_LINES, CART_MAX_LINE_QUANTITY, TaxCalculationError, bindCommerceApi, deliverPendingCommerceEmails, reconcileCommerce } from './api.js';
+import { IdentityEmailChangeHook } from 'talisman-cms/auth/identity';
 export { P as PaymentProviderAdapter, a as PaymentReferences, T as TaxAddressError, b as TaxCalculation, c as TaxCalculationParams, V as ValidatedWebhookEvent } from './payments-C3gqo5tp.js';
 export { CommerceEmailTemplates } from './emails.js';
 export { StripePaymentAdapter } from './adapters/stripe.js';
@@ -77,6 +78,9 @@ declare function readStoreSettings(env: object): StoreSettings;
  */
 declare function readStoreCurrency(env: object): string;
 
+/** Preserve the shopper account id and its orders/credit; revoke shopper sessions and old sign-in links. */
+declare const identityEmailChange: IdentityEmailChangeHook;
+
 type ShippingSettings = Pick<StoreSettings, 'deliveryCountries' | 'shippingRates'>;
 /** A shipping rate as offered for one destination and basket. */
 interface ShippingOption {
@@ -147,4 +151,4 @@ interface EcommercePluginConfig {
 declare function createEcommerceLayoutBlocks(productsCollectionSlug?: string): BlockDefinition[];
 declare const ecommercePlugin: (config?: EcommercePluginConfig) => Plugin;
 
-export { COUNTRY_CODES, type EcommercePluginConfig, type ShippingOption, type ShippingRate, type StoreSettings, StoreSettingsError, type TaxSettings, createEcommerceLayoutBlocks, ecommercePlugin, isCountryCode, readStoreCurrency, readStoreSettings, shippingOptionsFor };
+export { COUNTRY_CODES, type EcommercePluginConfig, type ShippingOption, type ShippingRate, type StoreSettings, StoreSettingsError, type TaxSettings, createEcommerceLayoutBlocks, ecommercePlugin, identityEmailChange, isCountryCode, readStoreCurrency, readStoreSettings, shippingOptionsFor };
