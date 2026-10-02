@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { ImageIcon, RefreshCw, Upload } from 'lucide-react';
 import { Button } from '../components/ui/button';
+import { DeleteConfirmation } from '../components/DeleteConfirmation';
+import { fetchCollectionConfigs } from '../lib/admin-api';
 
 type MediaEntry = {
   id: string;
@@ -43,7 +45,7 @@ async function fetchMediaPage(adminBasePath: string, cursor?: string | null) {
   const params = new URLSearchParams({ limit: String(MEDIA_PAGE_SIZE) });
   if (cursor) params.set('cursor', cursor);
   const res = await fetch(`${adminBasePath}/api/collections/media/entries?${params}`);
-  if (!res.ok) throw new Error('Failed to fetch media library');
+  if (!res.ok) throw new Error(res.status === 401 ? 'Your session has expired. Sign in again in another tab, then refresh.' : `Failed to fetch media library (HTTP ${res.status}).`);
   const payload = await res.json() as { docs?: unknown; nextCursor?: unknown };
   const docs = Array.isArray(payload?.docs) ? payload.docs : [];
   return {
@@ -56,8 +58,9 @@ export const Route = createFileRoute('/media')({
   component: MediaLibraryRoute,
   loader: async ({ context }) => {
     const adminBasePath = context.adminBasePath || '/admin';
-    const page = await fetchMediaPage(adminBasePath);
+    const [page, collections] = await Promise.all([fetchMediaPage(adminBasePath), fetchCollectionConfigs(adminBasePath)]);
     return {
+      canDelete: context.user?.role === 'admin' && collections.some((collection) => collection.slug === 'media' && !collection.readOnly),
       adminBasePath,
       entries: page.entries,
       nextCursor: page.nextCursor,
@@ -66,7 +69,7 @@ export const Route = createFileRoute('/media')({
 });
 
 function MediaLibraryRoute() {
-  const { adminBasePath, entries: initialEntries, nextCursor: initialCursor } = Route.useLoaderData();
+  const { canDelete, adminBasePath, entries: initialEntries, nextCursor: initialCursor } = Route.useLoaderData();
   const [entries, setEntries] = useState(initialEntries);
   const [cursor, setCursor] = useState<string | null>(initialCursor);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -75,8 +78,11 @@ function MediaLibraryRoute() {
   // Read out by screen readers: the upload has no other signal than the changed button text.
   const [uploadStatus, setUploadStatus] = useState('');
   const [error, setError] = useState('');
+  const [deleteEntry, setDeleteEntry] = useState<MediaEntry | null>(null);
+  const refreshRef = useRef<HTMLButtonElement>(null);
 
   const refreshEntries = async () => {
+    if (isRefreshing || isLoadingMore) return;
     setIsRefreshing(true);
     setError('');
 
@@ -92,7 +98,7 @@ function MediaLibraryRoute() {
   };
 
   const loadMore = async () => {
-    if (!cursor || isLoadingMore) return;
+    if (!cursor || isLoadingMore || isRefreshing) return;
     setIsLoadingMore(true);
     setError('');
 
@@ -109,7 +115,7 @@ function MediaLibraryRoute() {
 
   const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file) return;
+    if (!file || isUploading) return;
 
     setIsUploading(true);
     setError('');
@@ -150,7 +156,7 @@ function MediaLibraryRoute() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button type="button" variant="outline" className="gap-2" onClick={() => void refreshEntries()} disabled={isRefreshing}>
+          <Button type="button" ref={refreshRef} variant="outline" className="gap-2" onClick={() => void refreshEntries()} aria-disabled={isRefreshing || isLoadingMore || undefined} aria-busy={isRefreshing || undefined}>
             <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
             Refresh
           </Button>
@@ -158,7 +164,7 @@ function MediaLibraryRoute() {
             <Upload size={14} aria-hidden="true" />
             {isUploading ? 'Uploading...' : 'Upload Media'}
             {/* Visually hidden rather than display:none, so the file picker can be reached with the keyboard. */}
-            <input type="file" className="sr-only" accept="image/jpeg,image/png,image/gif,image/webp,image/avif" onChange={(event) => void handleUpload(event)} />
+            <input type="file" aria-disabled={isUploading || undefined} className="sr-only" accept="image/jpeg,image/png,image/gif,image/webp,image/avif" onChange={(event) => void handleUpload(event)} />
           </label>
         </div>
       </div>
@@ -181,11 +187,11 @@ function MediaLibraryRoute() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {entries.map((entry) => (
+            <div key={entry.id} className="overflow-hidden rounded-2xl border border-white/10 bg-zinc-950/50">
             <Link
-              key={entry.id}
               to="/collections/$slug/$entryId"
               params={{ slug: 'media', entryId: entry.id }}
-              className="overflow-hidden rounded-2xl border border-white/10 bg-zinc-950/50 transition-colors hover:border-white/20 hover:bg-white/[0.03]"
+              className="block transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400"
             >
               {entry.mimeType.startsWith('image/') ? (
                 // The filename is printed below the image, so it is not repeated as the alt text.
@@ -203,17 +209,31 @@ function MediaLibraryRoute() {
                 </div>
               </div>
             </Link>
+            {canDelete && <div className="px-4 pb-4"><Button type="button" variant="destructive" size="sm" aria-label={`Delete ${entry.filename}`} onClick={() => setDeleteEntry(entry)}>Delete</Button></div>}
+            </div>
           ))}
         </div>
       )}
 
       {cursor && (
         <div className="flex justify-center">
-          <Button type="button" variant="outline" size="sm" disabled={isLoadingMore} onClick={() => void loadMore()}>
+          <Button type="button" variant="outline" size="sm" aria-disabled={isLoadingMore || isRefreshing || undefined} aria-busy={isLoadingMore || undefined} onClick={() => void loadMore()}>
             {isLoadingMore ? 'Loading...' : 'Load more media'}
           </Button>
         </div>
       )}
+      {deleteEntry && <DeleteConfirmation
+        title={`Delete ${deleteEntry.filename}?`}
+        url={`${adminBasePath}/api/collections/media/entries/${encodeURIComponent(deleteEntry.id)}`}
+        warning="Deleting this asset removes its file. Pages using its URL may show broken images. Relationships and other references are not automatically repaired. Review its usages before deleting."
+        onClose={() => setDeleteEntry(null)}
+        getReturnFocus={() => refreshRef.current}
+        onDeleted={() => {
+          setEntries((current) => current.filter((entry) => entry.id !== deleteEntry.id));
+          setUploadStatus(`Deleted ${deleteEntry.filename}.`);
+          setDeleteEntry(null);
+        }}
+      />}
     </div>
   );
 }

@@ -1,10 +1,11 @@
 import React, { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useBlocker, useNavigate, useRouter } from '@tanstack/react-router';
 import { useForm, useStore } from '@tanstack/react-form';
-import { uiLibraries as configuredUiLibraries } from 'virtual:talisman-cms/ui-libraries';
+import { getLibraryDefinitions } from '../../lib/ui-libraries';
 import { adminEditorPanels } from 'virtual:talisman-cms/admin-extensions';
 import { Card, CardContent } from '../ui/card';
 import { Button } from '../ui/button';
+import { DeleteConfirmation } from '../DeleteConfirmation';
 import { ArrowLeft, Archive, Clock3, Database, History, Save, Send } from 'lucide-react';
 import { AdminBasePathContext, FieldRenderer, focusFieldControl, ServerFieldErrorsContext, type RelationOptionRecord, type RelationSupportEntries, type ServerFieldErrors } from '../fields';
 import { getAdminSection, getSectionCollectionLink, getSectionEntryLink, type AdminSection } from '../../lib/admin-sections';
@@ -209,10 +210,6 @@ function buildPresetEditorDefaults(entry: any, editorFields: any[]) {
   };
 }
 
-function getLibraryDefinitions() {
-  return configuredUiLibraries || [];
-}
-
 function getLibraryComponentDefinition(libraryId: string | undefined, componentSlug: string | undefined) {
   if (!libraryId || !componentSlug) return null;
   return getLibraryDefinitions()
@@ -286,7 +283,7 @@ function PresetEditorPanel({
       <form.Field
         name="name"
         children={(fieldApi: any) => (
-          <div className="space-y-2">
+          <div data-field-path="name" className="space-y-2">
             <label htmlFor={`${idPrefix}-name`} className="block text-sm font-medium text-zinc-300">Preset Name <span aria-hidden="true" className="text-red-400">*</span></label>
             <input
               id={`${idPrefix}-name`}
@@ -305,7 +302,7 @@ function PresetEditorPanel({
         <form.Field
           name="libraryId"
           children={(fieldApi: any) => (
-            <div className="space-y-2">
+            <div data-field-path="libraryId" className="space-y-2">
               <label htmlFor={`${idPrefix}-library`} className="block text-sm font-medium text-zinc-300">Library <span aria-hidden="true" className="text-red-400">*</span></label>
               <select
                 id={`${idPrefix}-library`}
@@ -335,7 +332,7 @@ function PresetEditorPanel({
         <form.Field
           name="componentSlug"
           children={(fieldApi: any) => (
-            <div className="space-y-2">
+            <div data-field-path="componentSlug" className="space-y-2">
               <label htmlFor={`${idPrefix}-component`} className="block text-sm font-medium text-zinc-300">Component <span aria-hidden="true" className="text-red-400">*</span></label>
               <select
                 id={`${idPrefix}-component`}
@@ -372,7 +369,7 @@ function PresetEditorPanel({
         <form.Field
           name="variant"
           children={(fieldApi: any) => (
-            <div className="space-y-2">
+            <div data-field-path="variant" className="space-y-2">
               <label htmlFor={`${idPrefix}-variant`} className="block text-sm font-medium text-zinc-300">Variant</label>
               <input
                 id={`${idPrefix}-variant`}
@@ -470,6 +467,7 @@ export function CollectionEntryEditor({
   const router = useRouter();
   const user = router.options.context.user;
   const isAdmin = user?.role === 'admin';
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const nativeCollection = isNativeCollection(collection);
   const presetCollection = isComponentPresetCollection(collection);
   const versioningEnabled = !nativeCollection;
@@ -609,6 +607,12 @@ export function CollectionEntryEditor({
   // changes what it offers, and the Save button when the panel or the pending box closes.
   const saveButtonRef = useRef<HTMLButtonElement | null>(null);
   const conflictPanelRef = useRef<HTMLDivElement | null>(null);
+  const errorSummaryRef = useRef<HTMLUListElement | null>(null);
+  const globalErrorRef = useRef<HTMLParagraphElement | null>(null);
+  useEffect(() => {
+    if (Object.keys(serverFieldErrors).length) errorSummaryRef.current?.focus();
+    else if (globalError) globalErrorRef.current?.focus();
+  }, [serverFieldErrors, globalError]);
   useEffect(() => {
     if (conflict) conflictPanelRef.current?.focus();
   }, [conflict]);
@@ -753,7 +757,12 @@ export function CollectionEntryEditor({
     if (presetCollection) {
       const presetValidation = validatePresetPayload(getLibraryDefinitions() as any, value);
       if (!presetValidation.success) {
-        throw new Error(presetValidation.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; '));
+        const errors: ServerFieldErrors = {};
+        for (const issue of presetValidation.issues) {
+          const path = issue.path.reduce((result: string, part: string | number) => typeof part === 'number' ? `${result}[${part}]` : result ? `${result}.${part}` : part, '');
+          errors[path] = [...(errors[path] || []), issue.message];
+        }
+        throw new EditorRequestError('Some preset fields need attention.', 400, errors);
       }
     }
     const method = isNew ? 'POST' : 'PUT';
@@ -812,7 +821,7 @@ export function CollectionEntryEditor({
     }
 
     if (error instanceof EditorRequestError && Object.keys(error.fieldErrors).length > 0) {
-      setServerFieldErrors(error.fieldErrors);
+      setServerFieldErrors(Object.fromEntries(Object.entries(error.fieldErrors).map(([path, messages]) => [presetCollection ? path.replace(/^propsJson(?=[.\[]|$)/, 'presetProps') : path, messages])));
       setGlobalError(error.status === 400 ? 'Some fields need attention. Fix them and try again.' : error.message);
       return;
     }
@@ -1219,16 +1228,17 @@ export function CollectionEntryEditor({
                         </Button>
                       </div>
                     )}
+                    {!isNew && isAdmin && !collection.readOnly && <Button type="button" variant="destructive" className="mt-3 w-full" aria-disabled={entryActionsLocked || undefined} onClick={() => { if (!entryActionsLocked) setDeleteOpen(true); }}>Delete {slug === 'media' ? 'media' : recordLabel}</Button>}
                     <p role="status" className="sr-only">{working?.message ?? ''}</p>
                     {hasUnsavedWork && !isWorking && (
                       <p className="text-xs text-amber-300 mt-3 text-center">Unsaved changes</p>
                     )}
-                    {globalError && <p role="alert" className="text-red-400 text-sm mt-3 text-center">{globalError}</p>}
+                    {globalError && <p ref={globalErrorRef} tabIndex={-1} role="alert" className="text-red-400 text-sm mt-3 text-center">{globalError}</p>}
                     {Object.keys(serverFieldErrors).length > 0 && (
                       <form.Subscribe
                         selector={(state: any) => state.values}
                         children={(values: Record<string, any>) => (
-                          <ul role="alert" className="mt-3 space-y-1 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                          <ul ref={errorSummaryRef} tabIndex={-1} role="alert" className="mt-3 space-y-1 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
                             {Object.entries(serverFieldErrors).map(([fieldPath, messages]) => (
                               <li key={fieldPath || 'entry'}>
                                 {/* The field's name leads to the field itself, when it is on the page. */}
@@ -1383,6 +1393,13 @@ export function CollectionEntryEditor({
           <EditorPanels panels={panelsAfterForm} form={form} {...panelProps} />
         </fieldset>}
       </div>
+      {deleteOpen && <DeleteConfirmation
+        title={`Delete ${recordLabel}?`}
+        url={`${basePath}/api/collections/${encodeURIComponent(slug)}/entries/${encodeURIComponent(entryId)}`}
+        warning={`${hasUnsavedWork ? 'Your unsaved changes will also be discarded. ' : ''}${slug === 'media' ? 'Deleting this asset removes its file. Pages using its URL may show broken images. ' : nativeCollection ? 'Deleting this record permanently removes the stored row. ' : 'Deleting this entry removes its revisions. '}Relationships and other references are not automatically repaired. Review its usages before deleting.`}
+        onClose={() => setDeleteOpen(false)}
+        onDeleted={async () => { leavingEditorRef.current = true; await navigate(getSectionCollectionLink(section, slug)); }}
+      />}
     </div>
   );
 }

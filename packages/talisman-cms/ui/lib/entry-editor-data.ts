@@ -5,6 +5,7 @@ import { formatFieldErrors, type ServerFieldErrors } from '../components/fields/
 import { buildRelationOptions, fieldsNeedPresetEntries } from '../components/fields/relations';
 import type { RelationSupportEntries } from '../components/fields/relations';
 import { fetchCollectionConfigs, fetchEntriesBySlug } from './admin-api';
+import { loadLibraryDefinitions } from './ui-libraries';
 import { getSupportCollectionSlugs } from './entry-describers';
 import { isSlugConflict, isStaleRecordConflict } from './entry-save';
 import { collectRelationshipFields, getRelationTargets } from './page-builder';
@@ -24,7 +25,7 @@ export function getRelationSupportSlugs(collection: any) {
   if (!collection?.fields) return [];
   const relationFields = collectRelationshipFields(collection.fields);
   const relationTargets = [...new Set(relationFields.flatMap((field: any) => getRelationTargets(field)))];
-  const supportSlugs = getSupportCollectionSlugs(collection.slug, relationTargets);
+  const supportSlugs = getSupportCollectionSlugs(collection.slug, relationTargets).filter((slug) => !relationTargets.includes(slug));
   if (fieldsNeedPresetEntries(collection.fields)) {
     supportSlugs.push('_ui_component_presets');
   }
@@ -35,6 +36,7 @@ export async function loadEntryEditorData(basePath: string, slug: string, entryI
   const isNew = entryId === 'new';
   const collections = await fetchCollectionConfigs(basePath);
   const collection = collections.find((c: any) => c.slug === slug);
+  if (slug === '_ui_component_presets') await loadLibraryDefinitions();
 
   // The entry, its history and the related records do not depend on each other, so they load together.
   const [loadedEntry, revisions, relationSupportEntries] = await Promise.all([

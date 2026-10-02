@@ -110,6 +110,7 @@ const MenuBar = ({ editor, ariaLabelledBy }: { editor: any; ariaLabelledBy?: str
 
 export function RichTextEditor({ value, onChange, className = '', hasError, ariaLabelledBy, ariaDescribedBy, required }: RichTextEditorProps) {
   const editor = useEditor({
+    injectCSS: false,
     extensions: [StarterKit],
     content: value || { type: 'doc', content: [] },
     editorProps: {

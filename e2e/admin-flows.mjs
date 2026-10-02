@@ -16,6 +16,7 @@
 //   --dist <dir>             TALISMAN_E2E_DIST            playground dist dir: every .js file with its size
 //   --artifacts <dir>        TALISMAN_E2E_ARTIFACTS       screenshots of failed steps
 //   --only <step,...>                                     run these steps (sign-in always runs first)
+//   --auth-mode <mode>       local (default), or hybrid-editor with an existing editor account
 //   --headed                                              show the browser, slowed down a little
 //   --help
 //
@@ -52,6 +53,7 @@ function readOptions(argv) {
     dist: process.env.TALISMAN_E2E_DIST || '',
     artifacts: process.env.TALISMAN_E2E_ARTIFACTS || '',
     only: null,
+    authMode: 'local',
     headed: false,
     help: false,
   };
@@ -64,6 +66,7 @@ function readOptions(argv) {
     '--dist': 'dist',
     '--artifacts': 'artifacts',
     '--only': 'only',
+    '--auth-mode': 'authMode',
   };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -78,6 +81,8 @@ function readOptions(argv) {
   if (typeof options.only === 'string') {
     options.only = options.only.split(',').map((name) => name.trim()).filter(Boolean);
   }
+  if (!['local', 'hybrid-editor'].includes(options.authMode)) throw new Error('--auth-mode must be local or hybrid-editor.');
+  if (options.authMode === 'hybrid-editor' && !options.only) options.only = ['hybrid-editor'];
   options.baseUrl = options.baseUrl.replace(/\/+$/, '');
   return options;
 }
@@ -433,6 +438,11 @@ const steps = {
     const session = await newSession(ctx);
     ctx.admin = session;
     const { page } = session;
+    if (options.authMode === 'hybrid-editor') {
+      await page.goto(ADMIN_PATH);
+      await signInOnPage(page, options.adminEmail, options.adminPassword, 'hybrid editor');
+      return `signed in as hybrid editor ${options.adminEmail}`;
+    }
 
     const setupResponse = await page.request.get(apiPath('/auth/setup'));
     if (!setupResponse.ok()) fail(`GET ${apiPath('/auth/setup')} answered ${await responseSummary(setupResponse)}; is the playground serving at ${options.baseUrl}?`);
@@ -457,6 +467,273 @@ const steps = {
     }
     await signInOnPage(page, options.adminEmail, options.adminPassword, 'admin');
     return ctx.state.createdAdmin ? `created the first admin (${options.adminEmail}) and signed in` : `signed in as ${options.adminEmail}`;
+  },
+
+  async 'hybrid-editor'(ctx) {
+    const { page } = ctx.admin;
+    const response = await page.request.get(apiPath('/auth/session'));
+    const session = await response.json();
+    if (!session.isHybridAuth || session.user?.role !== 'editor') fail('hybrid fixture must use HybridAuthAdapter and a local editor account');
+    await openEntry(page, 'posts', 'new');
+    await labelled(page, 'Title').fill(`Hybrid editor draft ${ctx.runId}`);
+    await labelled(page, 'Slug (Optional)').fill(`hybrid-editor-${ctx.runId}`);
+    const created = await clickAndAwaitResponse(page, saveButton(page), apiResponse('POST', apiPath('/collections/posts/entries')), 'hybrid editor draft');
+    if (!created.ok()) fail(`hybrid editor save: ${await responseSummary(created)}`);
+    const entry = await created.json();
+    await page.waitForURL((url) => url.pathname.endsWith(`/posts/${entry.id}`));
+    await expectVisible(editorHeading(page, 'existing'), 'saved hybrid draft');
+    if (await page.getByRole('button', { name: /^(Publish|Archive|Delete entry)$/ }).count()) fail('hybrid editor sees an admin-only action');
+    const forbidden = await page.request.delete(apiPath(`/collections/posts/entries/${entry.id}`));
+    if (forbidden.status() !== 403) fail(`hybrid editor delete answered ${forbidden.status()} instead of 403`);
+    await labelled(page, 'Title').fill(`Hybrid editor updated ${ctx.runId}`);
+    await saveEntry(page, 'posts', entry.id, 'hybrid editor second draft save');
+    if (await page.getByRole('button', { name: 'Sign out of CMS and Cloudflare' }).count()) fail('local hybrid editor sign-out should not end a Cloudflare session');
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expectVisible(page.getByRole('button', { name: 'Sign in', exact: true }), 'hybrid editor sign-out');
+    return 'local editor signs into hybrid mode, saves twice, cannot delete/publish/archive, and signs out of the CMS';
+  },
+
+  async 'overview-guidance'(ctx) {
+    const { page } = ctx.admin;
+    await page.goto(ADMIN_PATH);
+    await expectVisible(dashboardHeading(page), 'Overview');
+    if (ctx.options.artifacts) { await fs.mkdir(ctx.options.artifacts, { recursive: true }); await page.screenshot({ path: path.join(ctx.options.artifacts, 'overview.png') }); }
+    if ((await page.getByText('Cache Hit Rate (KV)', { exact: true }).count()) || (await page.getByText('--', { exact: true }).count())) fail('Overview still contains placeholder metrics');
+    await page.getByRole('link', { name: 'Browse collections', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expectVisible(page.getByText('Collections are configured in code.', { exact: false }), 'collection configuration guidance');
+    if (await page.getByRole('button', { name: 'New Collection' }).count()) fail('New Collection is still a disabled dead end');
+    return 'actionable Overview and code-configured collection guidance are keyboard accessible';
+  },
+
+  async 'catalog-loading'(ctx) {
+    const page = await ctx.admin.context.newPage();
+    const catalogRequests = [];
+    page.on('request', (request) => { if (/\/ui-libraries\.[^/]+\.js/.test(new URL(request.url()).pathname)) catalogRequests.push(request.url()); });
+    try {
+      await page.goto(ADMIN_PATH);
+      await expectVisible(dashboardHeading(page), 'Overview before catalog load');
+      if (catalogRequests.length) fail('Overview eagerly loaded the UI component catalog');
+      await openEntry(page, 'posts', 'new');
+      await expectVisible(page.getByRole('textbox', { name: 'Content', exact: true }), 'ordinary editor before catalog load');
+      if (catalogRequests.length) fail('ordinary entry editor eagerly loaded the UI component catalog');
+      await openEntry(page, '_ui_component_presets', 'new');
+      await expectVisible(labelled(page, 'Library'), 'preset authoring after catalog load');
+      if (!catalogRequests.length) fail('preset authoring did not load its component catalog');
+    } finally { await page.close(); }
+    return 'Overview and ordinary entry editing defer the component catalog until preset authoring needs it';
+  },
+
+  async 'confirmed-deletion'(ctx) {
+    const { page } = ctx.admin;
+    const created = await page.request.post(apiPath('/collections/posts/entries'), { data: { slug: `delete-${ctx.runId}`, data: { title: 'Delete regression fixture' } } });
+    if (!created.ok()) fail(`creating deletion fixture: ${await responseSummary(created)}`);
+    const entry = await created.json();
+    const entryUrl = apiPath(`/collections/posts/entries/${entry.id}`);
+    await openEntry(page, 'posts', entry.id);
+    await labelled(page, 'Title').fill('Unsaved deletion draft');
+    const opener = page.getByRole('button', { name: 'Delete entry', exact: true });
+    await opener.focus();
+    await page.keyboard.press('Enter');
+    const dialog = page.getByRole('dialog', { name: 'Delete entry?', exact: true });
+    await expectVisible(dialog, 'delete confirmation');
+    if (ctx.options.artifacts) await page.screenshot({ path: path.join(ctx.options.artifacts, 'deletion.png') });
+    await expectVisible(dialog.getByText('Your unsaved changes will also be discarded.', { exact: false }), 'unsaved changes warning');
+    if (!(await dialog.getByRole('button', { name: 'Cancel', exact: true }).evaluate((node) => node === document.activeElement))) fail('deletion did not start on Cancel');
+    await page.keyboard.press('Escape');
+    await expectHidden(dialog, 'cancelled dialog');
+    if (!(await opener.evaluate((node) => node === document.activeElement))) fail('cancel did not return focus');
+    await expectValue(labelled(page, 'Title'), 'Unsaved deletion draft', 'draft after cancel');
+    const refuse = async (route) => route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'Deletion refused for this regression test' }) });
+    await page.route(`**${entryUrl}`, async (route) => route.request().method() === 'DELETE' ? refuse(route) : route.continue());
+    try {
+      await opener.click();
+      await dialog.getByRole('button', { name: 'Delete permanently', exact: true }).click();
+      await expectVisible(dialog.getByRole('alert'), 'deletion error');
+      if (!(await dialog.getByRole('alert').evaluate((node) => node === document.activeElement))) fail('delete error did not take focus');
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await expectValue(labelled(page, 'Title'), 'Unsaved deletion draft', 'draft after failed delete');
+    } finally { await page.unroute(`**${entryUrl}`); }
+    await opener.click();
+    const deleted = await clickAndAwaitResponse(page, dialog.getByRole('button', { name: 'Delete permanently', exact: true }), apiResponse('DELETE', entryUrl), 'confirmed deletion');
+    if (!deleted.ok()) fail(`delete: ${await responseSummary(deleted)}`);
+    await page.waitForURL((url) => /\/collections\/posts\/?$/.test(url.pathname));
+    const missing = await page.request.get(entryUrl);
+    if (missing.status() !== 404) fail(`deleted entry still answers ${missing.status()}`);
+    return 'Cancel/Escape restore focus; failed deletion retains draft; confirmed deletion removes entry and opens list';
+  },
+
+  async 'session-expiry-preserves-draft'(ctx) {
+    const { page } = ctx.admin;
+    const entryId = await ensureEntry(ctx);
+    await openEntry(page, 'posts', entryId);
+    const draft = `Expired-session draft ${ctx.runId}`;
+    await labelled(page, 'Title').fill(draft);
+    const url = apiPath(`/collections/posts/entries/${entryId}`);
+    await page.route(`**${url}`, (route) => route.request().method() === 'PUT'
+      ? route.fulfill({ status: 401, contentType: 'application/json', body: '{}' }) : route.continue());
+    try {
+      await page.getByRole('button', { name: 'Save Draft', exact: true }).click();
+      const error = page.getByRole('alert').filter({ hasText: 'Your session has expired.' });
+      await expectVisible(error, 'expired-session recovery message');
+      await expectValue(labelled(page, 'Title'), draft, 'draft after session expiry');
+      if (!(await error.evaluate((node) => node === document.activeElement))) fail('session error did not take focus');
+    } finally { await page.unroute(`**${url}`); }
+    await saveEntry(page, 'posts', entryId, 'retrying after session recovery');
+    return 'HTTP 401 keeps edits, focuses recovery guidance, and permits a successful retry';
+  },
+
+  async 'relationship-search-pagination'(ctx) {
+    const { page } = ctx.admin;
+    // Fixture API pages deliberately put the selected record outside the first page.
+    const all = Array.from({ length: 35 }, (_, index) => ({ id: `relation-${index}`, data: { name: `Author ${String(index).padStart(2, '0')}` } }));
+    const requests = [];
+    const pattern = '**/api/collections/authors/entries**';
+    await page.route(pattern, async (route) => {
+      const url = new URL(route.request().url());
+      requests.push(url);
+      const id = url.pathname.split('/entries/')[1];
+      if (id) return route.fulfill({ json: all.find((entry) => entry.id === id) });
+      if (url.searchParams.get('limit') !== '30') fail('relationship read is not bounded to 30');
+      const text = url.searchParams.get('where[name][text]');
+      const docs = text ? all.filter((entry) => entry.data.name.toLowerCase().includes(text.toLowerCase())) : all;
+      const offset = url.searchParams.get('cursor') ? 30 : 0;
+      return route.fulfill({ json: { docs: docs.slice(offset, offset + 30), nextCursor: docs.length > offset + 30 ? 'next-authors' : null } });
+    });
+    try {
+      await openEntry(page, 'posts', 'new');
+      const options = page.getByRole('group', { name: 'Author options', exact: true });
+      await expectVisible(options.getByRole('button', { name: /Author 00/ }), 'first relation page');
+      if (requests.filter((url) => !url.pathname.includes('/entries/')).length !== 1) fail('relationship picker eagerly read more than one page');
+      await page.getByRole('button', { name: 'Load more Author options', exact: true }).focus();
+      await page.keyboard.press('Enter');
+      const target = options.getByRole('button', { name: /Author 34/ });
+      await expectVisible(target, 'second-page option');
+      await target.click();
+      await labelled(page, 'Search Author').fill('Author 00');
+      await waitUntil('relationship query should reach the server', () => requests.some((url) => url.searchParams.get('where[name][text]') === 'Author 00'));
+      await expectVisible(options.getByRole('button', { name: /Author 00/ }), 'server search result');
+      await expectHidden(options.getByRole('button', { name: /Author 34/ }), 'unmatched option');
+      await expectVisible(page.getByRole('button', { name: 'Remove Author 34', exact: true }), 'selected label outside current search page');
+      if (!requests.some((url) => url.searchParams.get('where[name][text]') === 'Author 00')) fail('query never reached server');
+      await page.getByRole('button', { name: 'Remove Author 34', exact: true }).click();
+      if (!(await labelled(page, 'Search Author').evaluate((node) => node === document.activeElement))) fail('removal did not return focus to search');
+      // Reset the unsaved test form before the next flow.
+      await page.reload();
+    } finally { await page.unroute(pattern); }
+    return 'one initial page, keyboard pagination, server search, retained selected labels and removal focus';
+  },
+
+  async 'relationship-server-search'(ctx) {
+    const { page } = ctx.admin;
+    const ids = [];
+    let postId;
+    const name = `Selected author ${ctx.runId}`;
+    try {
+      for (let index = 0; index < 35; index += 1) {
+        const response = await page.request.post(apiPath('/collections/authors/entries'), { data: { slug: `search-${ctx.runId}-${index}`, data: { name: index === 0 ? name : `Unmatched author ${ctx.runId}-${index}` } } });
+        if (!response.ok()) fail(`creating search fixture: ${await responseSummary(response)}`);
+        ids.push((await response.json()).id);
+      }
+      const created = await page.request.post(apiPath('/collections/posts/entries'), { data: { slug: `selected-${ctx.runId}`, data: { title: 'Saved relationship search fixture', author: ids[0] } } });
+      if (!created.ok()) fail(`creating selected-label fixture: ${await responseSummary(created)}`);
+      postId = (await created.json()).id;
+      await openEntry(page, 'posts', postId);
+      await expectVisible(page.getByRole('button', { name: `Remove ${name}`, exact: true }), 'saved selected label outside the first page');
+      await labelled(page, 'Search Author').fill(name);
+      const options = page.getByRole('group', { name: 'Author options', exact: true });
+      await expectVisible(options.getByRole('button', { name: new RegExp(escapeRegExp(name)) }), 'real server match beyond the initial page');
+      await expectNoAlert(page, 'real bounded relationship search');
+      if (await options.getByRole('button', { name: /Unmatched author/ }).count()) fail('server search returned unrelated entries');
+      if (ctx.options.artifacts) await page.screenshot({ path: path.join(ctx.options.artifacts, 'relationship-search.png') });
+    } finally {
+      if (postId) await page.request.delete(apiPath(`/collections/posts/entries/${postId}`));
+      for (const id of ids) await page.request.delete(apiPath(`/collections/authors/entries/${id}`));
+    }
+    return 'real server filtering finds a record beyond page one; saved selection labels load independently by ID';
+  },
+
+  async 'nested-inspector-error-focus'(ctx) {
+    const { page } = ctx.admin;
+    const created = await page.request.post(apiPath('/collections/pages/entries'), { data: {
+      slug: `inspector-${ctx.runId}`, data: { title: 'Inspector regression fixture', layout: [0, 1].map((index) => ({ blockType: 'sectionLayout', title: `Section ${index}`, content: [{ mode: 'inline', componentType: 'daisyAlertNotice', title: `Notice ${index}`, tone: 'info' }] })) },
+    } });
+    if (!created.ok()) fail(`creating inspector fixture: ${await responseSummary(created)}`);
+    const entry = await created.json();
+    const url = apiPath(`/collections/pages/entries/${entry.id}`);
+    await openEntry(page, 'pages', entry.id);
+    await expectVisible(page.getByRole('button', { name: 'Collapse Section Layout (block 1) in Page Layout', exact: true }), 'uniquely named block control');
+    await expectVisible(page.getByRole('button', { name: 'Collapse Alert Notice (Content item 1, block 2)', exact: true }), 'uniquely named nested item control');
+    await page.route(`**${url}`, (route) => route.request().method() === 'PUT' ? route.fulfill({ status: 400, json: {
+      error: 'Nested fields need attention', fieldErrors: { 'layout[0].title': ['Fix section title'], 'layout[1].content[0].title': ['Fix notice title'] },
+    } }) : route.continue());
+    try {
+      await page.getByRole('button', { name: 'Save Draft', exact: true }).click();
+      const summary = page.locator('ul[role="alert"]');
+      await expectVisible(summary, 'nested error summary');
+      if (!(await summary.evaluate((node) => node === document.activeElement))) fail('nested error summary did not take focus');
+      await summary.getByRole('button').first().click();
+      let dialog = page.getByRole('dialog', { name: /Inspector/ });
+      await expectVisible(dialog, 'block inspector from summary');
+      await waitUntil('block title should take focus', () => labelled(dialog, 'Title').evaluate((node) => node === document.activeElement));
+      await page.keyboard.press('Escape');
+      await summary.getByRole('button').last().click();
+      await expectVisible(dialog, 'component inspector from summary');
+      await waitUntil('component title should take focus', () => labelled(dialog, 'Title').evaluate((node) => node === document.activeElement));
+      await expectValue(labelled(dialog, 'Title'), 'Notice 1', 'nested component value after failed save');
+      if (ctx.options.artifacts) await page.screenshot({ path: path.join(ctx.options.artifacts, 'inspector.png') });
+      await page.keyboard.press('Escape');
+    } finally {
+      await page.unroute(`**${url}`);
+      await page.request.delete(url);
+    }
+    return 'error summary focuses itself, opens closed block/component inspectors, and focuses the correct nested control';
+  },
+
+  async 'preset-error-focus'(ctx) {
+    const { page } = ctx.admin;
+    await openEntry(page, '_ui_component_presets', 'new');
+    await labelled(page, 'Preset Name').fill('Error focus preset fixture');
+    await labelled(page, 'Library').selectOption('daisyui');
+    await labelled(page, 'Component').selectOption('daisyAlertNotice');
+    await labelled(page, 'Title').fill('Keep this preset title');
+    const url = apiPath('/collections/_ui_component_presets/entries');
+    await page.route(`**${url}`, (route) => route.request().method() === 'POST' ? route.fulfill({ status: 400, json: {
+      error: 'Preset field needs attention', fieldErrors: { 'propsJson.title': ['Fix preset title'] },
+    } }) : route.continue());
+    try {
+      await saveButton(page).click();
+      const summary = page.locator('ul[role="alert"]');
+      await expectVisible(summary, 'preset error summary');
+      await summary.getByRole('button').click();
+      if (!(await labelled(page, 'Title').evaluate((node) => node === document.activeElement))) fail('preset summary did not focus its rendered prop');
+      await expectValue(labelled(page, 'Title'), 'Keep this preset title', 'preset value after failed save');
+      if (ctx.options.artifacts) await page.screenshot({ path: path.join(ctx.options.artifacts, 'preset.png') });
+    } finally {
+      await page.unroute(`**${url}`);
+      await page.reload();
+    }
+    return 'serialized preset errors map to rendered prop controls and retain unsaved values';
+  },
+
+  async 'strict-csp-richtext'(ctx) {
+    const { page } = ctx.admin;
+    const violations = [];
+    const listener = (message) => { if (/Content Security Policy.*style|Refused to apply inline style|Applying inline style violates/i.test(message.text())) violations.push(message.text()); };
+    page.on('console', listener);
+    try {
+      await openEntry(page, 'posts', await ensureEntry(ctx));
+      const textbox = page.getByRole('textbox', { name: 'Content', exact: true });
+      await expectVisible(textbox, 'rich text under strict CSP');
+      await textbox.fill('Strict CSP editor fixture');
+      await page.getByRole('button', { name: 'Bold', exact: true }).focus();
+      await page.keyboard.press('ArrowRight');
+      if (!(await page.getByRole('button', { name: 'Italic', exact: true }).evaluate((node) => node === document.activeElement))) fail('rich-text toolbar keyboard navigation failed');
+      if (await page.locator('style[data-tiptap-style]').count()) fail('Tiptap still injects inline CSS');
+      if (violations.length) fail(`strict CSP rejected styles: ${violations.join(' | ')}`);
+      await saveEntry(page, 'posts', ctx.state.entryId, 'saving rich text under CSP');
+    } finally { page.off('console', listener); }
+    return 'rich text edits and toolbar navigation work without injected styles or CSP style violations';
   },
 
   async 'new-entry-saves-twice'(ctx) {
@@ -562,6 +839,11 @@ const steps = {
     await openEntry(editorPage, 'posts', entryId);
     const publishCount = await editorPage.getByRole('button', { name: /^(Publish|Publishing\.\.\.)$/ }).count();
     if (publishCount > 0) fail('the editor account sees a Publish button on the entry');
+    if (await editorPage.getByRole('button', { name: 'Delete entry', exact: true }).count()) fail('the editor account sees entry deletion');
+    await editorPage.goto(`${ADMIN_PATH}/media`);
+    await expectVisible(editorPage.getByRole('heading', { name: 'Media Library', exact: true }), 'editor media library');
+    if (await editorPage.getByRole('button', { name: /^Delete / }).count()) fail('the editor account sees Media Library deletion');
+    await openEntry(editorPage, 'posts', entryId);
     const archiveCount = await editorPage.getByRole('button', { name: /^(Archive|Archiving\.\.\.)$/ }).count();
     if (archiveCount > 0) fail('the editor account sees an Archive button on the entry');
 
@@ -659,7 +941,40 @@ const steps = {
     await page.reload();
     await expectVisible(editorHeading(page), 'the media editor after reloading');
     await expectValue(labelled(page, 'Alt Text'), altText, 'the Alt Text after reloading');
+    ctx.state.mediaId = mediaId;
+    ctx.state.mediaFilename = fileName;
     return `${fileName} uploaded, opened, alt text saved`;
+  },
+
+  async 'media-delete-and-busy-focus'(ctx) {
+    const { page } = ctx.admin;
+    if (!ctx.state.mediaId) await steps['media-upload'](ctx);
+    await page.goto(`${ADMIN_PATH}/media`);
+    await expectVisible(page.getByRole('heading', { name: 'Media Library', exact: true }), 'media library');
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    await page.route('**/api/collections/media/entries?*', async (route) => { await gate; await route.continue(); });
+    const refresh = page.getByRole('button', { name: 'Refresh', exact: true });
+    try {
+      await refresh.focus();
+      await page.keyboard.press('Enter');
+      await waitUntil('Refresh should report busy', async () => (await refresh.getAttribute('aria-busy')) === 'true');
+      if (!(await refresh.evaluate((node) => node === document.activeElement))) fail('busy media Refresh lost focus');
+      await expectVisible(page.getByRole('link', { name: new RegExp(escapeRegExp(ctx.state.mediaFilename)) }), 'media card during refresh');
+    } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
+    await waitUntil('Refresh should settle', async () => (await refresh.getAttribute('aria-busy')) !== 'true');
+    const deleteButton = page.getByRole('button', { name: `Delete ${ctx.state.mediaFilename}`, exact: true });
+    await deleteButton.click();
+    const dialog = page.getByRole('dialog', { name: `Delete ${ctx.state.mediaFilename}?`, exact: true });
+    await expectVisible(dialog.getByText('Pages using its URL may show broken images.', { exact: false }), 'media reference warning');
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expectVisible(deleteButton, 'asset after cancel');
+    await deleteButton.click();
+    const response = await clickAndAwaitResponse(page, dialog.getByRole('button', { name: 'Delete permanently', exact: true }), apiResponse('DELETE', apiPath(`/collections/media/entries/${ctx.state.mediaId}`)), 'deleting media');
+    if (!response.ok()) fail(`media delete refused: ${await responseSummary(response)}`);
+    await expectHidden(deleteButton, 'deleted media card');
+    if (!(await refresh.evaluate((node) => node === document.activeElement))) fail('deleted media card did not transfer focus to Refresh');
+    return 'busy refresh keeps focus and cards; media warning/cancel work; deletion removes asset and restores useful focus';
   },
 
   async 'variants'(ctx) {
@@ -937,7 +1252,7 @@ async function main() {
     const unknown = options.only.filter((name) => !allNames.includes(name));
     if (unknown.length > 0) throw new Error(`Unknown step(s) ${unknown.join(', ')}. Steps: ${allNames.join(', ')}`);
   }
-  const selected = new Set(options.only ? ['sign-in', ...options.only] : allNames);
+  const selected = new Set(options.only ? ['sign-in', ...options.only] : allNames.filter((name) => name !== 'hybrid-editor'));
 
   const report = { startedAt: new Date().toISOString(), baseUrl: options.baseUrl, steps: [], chunks: null };
   if (options.dist) {

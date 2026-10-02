@@ -27,7 +27,7 @@ const {
   PENDING_TRANSITION_CHECK_DELAYS_MS,
 } =
   await loadAdminModule('lib/entry-save.ts');
-const { fetchAllEntries, fetchCollectionConfigs, fetchEntriesBySlug } = await loadAdminModule('lib/admin-api.ts');
+const { fetchAllEntries, fetchCollectionConfigs, fetchEntriesBySlug, fetchEntriesPage } = await loadAdminModule('lib/admin-api.ts');
 const { describeEntryWith, describeEntryGeneric, getEntryOptionLabel, getSupportCollectionSlugsWith, readAdminSetting } =
   await loadAdminModule('lib/entry-labels.ts');
 const { COLLAPSED_STATE_INDEX_KEY, COLLAPSED_STATE_MAX_ENTRIES, pruneCollapsedState, readCollapsedCards, writeCollapsedCards } =
@@ -525,4 +525,34 @@ test('collapsed-state reads and writes survive corrupt values and broken storage
   assert.deepEqual(readCollapsedCards(entry, 'layout', blocked), {});
   assert.equal(writeCollapsedCards(entry, 'layout', { 'layout:0': true }, blocked), false);
   assert.deepEqual(pruneCollapsedState(blocked), []);
+});
+
+
+test('relationship search reads one bounded page and exposes the cursor without eager continuation', async () => {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(url);
+    return Response.json({ docs: [{ id: 'match-on-page-two', data: { title: 'Needle' } }], nextCursor: 'opaque-next' });
+  };
+  try {
+    const page = await fetchEntriesPage('/admin', 'authors', { search: '  Needle  ', searchField: 'name', cursor: 'opaque-first' });
+    assert.equal(calls.length, 1);
+    const url = new URL(calls[0], 'https://example.com');
+    assert.equal(url.searchParams.get('limit'), '30');
+    assert.equal(url.searchParams.get('where[name][text]'), 'Needle');
+    assert.equal(url.searchParams.get('cursor'), 'opaque-first');
+    assert.equal(page.docs[0].id, 'match-on-page-two');
+    assert.equal(page.nextCursor, 'opaque-next');
+  } finally { globalThis.fetch = original; }
+});
+
+test('relationship search errors distinguish an expired session and refuse malformed pages', async () => {
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response('{}', { status: 401 });
+    await assert.rejects(fetchEntriesPage('/admin', 'authors'), /session has expired.*selections are still here/);
+    globalThis.fetch = async () => Response.json([]);
+    await assert.rejects(fetchEntriesPage('/admin', 'authors'), /unexpected page/);
+  } finally { globalThis.fetch = original; }
 });

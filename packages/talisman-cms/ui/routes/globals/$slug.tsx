@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useForm } from '@tanstack/react-form';
-import { globals as configuredGlobals } from 'virtual:talisman-cms/config';
+
 import { ArrowLeft, Save } from 'lucide-react';
 import { AdminBasePathContext, FieldRenderer, focusFieldControl } from '../../components/fields';
 // The loader's helpers come from their own module: importing them through the index would keep the
@@ -13,8 +13,6 @@ import { fetchCollectionConfigs, fetchEntriesBySlug } from '../../lib/admin-api'
 import { prepareFieldValuesForSave } from '../../lib/entry-save';
 import {
   buildDefaultValues,
-  collectRelationshipFields,
-  getRelationTargets,
   getZodClientSchemaForFields,
   normalizeStoredFieldData,
 } from '../../lib/page-builder';
@@ -92,18 +90,15 @@ export const Route = createFileRoute('/globals/$slug')({
       throw new Error('Failed to fetch global');
     }
 
+    const { globals: configuredGlobals } = await import('virtual:talisman-cms/config');
     const global = await res.json() as GlobalRecord;
     const globalConfig = configuredGlobals.find((candidate) => candidate.slug === params.slug) || null;
     const relationSupportEntries: RelationSupportEntries = {};
 
     if (globalConfig?.fields?.length) {
-      const relationFields = collectRelationshipFields(globalConfig.fields);
-      const relationTargets = [...new Set(relationFields.flatMap((field: any) => getRelationTargets(field)))];
-      if (fieldsNeedPresetEntries(globalConfig.fields)) {
-        relationTargets.push('_ui_component_presets');
-      }
+      const relationTargets = fieldsNeedPresetEntries(globalConfig.fields) ? ['_ui_component_presets'] : [];
 
-      // The related collections load in parallel, each one bounded page at a time.
+      // Presets support page-builder references; relationship pickers load their own bounded pages.
       if (relationTargets.length > 0) {
         const collections = await fetchCollectionConfigs(adminBasePath).catch(() => [] as any[]);
         Object.assign(relationSupportEntries, await fetchEntriesBySlug(adminBasePath, relationTargets, collections));

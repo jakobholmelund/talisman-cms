@@ -105,3 +105,22 @@ export async function fetchEntriesBySlug(
   );
   return Object.fromEntries(slugs.map((slug, index) => [slug, lists[index]]));
 }
+
+/** One bounded server-filtered page. Filtering must happen before pagination in the entries API. */
+export async function fetchEntriesPage(basePath: string, slug: string, { search = '', searchField, cursor, signal }: {
+  search?: string; searchField?: string; cursor?: string | null; signal?: AbortSignal;
+} = {}): Promise<{ docs: any[]; nextCursor: string | null }> {
+  const params = new URLSearchParams({ limit: '30' });
+  if (search.trim()) {
+    if (!searchField) throw new Error('Choose a text field to search.');
+    params.set(`where[${searchField}][text]`, search.trim());
+  }
+  if (cursor) params.set('cursor', cursor);
+  const res = await fetch(`${basePath}/api/collections/${encodeURIComponent(slug)}/entries?${params}`, { signal });
+  if (!res.ok) throw new Error(res.status === 401
+    ? 'Your session has expired. Sign in again in another tab, then retry. Your selections are still here.'
+    : `Failed to load ${slug} (HTTP ${res.status}). Try again.`);
+  const payload = await res.json() as { docs?: unknown; nextCursor?: unknown };
+  if (!Array.isArray(payload?.docs)) throw new Error(`Failed to load ${slug}: the server returned an unexpected page.`);
+  return { docs: payload.docs as any[], nextCursor: typeof payload.nextCursor === 'string' && payload.nextCursor ? payload.nextCursor : null };
+}

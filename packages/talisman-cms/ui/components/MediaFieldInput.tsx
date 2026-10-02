@@ -119,6 +119,7 @@ export function MediaFieldInput({
   };
 
   const refreshLibrary = async () => {
+    if (isLoadingLibrary || isLoadingMore) return;
     setIsLoadingLibrary(true);
     setLibraryError('');
 
@@ -134,7 +135,7 @@ export function MediaFieldInput({
   };
 
   const loadMoreLibrary = async () => {
-    if (!libraryCursor || isLoadingMore) return;
+    if (!libraryCursor || isLoadingMore || isLoadingLibrary) return;
     setIsLoadingMore(true);
     setLibraryError('');
 
@@ -156,7 +157,7 @@ export function MediaFieldInput({
   }, [isLibraryOpen]);
 
   const handleUpload = async (file: File | null) => {
-    if (!file) return;
+    if (!file || isUploading) return;
 
     setIsUploading(true);
     setLibraryError('');
@@ -280,7 +281,7 @@ export function MediaFieldInput({
               <div className="text-sm font-medium text-zinc-100">Media Library</div>
               <div className="mt-1 text-xs text-zinc-400">Select an uploaded asset to write its URL into this field.</div>
             </div>
-            <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => void refreshLibrary()} disabled={isLoadingLibrary}>
+            <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => void refreshLibrary()} aria-disabled={isLoadingLibrary || isLoadingMore || undefined} aria-busy={isLoadingLibrary || undefined}>
               <RefreshCw size={14} className={isLoadingLibrary ? 'animate-spin' : ''} />
               Refresh
               {label && <span className="sr-only"> the media library for {label}</span>}
@@ -288,7 +289,7 @@ export function MediaFieldInput({
           </div>
 
           <p role="status" className="sr-only">{isLoadingLibrary ? 'Loading media assets...' : ''}</p>
-          {isLoadingLibrary ? (
+          {isLoadingLibrary && libraryItems.length === 0 ? (
             <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-6 text-sm text-zinc-400">
               Loading media assets...
             </div>
@@ -331,9 +332,9 @@ export function MediaFieldInput({
             </div>
           )}
 
-          {libraryCursor && !isLoadingLibrary && (
+          {libraryCursor && (
             <div className="flex justify-center">
-              <Button type="button" variant="outline" size="sm" disabled={isLoadingMore} onClick={() => void loadMoreLibrary()}>
+              <Button type="button" variant="outline" size="sm" aria-disabled={isLoadingMore || isLoadingLibrary || undefined} aria-busy={isLoadingMore || undefined} onClick={() => void loadMoreLibrary()}>
                 {isLoadingMore ? 'Loading...' : 'Load more media'}
               </Button>
             </div>

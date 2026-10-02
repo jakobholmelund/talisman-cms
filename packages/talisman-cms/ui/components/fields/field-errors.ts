@@ -39,13 +39,13 @@ export const ServerFieldErrorsContext = createContext<{
   clearError: (fieldPath: string) => void;
 }>({ errors: {}, clearError: () => {} });
 
-/**
- * Moves focus to the control of the field at `fieldPath`, found through the `data-field-path` the
- * renderer puts on each field. Nothing happens when the field is not on the page (a block's fields
- * only render in the inspector).
- */
-export function focusFieldControl(fieldPath: string) {
-  const field = document.querySelector<HTMLElement>(`[data-field-path="${CSS.escape(fieldPath)}"]`);
-  const control = field?.querySelector<HTMLElement>('input:not([type="hidden"]), select, textarea, [contenteditable="true"], button');
-  (control || field)?.focus();
+/** Open a closed inspector before focusing a nested field from the error summary. */
+export const FIELD_FOCUS_EVENT = 'talisman:focus-field';
+export function focusFieldControl(fieldPath: string, attempts = 0) {
+  const fields = Array.from(document.querySelectorAll<HTMLElement>(`[data-field-path="${CSS.escape(fieldPath)}"]`));
+  const field = fields.find((candidate) => !candidate.closest('[inert], [hidden]') && candidate.getClientRects().length > 0);
+  const control = field?.querySelector<HTMLElement>('input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"], button:not([disabled])');
+  if (control || field) { (control || field)?.focus(); return; }
+  if (attempts >= 4) return;
+  document.dispatchEvent(new CustomEvent(FIELD_FOCUS_EVENT, { detail: { fieldPath, attempts } }));
 }

@@ -206,6 +206,7 @@ export function FieldRenderer({ field, form, fieldPath, relationOptions, relatio
               </select>
             ) : isRelationshipFieldType(field.type) ? (
               <RelationshipPicker
+                adminBasePath={adminBasePath}
                 field={field}
                 value={fieldApi.state.value}
                 onChange={handleValueChange}

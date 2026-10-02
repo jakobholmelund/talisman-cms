@@ -1,5 +1,6 @@
 import React, { useContext, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { FIELD_FOCUS_EVENT, focusFieldControl } from './fields/field-errors';
 import { useStore } from '@tanstack/react-form';
 import {
   ArrowDown,
@@ -169,6 +170,7 @@ function BuilderPanel({
   renderField,
 }: PageBuilderComposerProps & { fieldApi: any }) {
   const value = fieldApi.state.value || [];
+  const [focusRequest, setFocusRequest] = useState<{ fieldPath: string; attempts: number } | null>(null);
   const [dragState, setDragState] = useState<DragState>(null);
   const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(getDefaultSelection(value));
   const [blockLibraryOpen, setBlockLibraryOpen] = useState(false);
@@ -183,6 +185,33 @@ function BuilderPanel({
       .filter(([path, meta]) => blockPathPattern.test(path) && formatFieldErrors((meta as any)?.errors).length > 0)
       .map(([path]) => path)
   ));
+  useEffect(() => {
+    const openField = (event: Event) => {
+      const request = (event as CustomEvent<{ fieldPath: string; attempts: number }>).detail;
+      const match = blockPathPattern.exec(request.fieldPath);
+      if (!match) return;
+      const blockIndex = Number(match[1]);
+      const blockValue = value[blockIndex];
+      const block = field.blocks?.find((candidate: any) => candidate.slug === blockValue?.blockType);
+      if (!block) return;
+      const rest = request.fieldPath.slice(match[0].length).replace(/^\./, '');
+      const slot = (block.componentSlots || []).find((candidate: any) => rest === candidate.name || rest.startsWith(`${candidate.name}.`) || rest.startsWith(`${candidate.name}[`));
+      const itemIndex = slot?.hasMany ? Number(rest.slice(slot.name.length).match(/^\[(\d+)\]/)?.[1] ?? 0) : 0;
+      setSelectedNode(slot ? { kind: 'slot-item', blockIndex, slotName: slot.name, itemIndex } : { kind: 'block', blockIndex });
+      setFocusRequest(request);
+    };
+    document.addEventListener(FIELD_FOCUS_EVENT, openField);
+    return () => document.removeEventListener(FIELD_FOCUS_EVENT, openField);
+  }, [fieldName, field.blocks, value]);
+  useEffect(() => {
+    if (!focusRequest) return;
+    // Wait for the inspector's own initial-focus effect and nested field mounts.
+    const frame = requestAnimationFrame(() => {
+      focusFieldControl(focusRequest.fieldPath, focusRequest.attempts + 1);
+      setFocusRequest(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusRequest, selectedNode]);
   const getBlockErrorCount = (blockIndex: number) => {
     const paths = new Set([...(JSON.parse(clientErrorPaths) as string[]), ...Object.keys(serverErrors)]);
     return [...paths].filter((path) => blockPathPattern.exec(path)?.[1] === String(blockIndex)).length;
@@ -433,7 +462,7 @@ function BuilderPanel({
                                   toggleCardCollapsed(fieldName, blockIndex);
                                 }}
                                 className="flex items-center gap-1 text-zinc-500"
-                                aria-label={blockCollapsed ? 'Expand block' : 'Collapse block'}
+                                aria-label={`${blockCollapsed ? 'Expand' : 'Collapse'} ${blockDef.name} (block ${blockIndex + 1}) in ${field.label}`}
                                 aria-expanded={!blockCollapsed}
                               >
                                 {blockCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
@@ -708,7 +737,7 @@ function BuilderPanel({
                                                           toggleCardCollapsed(slotFieldName, slotIndex);
                                                         }}
                                                         className="flex items-center gap-1 text-zinc-500"
-                                                        aria-label={slotCardCollapsed ? 'Expand item' : 'Collapse item'}
+                                                        aria-label={`${slotCardCollapsed ? 'Expand' : 'Collapse'} ${itemLabel} (${slot.label} item ${slotIndex + 1}, block ${blockIndex + 1})`}
                                                         aria-expanded={!slotCardCollapsed}
                                                       >
                                                         {slotCardCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
@@ -725,7 +754,7 @@ function BuilderPanel({
                                                       >
                                                         <span className="sr-only">Edit </span>
                                                         {itemLabel}
-                                                        <span className="sr-only"> ({slot.label} item {slotIndex + 1})</span>
+                                                        <span className="sr-only"> ({slot.label} item {slotIndex + 1}, block {blockIndex + 1})</span>
                                                       </button>
                                                     </div>
                                                     <div className="mt-1 text-[11px] uppercase tracking-[0.22em] text-zinc-500">{itemMeta}</div>
@@ -745,17 +774,17 @@ function BuilderPanel({
                                                   {slot.hasMany ? (
                                                     <>
                                                       <Button size="sm" variant="outline" type="button" onClick={() => openSlotPicker(slotFieldName, slotIndex)}>
-                                                        Add Above<span className="sr-only"> {itemLabel} ({slot.label} item {slotIndex + 1})</span>
+                                                        Add Above<span className="sr-only"> {itemLabel} ({slot.label} item {slotIndex + 1}, block {blockIndex + 1})</span>
                                                       </Button>
                                                       <Button size="sm" variant="outline" type="button" onClick={() => openSlotPicker(slotFieldName, slotIndex + 1)}>
-                                                        Add Below<span className="sr-only"> {itemLabel} ({slot.label} item {slotIndex + 1})</span>
+                                                        Add Below<span className="sr-only"> {itemLabel} ({slot.label} item {slotIndex + 1}, block {blockIndex + 1})</span>
                                                       </Button>
                                                       <Button
                                                         size="sm"
                                                         variant="outline"
                                                         type="button"
                                                         className="h-8 w-8 p-0"
-                                                        aria-label={`Move ${itemLabel} (${slot.label} item ${slotIndex + 1}) up`}
+                                                        aria-label={`Move ${itemLabel} (${slot.label} item ${slotIndex + 1}, block ${blockIndex + 1}) up`}
                                                         aria-disabled={slotIndex === 0 || undefined}
                                                         data-move-button={`${slotFieldName}:${slotIndex}:up`}
                                                         onClick={() => moveItem(slotApi, slotFieldName, slotIndex, slotIndex - 1, slotItems.length, itemLabel)}
@@ -768,7 +797,7 @@ function BuilderPanel({
                                                         variant="outline"
                                                         type="button"
                                                         className="h-8 w-8 p-0"
-                                                        aria-label={`Move ${itemLabel} (${slot.label} item ${slotIndex + 1}) down`}
+                                                        aria-label={`Move ${itemLabel} (${slot.label} item ${slotIndex + 1}, block ${blockIndex + 1}) down`}
                                                         aria-disabled={slotIndex === slotItems.length - 1 || undefined}
                                                         data-move-button={`${slotFieldName}:${slotIndex}:down`}
                                                         onClick={() => moveItem(slotApi, slotFieldName, slotIndex, slotIndex + 1, slotItems.length, itemLabel)}
@@ -782,7 +811,7 @@ function BuilderPanel({
                                                     size="sm"
                                                     variant="destructive"
                                                     type="button"
-                                                    aria-label={`Remove ${itemLabel} (${slot.label} item ${slotIndex + 1})`}
+                                                    aria-label={`Remove ${itemLabel} (${slot.label} item ${slotIndex + 1}, block ${blockIndex + 1})`}
                                                     onClick={() => removeSlotValue(slot, slotApi, slotIndex)}
                                                   >
                                                     Remove
