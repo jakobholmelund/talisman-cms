@@ -5,7 +5,7 @@ import { user } from './local-schema';
 /** Call only after proving control of the email address (for example, a consumed one-time link). */
 export async function ensureVerifiedEmailIdentity(env: TalismanEnv, email: string, name?: string | null): Promise<string> {
   const normalized = email.trim().toLowerCase();
-  if (normalized.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+  if (normalized.length > 254 || !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(normalized) || normalized.startsWith('.') || normalized.includes('..') || normalized.includes('.@') || normalized.split('@')[0].length > 64) {
     throw new Error('Valid verified email required');
   }
   const now = new Date(Math.floor(Date.now() / 1000) * 1000);

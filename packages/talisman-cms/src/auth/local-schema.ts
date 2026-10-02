@@ -13,7 +13,7 @@ export const user = sqliteTable('galaxy_auth_user', {
   image: text('image'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
-  role: text('role').notNull().default('editor'),
+  role: text('role').notNull().default('customer'),
   banned: integer('banned', { mode: 'boolean' }).notNull().default(false),
   banReason: text('ban_reason'),
   banExpires: integer('ban_expires', { mode: 'timestamp' }),
