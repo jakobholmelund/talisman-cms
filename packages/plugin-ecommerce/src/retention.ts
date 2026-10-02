@@ -43,6 +43,7 @@ export async function purgeStaleCommerceData(options: CommercePurgeOptions) {
     ['unverifiedAccounts', (limit) => sql`DELETE FROM _ecommerce_customer_accounts WHERE id IN (SELECT a.id
       FROM _ecommerce_customer_accounts a
       WHERE a.email_verified_at IS NULL AND a.cms_user_id IS NULL AND a.credit_balance = 0 AND a.created_at < ${now - day}
+        AND NOT EXISTS (SELECT 1 FROM _ecommerce_shopper_audits WHERE account_id = a.id)
         AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders WHERE user_id = a.id)
         AND NOT EXISTS (SELECT 1 FROM _ecommerce_customer_sessions WHERE account_id = a.id)
         AND NOT EXISTS (SELECT 1 FROM _ecommerce_carts WHERE user_id = a.id AND closed = 0)

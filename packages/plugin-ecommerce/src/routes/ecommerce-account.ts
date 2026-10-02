@@ -6,7 +6,7 @@ import { getEmailProvider } from 'talisman-cms/email/runtime';
 import { bindCommerceApi } from '../api';
 import { CUSTOMER_SESSION_COOKIE, CUSTOMER_SESSION_MAX_AGE, CustomerRequestLimitError,
   consumeCustomerEmailSignIn, findCustomerSession, normalizeShopperEmail, previewCustomerEmailSignIn,
-  requestCustomerEmailSignIn, revokeCustomerSession } from '../accounts';
+  manageShopperData, ShopperPrivacyError, requestCustomerEmailSignIn, revokeCustomerSession } from '../accounts';
 import { CART_SESSION_COOKIE, LEGACY_CART_SESSION_COOKIE, readCartSessionToken } from '../cookies';
 import { shopperSignInEmail } from '../emails';
 import { SHOPPER_SIGN_IN_TURNSTILE_ACTION, readTurnstileSettings, verifyTurnstileToken } from '../turnstile';
@@ -59,7 +59,7 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
   if (request.method !== 'POST') return Response.json({ error: 'Method not allowed' }, { status: 405, headers });
 
   const body = await request.json().catch(() => null) as {
-    basketChoice?: unknown; orderId?: unknown; email?: unknown; token?: unknown; preview?: unknown; turnstileToken?: unknown
+    action?: string; basketChoice?: unknown; orderId?: unknown; email?: unknown; token?: unknown; preview?: unknown; turnstileToken?: unknown
   } | null;
   const basketToken = readCartSessionToken(cookies);
   if (typeof body?.email === 'string') {
@@ -117,6 +117,19 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
       // A suppressed address gets the same answer as any other, so suppression status does not leak.
       if (isEmailDeliveryError(error) && error.code === 'recipient_suppressed') return Response.json({ accepted: true }, { headers });
       return Response.json({ error: 'The sign-in email could not be sent. Please try again later.' }, { status: 503, headers });
+    }
+  }
+  if (body && typeof body.action === 'string' && ['export', 'revoke', 'anonymize'].includes(body.action)) {
+    const account = await findCustomerSession(runtimeEnv, sessionToken);
+    if (!account) return Response.json({ error: 'Shopper session required' }, { status: 401, headers });
+    try {
+      const result = await manageShopperData(runtimeEnv, account.id, { accountId: account.id, action: body.action,
+        reason: `Shopper requested ${body.action} of commerce data` });
+      if (body.action !== 'export') cookies.delete(CUSTOMER_SESSION_COOKIE, { path: '/' });
+      return Response.json(result, { headers });
+    } catch (error) {
+      return Response.json({ error: error instanceof ShopperPrivacyError ? error.message : 'Shopper data request failed' },
+        { status: error instanceof ShopperPrivacyError ? 409 : 500, headers });
     }
   }
   // A preview names the account a link opens, masked, and leaves the link usable. Any request that

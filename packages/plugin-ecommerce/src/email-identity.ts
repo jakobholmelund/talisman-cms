@@ -1,3 +1,4 @@
+import { canonicalEmailSql } from './email-canonical';
 import { sql, type SQL } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb } from './db';
@@ -36,16 +37,7 @@ export function canonicalEmails(emails: Array<string | null | undefined>) {
  * no local part and domain. It follows `canonicalEmail` for ASCII addresses; SQLite's lower() leaves
  * other letters as they are.
  */
-export function canonicalEmailSql(address: string) {
-  const email = `lower(trim(${address}))`;
-  const at = `instr(${email}, '@')`;
-  const local = `substr(${email}, 1, ${at} - 1)`;
-  const domain = `rtrim(substr(${email}, ${at} + 1), '.')`;
-  const base = `(CASE WHEN instr(${local}, '+') > 1 THEN substr(${local}, 1, instr(${local}, '+') - 1) ELSE ${local} END)`;
-  return `(CASE WHEN ${at} < 2 OR ${domain} = '' THEN NULL
-    WHEN ${domain} IN ('gmail.com', 'googlemail.com') THEN replace(${base}, '.', '') || '@gmail.com'
-    ELSE ${base} || '@' || ${domain} END)`;
-}
+export { canonicalEmailSql } from "./email-canonical";
 
 /**
  * SQL `EXISTS (...)` that holds when a purchase other than order `excludeOrderId` was made under an
@@ -55,12 +47,10 @@ export function canonicalEmailSql(address: string) {
 export function canonicalPurchase(canonicals: string[], excludeOrderId?: string | null): SQL {
   const statuses = sql.raw(PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(', '));
   const purchased = sql`o.status IN (${statuses}) AND COALESCE(o.payment_provider, 'stripe') <> 'admin_test' AND o.id <> ${excludeOrderId ?? ''}`;
-  return sql`EXISTS (SELECT 1 FROM (
-      SELECT o.customer_email AS address FROM _ecommerce_orders o WHERE ${purchased}
-      UNION ALL
-      SELECT a.email_normalized FROM _ecommerce_orders o
-        JOIN _ecommerce_customer_accounts a ON a.id = o.user_id WHERE ${purchased})
-    WHERE ${sql.raw(canonicalEmailSql('address'))} IN (${sql.join(canonicals.map((canonical) => sql`${canonical}`), sql`, `)}))`;
+  const targets = sql.join(canonicals.map(canonical => sql`${canonical}`), sql`, `);
+  return sql`(EXISTS (SELECT 1 FROM _ecommerce_orders o WHERE ${purchased} AND o.customer_email_canonical IN (${targets}))
+    OR EXISTS (SELECT 1 FROM _ecommerce_orders o JOIN _ecommerce_customer_accounts a ON a.id = o.user_id
+      WHERE ${purchased} AND a.email_canonical IN (${targets})))`;
 }
 
 /**

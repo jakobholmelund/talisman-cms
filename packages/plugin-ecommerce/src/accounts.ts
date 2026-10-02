@@ -1,3 +1,4 @@
+export { manageShopperData, ShopperPrivacyError } from './shopper-privacy';
 import { and, count, eq, gt, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb } from './db';
@@ -84,7 +85,7 @@ export async function findCustomerSession(env: TalismanEnv, token?: string | nul
     .where(and(eq(customerSessions.tokenHash, await hashToken(token)), gt(customerSessions.expiresAt, new Date()),
       isNull(customerSessions.revokedAt), eq(customerSessions.purpose, 'session'))).get();
   if (!session) return null;
-  return await db.select().from(customerAccounts).where(eq(customerAccounts.id, session.accountId)).get() ?? null;
+  return await db.select().from(customerAccounts).where(and(eq(customerAccounts.id, session.accountId), eq(customerAccounts.sessionVersion, session.sessionVersion), isNull(customerAccounts.anonymizedAt))).get() ?? null;
 }
 
 function customerEmailDailyLimit(env: TalismanEnv) {
@@ -280,7 +281,7 @@ export async function consumeCustomerEmailSignIn(env: TalismanEnv, token: string
       .set({ emailVerifiedAt: sql`COALESCE(${customerAccounts.emailVerifiedAt}, ${now})`, updatedAt: at(now), cmsUserId })
       .where(eq(customerAccounts.id, account.id)),
     db.insert(customerSessions).values({ id: `csess_${crypto.randomUUID()}`, accountId: account.id,
-      tokenHash: await hashToken(sessionToken), expiresAt: at(now + CUSTOMER_SESSION_MAX_AGE), createdAt: at(now), purpose: 'session' }),
+      sessionVersion: account.sessionVersion, tokenHash: await hashToken(sessionToken), expiresAt: at(now + CUSTOMER_SESSION_MAX_AGE), createdAt: at(now), purpose: 'session' }),
   ]);
   return { account, token: sessionToken };
 }
@@ -299,6 +300,7 @@ export async function listCustomerOrders(env: TalismanEnv, accountId: string) {
     id: orders.id,
     status: orders.status,
     fulfillmentStatus: orders.fulfillmentStatus,
+    paymentUnderReview: sql<boolean>`(${orders.status} = 'pending' AND ${orders.reconcileReviewAt} IS NOT NULL)`.mapWith(Boolean),
     totalAmount: orders.totalAmount,
     subtotalAmount: orders.subtotalAmount,
     shippingAmount: orders.shippingAmount,

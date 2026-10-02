@@ -1,3 +1,4 @@
+import { canonicalEmailSql } from './email-canonical';
 import { defineRelations, sql } from 'drizzle-orm';
 import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
@@ -43,6 +44,7 @@ const taxSyncColumns = () => ({
   taxSyncAttempts: integer('tax_sync_attempts').notNull().default(0),
   taxSyncLastAt: integer('tax_sync_last_at', { mode: 'timestamp' }),
   taxSyncLastError: text('tax_sync_last_error'),
+  taxSyncReviewAt: integer('tax_sync_review_at', { mode: 'timestamp' }),
 });
 const taxSyncChecks = (table: string, columns: { taxSyncAttempts: AnySQLiteColumn }) => [
   check(`${table}_tax_sync_attempts_nonnegative`, money(columns.taxSyncAttempts, 'nonnegative')),
@@ -72,6 +74,9 @@ export const TAX_BEHAVIORS = ['inclusive', 'exclusive'] as const;
 export const orders = sqliteTable('_ecommerce_orders', {
   id: text('id').primaryKey(),
   cartId: text('cart_id').references(() => carts.id).unique(),
+  guestAccessTokenHash: text('guest_access_token_hash'),
+  /** Immutable compatibility credential of a guest basket, independent of later basket ownership. */
+  guestBasketTokenHash: text('guest_basket_token_hash'),
   userId: text('user_id'), // Optional, references standard 'users' if logged in
   checkoutSessionId: text('checkout_session_id'), // e.g. Stripe Checkout Session ID
   paymentIntentId: text('payment_intent_id').unique(),
@@ -79,6 +84,9 @@ export const orders = sqliteTable('_ecommerce_orders', {
   paymentProvider: text('payment_provider'), // e.g. stripe or admin_test
   referralCode: text('referral_code'),
   referralRewardCents: integer('referral_reward_cents').notNull().default(0),
+  /** Qualification and hold/cap terms in force at checkout; null only on earlier orders. */
+  referralTerms: text('referral_terms', { mode: 'json' }).$type<{ minOrderCents: number; holdDays: number; maxPerPeriod: number; periodDays: number }>(),
+  discountCleanupPending: integer('discount_cleanup_pending', { mode: 'boolean' }).notNull().default(false),
   discountCode: text('discount_code'),
   discountAmount: integer('discount_amount').notNull().default(0),
   giftCardId: text('gift_card_id'),
@@ -103,6 +111,7 @@ export const orders = sqliteTable('_ecommerce_orders', {
   totalAmount: integer('total_amount').notNull(),
   currency: text('currency').notNull().default('usd'),
   customerEmail: text('customer_email'),
+  customerEmailCanonical: text('customer_email_canonical').generatedAlwaysAs(sql.raw(canonicalEmailSql('customer_email'))),
   shippingAddress: text('shipping_address', { mode: 'json' }).$type<{ name?: string, line1?: string, line2?: string, city?: string, state?: string, postalCode?: string, country?: string }>(),
   billingAddress: text('billing_address', { mode: 'json' }).$type<{ name?: string, line1?: string, line2?: string, city?: string, state?: string, postalCode?: string, country?: string }>(),
   ...reconcileColumns(),
@@ -113,6 +122,8 @@ export const orders = sqliteTable('_ecommerce_orders', {
   index('_ecommerce_orders_user_idx').on(table.userId),
   index('_ecommerce_orders_checkout_session_idx').on(table.checkoutSessionId),
   // Order emails are looked up in lower case.
+  index('_ecommerce_orders_canonical_email_idx').on(table.customerEmailCanonical),
+  index('_ecommerce_orders_discount_cleanup_idx').on(table.updatedAt).where(sql`${table.discountCleanupPending} = 1`),
   index('_ecommerce_orders_customer_email_idx').on(sql`lower(${table.customerEmail})`),
   // Checkout reconciliation reads pending orders by age.
   index('_ecommerce_orders_pending_idx').on(table.createdAt).where(sql`${table.status} = 'pending'`),
@@ -126,6 +137,9 @@ export const orders = sqliteTable('_ecommerce_orders', {
     .where(sql`${table.status} IN ('partially_refunded', 'refunded') AND ${table.taxTransactionId} IS NOT NULL`),
   index('_ecommerce_orders_tax_transaction_missing_idx').on(table.status, table.createdAt)
     .where(sql`${table.taxCalculationId} IS NOT NULL AND ${table.taxTransactionId} IS NULL`),
+  check('orders_total_nonnegative', money(table.totalAmount, 'nonnegative')),
+  check('orders_provider_refund_capped', sql`${table.providerRefundedCents} <= ${table.totalAmount}`),
+  check('orders_totals_balanced', sql`${table.subtotalAmount} + ${table.shippingAmount} + CASE WHEN ${table.taxBehavior} = 'exclusive' THEN ${table.taxAmount} ELSE 0 END = ${table.totalAmount} + ${table.discountAmount} + ${table.creditApplied} + ${table.giftCardApplied}`),
   check('orders_referral_reward_nonnegative', money(table.referralRewardCents, 'nonnegative')),
   check('orders_credit_applied_nonnegative', money(table.creditApplied, 'nonnegative')),
   check('orders_subtotal_nonnegative', money(table.subtotalAmount, 'nonnegative')),
@@ -191,7 +205,12 @@ export const products = sqliteTable('_ecommerce_products', {
   status: text('status', { enum: PRODUCT_STATUSES }).notNull().default('draft'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull()
-});
+}, (table) => [
+  check('products_stock_nonnegative', money(table.inventoryQuantity, 'nonnegative')),
+  check('products_price_nonnegative', money(table.basePrice, 'nonnegative')),
+  check('products_type', oneOf(table.type, PRODUCT_TYPES)),
+  check('products_status', oneOf(table.status, PRODUCT_STATUSES))
+]);
 
 export const variants = sqliteTable('_ecommerce_variants', {
   id: text('id').primaryKey(),
@@ -210,7 +229,10 @@ export const productVariants = sqliteTable('_ecommerce_product_variants', {
   inventoryQuantity: integer('inventory_quantity').notNull().default(0),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull()
-});
+}, (table) => [
+  check('variants_stock_nonnegative', money(table.inventoryQuantity, 'nonnegative')),
+  check('variants_price_nonnegative', money(table.priceOverride, 'nonnegative'))
+]);
 
 export const productVariantValues = sqliteTable('_ecommerce_product_variant_values', {
   id: text('id').primaryKey(),
@@ -221,7 +243,9 @@ export const productVariantValues = sqliteTable('_ecommerce_product_variant_valu
   priceOverride: integer('price_override'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull()
-});
+}, (table) => [
+  check('variant_values_price_nonnegative', money(table.priceOverride, 'nonnegative'))
+]);
 
 export const stocks = sqliteTable('_ecommerce_stocks', {
   id: text('id').primaryKey(),
@@ -229,7 +253,9 @@ export const stocks = sqliteTable('_ecommerce_stocks', {
   quantity: integer('quantity').notNull().default(0),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull()
-});
+}, (table) => [
+  check('stocks_quantity_nonnegative', money(table.quantity, 'nonnegative'))
+]);
 
 /** Physical parts that can be shared by several purchasable variant values. */
 export const components = sqliteTable('_ecommerce_components', {
@@ -330,12 +356,16 @@ export const customerAccounts = sqliteTable('_ecommerce_customer_accounts', {
   cmsUserId: text('cms_user_id').references(() => cmsUsers.id, { onDelete: 'set null' }),
   email: text('email').notNull(),
   emailNormalized: text('email_normalized').notNull().unique(),
+  emailCanonical: text('email_canonical').generatedAlwaysAs(sql.raw(canonicalEmailSql('email_normalized'))),
   emailVerifiedAt: integer('email_verified_at', { mode: 'timestamp' }),
+  anonymizedAt: integer('anonymized_at', { mode: 'timestamp' }),
+  sessionVersion: integer('session_version').notNull().default(0),
   name: text('name'),
   creditBalance: integer('credit_balance').notNull().default(0),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [
+  index('_ecommerce_accounts_canonical_email_idx').on(table.emailCanonical),
   uniqueIndex('_ecommerce_customer_accounts_cms_user_idx').on(table.cmsUserId).where(sql`${table.cmsUserId} IS NOT NULL`),
 ]);
 
@@ -346,6 +376,7 @@ export const customerSessions = sqliteTable('_ecommerce_customer_sessions', {
   accountId: text('account_id').notNull().references(() => customerAccounts.id, { onDelete: 'cascade' }),
   orderId: text('order_id').unique(),
   tokenHash: text('token_hash').notNull().unique(),
+  sessionVersion: integer('session_version').notNull().default(0),
   expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   revokedAt: integer('revoked_at', { mode: 'timestamp' }),
@@ -377,7 +408,7 @@ export const rateLimits = sqliteTable('_ecommerce_rate_limits', {
  * Shipments, several per order when it ships in parcels, and corrections that restate a shipment's
  * carrier and tracking number. Rows are never changed; the latest correction of a shipment is in force.
  */
-export const FULFILLMENT_KINDS = ['shipment', 'correction'] as const;
+export const FULFILLMENT_KINDS = ['shipment', 'correction', 'reopen', 'complete'] as const;
 
 export const fulfillments = sqliteTable('_ecommerce_fulfillments', {
   id: text('id').primaryKey(),
@@ -389,15 +420,20 @@ export const fulfillments = sqliteTable('_ecommerce_fulfillments', {
   note: text('note').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   kind: text('kind', { enum: FULFILLMENT_KINDS }).notNull().default('shipment'),
+  /** Stable client request identity; retries must carry the same payload. */
+  requestKey: text('request_key'),
   /** The shipment a correction restates; null for a shipment. */
   correctsId: text('corrects_id').references((): AnySQLiteColumn => fulfillments.id),
   /** Whether a shipment completes its order; false for one parcel of a split shipment. */
   completesOrder: integer('completes_order', { mode: 'boolean' }).notNull().default(true),
 }, (table) => [
+  uniqueIndex('_ecommerce_fulfillments_request_unique').on(table.orderId, table.requestKey),
+  check('fulfillment_actor_filled', filled(table.adminActor)),
+  check('fulfillment_note_length', trimmed(table.note, 8)),
   index('_ecommerce_fulfillments_order_idx').on(table.orderId, table.createdAt),
   check('fulfillment_kind', oneOf(table.kind, FULFILLMENT_KINDS)),
   check('fulfillment_completes_order_flag', flag(table.completesOrder)),
-  check('fulfillment_correction_names_shipment', sql`(${table.kind} = 'shipment') = (${table.correctsId} IS NULL)`),
+  check('fulfillment_correction_names_shipment', sql`(${table.kind} = 'correction') = (${table.correctsId} IS NOT NULL)`),
   check('fulfillment_only_shipment_completes', sql`${table.kind} = 'shipment' OR ${table.completesOrder} = 0`),
 ]);
 
@@ -565,6 +601,8 @@ export const giftCards = sqliteTable('_ecommerce_gift_cards', {
   adminReason: text('admin_reason'),
   initialCents: integer('initial_cents').notNull(),
   balanceCents: integer('balance_cents').notNull().default(0),
+  /** Value refunded to a replacement card after its original issue. */
+  restoredCents: integer('restored_cents').notNull().default(0),
   currency: text('currency').notNull().default('usd'),
   status: text('status', { enum: GIFT_CARD_STATUSES }).notNull().default('active'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
@@ -573,7 +611,7 @@ export const giftCards = sqliteTable('_ecommerce_gift_cards', {
   index('_ecommerce_gift_cards_replaces_purchase_idx').on(table.replacesPurchaseId).where(sql`${table.replacesPurchaseId} IS NOT NULL`),
   check('gift_card_source', oneOf(table.source, GIFT_CARD_SOURCES)),
   check('gift_card_initial_range', sql`${table.initialCents} BETWEEN 500 AND 100000`),
-  check('gift_card_balance_within_initial', sql`${table.balanceCents} BETWEEN 0 AND ${table.initialCents}`),
+  check('gift_card_balance_within_initial', sql`${table.restoredCents} >= 0 AND ${table.balanceCents} BETWEEN 0 AND ${table.initialCents} + ${table.restoredCents}`),
   check('gift_card_currency_usd', sql`${table.currency} = 'usd'`),
   check('gift_card_status', oneOf(table.status, GIFT_CARD_STATUSES)),
   check('gift_card_replacement_by_admin', sql`${table.replacesPurchaseId} IS NULL OR ${table.source} = 'admin'`),
@@ -728,7 +766,7 @@ export const restocks = sqliteTable('_ecommerce_restocks', {
  * Administrator decisions on orders and gift card purchases parked for review, each recorded with the
  * retry or release it carried out. Exactly one of orderId and purchaseId is set.
  */
-export const RECONCILE_DECISION_ACTIONS = ['retry', 'release'] as const;
+export const RECONCILE_DECISION_ACTIONS = ['retry', 'release', 'attach_session'] as const;
 export const PAYMENT_RETURNED_KINDS = ['refunded', 'dispute_lost', 'confirmed'] as const;
 
 export const reconcileDecisions = sqliteTable('_ecommerce_reconcile_decisions', {
@@ -804,6 +842,37 @@ export const giftCardClaims = sqliteTable('_ecommerce_gift_card_claims', {
     OR (${table.createdBy} IS NOT NULL AND ${table.reason} IS NOT NULL AND length(trim(${table.createdBy})) > 0 AND length(trim(${table.reason})) >= 8)`),
 ]);
 
+export const SHOPPER_AUDIT_ACTIONS = ['export', 'revoke', 'anonymize'] as const;
+export const shopperAudits = sqliteTable('_ecommerce_shopper_audits', {
+  id: text('id').primaryKey(),
+  accountId: text('account_id').notNull().references(() => customerAccounts.id),
+  action: text('action', { enum: SHOPPER_AUDIT_ACTIONS }).notNull(),
+  actor: text('actor').notNull(),
+  reason: text('reason').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, (table) => [
+  check('shopper_audit_action', oneOf(table.action, SHOPPER_AUDIT_ACTIONS)),
+  check('shopper_audit_actor', filled(table.actor)),
+  check('shopper_audit_reason', trimmed(table.reason, 8)),
+]);
+
+export const TAX_SYNC_ACTIONS = ['retry', 'attach'] as const;
+export const taxSyncDecisions = sqliteTable('_ecommerce_tax_sync_decisions', {
+  id: text('id').primaryKey(),
+  orderId: text('order_id').notNull().references(() => orders.id),
+  reversalId: text('reversal_id').references(() => taxReversals.id),
+  action: text('action', { enum: TAX_SYNC_ACTIONS }).notNull(),
+  providerId: text('provider_id'),
+  actor: text('actor').notNull(),
+  reason: text('reason').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, (table) => [
+  check('tax_sync_action', oneOf(table.action, TAX_SYNC_ACTIONS)),
+  check('tax_sync_actor', filled(table.actor)),
+  check('tax_sync_reason', trimmed(table.reason, 8)),
+  check('tax_sync_attach_id', sql`(${table.action} = 'attach') = (${table.providerId} IS NOT NULL)`),
+]);
+
 // --- Relations, for the relational query builder ---
 
 const tables = {
@@ -812,7 +881,7 @@ const tables = {
   customers, customerAccounts, customerSessions, signInTokens, rateLimits, fulfillments, referralCodes, referrals,
   creditLedger, referralSettings, discountCodes, discountRedemptions, giftCardPurchases, giftCards, giftCardLedger,
   giftCardRedemptions, giftCardRefunds, giftCardReviews, giftCardOrderRefunds, taxReversals, disputes, restocks,
-  reconcileDecisions, emailDeliveries, giftCardClaims, cmsUsers,
+  reconcileDecisions, emailDeliveries, giftCardClaims, shopperAudits, taxSyncDecisions, cmsUsers,
 };
 
 /**
@@ -852,6 +921,7 @@ export const relations = defineRelations(tables, (r) => ({
     reconcileDecisions: r.many.reconcileDecisions(),
     /** The order-status sessions opened for the order. */
     customerSessions: r.many.customerSessions(),
+    taxSyncDecisions: r.many.taxSyncDecisions(),
   },
   payments: { order: r.one.orders({ from: r.payments.orderId, to: r.orders.id, optional: false }) },
   providerRefunds: { order: r.one.orders({ from: r.providerRefunds.orderId, to: r.orders.id, optional: false }) },
@@ -933,6 +1003,7 @@ export const relations = defineRelations(tables, (r) => ({
     tag: r.one.tags({ from: r.productTags.tagId, to: r.tags.id, optional: false }),
   },
   customerAccounts: {
+    audits: r.many.shopperAudits(),
     /** The shared CMS user the shopper's verified email links to. */
     cmsUser: r.one.cmsUsers({ from: r.customerAccounts.cmsUserId, to: r.cmsUsers.id }),
     orders: r.many.orders({ from: r.customerAccounts.id, to: r.orders.userId }),
@@ -1015,7 +1086,8 @@ export const relations = defineRelations(tables, (r) => ({
     card: r.one.giftCards({ from: r.giftCardReviews.cardId, to: r.giftCards.id, optional: false }),
   },
   giftCardOrderRefunds: { order: r.one.orders({ from: r.giftCardOrderRefunds.orderId, to: r.orders.id, optional: false }) },
-  taxReversals: { order: r.one.orders({ from: r.taxReversals.orderId, to: r.orders.id, optional: false }) },
+  taxReversals: { order: r.one.orders({ from: r.taxReversals.orderId, to: r.orders.id, optional: false }),
+    decisions: r.many.taxSyncDecisions() },
   disputes: {
     order: r.one.orders({ from: r.disputes.orderId, to: r.orders.id }),
     giftCardPurchase: r.one.giftCardPurchases({ from: r.disputes.giftCardPurchaseId, to: r.giftCardPurchases.id }),
@@ -1029,5 +1101,8 @@ export const relations = defineRelations(tables, (r) => ({
     purchase: r.one.giftCardPurchases({ from: r.giftCardClaims.purchaseId, to: r.giftCardPurchases.id, optional: false }),
     card: r.one.giftCards({ from: r.giftCardClaims.cardId, to: r.giftCards.id, optional: false }),
   },
+  shopperAudits: { account: r.one.customerAccounts({ from: r.shopperAudits.accountId, to: r.customerAccounts.id, optional: false }) },
+  taxSyncDecisions: { order: r.one.orders({ from: r.taxSyncDecisions.orderId, to: r.orders.id, optional: false }),
+    reversal: r.one.taxReversals({ from: r.taxSyncDecisions.reversalId, to: r.taxReversals.id }) },
   cmsUsers: { customerAccount: r.one.customerAccounts({ from: r.cmsUsers.id, to: r.customerAccounts.cmsUserId }) },
 }));

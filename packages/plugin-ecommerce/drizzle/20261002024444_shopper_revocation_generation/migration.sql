@@ -1,0 +1,2 @@
+ALTER TABLE `_ecommerce_customer_accounts` ADD `session_version` integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE `_ecommerce_customer_sessions` ADD `session_version` integer DEFAULT 0 NOT NULL;
