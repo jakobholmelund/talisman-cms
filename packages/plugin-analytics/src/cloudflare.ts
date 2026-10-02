@@ -1,3 +1,5 @@
+import { dailyDates } from './admin/dates';
+
 export type PeriodDays = 7 | 30;
 
 export function parsePeriod(value: string | null): PeriodDays {
@@ -38,6 +40,8 @@ export type TrafficOverview = {
 };
 export type TrafficRange = Omit<TrafficOverview, 'periodDays'>;
 
+export class AnalyticsSetupError extends Error {}
+
 const hexTag = /^[a-f0-9]{32}$/i;
 
 export function analyticsCredentials(env: Record<string, unknown>) {
@@ -47,13 +51,21 @@ export function analyticsCredentials(env: Record<string, unknown>) {
   if (typeof account !== 'string' || !hexTag.test(account) ||
       typeof site !== 'string' || !hexTag.test(site) ||
       typeof token !== 'string' || !token.trim()) {
-    throw new Error('Set CLOUDFLARE_ANALYTICS_ACCOUNT_ID, CLOUDFLARE_ANALYTICS_SITE_TAG, and CLOUDFLARE_ANALYTICS_API_TOKEN in Worker bindings.');
+    throw new AnalyticsSetupError('Set CLOUDFLARE_ANALYTICS_ACCOUNT_ID, CLOUDFLARE_ANALYTICS_SITE_TAG, and CLOUDFLARE_ANALYTICS_API_TOKEN in Worker bindings.');
   }
   return { account, site, token };
 }
 
-export function trafficQuery(account: string, site: string, start: string, end: string) {
-  const filter = `filter: { siteTag: ${JSON.stringify(site)}, datetime_geq: ${JSON.stringify(start)}, datetime_lt: ${JSON.stringify(end)} }`;
+export function trafficFilter(site: string, start: string, end: string, adminBase = '/admin') {
+  const paths = [...new Set(['/api', adminBase.replace(/\/$/, '')])];
+  // Lexical range excludes each exact path and its slash-delimited descendants, before aggregation.
+  // Scalar comparisons avoid wildcard interpretation of custom admin paths.
+  const excluded = paths.map(path => `{ requestPath_neq: ${JSON.stringify(path)}, OR: [{ requestPath_lt: ${JSON.stringify(path + '/')} }, { requestPath_geq: ${JSON.stringify(path + '0')} }] }`).join(', ');
+  return `filter: { siteTag: ${JSON.stringify(site)}, datetime_geq: ${JSON.stringify(start)}, datetime_lt: ${JSON.stringify(end)}, AND: [${excluded}] }`;
+}
+
+export function trafficQuery(account: string, site: string, start: string, end: string, adminBase = '/admin') {
+  const filter = trafficFilter(site, start, end, adminBase);
   return `{ viewer { accounts(filter: { accountTag: ${JSON.stringify(account)} }) {
     total: rumPageloadEventsAdaptiveGroups(${filter}, limit: 1) { count sum { visits } }
     trend: rumPageloadEventsAdaptiveGroups(${filter}, limit: 31, orderBy: [date_ASC]) { count sum { visits } dimensions { date } }
@@ -63,9 +75,9 @@ export function trafficQuery(account: string, site: string, start: string, end: 
   } } }`;
 }
 
-export function vitalsQuery(account: string, site: string, start: string, end: string) {
+export function vitalsQuery(account: string, site: string, start: string, end: string, adminBase = '/admin') {
   return `{ viewer { accounts(filter: { accountTag: ${JSON.stringify(account)} }) {
-    vitals: rumWebVitalsEventsAdaptiveGroups(filter: { siteTag: ${JSON.stringify(site)}, datetime_geq: ${JSON.stringify(start)}, datetime_lt: ${JSON.stringify(end)} }, limit: 1) {
+    vitals: rumWebVitalsEventsAdaptiveGroups(${trafficFilter(site, start, end, adminBase)}, limit: 1) {
       quantiles { largestContentfulPaintP75 interactionToNextPaintP75 cumulativeLayoutShiftP75 }
     }
   } } }`;
@@ -80,8 +92,7 @@ async function queryCloudflare<T>(token: string, query: string, fetcher: typeof 
   });
   const json = await response.json() as { data?: T; errors?: Array<{ message?: string }> };
   if (!response.ok || json.errors?.length || !json.data) {
-    const detail = json.errors?.[0]?.message || `HTTP ${response.status}`;
-    throw new Error(`Cloudflare Analytics query failed: ${detail}`);
+    throw new Error('Cloudflare Analytics is unavailable. Check token permissions or try again later.');
   }
   return json.data;
 }
@@ -95,21 +106,22 @@ function vital(value: number | undefined) {
 }
 
 export async function fetchTrafficRange(
-  env: Record<string, unknown>, start: string, end: string, fetcher: typeof fetch = fetch
+  env: Record<string, unknown>, start: string, end: string, fetcher: typeof fetch = fetch, adminBase = '/admin', includeVitals = true
 ): Promise<TrafficRange> {
   const { account, site, token } = analyticsCredentials(env);
   type TrafficResponse = { viewer: { accounts: Array<{
     total: RumGroup[]; trend: RumGroup[]; pages: RumGroup[]; referrers: RumGroup[]; countries: RumGroup[];
   }> } };
-  const data = await queryCloudflare<TrafficResponse>(token, trafficQuery(account, site, start, end), fetcher);
+  const data = await queryCloudflare<TrafficResponse>(token, trafficQuery(account, site, start, end, adminBase), fetcher);
   const rows = data.viewer.accounts[0];
-  if (!rows) throw new Error('Cloudflare Analytics returned no account data. Check the account ID and token permissions.');
+  if (!rows) throw new AnalyticsSetupError('Cloudflare Analytics returned no account data. Check the account ID and token permissions.');
   const overview: TrafficRange = {
     start, end,
     pageViews: finite(rows.total?.[0]?.count), visits: finite(rows.total?.[0]?.sum?.visits),
-    trend: (rows.trend || []).filter(row => row.dimensions?.date).map(row => ({
-      date: row.dimensions!.date!, pageViews: finite(row.count), visits: finite(row.sum?.visits)
-    })),
+    trend: dailyDates(start, end).map(date => {
+      const row = rows.trend?.find(row => row.dimensions?.date === date);
+      return { date, pageViews: finite(row?.count), visits: finite(row?.sum?.visits) };
+    }),
     pages: (rows.pages || []).filter(row => row.dimensions?.requestPath).map(row => ({
       path: row.dimensions!.requestPath!, pageViews: finite(row.count), visits: finite(row.sum?.visits)
     })),
@@ -117,9 +129,10 @@ export async function fetchTrafficRange(
     countries: (rows.countries || []).map(row => ({ country: row.dimensions?.countryName || 'Unknown', visits: finite(row.sum?.visits) })),
     vitals: null,
   };
+  if (!includeVitals) return overview;
   try {
     const performance = await queryCloudflare<{ viewer: { accounts: Array<{ vitals: VitalGroup[] }> } }>(
-      token, vitalsQuery(account, site, start, end), fetcher
+      token, vitalsQuery(account, site, start, end, adminBase), fetcher
     );
     const quantiles = performance.viewer.accounts[0]?.vitals?.[0]?.quantiles;
     if (quantiles) overview.vitals = {
@@ -128,14 +141,14 @@ export async function fetchTrafficRange(
       clsP75: vital(quantiles.cumulativeLayoutShiftP75),
     };
   } catch (error) {
-    overview.vitalsError = error instanceof Error ? error.message : 'Core Web Vitals unavailable';
+    overview.vitalsError = 'Core Web Vitals are unavailable. Check Cloudflare permissions or try again later.';
   }
   return overview;
 }
 
 export async function fetchTrafficOverview(
-  env: Record<string, unknown>, days: PeriodDays, fetcher: typeof fetch = fetch, now = new Date()
+  env: Record<string, unknown>, days: PeriodDays, fetcher: typeof fetch = fetch, now = new Date(), adminBase = '/admin'
 ): Promise<TrafficOverview> {
   const { start, end } = periodBounds(days, now);
-  return { periodDays: days, ...await fetchTrafficRange(env, start, end, fetcher) };
+  return { periodDays: days, ...await fetchTrafficRange(env, start, end, fetcher, adminBase) };
 }

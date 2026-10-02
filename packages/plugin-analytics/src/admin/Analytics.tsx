@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { analyticsRequest, Metric, number, Panel, RangePicker, Trend } from './common';
+import { formatRange } from './dates';
 import type { TrafficOverview } from '../cloudflare';
 
 export default function Analytics() {
@@ -22,9 +23,10 @@ export default function Analytics() {
     {loading && <p role="status">Loading analytics…</p>}
     {error && <p className="talisman-analytics__error" role="alert">{error}</p>}
     {data && !loading && <>
+      <p>{formatRange(data.start, data.end)} · End boundary excluded. First and last days may be partial.</p>
       <div className="talisman-analytics__metrics">
         <Metric label="Page views" value={number(data.pageViews)} detail="Reported by Cloudflare" />
-        <Metric label="Visits" value={number(data.visits)} detail="External referrals or direct visits" />
+        <Metric label="Visits" value={number(data.visits)} detail="New navigation from an external referrer or direct arrival" />
         <Metric label="LCP p75" value={data.vitals?.lcpP75Ms == null ? '—' : `${Math.round(data.vitals.lcpP75Ms)} ms`} detail="Largest Contentful Paint" />
         <Metric label="INP p75" value={data.vitals?.inpP75Ms == null ? '—' : `${Math.round(data.vitals.inpP75Ms)} ms`} detail="Interaction to Next Paint" />
         <Metric label="CLS p75" value={data.vitals?.clsP75 == null ? '—' : data.vitals.clsP75.toFixed(3)} detail="Cumulative Layout Shift" />

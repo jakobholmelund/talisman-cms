@@ -53,7 +53,7 @@ export function Trend({ points, value, label, format = number }: {
 }) {
   // Net sales can be negative on a day with more refunds than sales; those bars are marked.
   const max = Math.max(1, ...points.map(point => Math.abs(Number(point[value] || 0))));
-  return <div className="talisman-analytics__trend" role="img" aria-label={label}>
+  return <div className="talisman-analytics__trend" role="img" aria-label={`${label} (UTC). ${points.map(point => `${point.date}: ${format(Number(point[value] || 0))}`).join('; ')}`}>
     {points.map(point => <div key={point.date} className="talisman-analytics__bar-wrap"
       title={`${point.date}: ${format(Number(point[value] || 0))}`}>
       <div className={`talisman-analytics__bar${Number(point[value] || 0) < 0 ? ' talisman-analytics__bar--negative' : ''}`}

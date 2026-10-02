@@ -1,6 +1,9 @@
 ---
-interface Props { token: string }
-const { token } = Astro.props;
+interface Props { token: string; adminPath?: string }
+const { token, adminPath = '/admin' } = Astro.props;
 if (!/^[a-f0-9]{32}$/i.test(token)) throw new Error('Cloudflare Web Analytics beacon token must be 32 hexadecimal characters.');
+const path = Astro.url.pathname;
+const base = adminPath.replace(/\/$/, '');
+const privatePage = [base, '/api'].some(prefix => path === prefix || path.startsWith(prefix + '/'));
 ---
-<script is:inline type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon={JSON.stringify({ token })}></script>
+{!privatePage && <script is:inline type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon={JSON.stringify({ token })}></script>}

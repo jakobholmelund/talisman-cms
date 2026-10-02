@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { analyticsPlugin } from '../dist/index.js';
 import { fetchTrafficOverview } from '../dist/cloudflare.js';
 import { fetchCommerceOverview } from '../dist/commerce.js';
-import { createAskReport, formatRange, planReport, precedingWindow, reportWindow, validateReportPlan } from '../dist/ask.js';
+import { boundedAi, createAskReport, formatRange, planReport, precedingWindow, reportWindow, validateReportPlan } from '../dist/ask.js';
 
 const day = 86_400;
 const now = new Date('2026-09-25T12:00:00Z');
@@ -239,11 +239,11 @@ test('an Ask report counts test-mode orders only in test mode and says which rul
   order('stripe_test', { session: 'cs_test_ask', subtotal: 5000 });
   order('admin', { provider: 'admin_test', session: 'admin_test:ask', subtotal: 90000 });
   const ai = { async run() { return { response: { subject: 'sales', period: 'last_7_days', compare: true } }; } };
-  const inLiveMode = await createAskReport('How are sales doing this week?', ai, d1, {}, '/admin', 'products', 'live', now);
+  const inLiveMode = await createAskReport('How are sales doing over the last 7 days?', ai, d1, {}, '/admin', 'products', 'live', now);
   assert.match(inLiveMode.summary, /^There was 1 confirmed order and \$10\.00 net sales in USD\./);
   assert.deepEqual([inLiveMode.commerce.stripeMode, inLiveMode.previousCommerce.stripeMode], ['live', 'live']);
   assert.equal(inLiveMode.notes[0], 'Dates use UTC. Sales use the payment date and exclude pending orders, admin test orders and Stripe test-mode orders.');
-  const inTestMode = await createAskReport('How are sales doing this week?', ai, d1, {}, '/admin', 'products', 'test', now);
+  const inTestMode = await createAskReport('How are sales doing over the last 7 days?', ai, d1, {}, '/admin', 'products', 'test', now);
   assert.match(inTestMode.summary, /^There were 2 confirmed orders and \$60\.00 net sales in USD\./);
   assert.deepEqual([inTestMode.commerce.stripeMode, inTestMode.previousCommerce.stripeMode], ['test', 'test']);
   assert.equal(inTestMode.notes[0], 'Dates use UTC. Sales use the payment date and exclude pending orders and admin test orders. ' +
@@ -429,7 +429,7 @@ test('provider refunds never count for more than the order\'s provider refund to
   sqlite.close();
 });
 
-const dailyNetSales = ({ daily }) => daily.map(({ date, netSales }) => [date, netSales]);
+const dailyNetSales = ({ daily }) => daily.filter(row => row.orders || row.netSales).map(({ date, netSales }) => [date, netSales]);
 
 // Items 3000, 500 shipping and 350 tax added to the price: 3850 paid, 300 of it with store credit and
 // 3550 by Stripe, all refunded yesterday.
@@ -552,7 +552,7 @@ test('a products report names the best seller in each currency', async () => {
   order('lens', { subtotal: 3000, items: lens(3, 1000) });
   order('eur', { currency: 'eur', subtotal: 800, items: lens(1, 800) });
   const ai = { async run() { return { response: { subject: 'products', period: 'last_7_days', compare: false } }; } };
-  const report = await createAskReport('Which products sold best this week?', ai, d1, {}, '/admin', 'products', 'live', now);
+  const report = await createAskReport('Which products sold best over the last 7 days?', ai, d1, {}, '/admin', 'products', 'live', now);
   assert.match(report.summary, /Top product in EUR: Lens, with 1 unit and €8\.00 in item sales\. Top product in USD: Lens, with 3 units and \$30\.00 in item sales\.$/);
   sqlite.close();
 });
@@ -563,7 +563,7 @@ test('report amounts are scaled by each currency’s minor units', async () => {
   order('yen', { currency: 'jpy', subtotal: 1250, items: lens(1, 1250) });
   order('dinar', { currency: 'kwd', subtotal: 12345, items: lens(1, 12345) });
   const ai = { async run() { return { response: { subject: 'products', period: 'last_7_days', compare: false } }; } };
-  const report = await createAskReport('Which products sold best this week?', ai, d1, {}, '/admin', 'products', 'live', now);
+  const report = await createAskReport('Which products sold best over the last 7 days?', ai, d1, {}, '/admin', 'products', 'live', now);
   assert.match(report.summary, /1 confirmed order and ¥1,250 net sales in JPY/);
   assert.match(report.summary, /1 confirmed order and KWD\s12\.345 net sales in KWD/);
   assert.match(report.summary, /Top product in JPY: Lens, with 1 unit and ¥1,250 in item sales\./);
@@ -575,7 +575,7 @@ test('generated sales report uses confirmed aggregate orders and no customer rec
   const { sqlite, d1, order } = sqliteD1();
   order('paid', { subtotal: 2400, items: lens(2, 1200) });
   const ai = { async run() { return { response: { subject: 'sales', period: 'last_7_days', compare: false } }; } };
-  const result = await createAskReport('How are sales doing this week?', ai, d1, {}, '/admin', 'products', 'live', now);
+  const result = await createAskReport('How are sales doing over the last 7 days?', ai, d1, {}, '/admin', 'products', 'live', now);
   assert.equal(result.commerce.currencies[0].netSales, 2400);
   assert.match(result.summary, /one|1 confirmed order/);
   assert.equal(result.traffic, undefined);
@@ -588,4 +588,65 @@ test('conversion requests are rejected before calling the model or database', as
   const ai = { async run() { called = true; return { response: {} }; } };
   await assert.rejects(() => createAskReport('What is our conversion rate?', ai, {}, {}), /needs data/);
   assert.equal(called, false);
+});
+
+
+test('unsupported periods are rejected before AI can substitute a supported window', async () => {
+  let calls = 0;
+  const ai = { async run() { calls++; return { response: { subject: 'sales', period: 'last_30_days', compare: false } }; } };
+  for (const question of ['Sales last 14 days', 'Sales this year', 'Sales last week', 'Sales since Monday', 'Sales for September', 'Sales from 2026-01-01']) {
+    await assert.rejects(() => planReport(question, ai), /Unsupported period/);
+  }
+  assert.equal(calls, 0);
+  assert.throws(() => validateReportPlan({ subject: 'sales', period: 'unsupported', compare: false }), /Unsupported period/);
+});
+
+test('AI waits are bounded and a timed out binding cannot pile up more calls', async () => {
+  let finish; let calls = 0;
+  const ai = { run() { calls++; return new Promise(resolve => { finish = resolve; }); } };
+  await assert.rejects(() => boundedAi(ai, {}, 5), /timed out/);
+  await assert.rejects(() => boundedAi(ai, {}, 5), /busy/);
+  assert.equal(calls, 1);
+  finish({ response: {} });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(await boundedAi({ async run() { return { response: {} }; } }, {}, 5), { response: {} });
+});
+
+test('missing credentials and upstream failures keep current and comparison commerce answers', async () => {
+  const { sqlite, d1, order } = sqliteD1(); order('paid', { subtotal: 2400 });
+  const ai = { async run() { return { response: { subject: 'traffic_and_sales', period: 'last_7_days', compare: true } }; } };
+  for (const env of [{}, { CLOUDFLARE_ANALYTICS_ACCOUNT_ID: 'a'.repeat(32), CLOUDFLARE_ANALYTICS_SITE_TAG: 'b'.repeat(32), CLOUDFLARE_ANALYTICS_API_TOKEN: 'unused' }]) {
+    const result = await createAskReport('Traffic and sales last 7 days compared', ai, d1, env, '/staff', 'products', 'live', now,
+      async () => { throw new Error('sensitive provider internals'); });
+    assert.equal(result.commerce.currencies[0].netSales, 2400);
+    assert.ok(result.previousCommerce);
+    assert.ok(result.notes.some(note => note.includes('Traffic is unavailable')));
+    assert.equal(JSON.stringify(result).includes('sensitive'), false);
+  }
+  sqlite.close();
+});
+
+test('UTC daily commerce dates include zero sales and partial boundaries for each currency', async () => {
+  const { sqlite, d1, order } = sqliteD1(); order('usd'); order('eur', { currency: 'eur' });
+  const result = await fetchCommerceOverview(d1, 7, '/admin', 'products', 'live', now);
+  assert.equal(result.daily.length, 16);
+  assert.deepEqual(result.daily[0], { date: '2026-09-18', currency: 'eur', orders: 0, netSales: 0 });
+  assert.equal(result.daily.at(-1).date, '2026-09-25');
+  sqlite.close();
+});
+
+test('Ask traffic uses one query per window, zero fills UTC dates and excludes custom admin/API paths before aggregation', async () => {
+  const env = { CLOUDFLARE_ANALYTICS_ACCOUNT_ID: 'a'.repeat(32), CLOUDFLARE_ANALYTICS_SITE_TAG: 'b'.repeat(32), CLOUDFLARE_ANALYTICS_API_TOKEN: 'unused' };
+  const ai = { async run() { return { response: { subject: 'traffic', period: 'last_7_days', compare: true } }; } };
+  const queries = [];
+  const report = await createAskReport('Traffic last 7 days compared', ai, {}, env, '/staff_portal', 'products', 'live', now, async (_, init) => {
+    queries.push(JSON.parse(init.body).query);
+    return Response.json({ data: { viewer: { accounts: [{ total: [{ count: 3 }], trend: [{ dimensions: { date: '2026-09-24' }, count: 3 }] }] } } });
+  });
+  assert.equal(queries.length, 2);
+  assert.ok(queries.every(query => !query.includes('rumWebVitals')));
+  assert.ok(queries.every(query => query.includes('requestPath_neq: "/staff_portal"') && query.includes('requestPath_geq: "/staff_portal0"') && query.includes('requestPath_neq: "/api"')));
+  assert.equal(report.traffic.trend.length, 8);
+  assert.deepEqual(report.traffic.trend[0], { date: '2026-09-18', pageViews: 0, visits: 0 });
+  assert.equal(report.traffic.trend.at(-2).pageViews, 3);
 });

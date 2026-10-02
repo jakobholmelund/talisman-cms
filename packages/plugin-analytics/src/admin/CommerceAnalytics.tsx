@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { analyticsRequest, Metric, money, number, Panel, RangePicker, refundWording, Trend } from './common';
+import { formatRange } from './dates';
 import type { CommerceOverview } from '../commerce';
 
 export default function CommerceAnalytics() {
@@ -24,6 +25,7 @@ export default function CommerceAnalytics() {
     {loading && <p role="status">Loading commerce analytics…</p>}
     {error && <p className="talisman-analytics__error" role="alert">{error}</p>}
     {data && !loading && <>
+      <p>{formatRange(data.start, data.end)} · End boundary excluded. First and last days may be partial.</p>
       {data.currencies.map(row => <div key={row.currency}>
         <h2 className="talisman-analytics__currency">{row.currency.toUpperCase()}</h2>
         <div className="talisman-analytics__metrics">

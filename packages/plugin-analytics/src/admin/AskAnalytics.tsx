@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import type { AskReport } from '../ask';
 import { adminRequest } from 'talisman-cms/ui/sdk';
@@ -20,6 +20,8 @@ export default function AskAnalytics() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const controller = useRef<AbortController | null>(null);
+
+  useEffect(() => () => controller.current?.abort(), []);
 
   async function ask(value: string) {
     const trimmed = value.trim();
@@ -72,9 +74,10 @@ export default function AskAnalytics() {
     {report && <article className="talisman-analytics__report">
       <header className="talisman-analytics__report-header">
         <h2>{report.title}</h2>
-        <p>{report.period.label} · {formatRange(report.period.start, report.period.end)}</p>
+        <p>UTC boundaries · End excluded. {report.period.label} · {formatRange(report.period.start, report.period.end)}</p>
         {report.previous && <p>Compared with {report.previous.label.charAt(0).toLowerCase()}{report.previous.label.slice(1)} · {formatRange(report.previous.start, report.previous.end)}</p>}
       </header>
+      {report.notes.filter(note => note.includes('is unavailable')).map(note => <p key={note} role="status">{note}</p>)}
       <p className="talisman-analytics__summary">{report.summary}</p>
       {report.commerce && <>
         {currencyRows.map(row => {

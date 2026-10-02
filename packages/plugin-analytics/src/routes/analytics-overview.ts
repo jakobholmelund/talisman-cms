@@ -1,26 +1,21 @@
 import type { APIRoute } from 'astro';
 import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
-import { fetchTrafficOverview, parsePeriod, type TrafficOverview } from '../cloudflare';
+import { AnalyticsSetupError, fetchTrafficOverview, parsePeriod, type TrafficOverview } from '../cloudflare';
 
-const cache = new Map<string, { expires: number; promise: Promise<TrafficOverview> }>();
+import { privateJson, reportCache, scopeKey } from './support';
+const cachedReport = reportCache<TrafficOverview>();
 
 export const GET: APIRoute = async ({ request }) => {
   const authorization = await authorizeCmsRequest(request);
-  if (authorization.response) return authorization.response;
-  const headers = { 'Cache-Control': 'private, max-age=120' };
+  if (authorization.response) { authorization.response.headers.set('Cache-Control', 'no-store'); return authorization.response; }
+  const headers = { 'Cache-Control': 'private, no-store' };
+  const adminBase = new URL(request.url).pathname.split('/api/analytics/')[0];
   const days = parsePeriod(new URL(request.url).searchParams.get('days'));
   try {
     const { env } = await import('cloudflare:workers');
     const bindings = env as Record<string, unknown>;
-    const key = `${bindings.CLOUDFLARE_ANALYTICS_ACCOUNT_ID}:${bindings.CLOUDFLARE_ANALYTICS_SITE_TAG}:${days}`;
-    const cached = cache.get(key);
-    let promise: Promise<TrafficOverview>;
-    if (cached && cached.expires > Date.now()) promise = cached.promise;
-    else {
-      promise = fetchTrafficOverview(bindings, days);
-      cache.set(key, { expires: Date.now() + 120_000, promise });
-    }
-    const result = await promise;
+    const result = await cachedReport(`${scopeKey(bindings, adminBase)}:${days}`,
+      () => fetchTrafficOverview(bindings, days, fetch, new Date(), adminBase));
     if (bindings.DB) {
       const paths = result.pages.filter(page => /^\/[a-z0-9_-]+\/?$/i.test(page.path));
       if (paths.length) {
@@ -45,8 +40,7 @@ export const GET: APIRoute = async ({ request }) => {
     }
     return Response.json(result, { headers });
   } catch (error) {
-    cache.clear();
-    return Response.json({ error: error instanceof Error ? error.message : 'Analytics unavailable' },
-      { status: 502, headers: { 'Cache-Control': 'no-store' } });
+    const setup = error instanceof AnalyticsSetupError;
+    return privateJson({ error: setup ? (error as Error).message : 'Traffic analytics are unavailable. Please try again later.' }, setup ? 503 : 502);
   }
 };
