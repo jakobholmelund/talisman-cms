@@ -75,6 +75,12 @@ A private endpoint checks the session itself, so it stays private even when reac
 
 `routes` are Astro pages. A `path` without a leading slash is relative to the admin path and needs a CMS session, so a page such as `daisyui-preview` is served at `/admin/daisyui-preview` and cannot be prerendered; `public: true` opens it. A path with a leading slash is used as given, and a page outside the admin path is public. A value that is not a path on the site, such as a URL with a scheme or host, fails the build.
 
+### Linked identity email changes
+
+A plugin whose records share CMS user identities can register `identityEmailChange: { moduleId: 'my-plugin/identity', exportName: 'identityEmailChange' }`. The named export implements `IdentityEmailChangeHook` from `talisman-cms/auth/identity`: `(env, { userId, oldEmail, newEmail, condition }) => Promise<SQL[]>`.
+
+Return Drizzle `SQL` statements for the same `DB` binding. Include the supplied `condition` in every statement's `WHERE`: it proves the confirmation is still valid and the original CMS profile has not changed. The core runs all returned statements, session revocation, the CMS email update and confirmation consumption in one atomic D1 batch. A uniqueness failure rolls everything back. Do not execute writes, send email, call external services, alter CMS auth tables or mutate the confirmation/profile guard while constructing statements. Preserve account IDs and historical financial/contact snapshots; revoke related sessions and pending sign-in links. The ecommerce plugin is the reference implementation. Missing or failing hook modules refuse confirmation.
+
 ### Scheduled jobs
 
 A plugin that needs a cron job registers a module: `scheduled: { moduleId: 'my-reviews-plugin/scheduled' }` (`exportName` defaults to `scheduled`). The export is a function of one event:

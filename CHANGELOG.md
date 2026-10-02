@@ -67,6 +67,12 @@
 - Lost gift-card sessions, parcel retries/progress changes, tax records and coupon cleanup have durable, audited recovery. Refunds restore value to the current replacement card; new orders snapshot referral terms. Shopper export, revocation and anonymization preserve accounting records and refuse unresolved obligations.
 - Five generated 2 October commerce migrations add recovery, privacy and accounting guards; see RELEASE.md and the plugin guide. Fresh and populated local migration checks passed, including rejection of actual foreign-key damage. Inspect existing rows before applying tighter constraints. Public checkout remains disabled; live payments, email, tax, merchant decisions and operations still need owner rehearsal.
 
+### Media and user profile features
+
+- Media Library adds a standalone **Where used** report, and deletion includes the same paginated inventory of structured references in drafts, published snapshots, saved revisions, globals and configured native fields. The dialog requires acknowledgment for references or an incomplete check; code, external pages and HTML strings are outside the scan.
+- Admins can edit local staff names, inspect active CMS sessions without exposing their tokens, and end an individual session. Profile versions protect against overwriting newer edits.
+- Staff email changes require a 15-minute confirmation code sent to the new address, notify the old address, and end CMS and linked shopper sessions after confirmation. Ecommerce account IDs, credit and historical orders stay intact; conflicting identities roll back the whole change. SSO identities remain provider-managed. Plugins can register an atomic `identityEmailChange` hook. Email changes need the configured email provider; these features add no migration.
+
 ### Admin
 
 - The globals editor sends the version it loaded with every save (`If-Match`). When another editor saved first, the edits stay in the form, a panel says so, and **Load latest version** replaces them with what is stored, after asking. The entry editor publishes and archives from the revision its own save returned instead of re-reading the entry first, so a publish right after a save cannot land on a newer revision someone else saved in between, and one request per publish or archive disappears.
