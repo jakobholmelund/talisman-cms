@@ -8,7 +8,8 @@ type Parked = {
   lastError: string; problem: string; provider: string; sessionMode: Mode | null; otherMode: boolean;
   amountCents: number; currency: string;
 };
-type ParkedList = { storeMode: Mode; parkedCount: number; parked: Parked[] };
+type TaxReview = { id: string; orderId: string; kind: 'transaction' | 'reversal'; code: string; attempts: number };
+type ParkedList = { tax: TaxReview[]; storeMode: Mode; parkedCount: number; parked: Parked[] };
 type PaymentReturn = 'refunded' | 'dispute_lost' | 'confirmed';
 
 const kinds: Record<Kind, string> = { order: 'Order', gift_card_purchase: 'Gift card purchase' };
@@ -81,7 +82,7 @@ export default function ReconcileReview({ refreshKey }: { refreshKey?: unknown }
     }
   }
 
-  if (!list ? !message : !list.parkedCount && !message) return null;
+  if (!list ? !message : !list.parkedCount && !list.tax?.length && !message) return null;
   const storeMode = list?.storeMode;
   /** The session's Stripe mode, flagged when it is not the store's. */
   const session = (row: Parked) => !row.sessionMode ? ''
@@ -97,11 +98,43 @@ export default function ReconcileReview({ refreshKey }: { refreshKey?: unknown }
       <form className="ecom-admin__actions" onSubmit={event => event.preventDefault()}>
         <input name="reason" aria-label={`Reason for ${row.id}`} placeholder="Reason" minLength={8} maxLength={500} required />
         {/* Counts only where Stripe names no payment to check; otherwise Stripe's answer decides. */}
-        {row.lastError === 'payment_mismatch' && <label className="ecom-admin__check" title="Counts only where Stripe names no payment the store can check for a refund">
+        {['payment_mismatch', 'session_unrecorded'].includes(row.lastError) && <label className="ecom-admin__check" title="Counts only where Stripe names no payment the store can check for a refund">
           <input type="checkbox" name="confirmPaymentReturned" /> Payment returned to the shopper
         </label>}
+        {row.lastError === 'session_unrecorded' && <>
+          <input name="sessionId" aria-label="Stripe session id" placeholder="cs_… session found by purchase id" />
+          <button type="button" disabled={busy} onClick={event => {
+            const form = event.currentTarget.form;
+            if (!form?.reportValidity()) return;
+            const values = new FormData(form);
+            setBusy(true);
+            void adminRequest('reconcile', { action: 'attach-session', purchaseId: row.id,
+              sessionId: String(values.get('sessionId') || ''), reason: String(values.get('reason') || '') })
+              .then(async () => { show('Verified session attached. Reconciliation can finish the purchase.'); await load(); })
+              .catch(cause => show(errorText(cause), true)).finally(() => setBusy(false));
+          }}>Attach verified session</button>
+        </>}
         <button type="button" className="ecom-admin__secondary" disabled={busy} onClick={event => void act(event.currentTarget.form, row, 'retry')}>Retry</button>
         <button type="button" disabled={busy} onClick={event => void act(event.currentTarget.form, row, 'release')}>Release</button>
+      </form>
+    </div>)}
+    {list?.tax?.map(row => <div className="ecom-admin__row" key={`tax:${row.id}`}>
+      <span><strong>Tax {row.kind} · <code>{row.orderId}</code></strong>
+        <small>Automatic retries stopped ({row.code}). Find the existing Stripe Tax record by its reference. Attachment checks its currency, type and amounts. If no record exists, resolve the cause before retrying; an expired calculation requires merchant tax review.</small></span>
+      <form className="ecom-admin__actions" onSubmit={event => event.preventDefault()}>
+        <input name="reason" placeholder="Reason for recovery" minLength={8} maxLength={500} required />
+        <input name="providerId" placeholder="Existing tax_… record id" aria-label="Existing Stripe Tax record id" />
+        {(['retry', 'attach'] as const).map(outcome => <button key={outcome} type="button" disabled={busy} onClick={event => {
+          const form = event.currentTarget.form;
+          if (!form?.reportValidity()) return;
+          const values = new FormData(form); setBusy(true);
+          void adminRequest('reconcile', { action: 'tax', orderId: row.orderId,
+            ...(row.kind === 'reversal' ? { reversalId: row.id } : {}), outcome,
+            ...(outcome === 'attach' ? { providerId: String(values.get('providerId') || '') } : {}),
+            reason: String(values.get('reason') || '') })
+            .then(async () => { show('Tax recovery recorded.'); await load(); })
+            .catch(cause => show(errorText(cause), true)).finally(() => setBusy(false));
+        }}>{outcome === 'attach' ? 'Attach existing record' : 'Retry after correcting cause'}</button>)}
       </form>
     </div>)}
     {list && list.parkedCount > list.parked.length && <p className="ecom-admin__muted">Showing the {list.parked.length} parked longest of {list.parkedCount}.</p>}

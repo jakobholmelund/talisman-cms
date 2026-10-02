@@ -1,3 +1,4 @@
+import { hashOrderAccess } from './cookies';
 import { and, asc, count, desc, eq, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import type { TalismanEnv } from 'talisman-cms/client';
@@ -62,6 +63,7 @@ const shipmentSchema = z.object({
   trackingNumber: optionalText(150),
   note: z.string().trim().min(8).max(500),
   completesOrder: z.boolean().default(true),
+  requestKey: z.string().trim().min(8).max(128).optional(),
 }).strict();
 
 const correctionSchema = z.object({
@@ -171,6 +173,9 @@ export async function listCommerceOrdersAdmin(env: TalismanEnv, options: {
   const storedItems = rows.map((row) => Array.isArray(row.items) ? row.items.filter((item) => typeof item?.productId === 'string') : []);
   const described = await describeOrderItems(env, storedItems.flat());
   const shipments = await loadShipments(env, rows.map((row) => row.id));
+  const { events } = await batchGroups(db, { events: chunked(rows.map(row => row.id)).map(ids =>
+    db.query.fulfillments.findMany({ columns: { id: true, orderId: true, kind: true, note: true, adminActor: true, createdAt: true },
+      where: { orderId: { in: ids }, kind: { in: ['reopen', 'complete'] } }, orderBy: (_row, { sql }) => sql`rowid` })) });
   let offset = 0;
   const orders = rows.map((row, index) => {
     const items = described.slice(offset, offset += storedItems[index].length);
@@ -192,6 +197,7 @@ export async function listCommerceOrdersAdmin(env: TalismanEnv, options: {
       })),
       amounts: orderAmounts(row),
       shipments: shipments.get(row.id) ?? [],
+      fulfillmentEvents: events.filter(event => event.orderId === row.id),
     };
   });
   return {
@@ -220,25 +226,39 @@ export async function fulfillCommerceOrder(env: TalismanEnv, actor: string, inpu
   const values = parseInput(shipmentSchema, input);
   if (!actor.trim()) throw new Error('Administrator identity is required');
   const db = commerceDb(env);
+  // Old callers deduplicate an identical parcel. New clients provide a stable key per parcel,
+  // allowing two intentionally identical parcels while a lost response safely repeats one.
+  const requestKey = values.requestKey ?? `legacy_${await hashOrderAccess(JSON.stringify(values))}`;
+  const id = `ful_${await hashOrderAccess(`${values.orderId}:${requestKey}`)}`;
+  const replay = async () => {
+    const previous = await db.select().from(fulfillments).where(eq(fulfillments.id, id)).get();
+    if (!previous) return null;
+    if (previous.kind !== 'shipment' || previous.note !== values.note || previous.carrier !== values.carrier ||
+      previous.trackingNumber !== values.trackingNumber || previous.completesOrder !== values.completesOrder) {
+      throw new FulfillmentInputError('The shipment request key was already used with other details');
+    }
+    const current = await db.select({ status: ordersTable.status, fulfillmentStatus: ordersTable.fulfillmentStatus })
+      .from(ordersTable).where(eq(ordersTable.id, values.orderId)).get();
+    return { fulfillmentId: previous.id, orderId: values.orderId, ...current, duplicate: true };
+  };
+  const previous = await replay(); if (previous) return previous;
   const order = await db.select({ status: ordersTable.status, fulfillmentStatus: ordersTable.fulfillmentStatus,
     paymentProvider: ordersTable.paymentProvider }).from(ordersTable).where(eq(ordersTable.id, values.orderId)).get();
   if (!order) throw new Error('Order not found');
   if ((order.paymentProvider ?? 'stripe') === 'admin_test') throw new Error('Admin test orders cannot be fulfilled');
   if (order.fulfillmentStatus === 'fulfilled') throw new Error('Order has already shipped in full');
-  if (!SHIPPABLE_STATUSES.includes(order.status)) {
-    throw new Error(`A ${order.status.replaceAll('_', ' ')} order cannot ship`);
-  }
-  const id = `ful_${crypto.randomUUID()}`;
+  if (!SHIPPABLE_STATUSES.includes(order.status)) throw new Error(`A ${order.status.replaceAll('_', ' ')} order cannot ship`);
   const now = Math.floor(Date.now() / 1000);
   try {
     // The notice is recorded with the shipment, so a shipment is never recorded without it.
     await db.batch([
-      db.insert(fulfillments).values({ id, orderId: values.orderId, kind: 'shipment', completesOrder: values.completesOrder,
+      db.insert(fulfillments).values({ id, requestKey, orderId: values.orderId, kind: 'shipment', completesOrder: values.completesOrder,
         adminActor: actor, carrier: values.carrier, trackingNumber: values.trackingNumber, note: values.note,
         createdAt: new Date(now * 1000) }),
       db.run(commerceEmailStatement('shipment', id, now)),
     ]);
   } catch (cause) {
+    const previous = await replay(); if (previous) return previous;
     throw refusal(cause, 'Order is not ready for fulfillment');
   }
   await deliverCommerceEmail(env, 'shipment', id);
@@ -293,4 +313,30 @@ export async function correctCommerceFulfillment(env: TalismanEnv, actor: string
   await deliverCommerceEmail(env, 'shipment_update', id);
   return { correctionId: id, fulfillmentId: shipment.id, orderId: shipment.orderId,
     carrier: values.carrier, trackingNumber: values.trackingNumber };
+}
+
+const progressSchema = z.object({ orderId: z.string().trim().min(1).max(128),
+  action: z.enum(['reopen', 'complete']), reason: z.string().trim().min(8).max(500),
+  requestKey: z.string().trim().min(8).max(128) }).strict();
+/** Audited recovery of an early final parcel, or completion when remaining items were refunded. Ships nothing. */
+export async function adjustCommerceFulfillment(env: TalismanEnv, actor: string, input: unknown) {
+  const values = parseInput(progressSchema, input);
+  if (!actor.trim()) throw new FulfillmentInputError('Administrator identity is required');
+  const db = commerceDb(env);
+  const id = `ful_${await hashOrderAccess(`${values.orderId}:${values.requestKey}`)}`;
+  const replay = async () => {
+    const row = await db.select().from(fulfillments).where(eq(fulfillments.id, id)).get();
+    if (!row) return null;
+    if (row.kind !== values.action || row.note !== values.reason) throw new FulfillmentInputError('Request key already used with other details');
+    return { fulfillmentId: row.id, orderId: row.orderId, duplicate: true };
+  };
+  const previous = await replay(); if (previous) return previous;
+  try {
+    await db.insert(fulfillments).values({ id, orderId: values.orderId, requestKey: values.requestKey,
+      kind: values.action, note: values.reason, adminActor: actor, completesOrder: false, createdAt: new Date() });
+  } catch (cause) {
+    const previous = await replay(); if (previous) return previous;
+    throw refusal(cause, 'Fulfillment progress cannot be changed');
+  }
+  return { fulfillmentId: id, orderId: values.orderId, action: values.action };
 }

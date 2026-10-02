@@ -1,3 +1,5 @@
+import { discardCheckoutDiscount } from './orders';
+import { isOtherStripeModeSession } from './reconcile';
 import { and, eq, gte, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import { commerceContext, type CommerceApiOptions } from './commerce-context';
 import { batchGroups } from './db';
@@ -29,7 +31,7 @@ const at = (seconds: number) => new Date(seconds * 1000);
  * is not selected again, so only new or transient failures are reported.
  *
  * Tax records and reversals back off the same way on counts of their own, and a success clears the
- * count. They are not parked: one that keeps failing is reported each time it is tried again.
+ * count. Permanent tax failures park for audited administrator recovery; transient ones remain eligible.
  */
 export async function reconcileCommerce(options: CommerceApiOptions, limit = 10) {
   const count = Math.max(1, Math.min(20, Math.floor(limit)));
@@ -62,7 +64,7 @@ export async function reconcileCommerce(options: CommerceApiOptions, limit = 10)
       .where(and(pendingOrder, eq(schema.orders.paymentProvider, 'admin_test'), lt(schema.orders.createdAt, stale)))
       .orderBy(schema.orders.createdAt).limit(count)],
     giftPurchases: [db.select({ id: schema.giftCardPurchases.id }).from(schema.giftCardPurchases)
-      .where(and(eq(schema.giftCardPurchases.status, 'pending'), isNotNull(schema.giftCardPurchases.providerSessionId),
+      .where(and(eq(schema.giftCardPurchases.status, 'pending'),
         lt(schema.giftCardPurchases.createdAt, stale), isNull(schema.giftCardPurchases.reconcileReviewAt), purchaseWait.due))
       .orderBy(...purchaseWait.order).limit(count)],
   });
@@ -91,6 +93,17 @@ export async function reconcileCommerce(options: CommerceApiOptions, limit = 10)
     results.push(await reconcileAttempt(env, 'gift_card_purchase', row.id, now,
       () => reconcileGiftCardPurchase(env, stripe, row.id)));
   }
+  const coupons = await db.select({ id: schema.orders.id, sessionId: schema.orders.checkoutSessionId, createdAt: schema.orders.createdAt })
+    .from(schema.orders).where(sql`${schema.orders.discountCleanupPending} = 1 AND ${schema.orders.status} = 'cancelled'`)
+    .orderBy(schema.orders.updatedAt).limit(count);
+  for (const coupon of coupons) {
+    const otherMode = isOtherStripeModeSession(env, coupon.sessionId);
+    // Coupons in an inaccessible mode have expired with their 31-minute session by this age.
+    const removed = otherMode ? coupon.createdAt.getTime() <= (now - 35 * 60) * 1000
+      : await discardCheckoutDiscount(ctx.adapters.find(adapter => adapter.providerId === 'stripe'), coupon.id);
+    await db.update(schema.orders).set({ discountCleanupPending: !removed, updatedAt: at(now) }).where(eq(schema.orders.id, coupon.id));
+  }
+
   // Tax transactions that were not recorded when their orders were paid, reversals whose request
   // failed, and then refunds not yet mirrored in the tax: gift card tender refunds, refunds of
   // gift-card-only orders and any reversal not recorded at refund time. Each pass backs off failing

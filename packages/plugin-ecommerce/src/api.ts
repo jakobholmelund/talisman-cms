@@ -12,7 +12,9 @@ export { purgeStaleCommerceData, type CommercePurgeOptions } from './retention';
 export { deliverPendingCommerceEmails } from './commerce-emails';
 export { PROVIDER_CHECK_RETRY_MESSAGE, ProviderCheckLimitedError } from './provider-checks';
 export { ReconcileFailure, type ReconcileFailureCode, type ReconcileResult } from './reconcile';
-export { TaxCalculationError } from './tax';
+export { recoverTaxSync, listTaxSyncReview, TaxCalculationError } from './tax';
+export { attachGiftPurchaseSession } from './reconcile-review';
+export { ShopperError } from './shopper-errors';
 export { WebhookMismatchError, WebhookRetryLaterError, WebhookSignatureError } from './webhook-errors';
 
 /**
@@ -50,7 +52,7 @@ export function bindCommerceApi(options: CommerceApiOptions) {
       createFromCart: (cartId: string, options: CheckoutOptions) => createOrderFromCart(ctx, cartId, options),
       create: (data: NewOrder) => createOrder(ctx, data),
       find: (id: string) => findOrder(ctx, id),
-      findForSession: (id: string, sessionToken: string | undefined, customerId?: string) => findOrderForSession(ctx, id, sessionToken, customerId),
+      findForSession: (id: string, sessionToken: string | undefined, customerId?: string, orderAccessToken?: string) => findOrderForSession(ctx, id, sessionToken, customerId, orderAccessToken),
       updateStatus: (id: string, status: string, fulfillment?: FulfillmentDetails) => updateOrderStatus(ctx, id, status, fulfillment),
       finalizePayment: (id: string, options: PaymentConfirmation) => finalizeOrderPayment(ctx, { orderId: id, ...options }),
       cancel: (id: string, options: CancelOptions = {}) => cancelOrder(ctx, id, options),

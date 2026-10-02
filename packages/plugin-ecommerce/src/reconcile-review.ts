@@ -1,3 +1,4 @@
+import { listTaxSyncReview } from './tax';
 import { z } from 'zod';
 import { and, eq, sql, type SQL } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
@@ -92,6 +93,7 @@ export async function listParkedCommerce(env: TalismanEnv) {
   const storeMode = runtimeStripeMode(env);
   return {
     storeMode,
+    tax: await listTaxSyncReview(env),
     parkedCount: Number(counted?.count ?? 0),
     parked: rows.map((row) => {
       const code = row.last_error && row.last_error in RECONCILE_FAILURE_MESSAGES
@@ -179,6 +181,12 @@ export async function releaseParkedCommerce(options: CommerceApiOptions, actor: 
     if (!outcome) throw new Error('The order changed while it was being released; reload the list');
     paymentReturned = outcome.paymentReturned;
   } else {
+    if (!row.sessionId) {
+      if (!confirmPaymentReturned) throw new Error('Find and attach the lost Stripe session, or confirm after checking Stripe that no payment remains before releasing');
+      const refusal = uncheckedSessionRefusal(Math.floor(row.createdAt.getTime() / 1000));
+      if (refusal) throw refusal;
+      paymentReturned = 'confirmed';
+    }
     if (row.sessionId) {
       const stripe = options.paymentAdapters?.find((adapter) => adapter.providerId === 'stripe');
       if (!stripe?.getCheckoutSession || !stripe.expireCheckoutSession) {
@@ -219,4 +227,29 @@ export async function releaseParkedCommerce(options: CommerceApiOptions, actor: 
   // Who released what, without personal data: the administrator's user id and the record's id.
   console.info('[commerce] Parked checkout released', { kind, id, actor, otherMode });
   return { kind, id, status: 'cancelled', otherMode, paymentReturned };
+}
+
+/** Audited attachment of a lost gift-card session, verified against provider metadata and amount. */
+export async function attachGiftPurchaseSession(options: CommerceApiOptions, actor: string, input: unknown) {
+  const values = parseAction(z.object({ purchaseId: z.string().min(1).max(128), sessionId: z.string().regex(/^cs_(test_|live_)?[a-zA-Z0-9_]+$/),
+    reason: z.string().trim().min(8).max(500) }).strict(), input);
+  const decision = newDecision(actor, values.reason);
+  const db = commerceDb(options.env);
+  const purchase = await db.select().from(giftCardPurchases).where(eq(giftCardPurchases.id, values.purchaseId)).get();
+  if (!purchase || purchase.status !== 'pending' || purchase.providerSessionId) throw new Error('Purchase is not awaiting a lost session');
+  const adapter = options.paymentAdapters?.find(adapter => adapter.providerId === 'stripe');
+  if (!adapter?.getCheckoutSession) throw new Error('Stripe is not configured');
+  const session = await adapter.getCheckoutSession(values.sessionId);
+  if (session.references?.giftCardPurchaseId !== purchase.id || session.amountTotal !== purchase.amountCents ||
+    session.currency !== purchase.currency || isOtherStripeModeSession(options.env, values.sessionId)) throw new Error('Stripe session does not match the gift card purchase');
+  await db.batch([
+    db.run(decisionInsert('gift_card_purchase', 'attach_session', sql`status = 'pending' AND provider_session_id IS NULL`,
+      { id: decision.id, paymentReturned: null, actor, reason: values.reason, at: Math.floor(Date.now() / 1000), recordId: purchase.id })),
+    db.update(giftCardPurchases).set({ providerSessionId: values.sessionId, reconcileReviewAt: null,
+      reconcileAttempts: 0, reconcileLastAt: null, reconcileLastError: null })
+      .where(and(eq(giftCardPurchases.id, purchase.id), recorded(decision.id))),
+  ]);
+  if (!await db.select({ id: reconcileDecisions.id }).from(reconcileDecisions).where(eq(reconcileDecisions.id, decision.id)).get())
+    throw new Error('The purchase changed; reload and review it again');
+  return { purchaseId: purchase.id, status: 'pending' };
 }

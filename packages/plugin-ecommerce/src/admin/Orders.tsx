@@ -16,8 +16,9 @@ type Shipment = Tracking & {
   recorded: Tracking; corrections: Correction[];
 };
 type Order = {
-  id: string; status: string; fulfillmentStatus: string; customerEmail: string | null; currency: string;
+  id: string; paymentProvider: string; status: string; fulfillmentStatus: string; customerEmail: string | null; currency: string;
   createdAt: string; shippingAddress: Address | null; canShip: boolean; items: Item[];
+  fulfillmentEvents: Array<{ id: string; kind: string; note: string; adminActor: string; createdAt: string }>;
   amounts: Array<{ key: string; label: string; cents: number }>; shipments: Shipment[];
 };
 type OrdersPage = { view: View; pageSize: number; awaitingCount: number; nextCursor: string | null; orders: Order[] };
@@ -40,6 +41,7 @@ export default function Orders() {
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
   const latest = useRef(0);
+  const shipmentKeys = useRef(new WeakMap<HTMLFormElement, string>());
   // The view and search on screen. A reload after a write or a payment check reads them here, so it
   // loads what is selected when it runs, not what was selected when the action began.
   const selected = useRef<{ view: View; query: string }>({ view: 'awaiting', query: '' });
@@ -102,6 +104,7 @@ export default function Orders() {
         await adminRequest('fulfillment', body);
         // A partly shipped order keeps its form; clear it so the parcel is not recorded twice.
         form?.reset();
+        if (form) shipmentKeys.current.delete(form);
         show(success);
       } finally {
         await load().catch(() => undefined);
@@ -119,7 +122,10 @@ export default function Orders() {
       && !window.confirm(`Record this as the last parcel of ${orderId}? The order then counts as shipped in full, and no further parcels can be recorded for it.`)) {
       return;
     }
-    record({ action: 'ship', orderId, completesOrder, carrier: formText(values, 'carrier') || null,
+    const form = event.currentTarget;
+    const requestKey = shipmentKeys.current.get(form) ?? crypto.randomUUID();
+    shipmentKeys.current.set(form, requestKey);
+    record({ action: 'ship', requestKey, orderId, completesOrder, carrier: formText(values, 'carrier') || null,
       trackingNumber: formText(values, 'trackingNumber') || null, note: formText(values, 'note') },
     completesOrder ? `Shipment recorded; ${orderId} has shipped in full.` : `Partial shipment recorded for ${orderId}.`,
     event.currentTarget);
@@ -170,7 +176,21 @@ export default function Orders() {
         <h3>Amounts</h3>
         <ul>{order.amounts.map(amount => <li key={amount.key}>{amount.label}: <strong>{money(amount.cents, order.currency)}</strong></li>)}</ul>
         {address && <address>{address.name}<br />{address.line1}<br />{address.line2 && <>{address.line2}<br /></>}{address.city}, {address.state} {address.postalCode}<br />{address.country}</address>}
-        <OrderAdjustments order={order} />
+        {order.paymentProvider !== 'admin_test' && ['paid', 'partially_refunded', 'refunded'].includes(order.status) && order.fulfillmentStatus !== 'unfulfilled' && (
+                  <form onSubmit={event => {
+                    event.preventDefault();
+                    const form = event.currentTarget;
+                    const action = order.fulfillmentStatus === 'fulfilled' ? 'reopen' : 'complete';
+                    const requestKey = shipmentKeys.current.get(form) ?? crypto.randomUUID();
+                    shipmentKeys.current.set(form, requestKey);
+                    record({ action, orderId: order.id, requestKey, reason: formText(new FormData(form), 'reason') }, 'Fulfillment progress updated.', form);
+                  }}>
+                    <Field label="Reason for changing fulfillment"><input name="reason" required minLength={8} maxLength={500} className="talisman-input" /></Field>
+                    <button type="submit" disabled={busy} className="talisman-btn">{order.fulfillmentStatus === 'fulfilled' ? 'Reopen fulfillment' : 'Complete without another parcel'}</button>
+                  </form>
+                )}
+                {order.fulfillmentEvents?.map(event => <p key={event.id}>{statusLabel(event.kind)}: {event.note} · {event.adminActor} · {when(event.createdAt)}</p>)}
+                <OrderAdjustments order={order} />
         {order.shipments.length > 0 && <h3>Shipments</h3>}
         {order.shipments.map(shipment => <React.Fragment key={shipment.id}>
           <div className="ecom-admin__row"><span>

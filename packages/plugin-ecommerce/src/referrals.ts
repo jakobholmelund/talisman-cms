@@ -91,7 +91,7 @@ export async function getReferralPolicy(env: TalismanEnv): Promise<ReferralPolic
 }
 
 type QualifyingOrder = Pick<typeof orders.$inferSelect, 'status' | 'subtotalAmount' | 'discountAmount'
-  | 'providerRefundedCents' | 'giftCardRefundedCents'>;
+  | 'providerRefundedCents' | 'giftCardRefundedCents'> & { referralTerms?: { minOrderCents: number } | null };
 
 /**
  * What the shopper paid for the goods after promotions and refunds: the subtotal less the promotion
@@ -111,7 +111,7 @@ export function referralNetAmount(order: Omit<QualifyingOrder, 'status'>) {
  * later never voids an award by itself; only a refund or a lost dispute does.
  */
 export function referralOrderQualifies(order: QualifyingOrder, minOrderCents: number, rewardCents = 0) {
-  const minimum = Math.min(minOrderCents, order.subtotalAmount - order.discountAmount);
+  const minimum = order.referralTerms?.minOrderCents ?? Math.min(minOrderCents, order.subtotalAmount - order.discountAmount);
   return (QUALIFYING_STATUSES as readonly string[]).includes(order.status)
     && referralNetAmount(order) >= Math.max(minimum, 2 * rewardCents);
 }
@@ -126,7 +126,7 @@ function qualifyingOrder(alias: string, reward: string, minOrderCents: number): 
   return sql`(${column('status')} IN (${statuses})
     AND ${column('subtotal_amount')} - ${column('discount_amount')} - ${column('provider_refunded_cents')}
       - ${column('gift_card_refunded_cents')}
-      >= MAX(MIN(${minOrderCents}, ${column('subtotal_amount')} - ${column('discount_amount')}), 2 * ${sql.raw(reward)}))`;
+      >= MAX(COALESCE(json_extract(${column('referral_terms')}, '$.minOrderCents'), MIN(${minOrderCents}, ${column('subtotal_amount')} - ${column('discount_amount')})), 2 * ${sql.raw(reward)}))`;
 }
 
 /**
@@ -186,8 +186,8 @@ export async function releaseReferralAwards(options: { env: TalismanEnv; payment
   const policy = await getReferralPolicy(env);
   // Held awards are touched, so the oldest untouched ones come first and a held one never blocks the rest.
   const due = await db.all<{ id: string; orderId: string; rewardCents: number }>(sql`SELECT r.id, r.order_id AS orderId, r.reward_cents AS rewardCents
-    FROM _ecommerce_referrals r
-    WHERE r.status = 'approved' AND r.created_at <= ${now - policy.holdDays * DAY_SECONDS}
+    FROM _ecommerce_referrals r JOIN _ecommerce_orders o ON o.id = r.order_id
+    WHERE r.status = 'approved' AND r.created_at <= ${now} - COALESCE(json_extract(o.referral_terms, '$.holdDays'), ${policy.holdDays}) * ${DAY_SECONDS}
       AND NOT EXISTS (SELECT 1 FROM _ecommerce_credit_ledger l
         WHERE l.order_id = r.order_id AND l.kind = 'referral_award')
     ORDER BY r.updated_at, r.created_at LIMIT ${limit}`);
@@ -284,6 +284,7 @@ export type ReferralDashboard = {
     status: 'approved' | 'void'; state: 'pending' | 'released' | 'void'; createdAt: Date;
     /** When a pending award can be released at the earliest; null once released or void. */
     releasesAt: Date | null }>;
+  welcome: ReferralDashboard['earned'][number] | null;
   activity: Array<{ id: string; orderId: string; kind: string; amountCents: number; createdAt: Date }>;
 };
 
@@ -300,17 +301,29 @@ export async function getReferralDashboard(env: TalismanEnv, accountId: string):
   const codeActive = codeRow?.active ?? (code !== null);
   const rows = await db.select({ id: referrals.id, orderId: referrals.orderId,
     rewardCents: referrals.rewardCents, currency: referrals.currency, status: referrals.status,
-    createdAt: referrals.createdAt, awardId: creditLedger.id }).from(referrals)
+    createdAt: referrals.createdAt, terms: orders.referralTerms, awardId: creditLedger.id }).from(referrals)
     .leftJoin(creditLedger, and(eq(creditLedger.orderId, referrals.orderId), eq(creditLedger.kind, 'referral_award')))
+    .innerJoin(orders, eq(orders.id, referrals.orderId))
     .where(eq(referrals.referrerAccountId, accountId)).orderBy(desc(referrals.createdAt));
-  const earned = rows.map(({ awardId, ...row }) => {
+  const earned = rows.map(({ awardId, terms, ...row }) => {
     const state = row.status === 'void' ? 'void' as const : awardId ? 'released' as const : 'pending' as const;
     return { ...row, state, releasesAt: state === 'pending'
-      ? new Date(row.createdAt.getTime() + policy.holdDays * DAY_SECONDS * 1000) : null };
+      ? new Date(row.createdAt.getTime() + (terms?.holdDays ?? policy.holdDays) * DAY_SECONDS * 1000) : null };
   });
   const activity = await db.select({ id: creditLedger.id, orderId: creditLedger.orderId,
     kind: creditLedger.kind, amountCents: creditLedger.amountCents,
     createdAt: creditLedger.createdAt }).from(creditLedger)
     .where(eq(creditLedger.accountId, accountId)).orderBy(desc(creditLedger.createdAt)).limit(50);
-  return { code, codeActive, creditBalance: account.creditBalance, earned, activity };
+  const welcomeRow = await db.select({ id: referrals.id, orderId: referrals.orderId, rewardCents: referrals.rewardCents,
+    currency: referrals.currency, status: referrals.status, createdAt: referrals.createdAt,
+    terms: orders.referralTerms, awardId: creditLedger.id }).from(referrals)
+    .innerJoin(orders, eq(orders.id, referrals.orderId))
+    .leftJoin(creditLedger, and(eq(creditLedger.orderId, referrals.orderId), eq(creditLedger.kind, 'welcome_award')))
+    .where(eq(referrals.referredAccountId, accountId)).get();
+  const welcome = welcomeRow ? { id: welcomeRow.id, orderId: welcomeRow.orderId, rewardCents: welcomeRow.rewardCents,
+    currency: welcomeRow.currency, status: welcomeRow.status, createdAt: welcomeRow.createdAt,
+    state: welcomeRow.status === 'void' ? 'void' as const : welcomeRow.awardId ? 'released' as const : 'pending' as const,
+    releasesAt: welcomeRow.status === 'approved' && !welcomeRow.awardId
+      ? new Date(welcomeRow.createdAt.getTime() + (welcomeRow.terms?.holdDays ?? policy.holdDays) * DAY_SECONDS * 1000) : null } : null;
+  return { code, codeActive, creditBalance: account.creditBalance, earned, welcome, activity };
 }

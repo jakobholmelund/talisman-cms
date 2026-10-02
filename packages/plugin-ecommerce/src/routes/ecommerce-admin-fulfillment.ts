@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
-import { correctCommerceFulfillment, fulfillCommerceOrder, FulfillmentInputError,
+import { adjustCommerceFulfillment, correctCommerceFulfillment, fulfillCommerceOrder, FulfillmentInputError,
   listCommerceOrdersAdmin, type OrdersView } from '../fulfillment';
 
 type ListOptions = Parameters<typeof listCommerceOrdersAdmin>[1];
@@ -46,7 +46,8 @@ export const ALL: APIRoute = async ({ request }) => {
     // A body without an action that names an order records a shipment, as before actions existed.
     if (action === 'ship' || (action === undefined && 'orderId' in input)) {
       result = await fulfillCommerceOrder(runtimeEnv, actor, input);
-    } else if (action === 'correct') result = await correctCommerceFulfillment(runtimeEnv, actor, input);
+    } else if (action === 'reopen' || action === 'complete') result = await adjustCommerceFulfillment(runtimeEnv, actor, { ...input, action });
+    else if (action === 'correct') result = await correctCommerceFulfillment(runtimeEnv, actor, input);
     else return Response.json({ error: 'Invalid fulfillment action' }, { status: 400, headers });
     return Response.json({ result }, { headers });
   } catch (error) {

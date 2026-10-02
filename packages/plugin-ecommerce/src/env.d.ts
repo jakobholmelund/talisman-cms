@@ -40,3 +40,8 @@ declare module 'virtual:talisman-cms/admin-extensions' {
   }>;
   export const adminEntryDescribers: Array<{ plugin: string; module: Record<string, unknown> }>;
 }
+
+declare module 'virtual:talisman-cms/ui-libraries' {
+  import type { UiLibraryDefinition } from 'talisman-cms';
+  export const uiLibraries: UiLibraryDefinition[];
+}

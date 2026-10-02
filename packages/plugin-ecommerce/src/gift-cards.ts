@@ -12,6 +12,7 @@ import { getReferralPolicy, referralReversalStatements } from './referrals';
 import { readStoreSettings } from './store-settings';
 import { minimumChargeAmount } from './money';
 import { WebhookMismatchError } from './webhook-errors';
+import { ShopperError } from './shopper-errors';
 import { ReconcileFailure, assertStoreStripeMode, sessionLookupFailure } from './reconcile';
 import { giftCardClaimEmail, type GiftCardClaimEmail } from './emails';
 import { applyEmailTemplate, bareEmailAddress, commerceEmailHeld, commerceEmailSetup, commerceEmailStatement,
@@ -430,12 +431,12 @@ export async function evaluateGiftCard(env: TalismanEnv, code: string, amountDue
 
 export async function getGiftCardBalance(env: TalismanEnv, code: string) {
   const normalized = code.trim().toUpperCase();
-  if (!/^GIFT-[A-F0-9]{32}$/.test(normalized)) throw new Error('Invalid gift card code');
+  if (!/^GIFT-[A-F0-9]{32}$/.test(normalized)) throw new ShopperError('gift_card_unavailable', 'Gift card is unavailable', 400);
   const db = commerceDb(env);
   const card = await db.select({ balanceCents: giftCards.balanceCents,
     currency: giftCards.currency, status: giftCards.status }).from(giftCards)
     .where(eq(giftCards.codeHash, await hashGiftCardSecret(normalized))).get();
-  if (!card) throw new Error('Gift card not found');
+  if (!card) throw new ShopperError('gift_card_unavailable', 'Gift card is unavailable', 400);
   return card;
 }
 
@@ -445,7 +446,9 @@ export async function startGiftCardPurchase(env: TalismanEnv, adapter: PaymentPr
   const currency = giftCardCurrency(env);
   // Refuse before payment when the code could not be issued or shown afterwards.
   await giftCardKeyring(env);
-  const values = purchaseSchema.parse(input);
+  const parsed = purchaseSchema.safeParse(input);
+  if (!parsed.success) throw new ShopperError('invalid_gift_purchase', 'Enter a valid buyer email and gift card amount (500 to 100000 USD cents)', 400);
+  const values = parsed.data;
   const id = `gp_${crypto.randomUUID()}`;
   const accessToken = randomHex(32);
   const timestamp = Math.floor(Date.now() / 1000);
@@ -466,6 +469,11 @@ export async function startGiftCardPurchase(env: TalismanEnv, adapter: PaymentPr
       .where(pending);
     return { id, accessToken, paymentUrl: session.url };
   } catch (error) {
+    if (!providerSessionId) {
+      // A timeout can follow the provider's acceptance. Preserve the purchase for its signed webhook or audited recovery.
+      await db.update(giftCardPurchases).set({ reconcileReviewAt: at(timestamp), reconcileLastError: 'session_unrecorded' }).where(pending);
+      throw error;
+    }
     if (providerSessionId) {
       try { await adapter.expireCheckoutSession?.(providerSessionId); }
       catch {
@@ -486,13 +494,17 @@ export async function confirmGiftCardPurchase(env: TalismanEnv, session: {
   if (!id) throw new Error('Gift card purchase ID is missing');
   const db = commerceDb(env);
   const purchase = await db.select().from(giftCardPurchases).where(eq(giftCardPurchases.id, id)).get();
-  if (!purchase || purchase.providerSessionId !== session.id ||
+  if (!purchase || (purchase.providerSessionId !== null && purchase.providerSessionId !== session.id) ||
     purchase.amountCents !== session.amount_total ||
     session.currency?.toLowerCase() !== purchase.currency.toLowerCase() ||
     session.payment_status !== 'paid' || typeof session.payment_intent !== 'string') {
     throw new WebhookMismatchError('purchase_mismatch', 'Gift card payment does not match purchase');
   }
   if (purchase.status === 'paid') return { success: true, purchaseId: id, duplicate: true };
+  if (!purchase.providerSessionId && purchase.status === 'pending') {
+    await db.update(giftCardPurchases).set({ providerSessionId: session.id })
+      .where(and(eq(giftCardPurchases.id, id), eq(giftCardPurchases.status, 'pending'), isNull(giftCardPurchases.providerSessionId)));
+  }
   // A payment recorded before and refunded or held for review since.
   if (['partially_refunded', 'refunded', 'review'].includes(purchase.status)
     && purchase.paymentIntentId === session.payment_intent) return { success: true, purchaseId: id, duplicate: true };
@@ -698,7 +710,8 @@ export async function expireGiftCardPurchase(env: TalismanEnv, id: string, sessi
 export async function reconcileGiftCardPurchase(env: TalismanEnv, adapter: PaymentProviderAdapter | undefined, id: string) {
   const db = commerceDb(env);
   const purchase = await db.select().from(giftCardPurchases).where(eq(giftCardPurchases.id, id)).get();
-  if (!purchase || purchase.status !== 'pending' || !purchase.providerSessionId) return null;
+  if (!purchase || purchase.status !== 'pending') return null;
+  if (!purchase.providerSessionId) throw new ReconcileFailure('session_unrecorded');
   if (purchase.reconcileReviewAt) return { status: 'pending', review: true };
   if (adapter?.providerId !== 'stripe' || !adapter.getCheckoutSession) {
     throw new ReconcileFailure('provider_not_configured', 'Stripe session lookup is required for gift card reconciliation');

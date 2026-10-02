@@ -3,7 +3,9 @@ import type { TalismanEnv } from 'talisman-cms/client';
 import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
 import { reconcileCommerce } from '../api';
 import { runtimePaymentAdapters } from '../runtime';
-import { ReconcileInputError, listParkedCommerce, releaseParkedCommerce,
+import { recoverTaxSync } from '../tax';
+import { z } from 'zod';
+import { attachGiftPurchaseSession, ReconcileInputError, listParkedCommerce, releaseParkedCommerce,
   retryParkedCommerce } from '../reconcile-review';
 
 /**
@@ -42,12 +44,14 @@ export const ALL: APIRoute = async ({ request }) => {
     }
     const actor = String(authorization.user?.id ?? '');
     let result: unknown;
-    if (action === 'retry') result = await retryParkedCommerce(runtimeEnv, actor, input);
+    if (action === 'tax') result = await recoverTaxSync(runtimeEnv, paymentAdapters, actor, input);
+    else if (action === 'attach-session') result = await attachGiftPurchaseSession({ env: runtimeEnv, paymentAdapters }, actor, input);
+    else if (action === 'retry') result = await retryParkedCommerce(runtimeEnv, actor, input);
     else if (action === 'release') result = await releaseParkedCommerce({ env: runtimeEnv, paymentAdapters }, actor, input);
     else return Response.json({ error: 'Invalid reconciliation action' }, { status: 400, headers });
     return Response.json({ result }, { headers });
   } catch (error) {
-    const invalid = error instanceof ReconcileInputError || error instanceof SyntaxError;
+    const invalid = error instanceof ReconcileInputError || error instanceof SyntaxError || error instanceof z.ZodError;
     const fallback = request.method === 'GET' ? 'Parked records could not be listed' : 'Reconciliation failed';
     return Response.json({ error: error instanceof Error ? error.message : fallback },
       { status: invalid ? 400 : request.method === 'GET' || action === undefined ? 500 : 409, headers });

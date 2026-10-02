@@ -1,7 +1,9 @@
 import type { CollectionConfig, FieldDefinition } from 'talisman-cms';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb } from './db';
-import type { PRODUCT_STATUSES } from './schema';
+import { z } from 'zod';
+import { PRODUCT_STATUSES } from './schema';
+import { sql } from 'drizzle-orm';
 
 const byCreation = { createdAt: 'asc', id: 'asc' } as const;
 
@@ -11,9 +13,27 @@ const byCreation = { createdAt: 'asc', id: 'asc' } as const;
  * and tags, oldest first; `status` narrows the products. Read from D1 without the KV cache, so a
  * Commerce edit shows on the next request. One call serves every product a page shows.
  */
-export function readCatalog(env: TalismanEnv, options: { status?: ReadonlyArray<typeof PRODUCT_STATUSES[number]> } = {}) {
-  return commerceDb(env).query.products.findMany({
-    where: options.status ? { status: { in: [...options.status] } } : undefined,
+const catalogSchema = z.object({ status: z.array(z.enum(PRODUCT_STATUSES)).min(1).max(3).optional(),
+  ids: z.array(z.string().min(1).max(128)).min(1).max(80).optional(),
+  slug: z.string().min(1).max(200).optional(), limit: z.number().int().min(1).max(100).default(50),
+  cursor: z.string().max(1024).optional() }).strict();
+export type CatalogReadOptions = { status?: ReadonlyArray<typeof PRODUCT_STATUSES[number]>; ids?: string[];
+  slug?: string; limit?: number; cursor?: string };
+
+/** Bounded catalog page: at most 100 products, with stable createdAt/id continuation and optional ids/slug/status. */
+export async function readCatalogPage(env: TalismanEnv, options: CatalogReadOptions = {}) {
+  const values = catalogSchema.parse(options);
+  let position: [number, string] | undefined;
+  if (values.cursor) {
+    try { position = z.tuple([z.number().int().nonnegative(), z.string().min(1).max(128)])
+      .parse(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(values.cursor), char => char.charCodeAt(0))))); }
+    catch { throw new Error('Invalid catalog cursor'); }
+  }
+  const products = await commerceDb(env).query.products.findMany({
+    limit: values.limit + 1,
+    where: { status: values.status ? { in: values.status } : undefined,
+      id: values.ids ? { in: values.ids } : undefined, slug: values.slug,
+      RAW: position ? (product) => sql`(${product.createdAt}, ${product.id}) > (${position![0]}, ${position![1]})` : undefined },
     orderBy: byCreation,
     with: {
       categories: { orderBy: { name: 'asc' } },
@@ -27,6 +47,15 @@ export function readCatalog(env: TalismanEnv, options: { status?: ReadonlyArray<
       } },
     },
   });
+  const page = products.slice(0, values.limit);
+  const last = page.at(-1);
+  return { products: page, nextCursor: products.length > values.limit && last
+    ? btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify([Math.floor(last.createdAt.getTime() / 1000), last.id])))) : null };
+}
+
+/** Compatibility array API, now bounded to 50 by default/100 at most. Use readCatalogPage for continuation. */
+export async function readCatalog(env: TalismanEnv, options: CatalogReadOptions = {}) {
+  return (await readCatalogPage(env, options)).products;
 }
 
 /** A product as `readCatalog` returns it, with its nested groups, values, categories and tags. */

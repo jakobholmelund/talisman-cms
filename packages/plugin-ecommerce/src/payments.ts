@@ -123,7 +123,12 @@ export interface PaymentProviderAdapter {
     currency?: string | null;
     paymentIntentId?: string | null;
     customerEmail?: string | null;
+    references?: PaymentReferences;
   }>;
+
+  /** Read an existing tax record for audited recovery; never creates or reverses value. */
+  getTaxRecord?(id: string): Promise<{ reference: string; currency: string; type: string;
+    amountTotal: number; amountTax: number; originalTransaction: string | null }>;
 
   /**
    * How much of a payment the provider has refunded: 'full' once all of it, 'partial' for part of it,

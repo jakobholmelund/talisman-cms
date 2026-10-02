@@ -1,8 +1,10 @@
+import { ShopperError } from './shopper-errors';
 import { and, eq, inArray, isNotNull, isNull, lt, sql, type SQL } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb, type CommerceDb } from './db';
 import { TaxAddressError, type PaymentProviderAdapter, type TaxCalculationParams } from './payments';
-import { orders, taxReversals } from './schema';
+import { z } from 'zod';
+import { orders, taxReversals, taxSyncDecisions } from './schema';
 import type { TaxSettings } from './store-settings';
 import { TAX_ADDRESS_REQUIRED, TAX_ADDRESS_UNUSABLE, TAX_UNAVAILABLE } from './checkout-input';
 import { ReconcileFailure, backoff, reconcileFailure, type ReconcileResult } from './reconcile';
@@ -82,7 +84,7 @@ type CheckoutAddress = { line1?: unknown; line2?: unknown; city?: unknown; state
 export function taxAddressFor(requiresShipping: boolean, shippingAddress: CheckoutAddress,
   billingAddress: CheckoutAddress) {
   const given = requiresShipping ? shippingAddress : billingAddress;
-  if (!given || typeof given.country !== 'string' || !given.country) throw new Error(TAX_ADDRESS_REQUIRED);
+  if (!given || typeof given.country !== 'string' || !given.country) throw new ShopperError('checkout_details', TAX_ADDRESS_REQUIRED, 400);
   const address: TaxCalculationParams['address'] = { country: given.country };
   for (const key of ['line1', 'line2', 'city', 'state', 'postalCode'] as const) {
     const value = given[key];
@@ -131,7 +133,7 @@ export async function calculateOrderTax(adapter: PaymentProviderAdapter, input: 
   try {
     calculation = await adapter.calculateTax(params);
   } catch (cause) {
-    if (cause instanceof TaxAddressError) throw new Error(TAX_ADDRESS_UNUSABLE, { cause });
+    if (cause instanceof TaxAddressError) throw new ShopperError('checkout_details', TAX_ADDRESS_UNUSABLE, 400, { cause });
     throw failed(describe(cause), cause);
   }
   const exclusive = input.behavior === 'exclusive';
@@ -161,7 +163,7 @@ const PAID_STATUSES = ['paid', 'fulfilled', 'partially_refunded', 'refunded', 'd
 // tax_sync_* columns cover recording its transaction and, once it is refunded, recording the reversals
 // of its refunds; a reversal's own cover sending it to the provider. Failures at payment and refund
 // time count too, so that reconcileCommerce retries them after the same wait.
-const TAX_SYNC_CLEARED = { taxSyncAttempts: 0, taxSyncLastAt: null, taxSyncLastError: null } as const;
+const TAX_SYNC_CLEARED = { taxSyncAttempts: 0, taxSyncLastAt: null, taxSyncLastError: null, taxSyncReviewAt: null } as const;
 /** The backoff of an order's tax attempts, on its tax_sync_* columns. */
 const orderTaxBackoff = (now: number) => backoff({ attempts: orders.taxSyncAttempts, lastAt: orders.taxSyncLastAt,
   createdAt: orders.createdAt, id: orders.id }, now);
@@ -177,8 +179,12 @@ type TaxSyncTable = typeof orders | typeof taxReversals;
 /** Counts a failed tax attempt at `now` on the order or reversal that `where` names. */
 async function countTaxFailure(db: CommerceDb, table: TaxSyncTable, where: SQL | undefined, error: unknown, now: number) {
   try {
-    await db.update(table).set({ taxSyncAttempts: sql`${table.taxSyncAttempts} + 1`, taxSyncLastAt: at(now),
-      taxSyncLastError: reconcileFailure(error).code }).where(where);
+    const provider = error as { code?: string; param?: string; statusCode?: number };
+    const permanent = error instanceof ReconcileFailure && error.permanent || provider.code === 'resource_missing'
+      || provider.code === 'tax_calculation_expired'
+      || provider.statusCode === 400 && ['reference', 'calculation', 'original_transaction'].includes(provider.param ?? '');
+    await db.update(table).set({ taxSyncReviewAt: permanent ? at(now) : null, taxSyncAttempts: sql`${table.taxSyncAttempts} + 1`, taxSyncLastAt: at(now),
+      taxSyncLastError: permanent ? 'tax_permanent' : reconcileFailure(error).code }).where(where);
   } catch {
     // Best effort: an attempt whose failure is not counted is only retried sooner.
   }
@@ -193,12 +199,12 @@ export async function recordOrderTax(env: TalismanEnv, adapters: PaymentProvider
   now = unixNow()) {
   const db = commerceDb(env);
   const order = await db.select({ id: orders.id, status: orders.status, paymentProvider: orders.paymentProvider,
-    taxCalculationId: orders.taxCalculationId, taxTransactionId: orders.taxTransactionId,
+    taxCalculationId: orders.taxCalculationId, taxTransactionId: orders.taxTransactionId, taxSyncReviewAt: orders.taxSyncReviewAt,
     // When the order was paid, in Unix seconds: its first payment row. The subquery names the order's
     // column as text, because the builder writes column objects in a select's fields unqualified.
     paidAt: sql<number | null>`(SELECT MIN(created_at) FROM _ecommerce_payments WHERE order_id = _ecommerce_orders.id)` })
     .from(orders).where(eq(orders.id, orderId)).get();
-  if (!order?.taxCalculationId || order.taxTransactionId || !PAID_STATUSES.includes(order.status)) return false;
+  if (!order?.taxCalculationId || order.taxSyncReviewAt || order.taxTransactionId || !PAID_STATUSES.includes(order.status)) return false;
   try {
     const adapter = taxProvider(adapters, order.paymentProvider);
     if (!adapter?.recordTaxTransaction) {
@@ -367,7 +373,7 @@ export async function recordMissingTaxTransactions(env: TalismanEnv, adapters: P
   // Repeats the conditions of the partial index `_ecommerce_orders_tax_transaction_missing_idx`, so
   // SQLite looks the orders up in it.
   const rows = await commerceDb(env).select({ id: orders.id }).from(orders)
-    .where(and(inArray(orders.status, PAID_STATUSES), isNotNull(orders.taxCalculationId), isNull(orders.taxTransactionId), wait.due))
+    .where(and(inArray(orders.status, PAID_STATUSES), isNotNull(orders.taxCalculationId), isNull(orders.taxTransactionId), isNull(orders.taxSyncReviewAt), wait.due))
     .orderBy(...wait.order).limit(limit);
   return attemptEach(rows, (row) => row.id,
     async (row) => await recordOrderTax(env, adapters, row.id, now) ? 'tax_recorded' : 'unchanged');
@@ -390,7 +396,7 @@ export async function resendPendingTaxReversals(env: TalismanEnv, adapters: Paym
   const pending = await db.select({ orderId: taxReversals.orderId, reference: taxReversals.reference, amount: taxReversals.amount,
     paymentProvider: orders.paymentProvider, taxTransactionId: orders.taxTransactionId })
     .from(taxReversals).innerJoin(orders, eq(orders.id, taxReversals.orderId))
-    .where(and(sql`${taxReversals.providerReversalId} = ''`, lt(taxReversals.createdAt, at(now - REVERSAL_IN_FLIGHT_SECONDS)), wait.due))
+    .where(and(sql`${taxReversals.providerReversalId} = ''`, lt(taxReversals.createdAt, at(now - REVERSAL_IN_FLIGHT_SECONDS)), isNull(taxReversals.taxSyncReviewAt), wait.due))
     .orderBy(...wait.order).limit(limit);
   return attemptEach(pending, (row) => row.orderId, async (row) => {
     // A reversal is recorded only for an order with a transaction (recordTaxReversal).
@@ -412,8 +418,67 @@ export async function reverseUnreversedTax(env: TalismanEnv, adapters: PaymentPr
   // literals included, so SQLite reads only refunded orders with a tax transaction.
   const rows = await commerceDb(env).select({ id: orders.id }).from(orders)
     .where(and(sql`${orders.status} IN ('partially_refunded', 'refunded')`, isNotNull(orders.taxTransactionId),
-      sql`${reversalTarget} > ${reversed}`, wait.due))
+      sql`${reversalTarget} > ${reversed}`, isNull(orders.taxSyncReviewAt), wait.due))
     .orderBy(...wait.order).limit(limit);
   return attemptEach(rows, (row) => row.id,
     async (row) => await reverseOrderTax(env, adapters, row.id, now) ? 'tax_reversed' : 'unchanged');
+}
+
+/** Permanent tax failures stop retries and appear here, separate from unpaid checkout recovery. */
+export async function listTaxSyncReview(env: TalismanEnv) {
+  const db = commerceDb(env);
+  const [transactions, reversals] = await db.batch([
+    db.select({ id: orders.id, reviewAt: orders.taxSyncReviewAt,
+      code: orders.taxSyncLastError, attempts: orders.taxSyncAttempts }).from(orders)
+      .where(isNotNull(orders.taxSyncReviewAt)).limit(100),
+    db.select({ id: taxReversals.id, orderId: taxReversals.orderId, reviewAt: taxReversals.taxSyncReviewAt,
+      code: taxReversals.taxSyncLastError, attempts: taxReversals.taxSyncAttempts }).from(taxReversals)
+      .where(isNotNull(taxReversals.taxSyncReviewAt)).limit(100),
+  ]);
+  return [...transactions.map(row => ({ ...row, orderId: row.id, kind: 'transaction' as const })),
+    ...reversals.map(row => ({ ...row, kind: 'reversal' as const }))];
+}
+const taxRecoverySchema = z.object({ orderId: z.string().min(1).max(128), reversalId: z.string().min(1).max(128).optional(),
+  outcome: z.enum(['retry', 'attach']), providerId: z.string().regex(/^tax_[a-zA-Z0-9_]+$/).optional(),
+  reason: z.string().trim().min(8).max(500) }).strict();
+/** Attach a provider record after verifying reference/currency/amount/type, or audit a corrected cause and retry. */
+export async function recoverTaxSync(env: TalismanEnv, adapters: PaymentProviderAdapter[], actor: string, input: unknown) {
+  const values = taxRecoverySchema.parse(input);
+  if (!actor.trim()) throw new Error('Administrator identity is required');
+  const db = commerceDb(env);
+  const order = await db.select().from(orders).where(eq(orders.id, values.orderId)).get();
+  if (!order) throw new Error('Order not found');
+  const reversal = values.reversalId ? await db.select().from(taxReversals)
+    .where(and(eq(taxReversals.id, values.reversalId), eq(taxReversals.orderId, order.id))).get() : undefined;
+  if (values.reversalId && !reversal) throw new Error('Tax reversal not found');
+  if (!(reversal ? reversal.taxSyncReviewAt : order.taxSyncReviewAt)) throw new Error('Tax sync is not parked for review');
+  if (values.outcome === 'attach') {
+    if (!values.providerId) throw new Error('An existing Stripe Tax record id is required');
+    const adapter = taxProvider(adapters, order.paymentProvider);
+    if (!adapter?.getTaxRecord) throw new Error('The provider cannot verify the tax record');
+    const record = await adapter.getTaxRecord(values.providerId);
+    const matches = record.currency === order.currency && record.reference === (reversal?.reference ?? order.id)
+      && record.type === (reversal ? 'reversal' : 'transaction')
+      && record.amountTotal === (reversal ? -reversal.amount : order.totalAmount + order.giftCardApplied)
+      && (reversal ? record.originalTransaction === order.taxTransactionId : record.amountTax === order.taxAmount);
+    if (!matches) throw new Error('The provider tax record does not match this order/reversal');
+  } else if (values.providerId) throw new Error('A retry must not attach a provider id');
+  const guard = reversal
+    ? and(eq(taxReversals.id, reversal.id), eq(taxReversals.providerReversalId, ''), isNotNull(taxReversals.taxSyncReviewAt))
+    : and(eq(orders.id, order.id), isNotNull(orders.taxSyncReviewAt), values.outcome === 'attach' ? isNull(orders.taxTransactionId) : undefined);
+  // Update and its audit record commit together; the audit is conditional on the update returning a row.
+  const auditId = `taxd_${crypto.randomUUID()}`;
+  const table = reversal ? taxReversals : orders;
+  await db.batch([
+    db.run(sql`INSERT INTO _ecommerce_tax_sync_decisions (id,order_id,reversal_id,action,provider_id,actor,reason,created_at)
+      SELECT ${auditId},${order.id},${reversal?.id ?? null},${values.outcome},${values.providerId ?? null},${actor},${values.reason},${unixNow()}
+      FROM ${table} WHERE ${guard}`),
+    reversal ? db.update(taxReversals).set({ ...TAX_SYNC_CLEARED,
+      ...(values.outcome === 'attach' ? { providerReversalId: values.providerId! } : {}) }).where(guard)
+      : db.update(orders).set({ ...TAX_SYNC_CLEARED,
+        ...(values.outcome === 'attach' ? { taxTransactionId: values.providerId! } : {}) }).where(guard),
+  ]);
+  const recorded = await db.select({ id: taxSyncDecisions.id }).from(taxSyncDecisions).where(eq(taxSyncDecisions.id, auditId)).get();
+  if (!recorded) throw new Error('Tax sync changed; reload and review it again');
+  return { orderId: order.id, outcome: values.outcome };
 }

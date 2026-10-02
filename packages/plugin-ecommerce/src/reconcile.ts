@@ -11,14 +11,16 @@ const at = (seconds: number) => new Date(seconds * 1000);
 
 /** Why a reconciliation attempt failed. Only these codes are stored, never provider text or personal data. */
 export type ReconcileFailureCode = 'session_missing' | 'session_mode_mismatch' | 'payment_mismatch'
-  | 'provider_not_configured' | 'provider_unavailable' | 'provider_refused' | 'failed';
+  | 'session_unrecorded' | 'tax_permanent' | 'provider_not_configured' | 'provider_unavailable' | 'provider_refused' | 'failed';
 
 /** Failures that another attempt cannot change. They park the row for an administrator instead. */
 const PERMANENT_FAILURES: ReadonlySet<ReconcileFailureCode> =
-  new Set(['session_missing', 'session_mode_mismatch', 'payment_mismatch']);
+  new Set(['session_missing', 'session_mode_mismatch', 'payment_mismatch', 'session_unrecorded', 'tax_permanent']);
 
 /** An admin-safe explanation of each code, for results and the review list. */
 export const RECONCILE_FAILURE_MESSAGES: Record<ReconcileFailureCode, string> = {
+  session_unrecorded: 'The Stripe session was not stored. Find it by the purchase id, attach it, or confirm no payment remains before releasing.',
+  tax_permanent: 'Tax sync needs review. Attach the existing Stripe Tax record after checking its reference and amount, or correct the cause and retry.',
   session_missing: 'The payment provider has no checkout session with this id',
   session_mode_mismatch: 'The checkout session belongs to the other Stripe mode',
   payment_mismatch: 'The completed payment does not match the amount, currency or payment recorded for it',
@@ -174,7 +176,7 @@ export async function completedCheckoutReturn(adapter: Pick<PaymentProviderAdapt
  * `decision.recordId` while `condition` holds for it, with the failure it was parked with and, for a
  * release of a completed checkout, how the payment's return was established.
  */
-export function decisionInsert(kind: ReconcileKind, action: 'retry' | 'release', condition: SQL, decision: {
+export function decisionInsert(kind: ReconcileKind, action: 'retry' | 'release' | 'attach_session', condition: SQL, decision: {
   id: string; paymentReturned: PaymentReturn | null; actor: string; reason: string; at: number; recordId: string;
 }): SQL {
   const [orderId, purchaseId] = kind === 'order' ? ['id', 'NULL'] : ['NULL', 'id'];
