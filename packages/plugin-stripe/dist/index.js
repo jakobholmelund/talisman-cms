@@ -22,6 +22,7 @@ function stripePlugin(config = {}) {
   };
   return {
     name: "stripe-plugin",
+    migrations: config.sync?.length ? { dir: fileURLToPath(new URL("../drizzle", import.meta.url)) } : void 0,
     onInit: (cmsConfig) => {
       if (config.sync && cmsConfig.collections) {
         config.sync.forEach((syncOpt) => {
@@ -64,6 +65,7 @@ export const stripeConfig = { ...${JSON.stringify(runtimeConfig)}, webhooks: ${c
       }
     },
     endpoints: [
+      ...config.sync?.length ? [{ path: "/stripe/sync", entrypoint: resolveRouteEntrypoint("sync") }] : [],
       ...config.rest === true && config.restMethods?.length ? [{
         path: "/stripe/rest",
         entrypoint: resolveRouteEntrypoint("rest")

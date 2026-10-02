@@ -6,8 +6,11 @@ var stripeProxy = async (args) => {
     throw new Error("Stripe secret key must be provided");
   }
   const stripe = new Stripe(stripeSecretKey, {
+    // Preserve the existing collection/proxy API contract. Stripe supports version overrides;
+    // this older supported version deliberately differs from the SDK's latest TypeScript types.
     apiVersion: "2022-08-01",
-    // Target recent version per docs, or user can override
+    timeout: 1e4,
+    maxNetworkRetries: 1,
     // fetch works in Workers and Node alike
     httpClient: Stripe.createFetchHttpClient(),
     appInfo: {
