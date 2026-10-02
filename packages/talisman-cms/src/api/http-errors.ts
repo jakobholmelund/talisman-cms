@@ -29,10 +29,10 @@ export function toErrorResponse(error: unknown, context: string): Response {
   }
   // A hook failure is answered below, once a database cause has been ruled out.
   if (error instanceof ServiceError && !(error instanceof HookError)) {
-    return Response.json({ error: error.message }, { status: error.status });
+    return Response.json({ error: error.message, ...(error.status === 409 ? { code: error.code } : {}) }, { status: error.status });
   }
   if (isRevisionConflict(error) || isSlugConflict(error)) {
-    return Response.json({ error: (error as Error).message }, { status: 409 });
+    return Response.json({ error: (error as Error).message, code: isRevisionConflict(error) ? 'revision_conflict' : 'slug_conflict' }, { status: 409 });
   }
   if (isEntryNotFound(error)) {
     return Response.json({ error: (error as Error).message }, { status: 404 });
@@ -40,7 +40,7 @@ export function toErrorResponse(error: unknown, context: string): Response {
 
   const constraint = constraintErrorFrom(error);
   if (constraint) {
-    return Response.json({ error: constraint.message }, { status: constraint.status });
+    return Response.json({ error: constraint.message, ...(constraint.status === 409 ? { code: constraint.code } : {}) }, { status: constraint.status });
   }
 
   console.error(`[talisman-cms] ${context}:`, error);

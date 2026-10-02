@@ -1,7 +1,8 @@
+import { privateRoute } from '../../../private-response';
 import type { APIRoute } from 'astro';
 import { authAdapter, authConfigured } from 'virtual:talisman-cms/auth';
 
-export const GET: APIRoute = async ({ request }) => {
+export const GET: APIRoute = privateRoute(async ({ request }) => {
   const isDevAuth = authAdapter?.__talismanAuthRuntime?.moduleId === 'talisman-cms/auth/dev';
   const isAccessAuth = authAdapter?.__talismanAuthRuntime?.moduleId === 'talisman-cms/auth/access';
   const isHybridAuth = authAdapter?.__talismanAuthRuntime?.moduleId === 'talisman-cms/auth/hybrid';
@@ -31,4 +32,4 @@ export const GET: APIRoute = async ({ request }) => {
     status: 200,
     headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
   });
-};
+});

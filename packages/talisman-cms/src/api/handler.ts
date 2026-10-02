@@ -1,3 +1,4 @@
+import { privateRoute } from '../private-response';
 import type { APIRoute } from 'astro';
 import { count, sql } from 'drizzle-orm';
 import { createDbClient, type TalismanEnv } from '../db/client';
@@ -134,7 +135,7 @@ async function resolveConfigured(service: ReturnType<typeof createService>, slug
   return collection;
 }
 
-export const ALL: APIRoute = async ({ request, locals }) => {
+export const ALL: APIRoute = privateRoute(async ({ request, locals }) => {
   const url = new URL(request.url);
   const path = url.pathname;
   
@@ -393,4 +394,4 @@ export const ALL: APIRoute = async ({ request, locals }) => {
   }
 
   return new Response(JSON.stringify({ error: 'Not Found' }), { status: 404 });
-};
+});

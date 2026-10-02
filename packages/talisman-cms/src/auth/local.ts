@@ -289,11 +289,11 @@ export function LocalAuthAdapter(adminPath?: string, options: { requireAccess?: 
         const existing = await db.select().from(schema.user).where(sql`lower(${schema.user.email}) = ${normalizedEmail}`).get();
         if (existing) {
           if (existing.role !== 'customer') {
-            return Response.json({ error: 'This email already has a CMS account' }, { status: 409 });
+            return Response.json({ error: 'This email already has a CMS account', code: 'conflict' }, { status: 409 });
           }
           if (existing.banned) {
             // A disabled account keeps its ban after losing CMS access; re-enabling it is a separate, explicit step.
-            return Response.json({ error: 'This account is disabled. Enable it in the user list before granting CMS access.' }, { status: 409 });
+            return Response.json({ error: 'This account is disabled. Enable it in the user list before granting CMS access.', code: 'conflict' }, { status: 409 });
           }
           const auth = createLocalAuth(request, env, normalizedPath);
           const notGranted = await endSessionsBeforeGrant(auth, existing.id, request.headers);

@@ -21,6 +21,7 @@ export interface PublishWorkflowPayload {
 const REVISION_CONFLICT_MESSAGE = 'This entry changed since it was opened. Reload it before saving.';
 
 export class RevisionConflictError extends Error {
+  readonly code = 'revision_conflict';
   constructor() {
     super(REVISION_CONFLICT_MESSAGE);
     this.name = 'RevisionConflictError';
@@ -35,6 +36,7 @@ export function isRevisionConflict(error: unknown) {
 const SLUG_CONFLICT_MESSAGE = 'Another entry in this collection already uses this slug.';
 
 export class SlugConflictError extends Error {
+  readonly code = 'slug_conflict';
   constructor() {
     super(SLUG_CONFLICT_MESSAGE);
     this.name = 'SlugConflictError';

@@ -1,3 +1,4 @@
+import { privateRoute } from '../../private-response';
 import type { APIRoute } from 'astro';
 import { eq } from 'drizzle-orm';
 import { createDbClient, invalidateEntryCache, type TalismanEnv } from '../../client';
@@ -6,7 +7,7 @@ import { authorizeCmsRequest } from '../../auth/guard';
 import { MAX_MEDIA_BYTES, isMediaCollection, mediaPath, rasterImageType } from '../../db/media-policy';
 import { loadServiceConfig } from '../../service/config';
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = privateRoute(async ({ request }) => {
   const authorization = await authorizeCmsRequest(request);
   if (authorization.response) return authorization.response;
 
@@ -85,4 +86,4 @@ export const POST: APIRoute = async ({ request }) => {
       headers: { 'Content-Type': 'application/json' }
     });
   }
-};
+});

@@ -1,3 +1,4 @@
+import { privateResponse } from '../private-response';
 import type { TalismanAuthAdapter, TalismanUser } from './types';
 
 export type CmsAuthorization =
@@ -5,7 +6,7 @@ export type CmsAuthorization =
   | { user?: never; response: Response };
 
 function errorResponse(status: number, error: string): Response {
-  return Response.json({ error }, { status });
+  return privateResponse(Response.json({ error }, { status }));
 }
 
 export async function authorizeCmsRequestWithAdapter(

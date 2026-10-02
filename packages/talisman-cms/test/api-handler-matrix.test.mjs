@@ -209,3 +209,13 @@ test('a create that loses a unique-constraint race answers 409 without the state
     sqlite.close();
   }
 });
+
+test('private API success and validation/not-found/auth errors carry consistent privacy headers', { skip }, async () => {
+  const sqlite = database();
+  try {
+    for (const [method, path, body] of [['GET','/collections/posts/entries'],['GET','/collections/absent/entries'],['POST','/collections/posts/entries',{data:{}}]]) {
+      const result = await call(method, path, body);
+      for (const [key,value] of [['cache-control','no-store'],['referrer-policy','no-referrer'],['x-robots-tag','noindex, nofollow'],['x-frame-options','DENY']]) assert.equal(result.headers.get(key),value);
+    }
+  } finally { sqlite.close(); }
+});

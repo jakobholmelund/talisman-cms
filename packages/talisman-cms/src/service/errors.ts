@@ -99,7 +99,7 @@ export const NATIVE_RECORD_CONFLICT_MESSAGE = 'This record changed since it was 
 /** A native row changed since the caller loaded it (its `updatedAt` no longer matches). */
 export class NativeRecordConflictError extends ServiceError {
   constructor() {
-    super('conflict', 409, NATIVE_RECORD_CONFLICT_MESSAGE);
+    super('stale_record', 409, NATIVE_RECORD_CONFLICT_MESSAGE);
     this.name = 'NativeRecordConflictError';
   }
 }

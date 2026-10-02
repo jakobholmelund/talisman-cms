@@ -199,3 +199,30 @@ test('the setup check answers plainly, and the SSO route exists, only for the au
   } finally { sqlite.close(); }
   runtime.setAdapter(null);
 });
+
+test('protected guard successes, denials, and redirects all preserve CSP with private response headers', { skip }, async () => {
+  const check = response => {
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    assert.equal(response.headers.get('Referrer-Policy'), 'no-referrer');
+    assert.equal(response.headers.get('X-Robots-Tag'), 'noindex, nofollow');
+    assert.equal(response.headers.get('X-Frame-Options'), 'DENY');
+    assert.match(response.headers.get('Content-Security-Policy'), /frame-ancestors 'none'/);
+  };
+  runtime.protectedRoutes['/cms/tools'] = 'page';
+  runtime.setAdapter({ getUser: async () => null });
+  check(await onRequest(context('/cms/tools'), nextResponse()));
+  runtime.setAdapter({ getUser: async () => ({ role: 'editor', id: 'e', email: 'e@example.test' }) });
+  const success = await onRequest(context('/cms/tools'), async () => new Response('ok', { headers: { 'Content-Security-Policy': "script-src 'self' 'nonce-test'; style-src 'self'; frame-ancestors 'self'" } }));
+  check(success);
+  assert.match(success.headers.get('Content-Security-Policy'), /script-src 'self' 'nonce-test'; style-src 'self'/);
+  check(await setupRoute.GET({ request: new Request(`${ORIGIN}/admin/api/auth/setup`) }));
+});
+
+test('the unauthenticated admin shell preserves Astro-generated CSP and adds framing/privacy headers', { skip }, async () => {
+  // The virtual module in this fixture uses /admin; the integration's custom-path mapping is tested separately.
+  runtime.setAdapter({ getUser: async () => { throw new Error('shell must not authenticate'); } });
+  const response = await onRequest(context('/admin'), async () => new Response('<html>shell</html>', { headers: { 'Content-Security-Policy': "script-src 'self' 'sha256-test'; style-src 'self'" } }));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('Cache-Control'), 'no-store');
+  assert.equal(response.headers.get('Content-Security-Policy'), "script-src 'self' 'sha256-test'; style-src 'self'; frame-ancestors 'none'");
+});

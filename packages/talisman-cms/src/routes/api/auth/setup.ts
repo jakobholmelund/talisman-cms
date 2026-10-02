@@ -1,3 +1,4 @@
+import { privateRoute } from '../../../private-response';
 import type { APIRoute } from 'astro';
 import { drizzle } from 'drizzle-orm/d1';
 import { createInitialAdmin, getAccessEmail, getLocalAuthEnv } from '../../../auth/local';
@@ -21,7 +22,7 @@ async function setupState(request: Request) {
   return { env, accessEmail, required: existing.length === 0 };
 }
 
-export const GET: APIRoute = async ({ request }) => {
+export const GET: APIRoute = privateRoute(async ({ request }) => {
   // Hybrid, Access and dev auth have no first-admin setup; the sign-in panel asks on every load, so
   // answer plainly instead of with an error it would log.
   if (authAdapter?.__talismanAuthRuntime?.moduleId !== 'talisman-cms/auth/local') {
@@ -30,16 +31,16 @@ export const GET: APIRoute = async ({ request }) => {
   const state = await setupState(request);
   if ('response' in state) return state.response!;
   return Response.json({ required: state.required }, { headers: { 'Cache-Control': 'no-store' } });
-};
+});
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = privateRoute(async ({ request }) => {
   const origin = request.headers.get('origin');
   if (origin !== new URL(request.url).origin) {
     return Response.json({ error: 'Same-origin request required' }, { status: 403 });
   }
   const state = await setupState(request);
   if ('response' in state) return state.response!;
-  if (!state.required) return Response.json({ error: 'Setup is already complete' }, { status: 409 });
+  if (!state.required) return Response.json({ error: 'Setup is already complete', code: 'conflict' }, { status: 409 });
 
   const expected = readSetting(state.env, 'AUTH_SETUP_TOKEN');
   const supplied = request.headers.get('x-talisman-setup-token') || '';
@@ -67,6 +68,7 @@ export const POST: APIRoute = async ({ request }) => {
   const existingAccount = () => drizzle(state.env!.DB).select({ role: user.role }).from(user)
     .where(sql`lower(${user.email}) = ${email}`).limit(1).then(rows => rows[0]);
   const conflict = (account: { role: string | null }) => Response.json({
+    code: 'conflict',
     error: account.role === 'customer'
       ? 'This email belongs to a shopper account. Use a different email for the first admin.'
       : 'This email already has an account. Use a different email for the first admin.',
@@ -83,4 +85,4 @@ export const POST: APIRoute = async ({ request }) => {
     throw error;
   }
   return Response.json({ created: true }, { status: 201, headers: { 'Cache-Control': 'no-store' } });
-};
+});
