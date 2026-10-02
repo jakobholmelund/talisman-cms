@@ -28,7 +28,7 @@ binding = "AI"
 
 The screen and its POST endpoint are available only when the ecommerce plugin is registered. Questions require the CMS admin role. A Workers AI model maps each question to an allowlisted subject, UTC period, and optional previous-period comparison. Talisman then calculates the report from D1 and/or Cloudflare; the model cannot run SQL or see order, customer, or traffic records. Questions are sent to Workers AI and [inference uses the account's Workers AI allocation](https://developers.cloudflare.com/workers-ai/platform/pricing/).
 
-Supported questions cover confirmed sales, top products, refunds, traffic, and traffic alongside sales for today, yesterday, the last 7 or 30 days, this month, or last month. Precise conversion funnels, attribution, customer-level analysis, predictions, and causal explanations are not supported by these data sources. Reports show their exact UTC boundaries, with times whenever a boundary is not at midnight, and their metric definitions. If the AI binding is missing, the endpoint returns a configuration error.
+Supported questions cover confirmed sales, top products, refunds, traffic, and traffic alongside sales for today, yesterday, the last 7 or 30 days, this month, or last month. Precise conversion funnels, attribution, customer-level analysis, predictions, and causal explanations are not supported by these data sources. Reports show their exact UTC boundaries, with times whenever a boundary is not at midnight, and their metric definitions. Unsupported time periods are rejected explicitly; they are never intentionally replaced with another window. If a binding or traffic credential is missing, the endpoint returns a setup error. A combined report keeps its commerce figures when Cloudflare traffic fails, with a note explaining the missing portion.
 
 Comparisons use the matching span of the period before. Today is compared with yesterday up to the same time. This month is compared with last month up to the same day and time, or with all of last month once this month is longer. Yesterday is compared with the day before, last month with the month before, and the last 7 or 30 days with the 7 or 30 days before them. The summary names the exact window it compares with. A refunds question is summarized and compared by refunds, not by net sales. Until refund dates are recorded (see below), a refunds comparison compares the refunds on the orders paid in each window, not the refunds issued in it, and the summary and metrics say so.
 
@@ -51,7 +51,7 @@ If Cloudflare already injects its beacon, no Astro changes are needed. For a sit
 import Beacon from '@talisman-cms/plugin-analytics/beacon';
 ---
 <head>
-  <Beacon token="YOUR_WEB_ANALYTICS_SITE_TAG" />
+  <Beacon token="YOUR_WEB_ANALYTICS_SITE_TAG" adminPath="/admin" />
 </head>
 ```
 
@@ -73,3 +73,18 @@ How refunds are dated depends on the database, and both screens say which rule a
 - **By payment date.** Without that table, the plugin cannot tell when a Stripe refund was issued. Every refund counts on the payment date of the refunded order, and net sales are those orders' sales less their refunds so far, so the totals for a past period drop when one of its orders is refunded later.
 
 Cloudflare may use [adaptive sampling](https://developers.cloudflare.com/web-analytics/faq/) for aggregated traffic. Cloudflare page views and D1 orders have different collection methods, so the plugin does not claim a precise visit-to-purchase conversion rate. Cloudflare Web Analytics currently has no custom events or UTM attribution.
+
+
+## Boundaries and operational limits
+
+Daily charts fill every UTC date intersecting the report window with zeros where no events were recorded. The start boundary is inclusive and the end exclusive; rolling 7/30-day windows include partial first and last calendar days. Page views count page loads; visits follow Cloudflare's navigation/referrer definition and are not unique people. Traffic queries exclude the configured admin path and its descendants, plus `/api` and its descendants, before aggregation. Paths with a similar prefix remain eligible. The route derives the admin path from its mounted URL.
+
+The Beacon component uses Cloudflare's supported `type="module"` script shape and omits admin/API pages. Pass the CMS's `adminPath` when using a custom admin path. Keep it in a public layout only. For automatic Cloudflare injection, the admin shell must also send `Cache-Control: private, no-store, no-transform`; the core backend owns that protection. Reporting filters do not stop collection by an automatically injected beacon.
+
+Ask waits at most 10 seconds for Workers AI and permits one outstanding call per AI binding in each isolate. A timed-out binding keeps its slot until that call settles because the binding has no abort contract. Each admin user may submit five questions per minute per configuration in an isolate (including cache hits). Reports cache for at most two minutes in bounded isolate memory; Ask cache entries are separated by user, binding/configuration and exact question. Authorization runs on every request. Failures and degraded Ask reports are not cached. These limits are best-effort within each Worker isolate, not an account-wide quota; use platform controls for a global inference budget. Responses use `private, no-store` so browsers and shared caches do not retain private reports. Ask fetches traffic only, without the dashboard's Web Vitals call.
+
+Commerce queries select eligible payment/refund windows before expanding item JSON and calculating refund shares. Historical refund ledger rows for an eligible order remain available so cumulative rounding, duplicate-refund trimming and undated remainders stay exact. Gross sales, net sales, provider charges, refunds and product values retain the distinct definitions above; currencies are never combined.
+
+Local regression coverage includes production route authorization, admin roles, origins, body/media limits, setup/upstream failures, cache isolation/expiry, throttling, UTC chart gaps, refund arithmetic, and a real compiled Beacon render. Run `node packages/plugin-analytics/test/admin-browser.mjs` from a sanitized workspace clone for Chrome checks of missing bindings, degraded reports, accessible controls, errors and chart values.
+
+Before launch, the owner still verifies the GraphQL queries and path filters against the intended Cloudflare account/schema, token permissions, real traffic and Web Vitals availability, AI binding/model availability and allocation, beacon delivery under the deployed CSP, and automatic-injection exclusion on admin pages. Local fixtures do not complete these external gates. No new migrations or bindings are introduced by these fixes.
