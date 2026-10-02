@@ -1,48 +1,52 @@
 import {
   BASKET_LIMIT_MESSAGE,
   basketCreationOverLimit
-} from "./chunk-GTFAE5ME.js";
+} from "./chunk-Y55KJVWB.js";
 import {
   CODE_CHECK_LIMIT_MESSAGE,
   codeChecksOverBasketLimit,
   codeChecksOverNetworkLimit
-} from "./chunk-WGOMFUHS.js";
+} from "./chunk-UABJM5EO.js";
 import {
   runtimePaymentAdapters
-} from "./chunk-DQ2SJLJ6.js";
-import "./chunk-6L7TQXAW.js";
+} from "./chunk-M4D42HVD.js";
+import "./chunk-DR67UJVQ.js";
 import {
   CART_MAX_LINE_QUANTITY,
   PARKED_CHECKOUT_MESSAGE,
   PROVIDER_CHECK_RETRY_MESSAGE,
   TaxCalculationError,
-  bindCommerceApi
-} from "./chunk-3F4TX7AS.js";
-import "./chunk-TT3MVFMZ.js";
+  bindCommerceApi,
+  checkoutSchema,
+  isCheckoutDetailsError
+} from "./chunk-7PYQCX2K.js";
+import "./chunk-BSTJ7GJ6.js";
 import {
   codeRefusalBody
-} from "./chunk-NOGKXEVT.js";
+} from "./chunk-KO7Q6OA7.js";
 import "./chunk-BGDJXEM5.js";
-import {
-  ensureCartSession,
-  readCartSessionToken
-} from "./chunk-MDTTSWBR.js";
-import "./chunk-FFJXPA3V.js";
+import "./chunk-FET6OEOB.js";
 import {
   StoreSettingsError,
   readStoreSettings,
-  reportStoreSettingsError
-} from "./chunk-4LBJN5LU.js";
+  reportStoreSettingsError,
+  shopperFailure
+} from "./chunk-DN5M73UO.js";
 import {
   REFERRAL_COOKIE
-} from "./chunk-NTFJG6BA.js";
+} from "./chunk-JHSJ3R6O.js";
 import "./chunk-GNU6N22K.js";
 import {
   CUSTOMER_SESSION_COOKIE,
   findCustomerSession
-} from "./chunk-IAWGIRUS.js";
-import "./chunk-ZI5IJOR6.js";
-import "./chunk-NKJTK7MK.js";
+} from "./chunk-KGRQF4NN.js";
+import "./chunk-FDE2IMK7.js";
+import "./chunk-RVXM5XJ4.js";
+import {
+  ensureCartSession,
+  readCartSessionToken,
+  setOrderAccess
+} from "./chunk-NQUBOBQT.js";
 import "./chunk-NMGICNSV.js";
 import "./chunk-2UYSCNNW.js";
 
@@ -144,29 +148,12 @@ var ecommerceActions = {
     }
   }),
   checkout: defineAction({
-    input: z.object({
-      customerEmail: z.string().email(),
-      discountCode: z.string().trim().max(32).optional(),
-      giftCardCode: z.string().trim().max(37).optional(),
-      shippingAddress: z.object({
-        name: z.string().optional(),
-        line1: z.string().optional(),
-        line2: z.string().optional(),
-        city: z.string().optional(),
-        state: z.string().optional(),
-        postalCode: z.string().optional(),
-        country: z.string().optional()
-      }).passthrough().optional(),
-      billingAddress: z.object({
-        name: z.string().optional(),
-        line1: z.string().optional(),
-        line2: z.string().optional(),
-        city: z.string().optional(),
-        state: z.string().optional(),
-        postalCode: z.string().optional(),
-        country: z.string().optional()
-      }).passthrough().optional(),
-      shippingRateId: z.string().trim().max(40).optional()
+    // Astro may carry another Zod major/minor. This adapter validates through the one checkout schema.
+    input: z.custom().transform((input, context) => {
+      const parsed = checkoutSchema.safeParse(input);
+      if (parsed.success) return parsed.data;
+      for (const issue of parsed.error.issues) context.addIssue({ code: "custom", path: issue.path, message: issue.message });
+      return z.NEVER;
     }),
     handler: async (input, context) => {
       const { env } = await import("cloudflare:workers");
@@ -224,6 +211,7 @@ var ecommerceActions = {
           successUrl,
           cancelUrl
         });
+        setOrderAccess(context.cookies, context.url?.protocol === "https:", result.order.id, result.orderAccessToken);
         return {
           success: true,
           redirectUrl: result.paymentUrl,
@@ -240,10 +228,9 @@ var ecommerceActions = {
         }
         const refusal = codeRefusalBody(error);
         if (refusal) throw new ActionError({ code: "CONFLICT", message: refusal.error });
-        throw new ActionError({
-          code: "BAD_REQUEST",
-          message: error.message || "Failed to complete checkout"
-        });
+        if (isCheckoutDetailsError(error)) throw new ActionError({ code: "BAD_REQUEST", message: error.message });
+        const failure = shopperFailure(error);
+        throw new ActionError({ code: failure.status === 400 ? "BAD_REQUEST" : failure.status === 409 ? "CONFLICT" : failure.status === 503 ? "SERVICE_UNAVAILABLE" : "INTERNAL_SERVER_ERROR", message: failure.error });
       }
     }
   })

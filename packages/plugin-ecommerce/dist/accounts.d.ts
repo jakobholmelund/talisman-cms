@@ -1,5 +1,126 @@
 import { TalismanEnv } from 'talisman-cms/client';
 
+declare class ShopperPrivacyError extends Error {
+}
+/**
+ * Server-side privacy operations, authorized by the caller. The public account route passes only the
+ * authenticated account id. Export excludes credentials; anonymization retains accounting ids,
+ * items, money, refunds and append-only ledgers. Shared CMS identities remain the core's responsibility.
+ */
+declare function manageShopperData(env: TalismanEnv, actor: string, input: unknown): Promise<{
+    version: number;
+    exportedAt: string;
+    account: {
+        id: string;
+        email: string;
+        name: string | null;
+        creditBalance: number;
+        createdAt: Date;
+    };
+    orders: {
+        id: string;
+        status: string;
+        fulfillmentStatus: "fulfilled" | "unfulfilled" | "partially_fulfilled";
+        items: {
+            productId: string;
+            variantId?: string;
+            quantity: number;
+            priceAtPurchase: number;
+            usesComponents?: boolean;
+        }[];
+        totalAmount: number;
+        subtotalAmount: number;
+        shippingAmount: number;
+        taxAmount: number;
+        creditApplied: number;
+        discountAmount: number;
+        giftCardApplied: number;
+        currency: string;
+        customerEmail: string | null;
+        shippingAddress: {
+            name?: string;
+            line1?: string;
+            line2?: string;
+            city?: string;
+            state?: string;
+            postalCode?: string;
+            country?: string;
+        } | null;
+        billingAddress: {
+            name?: string;
+            line1?: string;
+            line2?: string;
+            city?: string;
+            state?: string;
+            postalCode?: string;
+            country?: string;
+        } | null;
+        providerRefundedCents: number;
+        giftCardRefundedCents: number;
+        createdAt: Date;
+        operations: {
+            id: string;
+            providerRefunds: {
+                createdAt: Date | null;
+                amountCents: number;
+            }[];
+            fulfillments: {
+                createdAt: Date;
+                carrier: string | null;
+                trackingNumber: string | null;
+                kind: "shipment" | "correction" | "reopen" | "complete";
+            }[];
+            giftCardRefunds: {
+                createdAt: Date;
+                amountCents: number;
+            }[];
+        } | undefined;
+    }[];
+    credit: {
+        kind: "referral_award" | "welcome_award" | "checkout_reserve" | "checkout_release" | "purchase_credit_refund" | "referral_reversal" | "welcome_reversal";
+        amountCents: number;
+        orderId: string;
+        createdAt: Date;
+    }[];
+    referrals: {
+        orderId: string;
+        rewardCents: number;
+        currency: string;
+        status: "approved" | "void";
+        createdAt: Date;
+    }[];
+    giftCardPurchases: {
+        id: string;
+        amountCents: number;
+        status: "paid" | "partially_refunded" | "refunded" | "cancelled" | "pending" | "review";
+        currency: string;
+        providerRefundedCents: number;
+        createdAt: Date;
+    }[];
+    discounts: {
+        code: string;
+        orderId: string;
+        amountCents: number;
+        status: "refunded" | "reserved" | "confirmed" | "cancelled";
+        createdAt: Date;
+    }[];
+    accountId?: undefined;
+    action?: undefined;
+    accountingRetained?: undefined;
+} | {
+    accountId: string;
+    action: "revoke" | "anonymize";
+    accountingRetained: boolean;
+    version?: undefined;
+    exportedAt?: undefined;
+    account?: undefined;
+    orders?: undefined;
+    credit?: undefined;
+    referrals?: undefined;
+    giftCardPurchases?: undefined;
+    discounts?: undefined;
+}>;
+
 declare const CUSTOMER_SESSION_COOKIE = "talisman-customer";
 declare const CUSTOMER_SESSION_MAX_AGE: number;
 /** Store-wide sign-in emails per 24 hours unless `TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT` sets another positive whole number. */
@@ -33,7 +154,10 @@ declare function findCustomerSession(env: TalismanEnv, token?: string | null): P
     cmsUserId: string | null;
     email: string;
     emailNormalized: string;
+    emailCanonical: string | null;
     emailVerifiedAt: Date | null;
+    anonymizedAt: Date | null;
+    sessionVersion: number;
     name: string | null;
     creditBalance: number;
     createdAt: Date;
@@ -104,7 +228,10 @@ declare function consumeCustomerEmailSignIn(env: TalismanEnv, token: string): Pr
         cmsUserId: string | null;
         email: string;
         emailNormalized: string;
+        emailCanonical: string | null;
         emailVerifiedAt: Date | null;
+        anonymizedAt: Date | null;
+        sessionVersion: number;
         name: string | null;
         creditBalance: number;
         createdAt: Date;
@@ -118,6 +245,7 @@ declare function listCustomerOrders(env: TalismanEnv, accountId: string): Promis
     id: string;
     status: string;
     fulfillmentStatus: "fulfilled" | "unfulfilled" | "partially_fulfilled";
+    paymentUnderReview: boolean;
     totalAmount: number;
     subtotalAmount: number;
     shippingAmount: number;
@@ -129,4 +257,4 @@ declare function listCustomerOrders(env: TalismanEnv, accountId: string): Promis
     createdAt: Date;
 }[]>;
 
-export { CUSTOMER_EMAIL_DAILY_LIMIT, CUSTOMER_SESSION_COOKIE, CUSTOMER_SESSION_MAX_AGE, CustomerEmailLimitError, type CustomerEmailSignInOptions, CustomerRequestLimitError, PURCHASED_ORDER_STATUSES, activateNewCustomer, consumeCustomerEmailSignIn, findCustomerSession, hasPurchaseHistory, listCustomerOrders, normalizeShopperEmail, previewCustomerEmailSignIn, requestCustomerEmailSignIn, revokeCustomerSession, shopperSignInBotCheck };
+export { CUSTOMER_EMAIL_DAILY_LIMIT, CUSTOMER_SESSION_COOKIE, CUSTOMER_SESSION_MAX_AGE, CustomerEmailLimitError, type CustomerEmailSignInOptions, CustomerRequestLimitError, PURCHASED_ORDER_STATUSES, ShopperPrivacyError, activateNewCustomer, consumeCustomerEmailSignIn, findCustomerSession, hasPurchaseHistory, listCustomerOrders, manageShopperData, normalizeShopperEmail, previewCustomerEmailSignIn, requestCustomerEmailSignIn, revokeCustomerSession, shopperSignInBotCheck };

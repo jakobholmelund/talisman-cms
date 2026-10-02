@@ -1,33 +1,42 @@
 import {
   basketCreationOverLimit,
   basketLimitResponse
-} from "../chunk-GTFAE5ME.js";
+} from "../chunk-Y55KJVWB.js";
 import {
   bindCommerceApi
-} from "../chunk-3F4TX7AS.js";
-import "../chunk-TT3MVFMZ.js";
-import "../chunk-NOGKXEVT.js";
+} from "../chunk-7PYQCX2K.js";
+import "../chunk-BSTJ7GJ6.js";
+import "../chunk-KO7Q6OA7.js";
 import "../chunk-BGDJXEM5.js";
-import {
-  ensureCartSession,
-  readCartSessionToken
-} from "../chunk-MDTTSWBR.js";
-import "../chunk-FFJXPA3V.js";
-import "../chunk-4LBJN5LU.js";
-import "../chunk-NTFJG6BA.js";
+import "../chunk-FET6OEOB.js";
+import "../chunk-DN5M73UO.js";
+import "../chunk-JHSJ3R6O.js";
 import "../chunk-GNU6N22K.js";
 import {
   CUSTOMER_SESSION_COOKIE,
   findCustomerSession
-} from "../chunk-IAWGIRUS.js";
-import "../chunk-ZI5IJOR6.js";
-import "../chunk-NKJTK7MK.js";
+} from "../chunk-KGRQF4NN.js";
+import "../chunk-FDE2IMK7.js";
+import "../chunk-RVXM5XJ4.js";
+import {
+  ensureCartSession,
+  readCartSessionToken
+} from "../chunk-NQUBOBQT.js";
 import "../chunk-NMGICNSV.js";
 import "../chunk-2UYSCNNW.js";
 
 // src/routes/ecommerce-cart.ts
-function publicCart(cart) {
-  return { id: cart?.id ?? null, items: cart?.items ?? [], locked: Boolean(cart?.checkoutSessionId) };
+async function publicCart(api, cart) {
+  let quote = null;
+  let pricingError = null;
+  if (cart?.items.length) {
+    try {
+      quote = await api.carts.quote(cart.id);
+    } catch {
+      pricingError = "Some basket items are unavailable. Remove them before checkout.";
+    }
+  }
+  return { id: cart?.id ?? null, items: cart?.items ?? [], locked: Boolean(cart?.checkoutSessionId), quote, pricingError };
 }
 async function currentCart(api, sessionToken, customerId) {
   return (customerId && sessionToken ? await api.carts.claim(sessionToken, customerId) : null) ?? await api.carts.find(sessionToken, customerId);
@@ -65,7 +74,7 @@ var ALL = async ({ request, cookies }) => {
     const customer = await findCustomerSession(env, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
     if (request.method === "GET") {
       const cart = await currentCart(api, readCartSessionToken(cookies), customer?.id);
-      return Response.json(publicCart(cart), { headers: { "Cache-Control": "no-store" } });
+      return Response.json(await publicCart(api, cart), { headers: { "Cache-Control": "no-store" } });
     }
     if (request.method === "POST") {
       if (request.headers.get("origin") !== new URL(request.url).origin) {
@@ -75,7 +84,7 @@ var ALL = async ({ request, cookies }) => {
       if (items instanceof Response) return items;
       const existing = await currentCart(api, readCartSessionToken(cookies), customer?.id);
       if (!items.length && !existing) {
-        return Response.json(publicCart(null));
+        return Response.json(await publicCart(api, null));
       }
       const checked = await api.carts.validateItems(items, existing?.items);
       if (!existing && await basketCreationOverLimit(env, request.headers.get("cf-connecting-ip"))) {
@@ -87,7 +96,7 @@ var ALL = async ({ request, cookies }) => {
         return new Response(JSON.stringify({ error: "Failed to find or create cart" }), { status: 500 });
       }
       const updated = await api.carts.updateItems(cart.id, checked);
-      return new Response(JSON.stringify(publicCart(updated)), {
+      return new Response(JSON.stringify(await publicCart(api, updated)), {
         status: 200,
         headers: { "Content-Type": "application/json" }
       });

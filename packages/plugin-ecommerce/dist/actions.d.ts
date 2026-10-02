@@ -149,7 +149,6 @@ declare const ecommerceActions: {
         discountCode?: string | undefined;
         giftCardCode?: string | undefined;
         shippingAddress?: {
-            [x: string]: unknown;
             name?: string | undefined;
             line1?: string | undefined;
             line2?: string | undefined;
@@ -159,7 +158,6 @@ declare const ecommerceActions: {
             country?: string | undefined;
         } | undefined;
         billingAddress?: {
-            [x: string]: unknown;
             name?: string | undefined;
             line1?: string | undefined;
             line2?: string | undefined;
@@ -174,7 +172,6 @@ declare const ecommerceActions: {
         discountCode?: string | undefined;
         giftCardCode?: string | undefined;
         shippingAddress?: {
-            [x: string]: unknown;
             name?: string | undefined;
             line1?: string | undefined;
             line2?: string | undefined;
@@ -184,7 +181,6 @@ declare const ecommerceActions: {
             country?: string | undefined;
         } | undefined;
         billingAddress?: {
-            [x: string]: unknown;
             name?: string | undefined;
             line1?: string | undefined;
             line2?: string | undefined;
@@ -206,7 +202,6 @@ declare const ecommerceActions: {
             discountCode?: string | undefined;
             giftCardCode?: string | undefined;
             shippingAddress?: {
-                [x: string]: unknown;
                 name?: string | undefined;
                 line1?: string | undefined;
                 line2?: string | undefined;
@@ -216,7 +211,6 @@ declare const ecommerceActions: {
                 country?: string | undefined;
             } | undefined;
             billingAddress?: {
-                [x: string]: unknown;
                 name?: string | undefined;
                 line1?: string | undefined;
                 line2?: string | undefined;
@@ -233,30 +227,99 @@ declare const ecommerceActions: {
             orderId: string;
         }>;
     } & {
-        __internalInfer: z.ZodObject<{
-            customerEmail: z.ZodString;
-            discountCode: z.ZodOptional<z.ZodString>;
-            giftCardCode: z.ZodOptional<z.ZodString>;
-            shippingAddress: z.ZodOptional<z.ZodObject<{
-                name: z.ZodOptional<z.ZodString>;
-                line1: z.ZodOptional<z.ZodString>;
-                line2: z.ZodOptional<z.ZodString>;
-                city: z.ZodOptional<z.ZodString>;
-                state: z.ZodOptional<z.ZodString>;
-                postalCode: z.ZodOptional<z.ZodString>;
-                country: z.ZodOptional<z.ZodString>;
-            }, z.core.$loose>>;
-            billingAddress: z.ZodOptional<z.ZodObject<{
-                name: z.ZodOptional<z.ZodString>;
-                line1: z.ZodOptional<z.ZodString>;
-                line2: z.ZodOptional<z.ZodString>;
-                city: z.ZodOptional<z.ZodString>;
-                state: z.ZodOptional<z.ZodString>;
-                postalCode: z.ZodOptional<z.ZodString>;
-                country: z.ZodOptional<z.ZodString>;
-            }, z.core.$loose>>;
-            shippingRateId: z.ZodOptional<z.ZodString>;
-        }, z.core.$strip>;
+        __internalInfer: z.ZodPipe<z.ZodCustom<{
+            customerEmail: string;
+            discountCode?: string | undefined;
+            giftCardCode?: string | undefined;
+            shippingAddress?: {
+                name?: string | undefined;
+                line1?: string | undefined;
+                line2?: string | undefined;
+                city?: string | undefined;
+                state?: string | undefined;
+                postalCode?: string | undefined;
+                country?: string | undefined;
+            } | undefined;
+            billingAddress?: {
+                name?: string | undefined;
+                line1?: string | undefined;
+                line2?: string | undefined;
+                city?: string | undefined;
+                state?: string | undefined;
+                postalCode?: string | undefined;
+                country?: string | undefined;
+            } | undefined;
+            shippingRateId?: string | undefined;
+        }, {
+            customerEmail: string;
+            discountCode?: string | undefined;
+            giftCardCode?: string | undefined;
+            shippingAddress?: {
+                name?: string | undefined;
+                line1?: string | undefined;
+                line2?: string | undefined;
+                city?: string | undefined;
+                state?: string | undefined;
+                postalCode?: string | undefined;
+                country?: string | undefined;
+            } | undefined;
+            billingAddress?: {
+                name?: string | undefined;
+                line1?: string | undefined;
+                line2?: string | undefined;
+                city?: string | undefined;
+                state?: string | undefined;
+                postalCode?: string | undefined;
+                country?: string | undefined;
+            } | undefined;
+            shippingRateId?: string | undefined;
+        }>, z.ZodTransform<{
+            customerEmail: string;
+            discountCode?: string | undefined;
+            giftCardCode?: string | undefined;
+            shippingAddress?: {
+                name?: string | undefined;
+                line1?: string | undefined;
+                line2?: string | undefined;
+                city?: string | undefined;
+                state?: string | undefined;
+                postalCode?: string | undefined;
+                country?: string | undefined;
+            } | undefined;
+            billingAddress?: {
+                name?: string | undefined;
+                line1?: string | undefined;
+                line2?: string | undefined;
+                city?: string | undefined;
+                state?: string | undefined;
+                postalCode?: string | undefined;
+                country?: string | undefined;
+            } | undefined;
+            shippingRateId?: string | undefined;
+        }, {
+            customerEmail: string;
+            discountCode?: string | undefined;
+            giftCardCode?: string | undefined;
+            shippingAddress?: {
+                name?: string | undefined;
+                line1?: string | undefined;
+                line2?: string | undefined;
+                city?: string | undefined;
+                state?: string | undefined;
+                postalCode?: string | undefined;
+                country?: string | undefined;
+            } | undefined;
+            billingAddress?: {
+                name?: string | undefined;
+                line1?: string | undefined;
+                line2?: string | undefined;
+                city?: string | undefined;
+                state?: string | undefined;
+                postalCode?: string | undefined;
+                country?: string | undefined;
+            } | undefined;
+            shippingRateId?: string | undefined;
+        }>>;
     } & string;
 };
 

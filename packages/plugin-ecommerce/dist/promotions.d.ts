@@ -3,7 +3,7 @@ import { TalismanEnv } from 'talisman-cms/client';
 import { z } from 'zod';
 import { discountCodes } from './schema.js';
 import 'drizzle-orm';
-import './payments-TQo6Ws_B.js';
+import './payments-C3gqo5tp.js';
 import 'drizzle-orm/sqlite-core';
 
 declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
@@ -21,9 +21,9 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     expiresAt: z.ZodNullable<z.ZodNumber>;
     active: z.ZodBoolean;
 }, "strict", z.ZodTypeAny, {
+    active: boolean;
     description: string | null;
     type: "amount" | "credit" | "percent";
-    active: boolean;
     value: number;
     expiresAt: number | null;
     code: string;
@@ -35,9 +35,9 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     firstOrderOnly: boolean;
     startsAt: number | null;
 }, {
+    active: boolean;
     description: string | null;
     type: "amount" | "credit" | "percent";
-    active: boolean;
     value: number;
     expiresAt: number | null;
     code: string;
@@ -49,9 +49,9 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     firstOrderOnly: boolean;
     startsAt: number | null;
 }>, {
+    active: boolean;
     description: string | null;
     type: "amount" | "credit" | "percent";
-    active: boolean;
     value: number;
     expiresAt: number | null;
     code: string;
@@ -63,9 +63,9 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     firstOrderOnly: boolean;
     startsAt: number | null;
 }, {
+    active: boolean;
     description: string | null;
     type: "amount" | "credit" | "percent";
-    active: boolean;
     value: number;
     expiresAt: number | null;
     code: string;

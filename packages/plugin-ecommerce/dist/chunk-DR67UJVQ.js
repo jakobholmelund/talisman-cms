@@ -156,7 +156,8 @@ var StripePaymentAdapter = class {
       amountTotal: session.amount_total,
       currency: session.currency,
       paymentIntentId: typeof session.payment_intent === "string" ? session.payment_intent : null,
-      customerEmail: session.customer_details?.email ?? session.customer_email
+      customerEmail: session.customer_details?.email ?? session.customer_email,
+      references: { orderId: session.metadata?.orderId, giftCardPurchaseId: session.metadata?.giftCardPurchaseId }
     };
   }
   async getPaymentReferences(paymentIntentId) {
@@ -211,6 +212,28 @@ var StripePaymentAdapter = class {
       amountTotal: calculation.amount_total,
       taxAmountExclusive: calculation.tax_amount_exclusive,
       taxAmountInclusive: calculation.tax_amount_inclusive
+    };
+  }
+  async getTaxRecord(id) {
+    const record = await this.stripe.tax.transactions.retrieve(id);
+    let amountTotal = 0;
+    let amountTax = 0;
+    for await (const line of this.stripe.tax.transactions.listLineItems(id, { limit: 100 })) {
+      amountTotal += line.amount + (line.tax_behavior === "exclusive" ? line.amount_tax : 0);
+      amountTax += line.amount_tax;
+    }
+    const shipping = record.shipping_cost;
+    if (shipping) {
+      amountTotal += shipping.amount + (shipping.tax_behavior === "exclusive" ? shipping.amount_tax : 0);
+      amountTax += shipping.amount_tax;
+    }
+    return {
+      reference: record.reference,
+      currency: record.currency,
+      type: record.type,
+      amountTotal,
+      amountTax,
+      originalTransaction: record.reversal?.original_transaction ?? null
     };
   }
   async recordTaxTransaction(params) {

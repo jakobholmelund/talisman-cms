@@ -1,6 +1,6 @@
 import { SQL } from 'drizzle-orm';
 import { TalismanEnv } from 'talisman-cms/client';
-import { P as PaymentProviderAdapter } from './payments-TQo6Ws_B.js';
+import { P as PaymentProviderAdapter } from './payments-C3gqo5tp.js';
 import { C as CommerceEmailComposer } from './email-deliveries-CyzibTug.js';
 import 'talisman-cms/email';
 import './emails.js';

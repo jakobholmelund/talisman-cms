@@ -1,6 +1,6 @@
 import { SQL } from 'drizzle-orm';
 import { TalismanEnv } from 'talisman-cms/client';
-import { P as PaymentProviderAdapter } from './payments-TQo6Ws_B.js';
+import { P as PaymentProviderAdapter } from './payments-C3gqo5tp.js';
 import { orders } from './schema.js';
 import 'drizzle-orm/sqlite-core';
 
@@ -49,7 +49,11 @@ declare function referralTermsError(terms: {
 declare function referralPolicy(env: TalismanEnv): ReferralPolicy;
 /** Saved admin settings win over the Worker settings, in both directions; the limits always come from the Worker. */
 declare function getReferralPolicy(env: TalismanEnv): Promise<ReferralPolicy>;
-type QualifyingOrder = Pick<typeof orders.$inferSelect, 'status' | 'subtotalAmount' | 'discountAmount' | 'providerRefundedCents' | 'giftCardRefundedCents'>;
+type QualifyingOrder = Pick<typeof orders.$inferSelect, 'status' | 'subtotalAmount' | 'discountAmount' | 'providerRefundedCents' | 'giftCardRefundedCents'> & {
+    referralTerms?: {
+        minOrderCents: number;
+    } | null;
+};
 /**
  * What the shopper paid for the goods after promotions and refunds: the subtotal less the promotion
  * discount, provider refunds and gift card refunds. Store credit and gift card tender count as paid.
@@ -123,6 +127,7 @@ type ReferralDashboard = {
         /** When a pending award can be released at the earliest; null once released or void. */
         releasesAt: Date | null;
     }>;
+    welcome: ReferralDashboard['earned'][number] | null;
     activity: Array<{
         id: string;
         orderId: string;

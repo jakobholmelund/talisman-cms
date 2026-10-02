@@ -1,18 +1,106 @@
-import * as drizzle_orm_sqlite_core from 'drizzle-orm/sqlite-core';
 import { FieldDefinition, CollectionConfig } from 'talisman-cms';
 import { TalismanEnv } from 'talisman-cms/client';
 import { PRODUCT_STATUSES } from './schema.js';
 import 'drizzle-orm';
+import 'drizzle-orm/sqlite-core';
 
-/**
- * The catalog in one statement, for a storefront: every product with its variant groups, each with
- * its definition, its values, their stock rows and bills of materials, and the product's categories
- * and tags, oldest first; `status` narrows the products. Read from D1 without the KV cache, so a
- * Commerce edit shows on the next request. One call serves every product a page shows.
- */
-declare function readCatalog(env: TalismanEnv, options?: {
+type CatalogReadOptions = {
     status?: ReadonlyArray<typeof PRODUCT_STATUSES[number]>;
-}): drizzle_orm_sqlite_core.SQLiteAsyncRelationalQuery<"async", {
+    ids?: string[];
+    slug?: string;
+    limit?: number;
+    cursor?: string;
+};
+/** Bounded catalog page: at most 100 products, with stable createdAt/id continuation and optional ids/slug/status. */
+declare function readCatalogPage(env: TalismanEnv, options?: CatalogReadOptions): Promise<{
+    products: {
+        id: string;
+        createdAt: Date;
+        updatedAt: Date;
+        status: "draft" | "active" | "archived";
+        name: string;
+        slug: string;
+        sku: string | null;
+        description: string | null;
+        images: string[];
+        categoryIds: string[];
+        tagIds: string[];
+        basePrice: number;
+        isPhysical: boolean;
+        inventoryQuantity: number;
+        type: "standard" | "digital" | "subscription";
+        variants: {
+            id: string;
+            createdAt: Date;
+            updatedAt: Date;
+            name: string;
+            sku: string | null;
+            inventoryQuantity: number;
+            productId: string;
+            variantId: string | null;
+            priceOverride: number | null;
+            variant: {
+                id: string;
+                createdAt: Date;
+                updatedAt: Date;
+                name: string;
+            } | null;
+            values: {
+                id: string;
+                createdAt: Date;
+                updatedAt: Date;
+                sku: string | null;
+                priceOverride: number | null;
+                productVariantId: string;
+                value: string;
+                image: string | null;
+                stock: {
+                    id: string;
+                    createdAt: Date;
+                    updatedAt: Date;
+                    productVariantValueId: string;
+                    quantity: number;
+                } | null;
+                requirements: {
+                    id: string;
+                    createdAt: Date;
+                    updatedAt: Date;
+                    productVariantValueId: string;
+                    quantity: number;
+                    componentId: string;
+                    component: {
+                        id: string;
+                        createdAt: Date;
+                        updatedAt: Date;
+                        name: string;
+                        sku: string;
+                        quantity: number;
+                    };
+                }[];
+            }[];
+        }[];
+        categories: {
+            id: string;
+            createdAt: Date;
+            updatedAt: Date;
+            name: string;
+            slug: string;
+            description: string | null;
+            image: string | null;
+            parentId: string | null;
+        }[];
+        tags: {
+            id: string;
+            createdAt: Date;
+            updatedAt: Date;
+            name: string;
+            color: string;
+        }[];
+    }[];
+    nextCursor: string | null;
+}>;
+/** Compatibility array API, now bounded to 50 by default/100 at most. Use readCatalogPage for continuation. */
+declare function readCatalog(env: TalismanEnv, options?: CatalogReadOptions): Promise<{
     id: string;
     createdAt: Date;
     updatedAt: Date;
@@ -188,4 +276,4 @@ interface CommerceCatalogSeed {
  */
 declare function createCommerceCatalogSeedSql(seed: CommerceCatalogSeed): string;
 
-export { type CatalogProduct, type CommerceCatalogSeed, commerceContentCollection, createCommerceCatalogSeedSql, readCatalog };
+export { type CatalogProduct, type CatalogReadOptions, type CommerceCatalogSeed, commerceContentCollection, createCommerceCatalogSeedSql, readCatalog, readCatalogPage };

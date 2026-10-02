@@ -1,26 +1,31 @@
 import {
+  readBoundedJson
+} from "../chunk-WMVGNPXB.js";
+import {
   runtimePaymentAdapters
-} from "../chunk-DQ2SJLJ6.js";
-import "../chunk-6L7TQXAW.js";
+} from "../chunk-M4D42HVD.js";
+import "../chunk-DR67UJVQ.js";
 import "../chunk-BGDJXEM5.js";
 import {
-  giftCardAccessCookie
-} from "../chunk-MDTTSWBR.js";
-import {
   GIFT_CARD_CLAIMS_PER_NETWORK_PER_HOUR,
+  GiftCardRefusal,
   StoreSettingsError,
   claimGiftCardCode,
   getGiftCardBalance,
   reportStoreSettingsError,
+  shopperFailure,
   startGiftCardPurchase
-} from "../chunk-4LBJN5LU.js";
-import "../chunk-NTFJG6BA.js";
+} from "../chunk-DN5M73UO.js";
+import "../chunk-JHSJ3R6O.js";
 import "../chunk-GNU6N22K.js";
 import {
   clientOverLimit
-} from "../chunk-IAWGIRUS.js";
-import "../chunk-ZI5IJOR6.js";
-import "../chunk-NKJTK7MK.js";
+} from "../chunk-KGRQF4NN.js";
+import "../chunk-FDE2IMK7.js";
+import "../chunk-RVXM5XJ4.js";
+import {
+  giftCardAccessCookie
+} from "../chunk-NQUBOBQT.js";
 import "../chunk-NMGICNSV.js";
 import "../chunk-2UYSCNNW.js";
 
@@ -36,7 +41,7 @@ var POST = async ({ request, cookies }) => {
   try {
     const { env } = await import("cloudflare:workers");
     const runtimeEnv = env;
-    const body = await request.json();
+    const body = await readBoundedJson(request);
     if (body && typeof body === "object" && body.action === "balance" && typeof body.code === "string") {
       return Response.json(await getGiftCardBalance(runtimeEnv, body.code), { headers });
     }
@@ -86,10 +91,9 @@ var POST = async ({ request, cookies }) => {
     if (error instanceof StoreSettingsError) {
       return Response.json({ error: reportStoreSettingsError(error) }, { status: 503, headers });
     }
-    return Response.json(
-      { error: error instanceof Error ? error.message : "Could not start gift card purchase" },
-      { status: 400, headers }
-    );
+    if (error instanceof GiftCardRefusal) return Response.json({ error: "Gift card purchases are unavailable" }, { status: 409, headers });
+    const failure = shopperFailure(error);
+    return Response.json({ error: failure.error, code: failure.code }, { status: failure.status, headers });
   }
 };
 export {

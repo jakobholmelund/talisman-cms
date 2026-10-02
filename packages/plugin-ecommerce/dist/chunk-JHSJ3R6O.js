@@ -1,10 +1,10 @@
 import {
   PURCHASED_ORDER_STATUSES
-} from "./chunk-IAWGIRUS.js";
+} from "./chunk-KGRQF4NN.js";
 import {
   commerceDb,
   runStatements
-} from "./chunk-ZI5IJOR6.js";
+} from "./chunk-FDE2IMK7.js";
 import {
   creditLedger,
   customerAccounts,
@@ -12,7 +12,7 @@ import {
   referralCodes,
   referralSettings,
   referrals
-} from "./chunk-NKJTK7MK.js";
+} from "./chunk-RVXM5XJ4.js";
 
 // src/referrals.ts
 import { and, desc, eq, sql as sql2 } from "drizzle-orm";
@@ -37,25 +37,13 @@ function canonicalEmail(email) {
 function canonicalEmails(emails) {
   return [...new Set(emails.map(canonicalEmail).filter((email) => Boolean(email)))];
 }
-function canonicalEmailSql(address) {
-  const email = `lower(trim(${address}))`;
-  const at = `instr(${email}, '@')`;
-  const local = `substr(${email}, 1, ${at} - 1)`;
-  const domain = `rtrim(substr(${email}, ${at} + 1), '.')`;
-  const base = `(CASE WHEN instr(${local}, '+') > 1 THEN substr(${local}, 1, instr(${local}, '+') - 1) ELSE ${local} END)`;
-  return `(CASE WHEN ${at} < 2 OR ${domain} = '' THEN NULL
-    WHEN ${domain} IN ('gmail.com', 'googlemail.com') THEN replace(${base}, '.', '') || '@gmail.com'
-    ELSE ${base} || '@' || ${domain} END)`;
-}
 function canonicalPurchase(canonicals, excludeOrderId) {
   const statuses = sql.raw(PURCHASED_ORDER_STATUSES.map((status) => `'${status}'`).join(", "));
   const purchased = sql`o.status IN (${statuses}) AND COALESCE(o.payment_provider, 'stripe') <> 'admin_test' AND o.id <> ${excludeOrderId ?? ""}`;
-  return sql`EXISTS (SELECT 1 FROM (
-      SELECT o.customer_email AS address FROM _ecommerce_orders o WHERE ${purchased}
-      UNION ALL
-      SELECT a.email_normalized FROM _ecommerce_orders o
-        JOIN _ecommerce_customer_accounts a ON a.id = o.user_id WHERE ${purchased})
-    WHERE ${sql.raw(canonicalEmailSql("address"))} IN (${sql.join(canonicals.map((canonical) => sql`${canonical}`), sql`, `)}))`;
+  const targets = sql.join(canonicals.map((canonical) => sql`${canonical}`), sql`, `);
+  return sql`(EXISTS (SELECT 1 FROM _ecommerce_orders o WHERE ${purchased} AND o.customer_email_canonical IN (${targets}))
+    OR EXISTS (SELECT 1 FROM _ecommerce_orders o JOIN _ecommerce_customer_accounts a ON a.id = o.user_id
+      WHERE ${purchased} AND a.email_canonical IN (${targets})))`;
 }
 async function hasCanonicalPurchase(env, emails, excludeOrderId) {
   const canonicals = canonicalEmails(emails);
@@ -119,7 +107,7 @@ function referralNetAmount(order) {
   return order.subtotalAmount - order.discountAmount - order.providerRefundedCents - order.giftCardRefundedCents;
 }
 function referralOrderQualifies(order, minOrderCents, rewardCents = 0) {
-  const minimum = Math.min(minOrderCents, order.subtotalAmount - order.discountAmount);
+  const minimum = order.referralTerms?.minOrderCents ?? Math.min(minOrderCents, order.subtotalAmount - order.discountAmount);
   return QUALIFYING_STATUSES.includes(order.status) && referralNetAmount(order) >= Math.max(minimum, 2 * rewardCents);
 }
 function qualifyingOrder(alias, reward, minOrderCents) {
@@ -128,7 +116,7 @@ function qualifyingOrder(alias, reward, minOrderCents) {
   return sql2`(${column("status")} IN (${statuses})
     AND ${column("subtotal_amount")} - ${column("discount_amount")} - ${column("provider_refunded_cents")}
       - ${column("gift_card_refunded_cents")}
-      >= MAX(MIN(${minOrderCents}, ${column("subtotal_amount")} - ${column("discount_amount")}), 2 * ${sql2.raw(reward)}))`;
+      >= MAX(COALESCE(json_extract(${column("referral_terms")}, '$.minOrderCents'), MIN(${minOrderCents}, ${column("subtotal_amount")} - ${column("discount_amount")})), 2 * ${sql2.raw(reward)}))`;
 }
 function referralReversalStatements(orderId, options) {
   const lost = options.disputeLost ? 1 : 0;
@@ -166,8 +154,8 @@ async function releaseReferralAwards(options, run = {}) {
   const limit = Math.max(1, Math.min(50, Math.floor(run.limit ?? 10)));
   const policy = await getReferralPolicy(env);
   const due = await db.all(sql2`SELECT r.id, r.order_id AS orderId, r.reward_cents AS rewardCents
-    FROM _ecommerce_referrals r
-    WHERE r.status = 'approved' AND r.created_at <= ${now - policy.holdDays * DAY_SECONDS}
+    FROM _ecommerce_referrals r JOIN _ecommerce_orders o ON o.id = r.order_id
+    WHERE r.status = 'approved' AND r.created_at <= ${now} - COALESCE(json_extract(o.referral_terms, '$.holdDays'), ${policy.holdDays}) * ${DAY_SECONDS}
       AND NOT EXISTS (SELECT 1 FROM _ecommerce_credit_ledger l
         WHERE l.order_id = r.order_id AND l.kind = 'referral_award')
     ORDER BY r.updated_at, r.created_at LIMIT ${limit}`);
@@ -257,11 +245,12 @@ async function getReferralDashboard(env, accountId) {
     currency: referrals.currency,
     status: referrals.status,
     createdAt: referrals.createdAt,
+    terms: orders.referralTerms,
     awardId: creditLedger.id
-  }).from(referrals).leftJoin(creditLedger, and(eq(creditLedger.orderId, referrals.orderId), eq(creditLedger.kind, "referral_award"))).where(eq(referrals.referrerAccountId, accountId)).orderBy(desc(referrals.createdAt));
-  const earned = rows.map(({ awardId, ...row }) => {
+  }).from(referrals).leftJoin(creditLedger, and(eq(creditLedger.orderId, referrals.orderId), eq(creditLedger.kind, "referral_award"))).innerJoin(orders, eq(orders.id, referrals.orderId)).where(eq(referrals.referrerAccountId, accountId)).orderBy(desc(referrals.createdAt));
+  const earned = rows.map(({ awardId, terms, ...row }) => {
     const state = row.status === "void" ? "void" : awardId ? "released" : "pending";
-    return { ...row, state, releasesAt: state === "pending" ? new Date(row.createdAt.getTime() + policy.holdDays * DAY_SECONDS * 1e3) : null };
+    return { ...row, state, releasesAt: state === "pending" ? new Date(row.createdAt.getTime() + (terms?.holdDays ?? policy.holdDays) * DAY_SECONDS * 1e3) : null };
   });
   const activity = await db.select({
     id: creditLedger.id,
@@ -270,13 +259,32 @@ async function getReferralDashboard(env, accountId) {
     amountCents: creditLedger.amountCents,
     createdAt: creditLedger.createdAt
   }).from(creditLedger).where(eq(creditLedger.accountId, accountId)).orderBy(desc(creditLedger.createdAt)).limit(50);
-  return { code, codeActive, creditBalance: account.creditBalance, earned, activity };
+  const welcomeRow = await db.select({
+    id: referrals.id,
+    orderId: referrals.orderId,
+    rewardCents: referrals.rewardCents,
+    currency: referrals.currency,
+    status: referrals.status,
+    createdAt: referrals.createdAt,
+    terms: orders.referralTerms,
+    awardId: creditLedger.id
+  }).from(referrals).innerJoin(orders, eq(orders.id, referrals.orderId)).leftJoin(creditLedger, and(eq(creditLedger.orderId, referrals.orderId), eq(creditLedger.kind, "welcome_award"))).where(eq(referrals.referredAccountId, accountId)).get();
+  const welcome = welcomeRow ? {
+    id: welcomeRow.id,
+    orderId: welcomeRow.orderId,
+    rewardCents: welcomeRow.rewardCents,
+    currency: welcomeRow.currency,
+    status: welcomeRow.status,
+    createdAt: welcomeRow.createdAt,
+    state: welcomeRow.status === "void" ? "void" : welcomeRow.awardId ? "released" : "pending",
+    releasesAt: welcomeRow.status === "approved" && !welcomeRow.awardId ? new Date(welcomeRow.createdAt.getTime() + (welcomeRow.terms?.holdDays ?? policy.holdDays) * DAY_SECONDS * 1e3) : null
+  } : null;
+  return { code, codeActive, creditBalance: account.creditBalance, earned, welcome, activity };
 }
 
 export {
   canonicalEmail,
   canonicalEmails,
-  canonicalEmailSql,
   canonicalPurchase,
   hasCanonicalPurchase,
   REFERRAL_COOKIE,

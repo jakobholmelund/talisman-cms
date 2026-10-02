@@ -1,5 +1,5 @@
 import Stripe from 'stripe';
-import { P as PaymentProviderAdapter, V as ValidatedWebhookEvent, a as PaymentReferences, c as TaxCalculationParams, b as TaxCalculation } from '../payments-TQo6Ws_B.js';
+import { P as PaymentProviderAdapter, V as ValidatedWebhookEvent, a as PaymentReferences, c as TaxCalculationParams, b as TaxCalculation } from '../payments-C3gqo5tp.js';
 
 interface StripeAdapterConfig {
     secretKey: string;
@@ -54,11 +54,23 @@ declare class StripePaymentAdapter implements PaymentProviderAdapter {
         currency: string | null;
         paymentIntentId: string | null;
         customerEmail: string | null;
+        references: {
+            orderId: string | undefined;
+            giftCardPurchaseId: string | undefined;
+        };
     }>;
     getPaymentReferences(paymentIntentId: string): Promise<PaymentReferences | null>;
     getRefundStatus(paymentIntentId: string): Promise<'none' | 'partial' | 'full'>;
     getDisputeStatus(paymentIntentId: string): Promise<'none' | 'open' | 'lost'>;
     calculateTax(params: TaxCalculationParams): Promise<TaxCalculation>;
+    getTaxRecord(id: string): Promise<{
+        reference: string;
+        currency: string;
+        type: Stripe.Tax.Transaction.Type;
+        amountTotal: number;
+        amountTax: number;
+        originalTransaction: string | null;
+    }>;
     recordTaxTransaction(params: {
         orderId: string;
         calculationId: string;

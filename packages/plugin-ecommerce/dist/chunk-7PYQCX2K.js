@@ -1,10 +1,10 @@
 import {
   INVENTORY_COLUMNS,
   fullRefundStatements
-} from "./chunk-TT3MVFMZ.js";
+} from "./chunk-BSTJ7GJ6.js";
 import {
   evaluateDiscountCode
-} from "./chunk-NOGKXEVT.js";
+} from "./chunk-KO7Q6OA7.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
@@ -12,9 +12,12 @@ import {
   deliverCommerceEmail,
   deliverPendingCommerceEmails,
   fulfillCommerceOrder
-} from "./chunk-FFJXPA3V.js";
+} from "./chunk-FET6OEOB.js";
 import {
+  RECONCILE_FAILURE_MESSAGES,
+  RECONCILE_TABLES,
   ReconcileFailure,
+  ShopperError,
   WebhookMismatchError,
   WebhookRetryLaterError,
   WebhookSignatureError,
@@ -32,6 +35,7 @@ import {
   isCountryCode,
   isMissingSessionError,
   isOtherStripeModeSession,
+  isProviderError,
   readStoreSettings,
   reconcileAttempt,
   reconcileBackoff,
@@ -40,10 +44,9 @@ import {
   recordGiftCardPurchaseRefund,
   sessionLookupFailure,
   uncheckedSessionRefusal
-} from "./chunk-4LBJN5LU.js";
+} from "./chunk-DN5M73UO.js";
 import {
   canonicalEmail,
-  canonicalEmailSql,
   canonicalEmails,
   canonicalPurchase,
   findReferralCode,
@@ -51,12 +54,16 @@ import {
   hasCanonicalPurchase,
   referralReversalStatements,
   releaseReferralAwards
-} from "./chunk-NTFJG6BA.js";
+} from "./chunk-JHSJ3R6O.js";
+import {
+  runtimeStripeMode,
+  stripeSessionMode
+} from "./chunk-GNU6N22K.js";
 import {
   PURCHASED_ORDER_STATUSES,
   claimInterval,
   hasPurchaseHistory
-} from "./chunk-IAWGIRUS.js";
+} from "./chunk-KGRQF4NN.js";
 import {
   batchGroups,
   chunked,
@@ -64,7 +71,7 @@ import {
   commitBatch,
   errorText,
   runStatements
-} from "./chunk-ZI5IJOR6.js";
+} from "./chunk-FDE2IMK7.js";
 import {
   carts,
   componentReservations,
@@ -79,9 +86,14 @@ import {
   productVariantValues,
   productVariants,
   products,
+  reconcileDecisions,
   referralCodes,
-  taxReversals
-} from "./chunk-NKJTK7MK.js";
+  taxReversals,
+  taxSyncDecisions
+} from "./chunk-RVXM5XJ4.js";
+import {
+  hashOrderAccess
+} from "./chunk-NQUBOBQT.js";
 import {
   minimumChargeAmount
 } from "./chunk-2UYSCNNW.js";
@@ -98,16 +110,16 @@ var CART_MAX_LINE_QUANTITY = 99;
 var CART_ID_MAX_LENGTH = 128;
 var cartItemKey = (item) => `${item.productId}\0${item.variantId || ""}`;
 function assertCartItems(items) {
-  if (!Array.isArray(items)) throw new Error("Cart items must be an array");
-  if (items.length > CART_MAX_LINES) throw new Error(`Cart items must not exceed ${CART_MAX_LINES} lines`);
+  if (!Array.isArray(items)) throw new ShopperError("basket_conflict", "Cart items must be an array", 409);
+  if (items.length > CART_MAX_LINES) throw new ShopperError("basket_conflict", `Cart items must not exceed ${CART_MAX_LINES} lines`, 409);
   if (items.some(
     (item) => !item || typeof item.productId !== "string" || !item.productId.trim() || item.productId.length > CART_ID_MAX_LENGTH || !Number.isSafeInteger(item.quantity) || item.quantity <= 0 || item.quantity > CART_MAX_LINE_QUANTITY || item.variantId !== void 0 && (typeof item.variantId !== "string" || item.variantId.length > CART_ID_MAX_LENGTH)
   )) {
-    throw new Error(`Cart items must have a product and a whole-number quantity from 1 to ${CART_MAX_LINE_QUANTITY}`);
+    throw new ShopperError("basket_conflict", `Cart items must have a product and a whole-number quantity from 1 to ${CART_MAX_LINE_QUANTITY}`, 409);
   }
   const itemKeys = items.map(cartItemKey);
   if (new Set(itemKeys).size !== itemKeys.length) {
-    throw new Error("Duplicate cart items are not allowed");
+    throw new ShopperError("basket_conflict", "Duplicate cart items are not allowed", 409);
   }
 }
 function aggregateComponentDemand(items) {
@@ -209,13 +221,13 @@ function resolveSelectedVariant(catalog, product, variantId) {
   if (variantValue) {
     const productVariant = catalog.groups.get(variantValue.groupId);
     if (!productVariant || productVariant.productId !== product.id) {
-      throw new Error(`Variant value not found or mismatch: ${variantId}`);
+      throw new ShopperError("basket_conflict", `Variant value not found or mismatch: ${variantId}`, 409);
     }
     const stock = variantValue.stock;
     const components = [];
     for (const requirement of catalog.requirements.get(variantValue.id) ?? []) {
       const component = requirement.component;
-      if (!component) throw new Error(`Component not found: ${requirement.componentId}`);
+      if (!component) throw new ShopperError("basket_conflict", `Component not found: ${requirement.componentId}`, 409);
       components.push({
         id: component.id,
         name: component.name,
@@ -233,9 +245,9 @@ function resolveSelectedVariant(catalog, product, variantId) {
   }
   const legacyVariant = catalog.groups.get(String(variantId));
   if (!legacyVariant || legacyVariant.productId !== product.id) {
-    throw new Error(`Variant not found or mismatch: ${variantId}`);
+    throw new ShopperError("basket_conflict", `Variant not found or mismatch: ${variantId}`, 409);
   }
-  if (catalog.groupsWithValues.has(legacyVariant.id)) throw new Error(`Select an option for ${product.name}`);
+  if (catalog.groupsWithValues.has(legacyVariant.id)) throw new ShopperError("basket_conflict", `Select an option for ${product.name}`, 409);
   return {
     price: legacyVariant.priceOverride ?? product.basePrice,
     name: `${product.name} - ${legacyVariant.name}`,
@@ -246,7 +258,7 @@ function resolveSelectedVariant(catalog, product, variantId) {
 }
 function requireVariantChoice(catalog, product, variantId) {
   if (variantId) return;
-  if (catalog.productsWithGroups.has(product.id)) throw new Error(`Select an option for ${product.name}`);
+  if (catalog.productsWithGroups.has(product.id)) throw new ShopperError("basket_conflict", `Select an option for ${product.name}`, 409);
 }
 async function checkCartItems(ctx, items, current = []) {
   const { db } = ctx;
@@ -256,7 +268,7 @@ async function checkCartItems(ctx, items, current = []) {
   const productIds = [...new Set(added.map((item) => item.productId))];
   const available = new Set(productIds.length ? (await db.select({ id: products.id, status: products.status }).from(products).where(inArray(products.id, productIds))).filter((product) => product.status !== "archived").map((product) => product.id) : []);
   const unknownProduct = added.find((item) => !available.has(item.productId));
-  if (unknownProduct) throw new Error(`Cart items must be catalog products; ${unknownProduct.productId} is not available`);
+  if (unknownProduct) throw new ShopperError("basket_conflict", `Cart items must be catalog products; ${unknownProduct.productId} is not available`, 409);
   const variantIds = [...new Set(added.flatMap((item) => item.variantId ? [item.variantId] : []))];
   if (variantIds.length) {
     const groups = await db.select({ id: productVariants.id, productId: productVariants.productId }).from(productVariants).where(inArray(productVariants.id, variantIds));
@@ -267,15 +279,15 @@ async function checkCartItems(ctx, items, current = []) {
       owners.set(value.id, value.productId);
     }
     const unchosenGroup = added.find((item) => item.variantId && choices.get(item.variantId) === item.productId);
-    if (unchosenGroup) throw new Error(`Cart items must choose one of the variants of ${unchosenGroup.productId}`);
+    if (unchosenGroup) throw new ShopperError("basket_conflict", `Cart items must choose one of the variants of ${unchosenGroup.productId}`, 409);
     const unknownVariant = added.find((item) => item.variantId && owners.get(item.variantId) !== item.productId);
-    if (unknownVariant) throw new Error(`Cart items must use a variant of their product; ${unknownVariant.variantId} is not available`);
+    if (unknownVariant) throw new ShopperError("basket_conflict", `Cart items must use a variant of their product; ${unknownVariant.variantId} is not available`, 409);
   }
   const withoutVariant = [...new Set(added.flatMap((item) => item.variantId ? [] : [item.productId]))];
   if (withoutVariant.length) {
     const withGroups = new Set((await db.selectDistinct({ productId: productVariants.productId }).from(productVariants).where(inArray(productVariants.productId, withoutVariant))).map((variant) => variant.productId));
     const unchosen = added.find((item) => !item.variantId && withGroups.has(item.productId));
-    if (unchosen) throw new Error(`Cart items must choose one of the variants of ${unchosen.productId}`);
+    if (unchosen) throw new ShopperError("basket_conflict", `Cart items must choose one of the variants of ${unchosen.productId}`, 409);
   }
   return items.map(({ productId, variantId, quantity }) => variantId ? { productId, variantId, quantity } : { productId, quantity });
 }
@@ -283,7 +295,7 @@ async function quoteCart(ctx, cartId) {
   const { env, db } = ctx;
   const { currency } = readStoreSettings(env);
   const cart = await db.select().from(carts).where(eq(carts.id, cartId)).get();
-  if (!cart) throw new Error("Cart not found");
+  if (!cart) throw new ShopperError("basket_conflict", "Cart not found", 409);
   const catalog = await loadBasketCatalog(ctx, cart.items);
   const lines = [];
   let totalAmount = 0;
@@ -291,16 +303,16 @@ async function quoteCart(ctx, cartId) {
   const componentItems = [];
   for (const item of cart.items) {
     const product = catalog.products.get(String(item.productId));
-    if (!product || product.status !== "active") throw new Error(`Product is not available: ${item.productId}`);
+    if (!product || product.status !== "active") throw new ShopperError("basket_conflict", `Product is not available: ${item.productId}`, 409);
     requireVariantChoice(catalog, product, item.variantId);
     const variant = item.variantId ? resolveSelectedVariant(catalog, product, item.variantId) : null;
     const unitAmount = variant?.price ?? product.basePrice;
     const name = variant?.name ?? product.name;
     if (!Number.isSafeInteger(unitAmount) || unitAmount <= 0) {
-      throw new Error(`A positive price is required for ${name}`);
+      throw new ShopperError("basket_conflict", `A positive price is required for ${name}`, 409);
     }
     if (product.type === "standard" && (variant?.availableQuantity ?? product.inventoryQuantity) < item.quantity) {
-      throw new Error(`Insufficient stock for ${name}`);
+      throw new ShopperError("basket_conflict", `Insufficient stock for ${name}`, 409);
     }
     if (product.type === "standard" && variant?.components.length) {
       componentItems.push({ quantity: item.quantity, components: variant.components });
@@ -311,9 +323,9 @@ async function quoteCart(ctx, cartId) {
     lines.push({ productId: item.productId, variantId: item.variantId, name, quantity: item.quantity, unitAmount, lineTotal });
   }
   for (const demand of aggregateComponentDemand(componentItems).values()) {
-    if (demand.available < demand.quantity) throw new Error(`Insufficient stock for component ${demand.name}`);
+    if (demand.available < demand.quantity) throw new ShopperError("basket_conflict", `Insufficient stock for component ${demand.name}`, 409);
   }
-  if (!Number.isSafeInteger(totalAmount)) throw new Error("Order total is too large");
+  if (!Number.isSafeInteger(totalAmount)) throw new ShopperError("basket_conflict", "Order total is too large", 409);
   return { lines, totalAmount, currency, requiresShipping, locked: Boolean(cart.checkoutSessionId) };
 }
 async function findCart(ctx, sessionToken, userId) {
@@ -331,17 +343,25 @@ async function findCart(ctx, sessionToken, userId) {
 async function claimCart(ctx, sessionToken, userId, choice) {
   const { db } = ctx;
   const account = await db.select({ id: customerAccounts.id }).from(customerAccounts).where(eq(customerAccounts.id, userId)).get();
-  if (!account) throw new Error("Customer account not found");
-  const guest = await db.select().from(carts).where(and(eq(carts.sessionToken, sessionToken), eq(carts.closed, false))).get();
+  if (!account) throw new ShopperError("basket_conflict", "Customer account not found", 409);
+  let guest = await db.select().from(carts).where(and(eq(carts.sessionToken, sessionToken), eq(carts.closed, false))).get();
   const owned = await db.select().from(carts).where(and(eq(carts.userId, userId), eq(carts.closed, false))).get();
   if (guest?.userId === userId) return guest;
-  if (guest?.userId) throw new Error("Basket belongs to another account");
-  if (guest?.checkoutSessionId) throw new Error("Checkout already started for this cart");
+  if (guest?.userId) {
+    const released = await db.update(carts).set({ sessionToken: null, version: sql`${carts.version} + 1` }).where(and(
+      eq(carts.id, guest.id),
+      eq(carts.version, guest.version),
+      eq(carts.sessionToken, sessionToken)
+    )).returning({ id: carts.id });
+    if (!released.length) throw new ShopperError("basket_changed", "Basket changed; reload and try again", 409);
+    guest = void 0;
+  }
+  if (guest?.checkoutSessionId) throw new ShopperError("basket_conflict", "Checkout already started for this cart", 409);
   if (guest && owned && guest.id !== owned.id) {
     if (guest.items.length && owned.items.length) {
-      if (!choice) throw new Error("Both baskets have items; choose which basket to keep before linking this session");
+      if (!choice) throw new ShopperError("basket_conflict", "Both baskets have items; choose which basket to keep before linking this session", 409);
     }
-    if (owned.checkoutSessionId) throw new Error("Checkout already started for this cart");
+    if (owned.checkoutSessionId) throw new ShopperError("basket_conflict", "Checkout already started for this cart", 409);
     if (guest.items.length && choice !== "account") {
       const released = await db.update(carts).set({ userId: null, updatedAt: /* @__PURE__ */ new Date() }).where(and(
         eq(carts.id, owned.id),
@@ -349,7 +369,7 @@ async function claimCart(ctx, sessionToken, userId, choice) {
         eq(carts.version, owned.version),
         eq(carts.closed, false)
       )).returning({ id: carts.id });
-      if (!released.length) throw new Error("Basket changed during account upgrade; reload and try again");
+      if (!released.length) throw new ShopperError("basket_conflict", "Basket changed during account upgrade; reload and try again", 409);
     } else {
       const released = await db.update(carts).set({ sessionToken: null, updatedAt: /* @__PURE__ */ new Date() }).where(and(
         eq(carts.id, guest.id),
@@ -357,7 +377,7 @@ async function claimCart(ctx, sessionToken, userId, choice) {
         eq(carts.version, guest.version),
         eq(carts.closed, false)
       )).returning({ id: carts.id });
-      if (!released.length) throw new Error("Basket changed during account upgrade; reload and try again");
+      if (!released.length) throw new ShopperError("basket_conflict", "Basket changed during account upgrade; reload and try again", 409);
     }
   }
   const target = choice === "account" && owned ? owned : guest?.items.length ? guest : owned ?? guest;
@@ -371,7 +391,7 @@ async function claimCart(ctx, sessionToken, userId, choice) {
       isNull(carts.checkoutSessionId),
       eq(carts.version, target.version)
     )).returning({ id: carts.id });
-    if (!updated.length) throw new Error("Basket changed during account upgrade; reload and try again");
+    if (!updated.length) throw new ShopperError("basket_conflict", "Basket changed during account upgrade; reload and try again", 409);
     return await db.select().from(carts).where(eq(carts.id, target.id)).get();
   }
   return null;
@@ -414,13 +434,13 @@ async function updateCartItems(ctx, cartId, items) {
   assertCartItems(items);
   const cart = await db.select().from(carts).where(eq(carts.id, cartId)).get();
   if (!cart) {
-    throw new Error("Cart not found");
+    throw new ShopperError("basket_conflict", "Cart not found", 409);
   }
   if (cart.closed) {
-    throw new Error("Cart is closed");
+    throw new ShopperError("basket_conflict", "Cart is closed", 409);
   }
   if (cart.checkoutSessionId) {
-    throw new Error("Checkout already started for this cart");
+    throw new ShopperError("basket_conflict", "Checkout already started for this cart", 409);
   }
   const checked = await checkCartItems(ctx, items, cart.items);
   const updated = await db.update(carts).set({ items: checked, updatedAt: /* @__PURE__ */ new Date(), version: sql`${carts.version} + 1` }).where(and(
@@ -429,7 +449,7 @@ async function updateCartItems(ctx, cartId, items) {
     isNull(carts.checkoutSessionId),
     eq(carts.version, cart.version)
   )).returning({ id: carts.id });
-  if (!updated.length) throw new Error("Basket changed or checkout already started; reload and try again");
+  if (!updated.length) throw new ShopperError("basket_conflict", "Basket changed or checkout already started; reload and try again", 409);
   return await db.select().from(carts).where(eq(carts.id, cartId)).get();
 }
 
@@ -437,7 +457,7 @@ async function updateCartItems(ctx, cartId, items) {
 import { and as and4, eq as eq4, isNull as isNull4, lt as lt2, notExists, sql as sql4 } from "drizzle-orm";
 
 // src/checkout-input.ts
-import { z } from "zod";
+import { z } from "zod/v4";
 var INVALID_COUNTRY = "Enter a valid country code";
 var UNDELIVERABLE_COUNTRY = "We do not deliver to this country";
 var SHIPPING_OPTION_UNAVAILABLE = "This shipping option is not available for your country";
@@ -458,7 +478,7 @@ function withCountryCode(address) {
   const country = address?.country;
   if (country === void 0 || country === null) return address;
   const code = typeof country === "string" ? country.trim().toUpperCase() : null;
-  if (code === null || code && !isCountryCode(code)) throw new Error(INVALID_COUNTRY);
+  if (code === null || code && !isCountryCode(code)) throw new ShopperError("invalid_country", INVALID_COUNTRY, 400);
   return { ...address, country: code };
 }
 var addressSchema = z.object({
@@ -470,9 +490,9 @@ var addressSchema = z.object({
   postalCode: z.string().trim().max(30).optional(),
   // Any case. Only officially assigned codes pass, so a mistyped "UK" is refused rather than stored.
   country: z.string().trim().toUpperCase().refine(isCountryCode, INVALID_COUNTRY).optional()
-});
+}).strict();
 var checkoutSchema = z.object({
-  customerEmail: z.string().trim().email().max(254).optional(),
+  customerEmail: z.string().trim().email().max(254),
   discountCode: z.string().trim().max(32).optional(),
   giftCardCode: z.string().trim().max(37).optional(),
   shippingAddress: addressSchema.optional(),
@@ -480,7 +500,7 @@ var checkoutSchema = z.object({
   // A rate id from the store's shipping rates. Left out or blank, checkout uses the first rate that
   // serves the country.
   shippingRateId: z.string().trim().max(40).optional()
-});
+}).strict();
 function checkoutInputError(error) {
   return error.issues.some((issue) => issue.path.at(-1) === "country") ? INVALID_COUNTRY : "Invalid checkout details";
 }
@@ -513,6 +533,7 @@ async function mayAskPaymentProvider(env, order, paymentAdapters, { minOrderAgeS
 
 // src/tax.ts
 import { and as and2, eq as eq2, inArray as inArray2, isNotNull as isNotNull2, isNull as isNull2, lt, sql as sql2 } from "drizzle-orm";
+import { z as z2 } from "zod";
 var SHIPPING_TAX_CODE = "txcd_92010001";
 var TaxCalculationError = class extends Error {
   constructor(options) {
@@ -552,7 +573,7 @@ function taxableLines(lines, discount, creditApplied) {
 }
 function taxAddressFor(requiresShipping, shippingAddress, billingAddress) {
   const given = requiresShipping ? shippingAddress : billingAddress;
-  if (!given || typeof given.country !== "string" || !given.country) throw new Error(TAX_ADDRESS_REQUIRED);
+  if (!given || typeof given.country !== "string" || !given.country) throw new ShopperError("checkout_details", TAX_ADDRESS_REQUIRED, 400);
   const address = { country: given.country };
   for (const key of ["line1", "line2", "city", "state", "postalCode"]) {
     const value = given[key];
@@ -584,7 +605,7 @@ async function calculateOrderTax(adapter, input) {
   try {
     calculation = await adapter.calculateTax(params);
   } catch (cause) {
-    if (cause instanceof TaxAddressError) throw new Error(TAX_ADDRESS_UNUSABLE, { cause });
+    if (cause instanceof TaxAddressError) throw new ShopperError("checkout_details", TAX_ADDRESS_UNUSABLE, 400, { cause });
     throw failed(describe(cause), cause);
   }
   const exclusive = input.behavior === "exclusive";
@@ -601,7 +622,7 @@ function taxProvider(adapters, paymentProvider) {
   return adapters.find((adapter) => adapter.providerId === providerId);
 }
 var PAID_STATUSES = ["paid", "fulfilled", "partially_refunded", "refunded", "disputed"];
-var TAX_SYNC_CLEARED = { taxSyncAttempts: 0, taxSyncLastAt: null, taxSyncLastError: null };
+var TAX_SYNC_CLEARED = { taxSyncAttempts: 0, taxSyncLastAt: null, taxSyncLastError: null, taxSyncReviewAt: null };
 var orderTaxBackoff = (now) => backoff({
   attempts: orders.taxSyncAttempts,
   lastAt: orders.taxSyncLastAt,
@@ -617,10 +638,13 @@ var reversalBackoff = (now) => backoff({
 var unixNow = () => Math.floor(Date.now() / 1e3);
 async function countTaxFailure(db, table, where, error, now) {
   try {
+    const provider = error;
+    const permanent = error instanceof ReconcileFailure && error.permanent || provider.code === "resource_missing" || provider.code === "tax_calculation_expired" || provider.statusCode === 400 && ["reference", "calculation", "original_transaction"].includes(provider.param ?? "");
     await db.update(table).set({
+      taxSyncReviewAt: permanent ? at(now) : null,
       taxSyncAttempts: sql2`${table.taxSyncAttempts} + 1`,
       taxSyncLastAt: at(now),
-      taxSyncLastError: reconcileFailure(error).code
+      taxSyncLastError: permanent ? "tax_permanent" : reconcileFailure(error).code
     }).where(where);
   } catch {
   }
@@ -633,11 +657,12 @@ async function recordOrderTax(env, adapters, orderId, now = unixNow()) {
     paymentProvider: orders.paymentProvider,
     taxCalculationId: orders.taxCalculationId,
     taxTransactionId: orders.taxTransactionId,
+    taxSyncReviewAt: orders.taxSyncReviewAt,
     // When the order was paid, in Unix seconds: its first payment row. The subquery names the order's
     // column as text, because the builder writes column objects in a select's fields unqualified.
     paidAt: sql2`(SELECT MIN(created_at) FROM _ecommerce_payments WHERE order_id = _ecommerce_orders.id)`
   }).from(orders).where(eq2(orders.id, orderId)).get();
-  if (!order?.taxCalculationId || order.taxTransactionId || !PAID_STATUSES.includes(order.status)) return false;
+  if (!order?.taxCalculationId || order.taxSyncReviewAt || order.taxTransactionId || !PAID_STATUSES.includes(order.status)) return false;
   try {
     const adapter = taxProvider(adapters, order.paymentProvider);
     if (!adapter?.recordTaxTransaction) {
@@ -686,31 +711,31 @@ async function recordTaxReversal(db, adapters, orderId) {
       reference: `${order.id}:reversal:${order.target}`,
       amount: order.target - order.reversed
     };
-    const recorded = await db.run(sql2`INSERT INTO _ecommerce_tax_reversals
+    const recorded2 = await db.run(sql2`INSERT INTO _ecommerce_tax_reversals
       (id, order_id, reference, amount, provider_reversal_id, created_at)
       SELECT ${`taxrev_${crypto.randomUUID()}`}, ${order.id}, ${reversal.reference}, ${reversal.amount}, '', ${unixNow()}
       WHERE (SELECT COALESCE(SUM(amount), 0) FROM _ecommerce_tax_reversals WHERE order_id = ${order.id}) = ${order.reversed}
       ON CONFLICT(reference) DO NOTHING`);
-    if (Number(recorded.meta?.changes ?? 0) > 0) return { adapter, reversal };
+    if (Number(recorded2.meta?.changes ?? 0) > 0) return { adapter, reversal };
   }
   return null;
 }
 async function reverseOrderTax(env, adapters, orderId, now = unixNow()) {
   const db = commerceDb(env);
-  let recorded;
+  let recorded2;
   try {
-    recorded = await recordTaxReversal(db, adapters, orderId);
+    recorded2 = await recordTaxReversal(db, adapters, orderId);
   } catch (error) {
     await countTaxFailure(db, orders, eq2(orders.id, orderId), error, now);
     throw error;
   }
-  if (!recorded) return null;
+  if (!recorded2) return null;
   try {
     await db.update(orders).set(TAX_SYNC_CLEARED).where(and2(eq2(orders.id, orderId), isNotNull2(orders.taxSyncLastAt)));
   } catch {
   }
-  await sendTaxReversal(db, recorded.adapter, recorded.reversal, now);
-  return { reference: recorded.reversal.reference, amount: recorded.reversal.amount };
+  await sendTaxReversal(db, recorded2.adapter, recorded2.reversal, now);
+  return { reference: recorded2.reversal.reference, amount: recorded2.reversal.amount };
 }
 async function sendTaxReversal(db, adapter, reversal, now) {
   const unsent = and2(eq2(taxReversals.reference, reversal.reference), eq2(taxReversals.providerReversalId, ""));
@@ -746,7 +771,7 @@ async function attemptEach(rows, orderOf, attempt) {
 }
 async function recordMissingTaxTransactions(env, adapters, now, limit) {
   const wait = orderTaxBackoff(now);
-  const rows = await commerceDb(env).select({ id: orders.id }).from(orders).where(and2(inArray2(orders.status, PAID_STATUSES), isNotNull2(orders.taxCalculationId), isNull2(orders.taxTransactionId), wait.due)).orderBy(...wait.order).limit(limit);
+  const rows = await commerceDb(env).select({ id: orders.id }).from(orders).where(and2(inArray2(orders.status, PAID_STATUSES), isNotNull2(orders.taxCalculationId), isNull2(orders.taxTransactionId), isNull2(orders.taxSyncReviewAt), wait.due)).orderBy(...wait.order).limit(limit);
   return attemptEach(
     rows,
     (row) => row.id,
@@ -763,7 +788,7 @@ async function resendPendingTaxReversals(env, adapters, now, limit) {
     amount: taxReversals.amount,
     paymentProvider: orders.paymentProvider,
     taxTransactionId: orders.taxTransactionId
-  }).from(taxReversals).innerJoin(orders, eq2(orders.id, taxReversals.orderId)).where(and2(sql2`${taxReversals.providerReversalId} = ''`, lt(taxReversals.createdAt, at(now - REVERSAL_IN_FLIGHT_SECONDS)), wait.due)).orderBy(...wait.order).limit(limit);
+  }).from(taxReversals).innerJoin(orders, eq2(orders.id, taxReversals.orderId)).where(and2(sql2`${taxReversals.providerReversalId} = ''`, lt(taxReversals.createdAt, at(now - REVERSAL_IN_FLIGHT_SECONDS)), isNull2(taxReversals.taxSyncReviewAt), wait.due)).orderBy(...wait.order).limit(limit);
   return attemptEach(pending, (row) => row.orderId, async (row) => {
     if (!row.taxTransactionId) throw new ReconcileFailure("failed", "The order has no tax transaction to reverse");
     await sendTaxReversal(db, taxProvider(adapters, row.paymentProvider), {
@@ -781,6 +806,7 @@ async function reverseUnreversedTax(env, adapters, now, limit) {
     sql2`${orders.status} IN ('partially_refunded', 'refunded')`,
     isNotNull2(orders.taxTransactionId),
     sql2`${reversalTarget} > ${reversed}`,
+    isNull2(orders.taxSyncReviewAt),
     wait.due
   )).orderBy(...wait.order).limit(limit);
   return attemptEach(
@@ -789,21 +815,88 @@ async function reverseUnreversedTax(env, adapters, now, limit) {
     async (row) => await reverseOrderTax(env, adapters, row.id, now) ? "tax_reversed" : "unchanged"
   );
 }
+async function listTaxSyncReview(env) {
+  const db = commerceDb(env);
+  const [transactions, reversals] = await db.batch([
+    db.select({
+      id: orders.id,
+      reviewAt: orders.taxSyncReviewAt,
+      code: orders.taxSyncLastError,
+      attempts: orders.taxSyncAttempts
+    }).from(orders).where(isNotNull2(orders.taxSyncReviewAt)).limit(100),
+    db.select({
+      id: taxReversals.id,
+      orderId: taxReversals.orderId,
+      reviewAt: taxReversals.taxSyncReviewAt,
+      code: taxReversals.taxSyncLastError,
+      attempts: taxReversals.taxSyncAttempts
+    }).from(taxReversals).where(isNotNull2(taxReversals.taxSyncReviewAt)).limit(100)
+  ]);
+  return [
+    ...transactions.map((row) => ({ ...row, orderId: row.id, kind: "transaction" })),
+    ...reversals.map((row) => ({ ...row, kind: "reversal" }))
+  ];
+}
+var taxRecoverySchema = z2.object({
+  orderId: z2.string().min(1).max(128),
+  reversalId: z2.string().min(1).max(128).optional(),
+  outcome: z2.enum(["retry", "attach"]),
+  providerId: z2.string().regex(/^tax_[a-zA-Z0-9_]+$/).optional(),
+  reason: z2.string().trim().min(8).max(500)
+}).strict();
+async function recoverTaxSync(env, adapters, actor, input) {
+  const values = taxRecoverySchema.parse(input);
+  if (!actor.trim()) throw new Error("Administrator identity is required");
+  const db = commerceDb(env);
+  const order = await db.select().from(orders).where(eq2(orders.id, values.orderId)).get();
+  if (!order) throw new Error("Order not found");
+  const reversal = values.reversalId ? await db.select().from(taxReversals).where(and2(eq2(taxReversals.id, values.reversalId), eq2(taxReversals.orderId, order.id))).get() : void 0;
+  if (values.reversalId && !reversal) throw new Error("Tax reversal not found");
+  if (!(reversal ? reversal.taxSyncReviewAt : order.taxSyncReviewAt)) throw new Error("Tax sync is not parked for review");
+  if (values.outcome === "attach") {
+    if (!values.providerId) throw new Error("An existing Stripe Tax record id is required");
+    const adapter = taxProvider(adapters, order.paymentProvider);
+    if (!adapter?.getTaxRecord) throw new Error("The provider cannot verify the tax record");
+    const record = await adapter.getTaxRecord(values.providerId);
+    const matches = record.currency === order.currency && record.reference === (reversal?.reference ?? order.id) && record.type === (reversal ? "reversal" : "transaction") && record.amountTotal === (reversal ? -reversal.amount : order.totalAmount + order.giftCardApplied) && (reversal ? record.originalTransaction === order.taxTransactionId : record.amountTax === order.taxAmount);
+    if (!matches) throw new Error("The provider tax record does not match this order/reversal");
+  } else if (values.providerId) throw new Error("A retry must not attach a provider id");
+  const guard = reversal ? and2(eq2(taxReversals.id, reversal.id), eq2(taxReversals.providerReversalId, ""), isNotNull2(taxReversals.taxSyncReviewAt)) : and2(eq2(orders.id, order.id), isNotNull2(orders.taxSyncReviewAt), values.outcome === "attach" ? isNull2(orders.taxTransactionId) : void 0);
+  const auditId = `taxd_${crypto.randomUUID()}`;
+  const table = reversal ? taxReversals : orders;
+  await db.batch([
+    db.run(sql2`INSERT INTO _ecommerce_tax_sync_decisions (id,order_id,reversal_id,action,provider_id,actor,reason,created_at)
+      SELECT ${auditId},${order.id},${reversal?.id ?? null},${values.outcome},${values.providerId ?? null},${actor},${values.reason},${unixNow()}
+      FROM ${table} WHERE ${guard}`),
+    reversal ? db.update(taxReversals).set({
+      ...TAX_SYNC_CLEARED,
+      ...values.outcome === "attach" ? { providerReversalId: values.providerId } : {}
+    }).where(guard) : db.update(orders).set({
+      ...TAX_SYNC_CLEARED,
+      ...values.outcome === "attach" ? { taxTransactionId: values.providerId } : {}
+    }).where(guard)
+  ]);
+  const recorded2 = await db.select({ id: taxSyncDecisions.id }).from(taxSyncDecisions).where(eq2(taxSyncDecisions.id, auditId)).get();
+  if (!recorded2) throw new Error("Tax sync changed; reload and review it again");
+  return { orderId: order.id, outcome: values.outcome };
+}
 
 // src/orders.ts
 var at2 = (seconds) => new Date(seconds * 1e3);
 var orderIn = (db, id, status) => exists(db.select({ one: sql3`1` }).from(orders).where(and3(eq3(orders.id, id), eq3(orders.status, status))));
 var PARKED_CHECKOUT_MESSAGE = "The store is reviewing the payment for this checkout. Contact the store to release it.";
 async function discardCheckoutDiscount(adapter, orderId) {
-  if (!adapter?.discardCheckoutDiscount) return;
+  if (!adapter?.discardCheckoutDiscount) return false;
   try {
     await adapter.discardCheckoutDiscount(orderId);
+    return true;
   } catch (error) {
     console.warn("[commerce] Checkout discount could not be discarded", {
       provider: adapter.providerId,
       name: error instanceof Error ? error.name : typeof error,
       code: typeof error?.code === "string" ? error.code : void 0
     });
+    return false;
   }
 }
 async function findOrder(ctx, id) {
@@ -812,12 +905,14 @@ async function findOrder(ctx, id) {
   if (!order) return null;
   return order;
 }
-async function findOrderForSession(ctx, id, sessionToken, customerId) {
+async function findOrderForSession(ctx, id, sessionToken, customerId, orderAccessToken) {
   const { db } = ctx;
   const order = await findOrder(ctx, id);
-  if (!order?.cartId) return null;
+  if (!order) return null;
   if (customerId && order.userId === customerId) return order;
-  if (!sessionToken) return null;
+  if (orderAccessToken && order.guestAccessTokenHash === await hashOrderAccess(orderAccessToken)) return order;
+  if (sessionToken && order.guestBasketTokenHash === await hashOrderAccess(sessionToken)) return order;
+  if (!sessionToken || !order.cartId) return null;
   const cart = await db.select().from(carts).where(eq3(carts.id, order.cartId)).get();
   return cart?.sessionToken === sessionToken ? order : null;
 }
@@ -833,6 +928,7 @@ async function createOrder(ctx, data) {
     paymentProvider: null,
     status: data.status || "draft",
     totalAmount: data.totalAmount,
+    subtotalAmount: data.totalAmount,
     currency: data.currency || readStoreSettings(env).currency,
     customerEmail: data.customerEmail,
     items: data.items,
@@ -912,7 +1008,7 @@ async function finalizeOrderPayment(ctx, params) {
     statements.push(db.update(orders).set({ userId: sql3`(${accountId})` }).where(and3(eq3(orders.id, params.orderId), eq3(orders.status, "paid"), isNull3(orders.userId))));
   }
   if (order.referralCode && order.referralRewardCents > 0 && params.provider !== "admin_test") {
-    const policy = await getReferralPolicy(env);
+    const policy = order.referralTerms ?? await getReferralPolicy(env);
     const referrer = await db.select({ emailNormalized: customerAccounts.emailNormalized }).from(referralCodes).innerJoin(customerAccounts, eq3(customerAccounts.id, referralCodes.accountId)).where(eq3(referralCodes.code, order.referralCode)).get();
     const buyerAccount = order.userId ? await db.select({ emailNormalized: customerAccounts.emailNormalized }).from(customerAccounts).where(eq3(customerAccounts.id, order.userId)).get() : void 0;
     const checkoutEmail = (order.customerEmail || "").trim().toLowerCase();
@@ -939,7 +1035,7 @@ async function finalizeOrderPayment(ctx, params) {
             JOIN _ecommerce_customer_accounts recent_referrer ON recent_referrer.id = recent.referrer_account_id
             WHERE recent.status = 'approved' AND recent.created_at > ${timestamp - policy.periodDays * 24 * 60 * 60}
               AND (recent.referrer_account_id = rc.account_id
-                OR ${sql3.raw(canonicalEmailSql("recent_referrer.email_normalized"))} = ${referrerCanonical})) < ${policy.maxPerPeriod}
+                OR ${sql3.raw("recent_referrer.email_canonical")} = ${referrerCanonical})) < ${policy.maxPerPeriod}
         ON CONFLICT DO NOTHING`));
     }
   }
@@ -1073,7 +1169,11 @@ async function cancelOrder(ctx, id, options = {}) {
   }
   const released = orderIn(db, id, "cancelled");
   const statements = [
-    db.update(orders).set({ status: "cancelled", updatedAt: at2(timestamp) }).where(and3(eq3(orders.id, id), notInArray(orders.status, [...PURCHASED_ORDER_STATUSES]))),
+    db.update(orders).set({
+      status: "cancelled",
+      updatedAt: at2(timestamp),
+      discountCleanupPending: order.creditApplied + order.discountAmount + order.giftCardApplied > 0 && (order.paymentProvider ?? "stripe") === "stripe"
+    }).where(and3(eq3(orders.id, id), notInArray(orders.status, [...PURCHASED_ORDER_STATUSES]))),
     db.update(discountRedemptions).set({ status: "cancelled", updatedAt: at2(timestamp) }).where(and3(eq3(discountRedemptions.orderId, id), eq3(discountRedemptions.status, "reserved"), released)),
     db.update(giftCardRedemptions).set({ status: "cancelled", updatedAt: at2(timestamp) }).where(and3(eq3(giftCardRedemptions.orderId, id), eq3(giftCardRedemptions.status, "reserved"), released))
   ];
@@ -1119,10 +1219,11 @@ async function cancelOrder(ctx, id, options = {}) {
   await commitBatch(db, statements);
   const cancelled = await findOrder(ctx, id);
   if (cancelled?.status === "cancelled" && !otherModeSession && order.creditApplied + order.discountAmount + order.giftCardApplied > 0) {
-    await discardCheckoutDiscount(
+    const removed = await discardCheckoutDiscount(
       paymentAdapters.find((candidate) => candidate.providerId === (order.paymentProvider ?? "stripe")),
       id
     );
+    if (removed) await db.update(orders).set({ discountCleanupPending: false }).where(eq3(orders.id, id));
   }
   return cancelled;
 }
@@ -1146,10 +1247,10 @@ function ratesServing(settings, country) {
 }
 function chooseShippingRate(settings, country, chosenId) {
   const serving = ratesServing(settings, country);
-  if (!serving.length) throw new Error(UNDELIVERABLE_COUNTRY);
+  if (!serving.length) throw new ShopperError("checkout_details", UNDELIVERABLE_COUNTRY, 400);
   const chosen = chosenId?.trim();
   const rate = chosen ? serving.find((candidate) => candidate.id === chosen) : serving[0];
-  if (!rate) throw new Error(SHIPPING_OPTION_UNAVAILABLE);
+  if (!rate) throw new ShopperError("checkout_details", SHIPPING_OPTION_UNAVAILABLE, 400);
   return rate;
 }
 function shippingCharge(rate, itemsAmount) {
@@ -1171,20 +1272,30 @@ var reservationRows = (list) => sql4`SELECT json_extract(value, '$.target') AS t
   FROM json_each(${list})`;
 async function createOrderFromCart(ctx, cartId, options) {
   const { env, db, adapters: paymentAdapters } = ctx;
+  const details = checkoutSchema.safeParse({
+    customerEmail: options.customerEmail,
+    shippingAddress: options.shippingAddress,
+    billingAddress: options.billingAddress,
+    shippingRateId: options.shippingRateId,
+    discountCode: options.discountCode,
+    giftCardCode: options.giftCardCode
+  });
+  if (!details.success) throw new ShopperError("invalid_checkout", checkoutInputError(details.error), 400);
+  options = { ...options, ...details.data };
   const settings = readStoreSettings(env);
   const { currency, deliveryCountries } = settings;
   const cart = await db.select().from(carts).where(eq4(carts.id, cartId)).get();
   if (!cart || cart.items.length === 0) {
-    throw new Error("Cart is empty or not found");
+    throw new ShopperError("basket_conflict", "Cart is empty or not found", 409);
   }
   if (cart.closed) {
-    throw new Error("Cart is closed");
+    throw new ShopperError("basket_conflict", "Cart is closed", 409);
   }
   if (cart.checkoutSessionId) {
-    throw new Error("Checkout already started for this cart");
+    throw new ShopperError("basket_conflict", "Checkout already started for this cart", 409);
   }
   const defaultAdapter = options.providerId ? paymentAdapters.find((adapter) => adapter.providerId === options.providerId) : paymentAdapters.length === 1 && paymentAdapters[0].providerId !== "admin_test" ? paymentAdapters[0] : void 0;
-  if (!defaultAdapter) throw new Error("A payment provider must be selected and configured before checkout");
+  if (!defaultAdapter) throw new ShopperError("provider_unavailable", "Checkout is unavailable right now. Please try again later.", 503);
   let requiresShipping = false;
   let totalAmount = 0;
   const orderItems = [];
@@ -1194,10 +1305,10 @@ async function createOrderFromCart(ctx, cartId, options) {
   for (const item of cart.items) {
     const product = catalog.products.get(String(item.productId));
     if (!product) {
-      throw new Error(`Product not found: ${item.productId}`);
+      throw new ShopperError("basket_conflict", `Product not found: ${item.productId}`, 409);
     }
     if (product.status !== "active") {
-      throw new Error(`Product is not available: ${item.productId}`);
+      throw new ShopperError("basket_conflict", `Product is not available: ${item.productId}`, 409);
     }
     requireVariantChoice(catalog, product, item.variantId);
     let price = product.basePrice;
@@ -1218,7 +1329,7 @@ async function createOrderFromCart(ctx, cartId, options) {
     }
     const tracksInventory = product.type === "standard";
     if (tracksInventory && availableQuantity < item.quantity) {
-      throw new Error(`Insufficient stock for ${finalName}`);
+      throw new ShopperError("basket_conflict", `Insufficient stock for ${finalName}`, 409);
     }
     if (tracksInventory && requiredComponents.length) {
       componentItems.push({ quantity: item.quantity, components: requiredComponents });
@@ -1228,10 +1339,10 @@ async function createOrderFromCart(ctx, cartId, options) {
       inventoryDemand.set(key, { ...inventoryTarget, quantity: (existing?.quantity ?? 0) + item.quantity });
     }
     if (!Number.isSafeInteger(price) || price <= 0) {
-      throw new Error(`A positive price is required for ${finalName}`);
+      throw new ShopperError("basket_conflict", `A positive price is required for ${finalName}`, 409);
     }
     totalAmount += price * item.quantity;
-    if (!Number.isSafeInteger(totalAmount)) throw new Error("Order total is too large");
+    if (!Number.isSafeInteger(totalAmount)) throw new ShopperError("basket_conflict", "Order total is too large", 409);
     orderItems.push({
       ...item,
       priceAtPurchase: price,
@@ -1242,21 +1353,23 @@ async function createOrderFromCart(ctx, cartId, options) {
   const componentDemand = aggregateComponentDemand(componentItems);
   for (const component of componentDemand.values()) {
     if (component.available < component.quantity) {
-      throw new Error(`Insufficient stock for component ${component.name}`);
+      throw new ShopperError("basket_conflict", `Insufficient stock for component ${component.name}`, 409);
     }
   }
   if (requiresShipping && (!options.shippingAddress || !["name", "line1", "city", "postalCode", "country"].every((key) => typeof options.shippingAddress[key] === "string" && options.shippingAddress[key].trim()))) {
-    throw new Error("Shipping address is required for physical products");
+    throw new ShopperError("shipping_address_required", "Shipping address is required for physical products", 400);
   }
   const shippingAddress = withCountryCode(options.shippingAddress);
   const billingAddress = withCountryCode(options.billingAddress);
   if (requiresShipping && deliveryCountries && !deliveryCountries.includes(shippingAddress.country)) {
-    throw new Error(UNDELIVERABLE_COUNTRY);
+    throw new ShopperError("country_unavailable", UNDELIVERABLE_COUNTRY, 400);
   }
   const shippingRate = requiresShipping && settings.shippingRates.length ? chooseShippingRate(settings, shippingAddress.country, options.shippingRateId) : null;
   const taxBehavior = settings.tax.mode === "none" || defaultAdapter.providerId === "admin_test" ? null : settings.tax.mode === "stripe-inclusive" ? "inclusive" : "exclusive";
   const taxAddress = taxBehavior ? taxAddressFor(requiresShipping, shippingAddress, billingAddress) : null;
   const orderId = `ord_${crypto.randomUUID()}`;
+  const orderAccessToken = `${crypto.randomUUID()}${crypto.randomUUID()}`;
+  const guestAccessTokenHash = await hashOrderAccess(orderAccessToken);
   const referralsPolicy = await getReferralPolicy(env);
   const subtotalAmount = totalAmount;
   const discount = options.discountCode && defaultAdapter.providerId === "stripe" ? await evaluateDiscountCode(env, {
@@ -1296,7 +1409,7 @@ async function createOrderFromCart(ctx, cartId, options) {
   }) : null;
   const exclusiveTax = tax?.behavior === "exclusive" ? tax.amount : 0;
   const amountDue = merchandise - creditApplied + shippingAmount + exclusiveTax;
-  if (!Number.isSafeInteger(amountDue)) throw new Error("Order total is too large");
+  if (!Number.isSafeInteger(amountDue)) throw new ShopperError("basket_conflict", "Order total is too large", 409);
   const giftCard = options.giftCardCode && defaultAdapter.providerId === "stripe" ? await evaluateGiftCard(env, options.giftCardCode, amountDue) : null;
   const giftCardApplied = giftCard?.amount ?? 0;
   totalAmount = amountDue - giftCardApplied;
@@ -1311,7 +1424,7 @@ async function createOrderFromCart(ctx, cartId, options) {
     }
   }
   if (!defaultAdapter.expireCheckoutSession) {
-    throw new Error("Payment provider must support checkout session expiry");
+    throw new ShopperError("basket_conflict", "Payment provider must support checkout session expiry", 409);
   }
   const successUrl = options.successUrl.replaceAll("{ORDER_ID}", orderId);
   const cancelUrl = options.cancelUrl.replaceAll("{ORDER_ID}", orderId);
@@ -1325,7 +1438,7 @@ async function createOrderFromCart(ctx, cartId, options) {
     eq4(carts.items, cart.items),
     eq4(carts.version, cart.version)
   )).returning({ id: carts.id });
-  if (!lock.length) throw new Error("Checkout already started for this cart");
+  if (!lock.length) throw new ShopperError("basket_conflict", "Checkout already started for this cart", 409);
   let session;
   let committed = false;
   let providerDiscount = false;
@@ -1357,12 +1470,14 @@ async function createOrderFromCart(ctx, cartId, options) {
       successUrl,
       cancelUrl
     });
-    if (!session.providerSessionId || !session.url) throw new Error("Payment provider did not return a checkout session");
+    if (!session.providerSessionId || !session.url) throw new ShopperError("basket_conflict", "Payment provider did not return a checkout session", 409);
     const checkoutSessionId = session.providerSessionId;
     const statements = [
       db.insert(orders).values({
         id: orderId,
         cartId,
+        guestAccessTokenHash,
+        guestBasketTokenHash: !cart.userId && cart.sessionToken ? await hashOrderAccess(cart.sessionToken) : null,
         userId: cart.userId,
         checkoutSessionId,
         paymentProvider: internallyPaid ? "gift_card" : defaultAdapter.providerId,
@@ -1375,6 +1490,7 @@ async function createOrderFromCart(ctx, cartId, options) {
         discountAmount,
         giftCardId: giftCard?.id ?? null,
         giftCardApplied,
+        referralTerms: referralCode ? { minOrderCents: referralsPolicy.minOrderCents, holdDays: referralsPolicy.holdDays, maxPerPeriod: referralsPolicy.maxPerPeriod, periodDays: referralsPolicy.periodDays } : null,
         referralCode,
         referralRewardCents: referralCode ? referralsPolicy.rewardCents : 0,
         currency,
@@ -1458,19 +1574,22 @@ async function createOrderFromCart(ctx, cartId, options) {
       committed = true;
     } catch (cause) {
       const refused = errorText(cause);
+      if (refused.includes("Shopper account changed during checkout")) {
+        throw new ShopperError("account_changed", "Your account changed during checkout; please sign in again", 409, { cause });
+      }
       if (refused.includes("Discount code is no longer available")) {
-        throw new Error("Discount code is no longer available", { cause });
+        throw new ShopperError("discount_changed", "Discount code is no longer available", 409, { cause });
       }
       if (refused.includes("Insufficient store credit")) {
-        throw new Error("Store credit changed during checkout; please try again", { cause });
+        throw new ShopperError("credit_changed", "Store credit changed during checkout; please try again", 409, { cause });
       }
       if (refused.includes("Gift card is no longer available")) {
-        throw new Error("Gift card is no longer available", { cause });
+        throw new ShopperError("gift_card_changed", "Gift card is no longer available", 409, { cause });
       }
-      throw new Error("Insufficient stock or checkout already started", { cause });
+      throw new ShopperError("stock_changed", "Insufficient stock or checkout already started", 409, { cause });
     }
     const order = await findOrder(ctx, orderId);
-    if (!order) throw new Error("Checkout was created but the order could not be loaded");
+    if (!order) throw new ShopperError("basket_conflict", "Checkout was created but the order could not be loaded", 409);
     if (internallyPaid) {
       await finalizeOrderPayment(ctx, {
         orderId,
@@ -1480,9 +1599,9 @@ async function createOrderFromCart(ctx, cartId, options) {
         amount: 0,
         customerEmail: options.customerEmail
       });
-      return { order: await findOrder(ctx, orderId), paymentUrl: session.url };
+      return { order: await findOrder(ctx, orderId), paymentUrl: session.url, orderAccessToken };
     }
-    return { order, paymentUrl: session.url };
+    return { order, paymentUrl: session.url, orderAccessToken };
   } catch (error) {
     if (committed) throw error;
     try {
@@ -1785,7 +1904,7 @@ async function assertNoAwaitedPayment(ctx, references) {
 async function applyStripeEvent(ctx, event, stripeAdapter) {
   const { env, db, adapters: paymentAdapters } = ctx;
   const text = (value) => typeof value === "string" && value ? value : null;
-  const at4 = Number.isSafeInteger(event.created) && event.created > 0 ? event.created : Math.floor(Date.now() / 1e3);
+  const at5 = Number.isSafeInteger(event.created) && event.created > 0 ? event.created : Math.floor(Date.now() / 1e3);
   if (event.type === "checkout.session.completed") {
     const session = event.data;
     if (session.payment_status !== "paid") return ignoredEvent(event);
@@ -1844,14 +1963,14 @@ async function applyStripeEvent(ctx, event, stripeAdapter) {
     if (giftPurchaseRefund) return giftPurchaseRefund;
     const listed = Array.isArray(charge.refunds?.data) ? charge.refunds.data : [];
     const latest = listed.filter((item) => typeof item?.id === "string").sort((a, b) => Number(b.created ?? 0) - Number(a.created ?? 0))[0];
-    const recorded = await recordProviderRefund(ctx, {
+    const recorded2 = await recordProviderRefund(ctx, {
       ...refund,
-      refundedAt: at4,
+      refundedAt: at5,
       providerRefundId: typeof latest?.id === "string" ? latest.id : null
     });
-    if (recorded) {
-      await reverseRefundedOrderTax(env, paymentAdapters, recorded.orderId);
-      return recorded;
+    if (recorded2) {
+      await reverseRefundedOrderTax(env, paymentAdapters, recorded2.orderId);
+      return recorded2;
     }
     await assertNoAwaitedPayment(ctx, {
       orderId: text(charge.metadata?.orderId),
@@ -1860,9 +1979,9 @@ async function applyStripeEvent(ctx, event, stripeAdapter) {
     return ignoredEvent(event);
   }
   if (event.type === "charge.dispute.created" || event.type === "charge.dispute.closed") {
-    const dispute = parseStripeDispute(event.data, at4);
+    const dispute = parseStripeDispute(event.data, at5);
     if (!dispute) return ignoredEvent(event);
-    const applied = await applyStripeDispute(env, dispute, { closed: event.type === "charge.dispute.closed", at: at4 });
+    const applied = await applyStripeDispute(env, dispute, { closed: event.type === "charge.dispute.closed", at: at5 });
     if (applied && "orderId" in applied && applied.status === "refunded") {
       await reverseRefundedOrderTax(env, paymentAdapters, applied.orderId);
     }
@@ -1897,7 +2016,7 @@ async function handleStripeWebhook(ctx, payload, signature, secret) {
 }
 
 // src/reconcile-job.ts
-import { and as and5, eq as eq7, gte, isNotNull as isNotNull3, isNull as isNull5, lt as lt3, or, sql as sql6 } from "drizzle-orm";
+import { and as and5, eq as eq7, gte, isNull as isNull5, lt as lt3, or, sql as sql6 } from "drizzle-orm";
 var at3 = (seconds) => new Date(seconds * 1e3);
 async function reconcileCommerce(options, limit = 10) {
   const count = Math.max(1, Math.min(20, Math.floor(limit)));
@@ -1928,7 +2047,6 @@ async function reconcileCommerce(options, limit = 10) {
     abandonedTests: settlesAdminTest ? [] : [db.select({ id: orders.id }).from(orders).where(and5(pendingOrder, eq7(orders.paymentProvider, "admin_test"), lt3(orders.createdAt, stale))).orderBy(orders.createdAt).limit(count)],
     giftPurchases: [db.select({ id: giftCardPurchases.id }).from(giftCardPurchases).where(and5(
       eq7(giftCardPurchases.status, "pending"),
-      isNotNull3(giftCardPurchases.providerSessionId),
       lt3(giftCardPurchases.createdAt, stale),
       isNull5(giftCardPurchases.reconcileReviewAt),
       purchaseWait.due
@@ -1963,6 +2081,12 @@ async function reconcileCommerce(options, limit = 10) {
       now,
       () => reconcileGiftCardPurchase(env, stripe, row.id)
     ));
+  }
+  const coupons = await db.select({ id: orders.id, sessionId: orders.checkoutSessionId, createdAt: orders.createdAt }).from(orders).where(sql6`${orders.discountCleanupPending} = 1 AND ${orders.status} = 'cancelled'`).orderBy(orders.updatedAt).limit(count);
+  for (const coupon of coupons) {
+    const otherMode = isOtherStripeModeSession(env, coupon.sessionId);
+    const removed = otherMode ? coupon.createdAt.getTime() <= (now - 35 * 60) * 1e3 : await discardCheckoutDiscount(ctx.adapters.find((adapter) => adapter.providerId === "stripe"), coupon.id);
+    await db.update(orders).set({ discountCleanupPending: !removed, updatedAt: at3(now) }).where(eq7(orders.id, coupon.id));
   }
   const adapters = options.paymentAdapters ?? [];
   const taxPasses = [
@@ -2037,6 +2161,7 @@ async function purgeStaleCommerceData(options) {
     ["unverifiedAccounts", (limit) => sql7`DELETE FROM _ecommerce_customer_accounts WHERE id IN (SELECT a.id
       FROM _ecommerce_customer_accounts a
       WHERE a.email_verified_at IS NULL AND a.cms_user_id IS NULL AND a.credit_balance = 0 AND a.created_at < ${now - day}
+        AND NOT EXISTS (SELECT 1 FROM _ecommerce_shopper_audits WHERE account_id = a.id)
         AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders WHERE user_id = a.id)
         AND NOT EXISTS (SELECT 1 FROM _ecommerce_customer_sessions WHERE account_id = a.id)
         AND NOT EXISTS (SELECT 1 FROM _ecommerce_carts WHERE user_id = a.id AND closed = 0)
@@ -2073,6 +2198,214 @@ async function purgeStaleCommerceData(options) {
   return deleted;
 }
 
+// src/reconcile-review.ts
+import { z as z3 } from "zod";
+import { and as and6, eq as eq8, sql as sql8 } from "drizzle-orm";
+var ReconcileInputError = class extends Error {
+  name = "ReconcileInputError";
+};
+var PARKED_LIST_LIMIT = 100;
+var PROVIDER_UNREACHABLE = "Stripe could not be asked about this checkout session, so nothing was released. Try again later.";
+var retrySchema = z3.object({
+  kind: z3.enum(["order", "gift_card_purchase"]),
+  id: z3.string().trim().min(1).max(128),
+  // Counted in characters, as the decision table's CHECK counts them; String.length counts UTF-16 units.
+  reason: z3.string().trim().refine((reason) => [...reason].length >= 8 && [...reason].length <= 500)
+}).strict();
+var releaseSchema = retrySchema.extend({ confirmPaymentReturned: z3.boolean().optional() }).strict();
+function parseAction(schema, input) {
+  const parsed = schema.safeParse(input);
+  if (!parsed.success) {
+    throw new ReconcileInputError("Name the parked record (kind order or gift_card_purchase, and its id) and give a reason of 8 to 500 characters");
+  }
+  return parsed.data;
+}
+function newDecision(actor, reason) {
+  if (!actor.trim()) throw new Error("Administrator identity is required");
+  return { id: `rcd_${crypto.randomUUID()}`, actor, reason };
+}
+var parked = (table) => sql8`${table.status} = 'pending' AND ${table.reconcileReviewAt} IS NOT NULL`;
+var at4 = (seconds) => new Date(seconds * 1e3);
+var recorded = (decisionId) => sql8`EXISTS (SELECT 1 FROM _ecommerce_reconcile_decisions WHERE id = ${decisionId})`;
+var notParked = (kind) => kind === "order" ? "This order is not pending and parked for review; reload the list" : "This gift card purchase is not pending and parked for review; reload the list";
+var isoTime = (seconds) => new Date(seconds * 1e3).toISOString();
+async function listParkedCommerce(env) {
+  const db = commerceDb(env);
+  const [rows, counted] = await db.batch([
+    db.all(sql8`SELECT 'order' AS kind, id, created_at, reconcile_attempts AS attempts,
+        reconcile_last_at AS last_at, reconcile_last_error AS last_error, reconcile_review_at AS review_at,
+        checkout_session_id AS session_id, COALESCE(payment_provider, 'stripe') AS provider,
+        total_amount AS amount_cents, currency
+      FROM _ecommerce_orders WHERE ${parked(orders)}
+      UNION ALL
+      SELECT 'gift_card_purchase', id, created_at, reconcile_attempts, reconcile_last_at, reconcile_last_error,
+        reconcile_review_at, provider_session_id, 'stripe', amount_cents, currency
+      FROM _ecommerce_gift_card_purchases WHERE ${parked(giftCardPurchases)}
+      ORDER BY review_at, id LIMIT ${PARKED_LIST_LIMIT}`),
+    db.get(sql8`SELECT (SELECT COUNT(*) FROM _ecommerce_orders WHERE ${parked(orders)})
+      + (SELECT COUNT(*) FROM _ecommerce_gift_card_purchases WHERE ${parked(giftCardPurchases)}) AS count`)
+  ]);
+  const storeMode = runtimeStripeMode(env);
+  return {
+    storeMode,
+    tax: await listTaxSyncReview(env),
+    parkedCount: Number(counted?.count ?? 0),
+    parked: rows.map((row) => {
+      const code = row.last_error && row.last_error in RECONCILE_FAILURE_MESSAGES ? row.last_error : "failed";
+      const stripe = row.provider === "stripe";
+      return {
+        kind: row.kind,
+        id: row.id,
+        createdAt: isoTime(row.created_at),
+        parkedAt: isoTime(row.review_at),
+        lastAttemptAt: row.last_at === null ? null : isoTime(row.last_at),
+        attempts: row.attempts,
+        lastError: code,
+        problem: RECONCILE_FAILURE_MESSAGES[code],
+        provider: row.provider,
+        sessionMode: stripe ? stripeSessionMode(row.session_id) : null,
+        otherMode: stripe && isOtherStripeModeSession(env, row.session_id),
+        amountCents: row.amount_cents,
+        currency: row.currency
+      };
+    })
+  };
+}
+async function retryParkedCommerce(env, actor, input) {
+  const { kind, id, reason } = parseAction(retrySchema, input);
+  const decision = newDecision(actor, reason);
+  const timestamp = Math.floor(Date.now() / 1e3);
+  const db = commerceDb(env);
+  const table = RECONCILE_TABLES[kind];
+  const [, retried] = await db.batch([
+    db.run(decisionInsert(kind, "retry", parked(table), {
+      id: decision.id,
+      paymentReturned: null,
+      actor: decision.actor,
+      reason: decision.reason,
+      at: timestamp,
+      recordId: id
+    })),
+    db.update(table).set({ reconcileReviewAt: null, reconcileAttempts: 0, reconcileLastAt: null, reconcileLastError: null }).where(and6(eq8(table.id, id), parked(table), recorded(decision.id))).returning({ id: table.id })
+  ]);
+  if (!retried.length) throw new Error(notParked(kind));
+  console.info("[commerce] Parked checkout returned to reconciliation", { kind, id, actor });
+  return { kind, id, status: "pending" };
+}
+function releaseRefusal(error) {
+  const failure = reconcileFailure(error);
+  if (failure.code === "provider_unavailable" || failure.code === "provider_refused") {
+    return new Error(PROVIDER_UNREACHABLE, { cause: error });
+  }
+  return isProviderError(error) ? new Error("Stripe returned an error about this checkout session, so nothing was released.", { cause: error }) : error;
+}
+async function releaseParkedCommerce(options, actor, input) {
+  const { kind, id, reason, confirmPaymentReturned = false } = parseAction(releaseSchema, input);
+  const decision = newDecision(actor, reason);
+  const { env } = options;
+  const db = commerceDb(env);
+  const table = RECONCILE_TABLES[kind];
+  const row = await db.select({
+    sessionId: kind === "order" ? orders.checkoutSessionId : giftCardPurchases.providerSessionId,
+    createdAt: table.createdAt
+  }).from(table).where(and6(eq8(table.id, id), parked(table))).get();
+  if (!row) throw new Error(notParked(kind));
+  const otherMode = isOtherStripeModeSession(env, row.sessionId);
+  const decided = () => db.select({ paymentReturned: reconcileDecisions.paymentReturned }).from(reconcileDecisions).where(eq8(reconcileDecisions.id, decision.id)).get();
+  let paymentReturned = null;
+  if (kind === "order") {
+    try {
+      await bindCommerceApi(options).orders.cancel(id, { reviewRelease: { decision, confirmPaymentReturned } });
+    } catch (error) {
+      throw releaseRefusal(error);
+    }
+    const outcome = await decided();
+    if (!outcome) throw new Error("The order changed while it was being released; reload the list");
+    paymentReturned = outcome.paymentReturned;
+  } else {
+    if (!row.sessionId) {
+      if (!confirmPaymentReturned) throw new Error("Find and attach the lost Stripe session, or confirm after checking Stripe that no payment remains before releasing");
+      const refusal = uncheckedSessionRefusal(Math.floor(row.createdAt.getTime() / 1e3));
+      if (refusal) throw refusal;
+      paymentReturned = "confirmed";
+    }
+    if (row.sessionId) {
+      const stripe = options.paymentAdapters?.find((adapter) => adapter.providerId === "stripe");
+      if (!stripe?.getCheckoutSession || !stripe.expireCheckoutSession) {
+        throw new Error("Stripe must be configured to check this checkout session before the purchase is released");
+      }
+      const refuseUnchecked = () => {
+        const refusal = uncheckedSessionRefusal(Math.floor(row.createdAt.getTime() / 1e3));
+        if (refusal) throw refusal;
+      };
+      if (otherMode) refuseUnchecked();
+      if (!otherMode) {
+        try {
+          let session = null;
+          try {
+            session = await stripe.getCheckoutSession(row.sessionId);
+          } catch (error) {
+            if (!isMissingSessionError(error)) throw error;
+            refuseUnchecked();
+          }
+          if (session?.status === "complete") paymentReturned = await completedCheckoutReturn(stripe, session, confirmPaymentReturned);
+          else if (session && session.status !== "expired") await stripe.expireCheckoutSession(row.sessionId);
+        } catch (error) {
+          throw releaseRefusal(error);
+        }
+      }
+    }
+    const timestamp = Math.floor(Date.now() / 1e3);
+    const [, released] = await db.batch([
+      db.run(decisionInsert(kind, "release", parked(table), {
+        id: decision.id,
+        paymentReturned,
+        actor: decision.actor,
+        reason: decision.reason,
+        at: timestamp,
+        recordId: id
+      })),
+      db.update(giftCardPurchases).set({ status: "cancelled", updatedAt: at4(timestamp) }).where(and6(eq8(giftCardPurchases.id, id), parked(giftCardPurchases), recorded(decision.id))).returning({ id: giftCardPurchases.id })
+    ]);
+    if (!released.length) throw new Error("The purchase changed while it was being released; reload the list");
+  }
+  console.info("[commerce] Parked checkout released", { kind, id, actor, otherMode });
+  return { kind, id, status: "cancelled", otherMode, paymentReturned };
+}
+async function attachGiftPurchaseSession(options, actor, input) {
+  const values = parseAction(z3.object({
+    purchaseId: z3.string().min(1).max(128),
+    sessionId: z3.string().regex(/^cs_(test_|live_)?[a-zA-Z0-9_]+$/),
+    reason: z3.string().trim().min(8).max(500)
+  }).strict(), input);
+  const decision = newDecision(actor, values.reason);
+  const db = commerceDb(options.env);
+  const purchase = await db.select().from(giftCardPurchases).where(eq8(giftCardPurchases.id, values.purchaseId)).get();
+  if (!purchase || purchase.status !== "pending" || purchase.providerSessionId) throw new Error("Purchase is not awaiting a lost session");
+  const adapter = options.paymentAdapters?.find((adapter2) => adapter2.providerId === "stripe");
+  if (!adapter?.getCheckoutSession) throw new Error("Stripe is not configured");
+  const session = await adapter.getCheckoutSession(values.sessionId);
+  if (session.references?.giftCardPurchaseId !== purchase.id || session.amountTotal !== purchase.amountCents || session.currency !== purchase.currency || isOtherStripeModeSession(options.env, values.sessionId)) throw new Error("Stripe session does not match the gift card purchase");
+  await db.batch([
+    db.run(decisionInsert(
+      "gift_card_purchase",
+      "attach_session",
+      sql8`status = 'pending' AND provider_session_id IS NULL`,
+      { id: decision.id, paymentReturned: null, actor, reason: values.reason, at: Math.floor(Date.now() / 1e3), recordId: purchase.id }
+    )),
+    db.update(giftCardPurchases).set({
+      providerSessionId: values.sessionId,
+      reconcileReviewAt: null,
+      reconcileAttempts: 0,
+      reconcileLastAt: null,
+      reconcileLastError: null
+    }).where(and6(eq8(giftCardPurchases.id, purchase.id), recorded(decision.id)))
+  ]);
+  if (!await db.select({ id: reconcileDecisions.id }).from(reconcileDecisions).where(eq8(reconcileDecisions.id, decision.id)).get())
+    throw new Error("The purchase changed; reload and review it again");
+  return { purchaseId: purchase.id, status: "pending" };
+}
+
 // src/api.ts
 function bindCommerceApi(options) {
   const ctx = commerceContext(options);
@@ -2096,7 +2429,7 @@ function bindCommerceApi(options) {
       createFromCart: (cartId, options2) => createOrderFromCart(ctx, cartId, options2),
       create: (data) => createOrder(ctx, data),
       find: (id) => findOrder(ctx, id),
-      findForSession: (id, sessionToken, customerId) => findOrderForSession(ctx, id, sessionToken, customerId),
+      findForSession: (id, sessionToken, customerId, orderAccessToken) => findOrderForSession(ctx, id, sessionToken, customerId, orderAccessToken),
       updateStatus: (id, status, fulfillment) => updateOrderStatus(ctx, id, status, fulfillment),
       finalizePayment: (id, options2) => finalizeOrderPayment(ctx, { orderId: id, ...options2 }),
       cancel: (id, options2 = {}) => cancelOrder(ctx, id, options2)
@@ -2120,9 +2453,16 @@ export {
   providerCheckLimitResponse,
   mayAskPaymentProvider,
   TaxCalculationError,
+  listTaxSyncReview,
+  recoverTaxSync,
   PARKED_CHECKOUT_MESSAGE,
   shippingOptionsFor,
   reconcileCommerce,
   purgeStaleCommerceData,
+  ReconcileInputError,
+  listParkedCommerce,
+  retryParkedCommerce,
+  releaseParkedCommerce,
+  attachGiftPurchaseSession,
   bindCommerceApi
 };

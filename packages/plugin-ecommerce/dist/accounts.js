@@ -5,19 +5,21 @@ import {
   CustomerEmailLimitError,
   CustomerRequestLimitError,
   PURCHASED_ORDER_STATUSES,
+  ShopperPrivacyError,
   activateNewCustomer,
   consumeCustomerEmailSignIn,
   findCustomerSession,
   hasPurchaseHistory,
   listCustomerOrders,
+  manageShopperData,
   normalizeShopperEmail,
   previewCustomerEmailSignIn,
   requestCustomerEmailSignIn,
   revokeCustomerSession,
   shopperSignInBotCheck
-} from "./chunk-IAWGIRUS.js";
-import "./chunk-ZI5IJOR6.js";
-import "./chunk-NKJTK7MK.js";
+} from "./chunk-KGRQF4NN.js";
+import "./chunk-FDE2IMK7.js";
+import "./chunk-RVXM5XJ4.js";
 export {
   CUSTOMER_EMAIL_DAILY_LIMIT,
   CUSTOMER_SESSION_COOKIE,
@@ -25,11 +27,13 @@ export {
   CustomerEmailLimitError,
   CustomerRequestLimitError,
   PURCHASED_ORDER_STATUSES,
+  ShopperPrivacyError,
   activateNewCustomer,
   consumeCustomerEmailSignIn,
   findCustomerSession,
   hasPurchaseHistory,
   listCustomerOrders,
+  manageShopperData,
   normalizeShopperEmail,
   previewCustomerEmailSignIn,
   requestCustomerEmailSignIn,

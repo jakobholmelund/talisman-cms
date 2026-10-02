@@ -1,34 +1,36 @@
 import {
   bindCommerceApi
-} from "../chunk-3F4TX7AS.js";
-import "../chunk-TT3MVFMZ.js";
-import "../chunk-NOGKXEVT.js";
+} from "../chunk-7PYQCX2K.js";
+import "../chunk-BSTJ7GJ6.js";
+import "../chunk-KO7Q6OA7.js";
 import "../chunk-BGDJXEM5.js";
-import {
-  CART_SESSION_COOKIE,
-  LEGACY_CART_SESSION_COOKIE,
-  readCartSessionToken
-} from "../chunk-MDTTSWBR.js";
-import "../chunk-FFJXPA3V.js";
-import "../chunk-4LBJN5LU.js";
-import "../chunk-NTFJG6BA.js";
+import "../chunk-FET6OEOB.js";
+import "../chunk-DN5M73UO.js";
+import "../chunk-JHSJ3R6O.js";
 import "../chunk-GNU6N22K.js";
 import {
   CUSTOMER_SESSION_COOKIE,
   CUSTOMER_SESSION_MAX_AGE,
   CustomerRequestLimitError,
   SHOPPER_SIGN_IN_TURNSTILE_ACTION,
+  ShopperPrivacyError,
   consumeCustomerEmailSignIn,
   findCustomerSession,
+  manageShopperData,
   normalizeShopperEmail,
   previewCustomerEmailSignIn,
   readTurnstileSettings,
   requestCustomerEmailSignIn,
   revokeCustomerSession,
   verifyTurnstileToken
-} from "../chunk-IAWGIRUS.js";
-import "../chunk-ZI5IJOR6.js";
-import "../chunk-NKJTK7MK.js";
+} from "../chunk-KGRQF4NN.js";
+import "../chunk-FDE2IMK7.js";
+import "../chunk-RVXM5XJ4.js";
+import {
+  CART_SESSION_COOKIE,
+  LEGACY_CART_SESSION_COOKIE,
+  readCartSessionToken
+} from "../chunk-NQUBOBQT.js";
 import {
   shopperSignInEmail
 } from "../chunk-NMGICNSV.js";
@@ -135,6 +137,24 @@ var ALL = async ({ request, cookies }) => {
       logSendFailure(error);
       if (isEmailDeliveryError(error) && error.code === "recipient_suppressed") return Response.json({ accepted: true }, { headers });
       return Response.json({ error: "The sign-in email could not be sent. Please try again later." }, { status: 503, headers });
+    }
+  }
+  if (body && typeof body.action === "string" && ["export", "revoke", "anonymize"].includes(body.action)) {
+    const account = await findCustomerSession(runtimeEnv, sessionToken);
+    if (!account) return Response.json({ error: "Shopper session required" }, { status: 401, headers });
+    try {
+      const result = await manageShopperData(runtimeEnv, account.id, {
+        accountId: account.id,
+        action: body.action,
+        reason: `Shopper requested ${body.action} of commerce data`
+      });
+      if (body.action !== "export") cookies.delete(CUSTOMER_SESSION_COOKIE, { path: "/" });
+      return Response.json(result, { headers });
+    } catch (error) {
+      return Response.json(
+        { error: error instanceof ShopperPrivacyError ? error.message : "Shopper data request failed" },
+        { status: error instanceof ShopperPrivacyError ? 409 : 500, headers }
+      );
     }
   }
   if (body?.token !== void 0 && body.preview !== void 0 && body.preview !== false) {

@@ -86,6 +86,14 @@ declare function listCommerceOrdersAdmin(env: TalismanEnv, options?: {
         }[];
         amounts: OrderAmount[];
         shipments: Shipment[];
+        fulfillmentEvents: {
+            id: string;
+            createdAt: Date;
+            orderId: string;
+            adminActor: string;
+            note: string;
+            kind: "shipment" | "correction" | "reopen" | "complete";
+        }[];
     }[];
 }>;
 /**
@@ -96,6 +104,12 @@ declare function listCommerceOrdersAdmin(env: TalismanEnv, options?: {
  * fails the shipment, and the scheduled job retries it.
  */
 declare function fulfillCommerceOrder(env: TalismanEnv, actor: string, input: unknown): Promise<{
+    duplicate: boolean;
+    status?: string | undefined;
+    fulfillmentStatus?: "unfulfilled" | "partially_fulfilled" | "fulfilled" | undefined;
+    fulfillmentId: string;
+    orderId: string;
+} | {
     fulfillmentId: string;
     orderId: string;
     status: string | undefined;
@@ -115,5 +129,15 @@ declare function correctCommerceFulfillment(env: TalismanEnv, actor: string, inp
     carrier: string | null;
     trackingNumber: string | null;
 }>;
+/** Audited recovery of an early final parcel, or completion when remaining items were refunded. Ships nothing. */
+declare function adjustCommerceFulfillment(env: TalismanEnv, actor: string, input: unknown): Promise<{
+    fulfillmentId: string;
+    orderId: string;
+    duplicate: boolean;
+} | {
+    fulfillmentId: string;
+    orderId: string;
+    action: "reopen" | "complete";
+}>;
 
-export { FulfillmentInputError, type FulfillmentStatus, ORDERS_PAGE_MAX, ORDERS_PAGE_SIZE, type OrdersView, correctCommerceFulfillment, fulfillCommerceOrder, listCommerceOrdersAdmin };
+export { FulfillmentInputError, type FulfillmentStatus, ORDERS_PAGE_MAX, ORDERS_PAGE_SIZE, type OrdersView, adjustCommerceFulfillment, correctCommerceFulfillment, fulfillCommerceOrder, listCommerceOrdersAdmin };

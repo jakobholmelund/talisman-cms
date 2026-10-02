@@ -1,15 +1,17 @@
 import {
   FulfillmentInputError,
+  adjustCommerceFulfillment,
   correctCommerceFulfillment,
   fulfillCommerceOrder,
   listCommerceOrdersAdmin
-} from "../chunk-FFJXPA3V.js";
-import "../chunk-4LBJN5LU.js";
-import "../chunk-NTFJG6BA.js";
+} from "../chunk-FET6OEOB.js";
+import "../chunk-DN5M73UO.js";
+import "../chunk-JHSJ3R6O.js";
 import "../chunk-GNU6N22K.js";
-import "../chunk-IAWGIRUS.js";
-import "../chunk-ZI5IJOR6.js";
-import "../chunk-NKJTK7MK.js";
+import "../chunk-KGRQF4NN.js";
+import "../chunk-FDE2IMK7.js";
+import "../chunk-RVXM5XJ4.js";
+import "../chunk-NQUBOBQT.js";
 import "../chunk-NMGICNSV.js";
 import "../chunk-2UYSCNNW.js";
 
@@ -52,7 +54,8 @@ var ALL = async ({ request }) => {
     let result;
     if (action === "ship" || action === void 0 && "orderId" in input) {
       result = await fulfillCommerceOrder(runtimeEnv, actor, input);
-    } else if (action === "correct") result = await correctCommerceFulfillment(runtimeEnv, actor, input);
+    } else if (action === "reopen" || action === "complete") result = await adjustCommerceFulfillment(runtimeEnv, actor, { ...input, action });
+    else if (action === "correct") result = await correctCommerceFulfillment(runtimeEnv, actor, input);
     else return Response.json({ error: "Invalid fulfillment action" }, { status: 400, headers });
     return Response.json({ result }, { headers });
   } catch (error) {

@@ -1,7 +1,7 @@
 import {
   getReferralPolicy,
   referralReversalStatements
-} from "./chunk-NTFJG6BA.js";
+} from "./chunk-JHSJ3R6O.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
@@ -9,7 +9,7 @@ import {
 import {
   commerceDb,
   commitBatch
-} from "./chunk-ZI5IJOR6.js";
+} from "./chunk-FDE2IMK7.js";
 import {
   creditLedger,
   discountRedemptions,
@@ -22,7 +22,7 @@ import {
   giftCards,
   orders,
   payments
-} from "./chunk-NKJTK7MK.js";
+} from "./chunk-RVXM5XJ4.js";
 import {
   emailLink,
   giftCardClaimEmail
@@ -459,11 +459,29 @@ var WebhookMismatchError = class extends Error {
   }
 };
 
+// src/shopper-errors.ts
+var ShopperError = class extends Error {
+  constructor(code, message, status, options) {
+    super(message, options);
+    this.code = code;
+    this.status = status;
+    this.name = "ShopperError";
+  }
+};
+function shopperFailure(error) {
+  if (error instanceof ShopperError) return { error: error.message, code: error.code, status: error.status };
+  if (error instanceof SyntaxError) return { error: "Request must be valid JSON", code: "invalid_json", status: 400 };
+  console.error("[commerce] Shopper operation failed", { name: error instanceof Error ? error.name : typeof error });
+  return { error: "Checkout is unavailable right now. Please try again later.", code: "checkout_failed", status: 503 };
+}
+
 // src/reconcile.ts
 import { and, eq, isNull, sql } from "drizzle-orm";
 var at = (seconds) => new Date(seconds * 1e3);
-var PERMANENT_FAILURES = /* @__PURE__ */ new Set(["session_missing", "session_mode_mismatch", "payment_mismatch"]);
+var PERMANENT_FAILURES = /* @__PURE__ */ new Set(["session_missing", "session_mode_mismatch", "payment_mismatch", "session_unrecorded", "tax_permanent"]);
 var RECONCILE_FAILURE_MESSAGES = {
+  session_unrecorded: "The Stripe session was not stored. Find it by the purchase id, attach it, or confirm no payment remains before releasing.",
+  tax_permanent: "Tax sync needs review. Attach the existing Stripe Tax record after checking its reference and amount, or correct the cause and retry.",
   session_missing: "The payment provider has no checkout session with this id",
   session_mode_mismatch: "The checkout session belongs to the other Stripe mode",
   payment_mismatch: "The completed payment does not match the amount, currency or payment recorded for it",
@@ -1202,21 +1220,23 @@ async function evaluateGiftCard(env, code, amountDue) {
 }
 async function getGiftCardBalance(env, code) {
   const normalized = code.trim().toUpperCase();
-  if (!/^GIFT-[A-F0-9]{32}$/.test(normalized)) throw new Error("Invalid gift card code");
+  if (!/^GIFT-[A-F0-9]{32}$/.test(normalized)) throw new ShopperError("gift_card_unavailable", "Gift card is unavailable", 400);
   const db = commerceDb(env);
   const card = await db.select({
     balanceCents: giftCards.balanceCents,
     currency: giftCards.currency,
     status: giftCards.status
   }).from(giftCards).where(eq3(giftCards.codeHash, await hashGiftCardSecret(normalized))).get();
-  if (!card) throw new Error("Gift card not found");
+  if (!card) throw new ShopperError("gift_card_unavailable", "Gift card is unavailable", 400);
   return card;
 }
 async function startGiftCardPurchase(env, adapter, input, urls) {
   if (adapter.providerId !== "stripe") throw new Error("Gift card purchases require Stripe");
   const currency = giftCardCurrency(env);
   await giftCardKeyring(env);
-  const values = purchaseSchema.parse(input);
+  const parsed = purchaseSchema.safeParse(input);
+  if (!parsed.success) throw new ShopperError("invalid_gift_purchase", "Enter a valid buyer email and gift card amount (500 to 100000 USD cents)", 400);
+  const values = parsed.data;
   const id = `gp_${crypto.randomUUID()}`;
   const accessToken = randomHex(32);
   const timestamp = Math.floor(Date.now() / 1e3);
@@ -1247,6 +1267,10 @@ async function startGiftCardPurchase(env, adapter, input, urls) {
     await db.update(giftCardPurchases).set({ providerSessionId: session.providerSessionId, updatedAt: at3(timestamp) }).where(pending);
     return { id, accessToken, paymentUrl: session.url };
   } catch (error) {
+    if (!providerSessionId) {
+      await db.update(giftCardPurchases).set({ reconcileReviewAt: at3(timestamp), reconcileLastError: "session_unrecorded" }).where(pending);
+      throw error;
+    }
     if (providerSessionId) {
       try {
         await adapter.expireCheckoutSession?.(providerSessionId);
@@ -1264,10 +1288,13 @@ async function confirmGiftCardPurchase(env, session) {
   if (!id) throw new Error("Gift card purchase ID is missing");
   const db = commerceDb(env);
   const purchase = await db.select().from(giftCardPurchases).where(eq3(giftCardPurchases.id, id)).get();
-  if (!purchase || purchase.providerSessionId !== session.id || purchase.amountCents !== session.amount_total || session.currency?.toLowerCase() !== purchase.currency.toLowerCase() || session.payment_status !== "paid" || typeof session.payment_intent !== "string") {
+  if (!purchase || purchase.providerSessionId !== null && purchase.providerSessionId !== session.id || purchase.amountCents !== session.amount_total || session.currency?.toLowerCase() !== purchase.currency.toLowerCase() || session.payment_status !== "paid" || typeof session.payment_intent !== "string") {
     throw new WebhookMismatchError("purchase_mismatch", "Gift card payment does not match purchase");
   }
   if (purchase.status === "paid") return { success: true, purchaseId: id, duplicate: true };
+  if (!purchase.providerSessionId && purchase.status === "pending") {
+    await db.update(giftCardPurchases).set({ providerSessionId: session.id }).where(and3(eq3(giftCardPurchases.id, id), eq3(giftCardPurchases.status, "pending"), isNull3(giftCardPurchases.providerSessionId)));
+  }
   if (["partially_refunded", "refunded", "review"].includes(purchase.status) && purchase.paymentIntentId === session.payment_intent) return { success: true, purchaseId: id, duplicate: true };
   if (purchase.status !== "pending") {
     throw new WebhookMismatchError("purchase_not_pending", "Gift card purchase is no longer pending");
@@ -1441,7 +1468,8 @@ async function expireGiftCardPurchase(env, id, sessionId) {
 async function reconcileGiftCardPurchase(env, adapter, id) {
   const db = commerceDb(env);
   const purchase = await db.select().from(giftCardPurchases).where(eq3(giftCardPurchases.id, id)).get();
-  if (!purchase || purchase.status !== "pending" || !purchase.providerSessionId) return null;
+  if (!purchase || purchase.status !== "pending") return null;
+  if (!purchase.providerSessionId) throw new ReconcileFailure("session_unrecorded");
   if (purchase.reconcileReviewAt) return { status: "pending", review: true };
   if (adapter?.providerId !== "stripe" || !adapter.getCheckoutSession) {
     throw new ReconcileFailure("provider_not_configured", "Stripe session lookup is required for gift card reconciliation");
@@ -1729,6 +1757,8 @@ async function refundGiftCardOnlyOrder(env, actor, input) {
 }
 
 export {
+  ShopperError,
+  shopperFailure,
   COUNTRY_CODES,
   isCountryCode,
   StoreSettingsError,

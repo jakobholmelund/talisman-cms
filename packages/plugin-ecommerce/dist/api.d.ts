@@ -1,11 +1,11 @@
 import { TalismanEnv } from 'talisman-cms/client';
-import { P as PaymentProviderAdapter } from './payments-TQo6Ws_B.js';
+import { P as PaymentProviderAdapter } from './payments-C3gqo5tp.js';
 import { a as CommerceEmailResult } from './email-deliveries-CyzibTug.js';
 import 'talisman-cms/email';
 import './emails.js';
 
 /** Why a reconciliation attempt failed. Only these codes are stored, never provider text or personal data. */
-type ReconcileFailureCode = 'session_missing' | 'session_mode_mismatch' | 'payment_mismatch' | 'provider_not_configured' | 'provider_unavailable' | 'provider_refused' | 'failed';
+type ReconcileFailureCode = 'session_missing' | 'session_mode_mismatch' | 'payment_mismatch' | 'session_unrecorded' | 'tax_permanent' | 'provider_not_configured' | 'provider_unavailable' | 'provider_refused' | 'failed';
 /** A reconciliation attempt that failed for a known reason. A permanent one parks the row. */
 declare class ReconcileFailure extends Error {
     readonly name = "ReconcileFailure";
@@ -76,7 +76,7 @@ declare const PARKED_CHECKOUT_MESSAGE = "The store is reviewing the payment for 
  * is not selected again, so only new or transient failures are reported.
  *
  * Tax records and reversals back off the same way on counts of their own, and a success clears the
- * count. They are not parked: one that keeps failing is reported each time it is tried again.
+ * count. Permanent tax failures park for audited administrator recovery; transient ones remain eligible.
  */
 declare function reconcileCommerce(options: CommerceApiOptions, limit?: number): Promise<ReconcileResult[]>;
 
@@ -128,6 +128,40 @@ declare class ProviderCheckLimitedError extends Error {
 
 declare class TaxCalculationError extends Error {
     constructor(options?: ErrorOptions);
+}
+/** Permanent tax failures stop retries and appear here, separate from unpaid checkout recovery. */
+declare function listTaxSyncReview(env: TalismanEnv): Promise<({
+    orderId: string;
+    kind: "transaction";
+    id: string;
+    reviewAt: Date | null;
+    code: string | null;
+    attempts: number;
+} | {
+    kind: "reversal";
+    id: string;
+    orderId: string;
+    reviewAt: Date | null;
+    code: string | null;
+    attempts: number;
+})[]>;
+/** Attach a provider record after verifying reference/currency/amount/type, or audit a corrected cause and retry. */
+declare function recoverTaxSync(env: TalismanEnv, adapters: PaymentProviderAdapter[], actor: string, input: unknown): Promise<{
+    orderId: string;
+    outcome: "retry" | "attach";
+}>;
+
+/** Audited attachment of a lost gift-card session, verified against provider metadata and amount. */
+declare function attachGiftPurchaseSession(options: CommerceApiOptions, actor: string, input: unknown): Promise<{
+    purchaseId: string;
+    status: string;
+}>;
+
+/** Only errors explicitly safe for shoppers may cross public checkout/payment boundaries. */
+declare class ShopperError extends Error {
+    readonly code: string;
+    readonly status: 400 | 409 | 503;
+    constructor(code: string, message: string, status: 400 | 409 | 503, options?: ErrorOptions);
 }
 
 /**
@@ -271,12 +305,15 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 taxSyncAttempts: number;
                 taxSyncLastAt: Date | null;
                 taxSyncLastError: string | null;
+                taxSyncReviewAt: Date | null;
                 reconcileAttempts: number;
                 reconcileLastAt: Date | null;
                 reconcileLastError: string | null;
                 reconcileReviewAt: Date | null;
                 id: string;
                 cartId: string | null;
+                guestAccessTokenHash: string | null;
+                guestBasketTokenHash: string | null;
                 userId: string | null;
                 checkoutSessionId: string | null;
                 paymentIntentId: string | null;
@@ -284,6 +321,13 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 paymentProvider: string | null;
                 referralCode: string | null;
                 referralRewardCents: number;
+                referralTerms: {
+                    minOrderCents: number;
+                    holdDays: number;
+                    maxPerPeriod: number;
+                    periodDays: number;
+                } | null;
+                discountCleanupPending: boolean;
                 discountCode: string | null;
                 discountAmount: number;
                 giftCardId: string | null;
@@ -310,6 +354,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 totalAmount: number;
                 currency: string;
                 customerEmail: string | null;
+                customerEmailCanonical: string | null;
                 shippingAddress: {
                     name?: string;
                     line1?: string;
@@ -339,12 +384,15 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 taxSyncAttempts: number;
                 taxSyncLastAt: Date | null;
                 taxSyncLastError: string | null;
+                taxSyncReviewAt: Date | null;
                 reconcileAttempts: number;
                 reconcileLastAt: Date | null;
                 reconcileLastError: string | null;
                 reconcileReviewAt: Date | null;
                 id: string;
                 cartId: string | null;
+                guestAccessTokenHash: string | null;
+                guestBasketTokenHash: string | null;
                 userId: string | null;
                 checkoutSessionId: string | null;
                 paymentIntentId: string | null;
@@ -352,6 +400,13 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 paymentProvider: string | null;
                 referralCode: string | null;
                 referralRewardCents: number;
+                referralTerms: {
+                    minOrderCents: number;
+                    holdDays: number;
+                    maxPerPeriod: number;
+                    periodDays: number;
+                } | null;
+                discountCleanupPending: boolean;
                 discountCode: string | null;
                 discountAmount: number;
                 giftCardId: string | null;
@@ -378,6 +433,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 totalAmount: number;
                 currency: string;
                 customerEmail: string | null;
+                customerEmailCanonical: string | null;
                 shippingAddress: {
                     name?: string;
                     line1?: string;
@@ -407,12 +463,15 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 taxSyncAttempts: number;
                 taxSyncLastAt: Date | null;
                 taxSyncLastError: string | null;
+                taxSyncReviewAt: Date | null;
                 reconcileAttempts: number;
                 reconcileLastAt: Date | null;
                 reconcileLastError: string | null;
                 reconcileReviewAt: Date | null;
                 id: string;
                 cartId: string | null;
+                guestAccessTokenHash: string | null;
+                guestBasketTokenHash: string | null;
                 userId: string | null;
                 checkoutSessionId: string | null;
                 paymentIntentId: string | null;
@@ -420,6 +479,13 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 paymentProvider: string | null;
                 referralCode: string | null;
                 referralRewardCents: number;
+                referralTerms: {
+                    minOrderCents: number;
+                    holdDays: number;
+                    maxPerPeriod: number;
+                    periodDays: number;
+                } | null;
+                discountCleanupPending: boolean;
                 discountCode: string | null;
                 discountAmount: number;
                 giftCardId: string | null;
@@ -446,6 +512,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 totalAmount: number;
                 currency: string;
                 customerEmail: string | null;
+                customerEmailCanonical: string | null;
                 shippingAddress: {
                     name?: string;
                     line1?: string;
@@ -496,12 +563,15 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 taxSyncAttempts: number;
                 taxSyncLastAt: Date | null;
                 taxSyncLastError: string | null;
+                taxSyncReviewAt: Date | null;
                 reconcileAttempts: number;
                 reconcileLastAt: Date | null;
                 reconcileLastError: string | null;
                 reconcileReviewAt: Date | null;
                 id: string;
                 cartId: string | null;
+                guestAccessTokenHash: string | null;
+                guestBasketTokenHash: string | null;
                 userId: string | null;
                 checkoutSessionId: string | null;
                 paymentIntentId: string | null;
@@ -509,6 +579,13 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 paymentProvider: string | null;
                 referralCode: string | null;
                 referralRewardCents: number;
+                referralTerms: {
+                    minOrderCents: number;
+                    holdDays: number;
+                    maxPerPeriod: number;
+                    periodDays: number;
+                } | null;
+                discountCleanupPending: boolean;
                 discountCode: string | null;
                 discountAmount: number;
                 giftCardId: string | null;
@@ -535,6 +612,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 totalAmount: number;
                 currency: string;
                 customerEmail: string | null;
+                customerEmailCanonical: string | null;
                 shippingAddress: {
                     name?: string;
                     line1?: string;
@@ -555,6 +633,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 } | null;
             };
             paymentUrl: string;
+            orderAccessToken: string;
         }>;
         create: (data: {
             id?: string;
@@ -595,12 +674,15 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             taxSyncAttempts: number;
             taxSyncLastAt: Date | null;
             taxSyncLastError: string | null;
+            taxSyncReviewAt: Date | null;
             reconcileAttempts: number;
             reconcileLastAt: Date | null;
             reconcileLastError: string | null;
             reconcileReviewAt: Date | null;
             id: string;
             cartId: string | null;
+            guestAccessTokenHash: string | null;
+            guestBasketTokenHash: string | null;
             userId: string | null;
             checkoutSessionId: string | null;
             paymentIntentId: string | null;
@@ -608,6 +690,13 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             paymentProvider: string | null;
             referralCode: string | null;
             referralRewardCents: number;
+            referralTerms: {
+                minOrderCents: number;
+                holdDays: number;
+                maxPerPeriod: number;
+                periodDays: number;
+            } | null;
+            discountCleanupPending: boolean;
             discountCode: string | null;
             discountAmount: number;
             giftCardId: string | null;
@@ -634,6 +723,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             totalAmount: number;
             currency: string;
             customerEmail: string | null;
+            customerEmailCanonical: string | null;
             shippingAddress: {
                 name?: string;
                 line1?: string;
@@ -659,12 +749,15 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             taxSyncAttempts: number;
             taxSyncLastAt: Date | null;
             taxSyncLastError: string | null;
+            taxSyncReviewAt: Date | null;
             reconcileAttempts: number;
             reconcileLastAt: Date | null;
             reconcileLastError: string | null;
             reconcileReviewAt: Date | null;
             id: string;
             cartId: string | null;
+            guestAccessTokenHash: string | null;
+            guestBasketTokenHash: string | null;
             userId: string | null;
             checkoutSessionId: string | null;
             paymentIntentId: string | null;
@@ -672,6 +765,13 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             paymentProvider: string | null;
             referralCode: string | null;
             referralRewardCents: number;
+            referralTerms: {
+                minOrderCents: number;
+                holdDays: number;
+                maxPerPeriod: number;
+                periodDays: number;
+            } | null;
+            discountCleanupPending: boolean;
             discountCode: string | null;
             discountAmount: number;
             giftCardId: string | null;
@@ -698,6 +798,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             totalAmount: number;
             currency: string;
             customerEmail: string | null;
+            customerEmailCanonical: string | null;
             shippingAddress: {
                 name?: string;
                 line1?: string;
@@ -717,18 +818,21 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 country?: string;
             } | null;
         } | null>;
-        findForSession: (id: string, sessionToken: string | undefined, customerId?: string) => Promise<{
+        findForSession: (id: string, sessionToken: string | undefined, customerId?: string, orderAccessToken?: string) => Promise<{
             createdAt: Date;
             updatedAt: Date;
             taxSyncAttempts: number;
             taxSyncLastAt: Date | null;
             taxSyncLastError: string | null;
+            taxSyncReviewAt: Date | null;
             reconcileAttempts: number;
             reconcileLastAt: Date | null;
             reconcileLastError: string | null;
             reconcileReviewAt: Date | null;
             id: string;
             cartId: string | null;
+            guestAccessTokenHash: string | null;
+            guestBasketTokenHash: string | null;
             userId: string | null;
             checkoutSessionId: string | null;
             paymentIntentId: string | null;
@@ -736,6 +840,13 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             paymentProvider: string | null;
             referralCode: string | null;
             referralRewardCents: number;
+            referralTerms: {
+                minOrderCents: number;
+                holdDays: number;
+                maxPerPeriod: number;
+                periodDays: number;
+            } | null;
+            discountCleanupPending: boolean;
             discountCode: string | null;
             discountAmount: number;
             giftCardId: string | null;
@@ -762,6 +873,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             totalAmount: number;
             currency: string;
             customerEmail: string | null;
+            customerEmailCanonical: string | null;
             shippingAddress: {
                 name?: string;
                 line1?: string;
@@ -792,12 +904,15 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             taxSyncAttempts: number;
             taxSyncLastAt: Date | null;
             taxSyncLastError: string | null;
+            taxSyncReviewAt: Date | null;
             reconcileAttempts: number;
             reconcileLastAt: Date | null;
             reconcileLastError: string | null;
             reconcileReviewAt: Date | null;
             id: string;
             cartId: string | null;
+            guestAccessTokenHash: string | null;
+            guestBasketTokenHash: string | null;
             userId: string | null;
             checkoutSessionId: string | null;
             paymentIntentId: string | null;
@@ -805,6 +920,13 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             paymentProvider: string | null;
             referralCode: string | null;
             referralRewardCents: number;
+            referralTerms: {
+                minOrderCents: number;
+                holdDays: number;
+                maxPerPeriod: number;
+                periodDays: number;
+            } | null;
+            discountCleanupPending: boolean;
             discountCode: string | null;
             discountAmount: number;
             giftCardId: string | null;
@@ -831,6 +953,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             totalAmount: number;
             currency: string;
             customerEmail: string | null;
+            customerEmailCanonical: string | null;
             shippingAddress: {
                 name?: string;
                 line1?: string;
@@ -883,12 +1006,15 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             taxSyncAttempts: number;
             taxSyncLastAt: Date | null;
             taxSyncLastError: string | null;
+            taxSyncReviewAt: Date | null;
             reconcileAttempts: number;
             reconcileLastAt: Date | null;
             reconcileLastError: string | null;
             reconcileReviewAt: Date | null;
             id: string;
             cartId: string | null;
+            guestAccessTokenHash: string | null;
+            guestBasketTokenHash: string | null;
             userId: string | null;
             checkoutSessionId: string | null;
             paymentIntentId: string | null;
@@ -896,6 +1022,13 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             paymentProvider: string | null;
             referralCode: string | null;
             referralRewardCents: number;
+            referralTerms: {
+                minOrderCents: number;
+                holdDays: number;
+                maxPerPeriod: number;
+                periodDays: number;
+            } | null;
+            discountCleanupPending: boolean;
             discountCode: string | null;
             discountAmount: number;
             giftCardId: string | null;
@@ -922,6 +1055,7 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             totalAmount: number;
             currency: string;
             customerEmail: string | null;
+            customerEmailCanonical: string | null;
             shippingAddress: {
                 name?: string;
                 line1?: string;
@@ -945,20 +1079,6 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
     webhooks: {
         handleStripe: (payload: string, signature: string, secret?: string) => Promise<{
             success: boolean;
-            orderId: string;
-            status: string;
-            duplicate: boolean;
-        } | {
-            success: boolean;
-            orderId: string;
-            status: string;
-            duplicate?: undefined;
-        } | {
-            success: boolean;
-            event: string;
-            ignored: boolean;
-        } | {
-            success: boolean;
             purchaseId: string;
             duplicate: boolean;
         } | {
@@ -973,8 +1093,22 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
         } | {
             success: boolean;
             orderId: string;
+            status: string;
+            duplicate: boolean;
+        } | {
+            success: boolean;
+            orderId: string;
+            status: string;
+            duplicate?: undefined;
+        } | {
+            success: boolean;
+            orderId: string;
             duplicate: boolean;
             status?: undefined;
+        } | {
+            success: boolean;
+            event: string;
+            ignored: boolean;
         } | {
             success: boolean;
             event: string;
@@ -992,4 +1126,4 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
     };
 };
 
-export { CART_MAX_LINES, CART_MAX_LINE_QUANTITY, type CartItemInput, type CommerceApiOptions, type CommercePurgeOptions, PARKED_CHECKOUT_MESSAGE, PROVIDER_CHECK_RETRY_MESSAGE, ProviderCheckLimitedError, ReconcileFailure, type ReconcileFailureCode, type ReconcileResult, TaxCalculationError, WebhookMismatchError, WebhookRetryLaterError, WebhookSignatureError, aggregateComponentDemand, bindCommerceApi, deliverPendingCommerceEmails, purgeStaleCommerceData, reconcileCommerce };
+export { CART_MAX_LINES, CART_MAX_LINE_QUANTITY, type CartItemInput, type CommerceApiOptions, type CommercePurgeOptions, PARKED_CHECKOUT_MESSAGE, PROVIDER_CHECK_RETRY_MESSAGE, ProviderCheckLimitedError, ReconcileFailure, type ReconcileFailureCode, type ReconcileResult, ShopperError, TaxCalculationError, WebhookMismatchError, WebhookRetryLaterError, WebhookSignatureError, aggregateComponentDemand, attachGiftPurchaseSession, bindCommerceApi, deliverPendingCommerceEmails, listTaxSyncReview, purgeStaleCommerceData, reconcileCommerce, recoverTaxSync };

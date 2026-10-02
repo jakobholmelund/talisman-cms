@@ -11,18 +11,21 @@ import {
   sendCommerceEmailNow,
   unclaimedAt,
   waitingEmailsResult
-} from "./chunk-4LBJN5LU.js";
+} from "./chunk-DN5M73UO.js";
 import {
   batchGroups,
   chunked,
   commerceDb,
   errorText
-} from "./chunk-ZI5IJOR6.js";
+} from "./chunk-FDE2IMK7.js";
 import {
   emailDeliveries,
   fulfillments,
   orders
-} from "./chunk-NKJTK7MK.js";
+} from "./chunk-RVXM5XJ4.js";
+import {
+  hashOrderAccess
+} from "./chunk-NQUBOBQT.js";
 import {
   orderConfirmationEmail,
   shipmentEmail
@@ -283,7 +286,8 @@ var shipmentSchema = z.object({
   carrier: optionalText(100),
   trackingNumber: optionalText(150),
   note: z.string().trim().min(8).max(500),
-  completesOrder: z.boolean().default(true)
+  completesOrder: z.boolean().default(true),
+  requestKey: z.string().trim().min(8).max(128).optional()
 }).strict();
 var correctionSchema = z.object({
   fulfillmentId: z.string().trim().min(1).max(128),
@@ -377,6 +381,11 @@ async function listCommerceOrdersAdmin(env, options = {}) {
   const storedItems2 = rows.map((row) => Array.isArray(row.items) ? row.items.filter((item) => typeof item?.productId === "string") : []);
   const described = await describeOrderItems(env, storedItems2.flat());
   const shipments = await loadShipments(env, rows.map((row) => row.id));
+  const { events } = await batchGroups(db, { events: chunked(rows.map((row) => row.id)).map((ids) => db.query.fulfillments.findMany({
+    columns: { id: true, orderId: true, kind: true, note: true, adminActor: true, createdAt: true },
+    where: { orderId: { in: ids }, kind: { in: ["reopen", "complete"] } },
+    orderBy: (_row, { sql: sql3 }) => sql3`rowid`
+  })) });
   let offset = 0;
   const orders2 = rows.map((row, index) => {
     const items = described.slice(offset, offset += storedItems2[index].length);
@@ -402,7 +411,8 @@ async function listCommerceOrdersAdmin(env, options = {}) {
         sku: item.sku
       })),
       amounts: orderAmounts(row),
-      shipments: shipments.get(row.id) ?? []
+      shipments: shipments.get(row.id) ?? [],
+      fulfillmentEvents: events.filter((event) => event.orderId === row.id)
     };
   });
   return {
@@ -420,6 +430,19 @@ async function fulfillCommerceOrder(env, actor, input) {
   const values = parseInput(shipmentSchema, input);
   if (!actor.trim()) throw new Error("Administrator identity is required");
   const db = commerceDb(env);
+  const requestKey = values.requestKey ?? `legacy_${await hashOrderAccess(JSON.stringify(values))}`;
+  const id = `ful_${await hashOrderAccess(`${values.orderId}:${requestKey}`)}`;
+  const replay = async () => {
+    const previous2 = await db.select().from(fulfillments).where(eq2(fulfillments.id, id)).get();
+    if (!previous2) return null;
+    if (previous2.kind !== "shipment" || previous2.note !== values.note || previous2.carrier !== values.carrier || previous2.trackingNumber !== values.trackingNumber || previous2.completesOrder !== values.completesOrder) {
+      throw new FulfillmentInputError("The shipment request key was already used with other details");
+    }
+    const current2 = await db.select({ status: orders.status, fulfillmentStatus: orders.fulfillmentStatus }).from(orders).where(eq2(orders.id, values.orderId)).get();
+    return { fulfillmentId: previous2.id, orderId: values.orderId, ...current2, duplicate: true };
+  };
+  const previous = await replay();
+  if (previous) return previous;
   const order = await db.select({
     status: orders.status,
     fulfillmentStatus: orders.fulfillmentStatus,
@@ -428,15 +451,13 @@ async function fulfillCommerceOrder(env, actor, input) {
   if (!order) throw new Error("Order not found");
   if ((order.paymentProvider ?? "stripe") === "admin_test") throw new Error("Admin test orders cannot be fulfilled");
   if (order.fulfillmentStatus === "fulfilled") throw new Error("Order has already shipped in full");
-  if (!SHIPPABLE_STATUSES.includes(order.status)) {
-    throw new Error(`A ${order.status.replaceAll("_", " ")} order cannot ship`);
-  }
-  const id = `ful_${crypto.randomUUID()}`;
+  if (!SHIPPABLE_STATUSES.includes(order.status)) throw new Error(`A ${order.status.replaceAll("_", " ")} order cannot ship`);
   const now = Math.floor(Date.now() / 1e3);
   try {
     await db.batch([
       db.insert(fulfillments).values({
         id,
+        requestKey,
         orderId: values.orderId,
         kind: "shipment",
         completesOrder: values.completesOrder,
@@ -449,6 +470,8 @@ async function fulfillCommerceOrder(env, actor, input) {
       db.run(commerceEmailStatement("shipment", id, now))
     ]);
   } catch (cause) {
+    const previous2 = await replay();
+    if (previous2) return previous2;
     throw refusal(cause, "Order is not ready for fulfillment");
   }
   await deliverCommerceEmail(env, "shipment", id);
@@ -517,6 +540,43 @@ async function correctCommerceFulfillment(env, actor, input) {
     trackingNumber: values.trackingNumber
   };
 }
+var progressSchema = z.object({
+  orderId: z.string().trim().min(1).max(128),
+  action: z.enum(["reopen", "complete"]),
+  reason: z.string().trim().min(8).max(500),
+  requestKey: z.string().trim().min(8).max(128)
+}).strict();
+async function adjustCommerceFulfillment(env, actor, input) {
+  const values = parseInput(progressSchema, input);
+  if (!actor.trim()) throw new FulfillmentInputError("Administrator identity is required");
+  const db = commerceDb(env);
+  const id = `ful_${await hashOrderAccess(`${values.orderId}:${values.requestKey}`)}`;
+  const replay = async () => {
+    const row = await db.select().from(fulfillments).where(eq2(fulfillments.id, id)).get();
+    if (!row) return null;
+    if (row.kind !== values.action || row.note !== values.reason) throw new FulfillmentInputError("Request key already used with other details");
+    return { fulfillmentId: row.id, orderId: row.orderId, duplicate: true };
+  };
+  const previous = await replay();
+  if (previous) return previous;
+  try {
+    await db.insert(fulfillments).values({
+      id,
+      orderId: values.orderId,
+      requestKey: values.requestKey,
+      kind: values.action,
+      note: values.reason,
+      adminActor: actor,
+      completesOrder: false,
+      createdAt: /* @__PURE__ */ new Date()
+    });
+  } catch (cause) {
+    const previous2 = await replay();
+    if (previous2) return previous2;
+    throw refusal(cause, "Fulfillment progress cannot be changed");
+  }
+  return { fulfillmentId: id, orderId: values.orderId, action: values.action };
+}
 
 export {
   deliverCommerceEmail,
@@ -526,5 +586,6 @@ export {
   FulfillmentInputError,
   listCommerceOrdersAdmin,
   fulfillCommerceOrder,
-  correctCommerceFulfillment
+  correctCommerceFulfillment,
+  adjustCommerceFulfillment
 };

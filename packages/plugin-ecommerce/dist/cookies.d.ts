@@ -34,5 +34,11 @@ declare function readGiftCardAccessToken(cookies: CookieReader, purchaseId: stri
  * A token found only under the legacy name is adopted; the legacy cookie is dropped either way.
  */
 declare function ensureCartSession(cookies: CookieJar, secure: boolean): string;
+/** Each guest order keeps its own credential when the browser starts another basket. */
+declare const ORDER_ACCESS_COOKIE_PREFIX = "talisman-order-";
+declare const orderAccessCookie: (id: string) => string;
+declare function readOrderAccess(cookies: CookieReader, id: string): string | undefined;
+declare function setOrderAccess(cookies: CookieJar | undefined, secure: boolean, id: string, token: string): void;
+declare function hashOrderAccess(token: string): Promise<string>;
 
-export { CART_SESSION_COOKIE, CART_SESSION_MAX_AGE, type CookieJar, type CookieReader, GIFT_CARD_ACCESS_COOKIE_PREFIX, LEGACY_CART_SESSION_COOKIE, LEGACY_GIFT_CARD_ACCESS_COOKIE_PREFIX, ensureCartSession, giftCardAccessCookie, legacyGiftCardAccessCookie, readCartSessionToken, readGiftCardAccessToken };
+export { CART_SESSION_COOKIE, CART_SESSION_MAX_AGE, type CookieJar, type CookieReader, GIFT_CARD_ACCESS_COOKIE_PREFIX, LEGACY_CART_SESSION_COOKIE, LEGACY_GIFT_CARD_ACCESS_COOKIE_PREFIX, ORDER_ACCESS_COOKIE_PREFIX, ensureCartSession, giftCardAccessCookie, hashOrderAccess, legacyGiftCardAccessCookie, orderAccessCookie, readCartSessionToken, readGiftCardAccessToken, readOrderAccess, setOrderAccess };

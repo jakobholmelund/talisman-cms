@@ -1,32 +1,33 @@
 import {
   runtimePaymentAdapters
-} from "../chunk-DQ2SJLJ6.js";
-import "../chunk-6L7TQXAW.js";
+} from "../chunk-M4D42HVD.js";
+import "../chunk-DR67UJVQ.js";
 import {
   PROVIDER_CHECK_MIN_ORDER_AGE_SECONDS,
   ProviderCheckLimitedError,
   bindCommerceApi,
   mayAskPaymentProvider,
   providerCheckLimitResponse
-} from "../chunk-3F4TX7AS.js";
-import "../chunk-TT3MVFMZ.js";
-import "../chunk-NOGKXEVT.js";
+} from "../chunk-7PYQCX2K.js";
+import "../chunk-BSTJ7GJ6.js";
+import "../chunk-KO7Q6OA7.js";
 import "../chunk-BGDJXEM5.js";
-import {
-  readCartSessionToken
-} from "../chunk-MDTTSWBR.js";
-import "../chunk-FFJXPA3V.js";
+import "../chunk-FET6OEOB.js";
 import {
   reconcileFailure
-} from "../chunk-4LBJN5LU.js";
-import "../chunk-NTFJG6BA.js";
+} from "../chunk-DN5M73UO.js";
+import "../chunk-JHSJ3R6O.js";
 import "../chunk-GNU6N22K.js";
 import {
   CUSTOMER_SESSION_COOKIE,
   findCustomerSession
-} from "../chunk-IAWGIRUS.js";
-import "../chunk-ZI5IJOR6.js";
-import "../chunk-NKJTK7MK.js";
+} from "../chunk-KGRQF4NN.js";
+import "../chunk-FDE2IMK7.js";
+import "../chunk-RVXM5XJ4.js";
+import {
+  readCartSessionToken,
+  readOrderAccess
+} from "../chunk-NQUBOBQT.js";
 import "../chunk-NMGICNSV.js";
 import "../chunk-2UYSCNNW.js";
 
@@ -47,10 +48,11 @@ var ALL = async ({ request, cookies }) => {
     const { env } = await import("cloudflare:workers");
     const runtimeEnv = env;
     const customer = await findCustomerSession(runtimeEnv, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
-    if (!sessionToken && !customer) return Response.json({ error: "Order not found" }, { status: 404 });
+    const orderAccessToken = readOrderAccess(cookies, orderId);
+    if (!sessionToken && !customer && !orderAccessToken) return Response.json({ error: "Order not found" }, { status: 404 });
     const paymentAdapters = runtimePaymentAdapters(runtimeEnv);
     const api = bindCommerceApi({ env: runtimeEnv, paymentAdapters });
-    let order = await api.orders.findForSession(orderId, sessionToken, customer?.id);
+    let order = await api.orders.findForSession(orderId, sessionToken, customer?.id, orderAccessToken);
     if (!order) return Response.json({ error: "Order not found" }, { status: 404 });
     if (request.method === "POST") {
       try {
@@ -72,7 +74,7 @@ var ALL = async ({ request, cookies }) => {
       } catch (error) {
         console.warn("[commerce] Order status check failed", { code: reconcileFailure(error).code });
       }
-      order = await api.orders.findForSession(orderId, sessionToken, customer?.id);
+      order = await api.orders.findForSession(orderId, sessionToken, customer?.id, orderAccessToken);
       if (!order) return Response.json({ error: "Order not found" }, { status: 404 });
     }
     return Response.json({

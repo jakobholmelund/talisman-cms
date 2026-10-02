@@ -1,6 +1,6 @@
 import { BlockDefinition, Plugin } from 'talisman-cms';
 export { CART_MAX_LINES, CART_MAX_LINE_QUANTITY, TaxCalculationError, bindCommerceApi, deliverPendingCommerceEmails, reconcileCommerce } from './api.js';
-export { P as PaymentProviderAdapter, a as PaymentReferences, T as TaxAddressError, b as TaxCalculation, c as TaxCalculationParams, V as ValidatedWebhookEvent } from './payments-TQo6Ws_B.js';
+export { P as PaymentProviderAdapter, a as PaymentReferences, T as TaxAddressError, b as TaxCalculation, c as TaxCalculationParams, V as ValidatedWebhookEvent } from './payments-C3gqo5tp.js';
 export { CommerceEmailTemplates } from './emails.js';
 export { StripePaymentAdapter } from './adapters/stripe.js';
 export { AdminTestPaymentAdapter } from './adapters/admin-test.js';

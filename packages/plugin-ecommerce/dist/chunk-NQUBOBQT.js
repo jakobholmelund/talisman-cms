@@ -32,6 +32,24 @@ function ensureCartSession(cookies, secure) {
   });
   return sessionToken;
 }
+var ORDER_ACCESS_COOKIE_PREFIX = "talisman-order-";
+var orderAccessCookie = (id) => `${ORDER_ACCESS_COOKIE_PREFIX}${id}`;
+function readOrderAccess(cookies, id) {
+  return cookies.get(orderAccessCookie(id))?.value;
+}
+function setOrderAccess(cookies, secure, id, token) {
+  cookies?.set(orderAccessCookie(id), token, {
+    path: "/",
+    httpOnly: true,
+    sameSite: "lax",
+    secure,
+    maxAge: CART_SESSION_MAX_AGE
+  });
+}
+async function hashOrderAccess(token) {
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 export {
   CART_SESSION_COOKIE,
@@ -43,5 +61,10 @@ export {
   legacyGiftCardAccessCookie,
   readCartSessionToken,
   readGiftCardAccessToken,
-  ensureCartSession
+  ensureCartSession,
+  ORDER_ACCESS_COOKIE_PREFIX,
+  orderAccessCookie,
+  readOrderAccess,
+  setOrderAccess,
+  hashOrderAccess
 };
