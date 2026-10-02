@@ -3,6 +3,7 @@ import { getClient } from 'talisman-cms/client';
 // @ts-ignore
 import { env as cfEnv } from 'cloudflare:workers';
 import { buildThemeCss } from './theme-css';
+import themeScriptUrl from './theme-init.js?url&no-inline';
 
 const env = { DB: (cfEnv as any).DB, KV: (cfEnv as any).KV };
 
@@ -29,21 +30,5 @@ try {
 }
 ---
 
-{injectedCss.trim().length > 0 && <style is:inline data-daisyui-theme set:html={injectedCss} />}
-
-<script is:inline define:vars={{ lightThemeName, darkThemeName }}>
-  window.talismanThemes = { light: lightThemeName, dark: darkThemeName };
-  
-  // Set initial theme based on localStorage or OS preference
-  if (!document.documentElement.hasAttribute('data-theme')) {
-    const savedTheme = localStorage.getItem('talisman-theme');
-    if (savedTheme === 'light' || savedTheme === 'dark') {
-      document.documentElement.setAttribute('data-theme', window.talismanThemes[savedTheme]);
-    } else {
-      const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const initialMode = isDark ? 'dark' : 'light';
-      document.documentElement.setAttribute('data-theme', window.talismanThemes[initialMode]);
-      localStorage.setItem('talisman-theme', initialMode);
-    }
-  }
-</script>
+<meta name="daisyui-themes" data-light-theme={lightThemeName} data-dark-theme={darkThemeName} data-theme-css={injectedCss} />
+<script is:inline data-astro-rerun src={themeScriptUrl}></script>

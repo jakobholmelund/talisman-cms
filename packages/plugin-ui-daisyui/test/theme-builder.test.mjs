@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  DAISYUI_THEME_DEFAULTS_VERSION,
   DAISYUI_THEME_DEFAULTS,
   buildThemeCss,
   colorToHex,
@@ -52,8 +53,7 @@ test('theme defaults are daisyUI 5 themes with every colour and variable', () =>
 test('themeDefaults.ts matches the daisyUI installed in the workspace', async (t) => {
   const daisyUi = await loadDaisyUiThemes();
   if (!daisyUi) {
-    t.skip('daisyUI is not installed next to this package');
-    return;
+    assert.fail('The pinned daisyUI development dependency must be installed');
   }
   assert.equal(
     readFileSync(themeDefaultsPath, 'utf8'),
@@ -162,4 +162,23 @@ test('the Theme Builder loads state through createThemeEditorState and seeds no 
   const preview = readFileSync(path.join(packageRoot, 'src/components/DaisyUiPreviewContent.astro'), 'utf8');
   assert.match(preview, /buildThemeCss\(JSON\.parse\(stateStr\)\)/);
   assert.doesNotMatch(preview, /is:inline/);
+});
+
+test('reapplying a stale dark-theme edit retains a newer light theme and unrelated overrides', async () => {
+  const { reapplyThemeChanges } = await import('../dist/index.js');
+  const base = createThemeEditorState({ lightColors: { primary: '#111111' } });
+  const edited = createThemeEditorState({ darkTheme: 'business', lightColors: { primary: '#222222' } });
+  const latest = createThemeEditorState({ lightTheme: 'cupcake', lightColors: { primary: '#333333', accent: '#444444' } });
+  const merged = reapplyThemeChanges(base, edited, latest);
+  assert.equal(merged.lightTheme, 'cupcake');
+  assert.equal(merged.darkTheme, 'business');
+  assert.deepEqual(merged.lightColors, { primary: '#222222', accent: '#444444' });
+  assert.deepEqual(reapplyThemeChanges(base, createThemeEditorState({}), latest).lightColors, { accent: '#444444' });
+});
+
+
+test('generated theme version, pinned dependency, and package NOTICE agree', () => {
+  const pkg = JSON.parse(readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
+  assert.equal(pkg.devDependencies.daisyui, DAISYUI_THEME_DEFAULTS_VERSION);
+  assert.ok(readFileSync(path.join(packageRoot, 'NOTICE'), 'utf8').includes(`version ${DAISYUI_THEME_DEFAULTS_VERSION},`));
 });

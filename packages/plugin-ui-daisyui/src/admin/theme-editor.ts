@@ -129,3 +129,31 @@ export function colorToHex(value: string): string | null {
   if (channels.some((channel) => channel === null)) return null;
   return toHex((channels as number[]).map((channel) => channel / 255));
 }
+
+/** Reapply only local changes over a fresh read; preserve other editors' untouched values. */
+export function reapplyThemeChanges(base: ThemeEditorState, edited: ThemeEditorState, latest: ThemeEditorState): ThemeEditorState {
+  const next = structuredClone(latest);
+  for (const mode of ['light', 'dark'] as const) {
+    const themeKey = `${mode}Theme` as const;
+    const colorKey = `${mode}Colors` as const;
+    if (edited[themeKey] !== base[themeKey]) {
+      next[themeKey] = edited[themeKey];
+      // A changed palette belongs to the newly selected base theme.
+      next[colorKey] = { ...edited[colorKey] };
+    } else {
+      next[colorKey] = reapplyValues(base[colorKey], edited[colorKey], latest[colorKey]);
+    }
+  }
+  next.advanced = reapplyValues(base.advanced, edited.advanced, latest.advanced);
+  return next;
+}
+
+function reapplyValues(base: Record<string, string>, edited: Record<string, string>, latest: Record<string, string>) {
+  const next = { ...latest };
+  for (const key of new Set([...Object.keys(base), ...Object.keys(edited)])) {
+    if (base[key] === edited[key]) continue;
+    if (edited[key] === undefined) delete next[key];
+    else next[key] = edited[key];
+  }
+  return next;
+}

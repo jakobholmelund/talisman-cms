@@ -64,7 +64,8 @@
     "dev": "pnpm run generate && tsup src/index.ts src/generator.ts src/generated.ts --format esm --dts --watch",
     "test": "pnpm run build && node --test ./test/*.test.mjs",
     "prepack": "pnpm run build",
-    "prepublishOnly": "node -e \"if (!/^pnpm\\//.test(process.env.npm_config_user_agent || '')) { console.error('Publish with pnpm (pnpm release:publish) so workspace: ranges are rewritten and LICENSE.md is packed.'); process.exit(1); }\""
+    "prepublishOnly": "node -e \"if (!/^pnpm\\//.test(process.env.npm_config_user_agent || '')) { console.error('Publish with pnpm (pnpm release:publish) so workspace: ranges are rewritten and LICENSE.md is packed.'); process.exit(1); }\"",
+    "test:browser": "TALISMAN_UI_BROWSER=1 node --test ./test/renderers.test.mjs ./test/*.browser.mjs"
   },
   "peerDependencies": {
     "astro": "^7.0.0",
@@ -78,6 +79,10 @@
     "talisman-cms": "workspace:*",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
-    "vite": "^8.3.0"
+    "vite": "^8.3.0",
+    "daisyui": "5.7.42"
+  },
+  "dependencies": {
+    "@tanstack/react-router": "^1.170.38"
   }
 }

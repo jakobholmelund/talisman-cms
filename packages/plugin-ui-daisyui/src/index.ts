@@ -8,6 +8,7 @@ export { safeHref, cssUrl, safeCssLength, clampInteger } from './renderers/sanit
 export { buildThemeCss, sanitizeThemeSettings, type DaisyUiThemeSettings } from './components/theme-css';
 export { DAISYUI_THEME_DEFAULTS, DAISYUI_THEME_DEFAULTS_VERSION, type DaisyUiThemeDefaults } from './admin/themeDefaults';
 export {
+  reapplyThemeChanges,
   colorToHex,
   createThemeEditorState,
   themeDefaultValue,

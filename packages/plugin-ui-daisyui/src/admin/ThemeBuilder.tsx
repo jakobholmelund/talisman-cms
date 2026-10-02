@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useBlocker } from '@tanstack/react-router';
 import { adminApiUrl, adminUrl } from 'talisman-cms/ui/sdk';
 import { DAISYUI_THEME_DEFAULTS } from './themeDefaults';
 import {
@@ -8,6 +9,7 @@ import {
   isSafeThemeNumber,
 } from '../components/theme-css';
 import {
+  reapplyThemeChanges,
   colorToHex,
   createThemeEditorState,
   normalizeColorInput,
@@ -32,6 +34,11 @@ const isInvalidColor = (value: string | undefined) => value !== undefined && !is
 const isInvalidNumber = (value: string | undefined) => value !== undefined && !isSafeThemeNumber(value);
 
 export default function ThemeBuilder() {
+  const [version, setVersion] = useState<number>();
+  const [baseline, setBaseline] = useState<ThemeEditorState>(createThemeEditorState({}));
+  const [saveError, setSaveError] = useState('');
+  const [conflict, setConflict] = useState(false);
+  const [heldEdits, setHeldEdits] = useState<ThemeEditorState | null>(null);
   const [lightColors, setLightColors] = useState<Overrides>({});
   const [darkColors, setDarkColors] = useState<Overrides>({});
   const [lightTheme, setLightTheme] = useState('light');
@@ -72,6 +79,9 @@ export default function ThemeBuilder() {
         // Only saved overrides are loaded. Everything else shows the base theme's daisyUI values and
         // is not saved, so a first save keeps daisyUI's own light and dark palettes.
         applyState(createThemeEditorState(data));
+        setBaseline(createThemeEditorState(data));
+        if (!Number.isSafeInteger(data.version) || data.version < 1) setLoadError('The saved theme has no valid version. Reload before saving.');
+        else setVersion(data.version);
 
         if (layoutsData && layoutsData.layouts) {
           setLayoutOptions(layoutsData.layouts);
@@ -116,6 +126,13 @@ export default function ThemeBuilder() {
     setAdvanced((prev) => withValue(prev, id, value));
   };
 
+  const currentState = { lightTheme, darkTheme, lightColors, darkColors, advanced };
+  const dirty = JSON.stringify(currentState) !== JSON.stringify(baseline) || heldEdits !== null;
+  useBlocker({
+    shouldBlockFn: ({ current, next }) => dirty && current.pathname !== next.pathname && !window.confirm('You have unsaved theme changes. Leave and discard them?'),
+    enableBeforeUnload: () => dirty,
+  });
+
   const payload = () => themeEditorPayload({ lightTheme, darkTheme, lightColors, darkColors, advanced });
 
   const invalidFields = [
@@ -127,30 +144,52 @@ export default function ThemeBuilder() {
   const handleSave = async () => {
     setIsSaving(true);
     setSuccess(false);
+    setSaveError('');
 
     try {
       const res = await fetch(adminApiUrl('daisyui/theme'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload()),
+        body: JSON.stringify({ ...payload(), expectedVersion: version }),
       });
       const body = await res.json().catch(() => ({}));
 
       if (!res.ok) {
         const fields = Array.isArray(body?.fields) ? body.fields.join(', ') : '';
-        alert(fields ? `Error saving theme: these values are not allowed: ${fields}` : 'Error saving theme');
+        setConflict(res.status === 409);
+        setSaveError(res.status === 409 ? 'Another editor saved this theme. Your edits are preserved. Load the latest version, then review and reapply your changes.' : fields ? `These values are not allowed: ${fields}` : body.error || 'Could not save the theme. Your edits are preserved.');
         return;
       }
 
       applyState(createThemeEditorState(body));
+      setBaseline(createThemeEditorState(body));
+      setVersion(body.version);
+      setConflict(false);
+      setHeldEdits(null);
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
       console.error(err);
-      alert('Error saving theme');
+      setSaveError('Could not save the theme. Your edits are preserved. Try again.');
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const loadLatest = async () => {
+    setIsSaving(true);
+    try {
+      const res = await fetch(adminApiUrl('daisyui/theme'), { cache: 'no-store' });
+      const body = await res.json();
+      if (!res.ok || !Number.isSafeInteger(body.version) || body.version < 1) throw new Error('Could not load the latest theme. Your edits are preserved.');
+      setHeldEdits(reapplyThemeChanges(baseline, currentState, createThemeEditorState(body)));
+      applyState(createThemeEditorState(body));
+      setBaseline(createThemeEditorState(body));
+      setVersion(body.version);
+      setConflict(false);
+      setSaveError('');
+    } catch (err) { setSaveError(err instanceof Error ? err.message : 'Could not load the latest theme.'); }
+    finally { setIsSaving(false); }
   };
 
   if (loading) {
@@ -220,9 +259,16 @@ export default function ThemeBuilder() {
 
   return (
     <div className="flex flex-col lg:flex-row gap-8 p-6" style={previewStyles}>
-      <div className="flex-1 space-y-6">
+      <fieldset disabled={isSaving} className="flex-1 min-w-0 space-y-6">
+        {saveError && <p role="alert" className="text-sm text-red-300">{saveError}</p>}
+        {conflict && <button type="button" onClick={loadLatest}>Load latest version (keep my edits)</button>}
+        {heldEdits && <div role="status">
+          Latest version loaded. Review it, then reapply your edits. Changes to the same values use your edits.
+          <button type="button" onClick={() => { applyState(heldEdits); setHeldEdits(null); }}>Reapply my changes</button>
+          <button type="button" onClick={() => { if (window.confirm('Discard your preserved theme edits?')) setHeldEdits(null); }}>Discard my changes</button>
+        </div>}
         {loadError && (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{loadError}</div>
+          <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{loadError}</div>
         )}
 
         <div>
@@ -233,8 +279,8 @@ export default function ThemeBuilder() {
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">Light Theme</label>
-              <select
+              <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2" htmlFor="daisyui-light-theme">Light Theme</label>
+              <select id="daisyui-light-theme"
                 className="w-full bg-black/30 border border-white/10 text-zinc-200 text-sm focus:outline-none focus:ring-1 ring-indigo-500 rounded px-3 py-2"
                 value={lightTheme}
                 onChange={(e) => handleThemeChange('light', e.target.value)}
@@ -243,8 +289,8 @@ export default function ThemeBuilder() {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">Dark Theme</label>
-              <select
+              <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2" htmlFor="daisyui-dark-theme">Dark Theme</label>
+              <select id="daisyui-dark-theme"
                 className="w-full bg-black/30 border border-white/10 text-zinc-200 text-sm focus:outline-none focus:ring-1 ring-indigo-500 rounded px-3 py-2"
                 value={darkTheme}
                 onChange={(e) => handleThemeChange('dark', e.target.value)}
@@ -377,17 +423,17 @@ export default function ThemeBuilder() {
         <div className="pt-4 flex items-center gap-4 border-t border-white/10 mt-6">
           <button
             onClick={handleSave}
-            disabled={isSaving || !!loadError || invalidFields.length > 0}
+            disabled={isSaving || !!loadError || conflict || heldEdits !== null || !version || invalidFields.length > 0}
             className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
           >
             {isSaving ? 'Saving...' : 'Save Theme'}
           </button>
-          {success && <span className="text-sm text-emerald-400 font-medium">Theme saved successfully!</span>}
+          {success && <span role="status" className="text-sm text-emerald-400 font-medium">Theme saved successfully!</span>}
           {invalidFields.length > 0 && (
-            <span className="text-sm text-red-300">Fix the highlighted values before saving ({invalidFields.join(', ')}).</span>
+            <span role="alert" className="text-sm text-red-300">Fix the highlighted values before saving ({invalidFields.join(', ')}).</span>
           )}
         </div>
-      </div>
+      </fieldset>
 
       <div className="w-full lg:w-96 shrink-0 space-y-4">
         <div className="flex items-center justify-between mb-2">
@@ -484,8 +530,8 @@ export default function ThemeBuilder() {
 
           {layoutOptions.length > 0 && (
             <div className="mb-4">
-              <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">Host Layout Override</label>
-              <select
+              <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2" htmlFor="daisyui-layout">Host Layout Override</label>
+              <select id="daisyui-layout"
                 className="w-full bg-black/30 border border-white/10 text-zinc-200 text-sm focus:outline-none focus:ring-1 ring-indigo-500 rounded px-3 py-2"
                 value={selectedLayout}
                 onChange={(e) => setSelectedLayout(e.target.value)}

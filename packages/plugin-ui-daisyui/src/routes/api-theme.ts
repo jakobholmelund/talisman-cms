@@ -1,6 +1,6 @@
 // @ts-ignore
 import type { APIRoute } from 'astro';
-import { getClient } from 'talisman-cms/client';
+import { getClient, userActor, isServiceError } from 'talisman-cms/client';
 import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
 // @ts-ignore
 import { env as cfEnv } from 'cloudflare:workers';
@@ -15,7 +15,7 @@ const getSafeData = (data: any) => {
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
-  headers: { 'Content-Type': 'application/json' }
+  headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' }
 });
 
 export const GET: APIRoute = async ({ request }: { request: Request }) => {
@@ -24,12 +24,12 @@ export const GET: APIRoute = async ({ request }: { request: Request }) => {
 
   try {
     const env = { DB: (cfEnv as any).DB, KV: (cfEnv as any).KV };
-    const client = getClient(env as any);
-    const themeGlobal = await client.globals.find('daisyui-theme');
+    const client = getClient(env as any, undefined, { actor: userActor(authorization.user!, request) });
+    const themeGlobal = await client.globals.find('daisyui-theme', { cache: false });
 
-    return json(sanitizeThemeSettings(getSafeData(themeGlobal?.data)).settings);
+    return json({ ...sanitizeThemeSettings(getSafeData(themeGlobal?.data)).settings, version: themeGlobal?.version });
   } catch (err: any) {
-    return json({ error: err.message }, 500);
+    return json({ error: isServiceError(err) ? err.message : 'Could not access the saved theme', ...(err.code === 'stale_record' ? { code: err.code, version: err.version } : {}) }, isServiceError(err) ? err.status : 500);
   }
 };
 
@@ -51,19 +51,25 @@ export const POST: APIRoute = async ({ request }: { request: Request }) => {
     return json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const { settings, rejected } = sanitizeThemeSettings(body);
+  const expectedVersion = (body as any)?.expectedVersion;
+  if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+    return json({ error: 'expectedVersion must be the positive whole-number version returned by GET' }, 400);
+  }
+
+  const { expectedVersion: _, ...themeBody } = body as Record<string, unknown>;
+  const { settings, rejected } = sanitizeThemeSettings(themeBody);
   if (rejected.length > 0) {
     return json({ error: 'Invalid theme values', fields: rejected }, 400);
   }
 
   try {
     const env = { DB: (cfEnv as any).DB, KV: (cfEnv as any).KV };
-    const client = getClient(env as any);
+    const client = getClient(env as any, undefined, { actor: userActor(authorization.user!, request) });
 
-    const updated = await client.globals.update('daisyui-theme', settings);
+    const updated = await client.globals.save('daisyui-theme', settings, { expectedVersion });
 
-    return json(sanitizeThemeSettings(getSafeData(updated?.data)).settings);
+    return json({ ...sanitizeThemeSettings(getSafeData(updated?.data)).settings, version: updated?.version });
   } catch (err: any) {
-    return json({ error: err.message }, 500);
+    return json({ error: isServiceError(err) ? err.message : 'Could not access the saved theme', ...(err.code === 'stale_record' ? { code: err.code, version: err.version } : {}) }, isServiceError(err) ? err.status : 500);
   }
 };

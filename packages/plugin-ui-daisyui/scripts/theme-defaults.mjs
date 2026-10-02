@@ -2,8 +2,8 @@
 // Theme Builder shows the values of the daisyUI version the site builds with. Run
 // `pnpm run theme-defaults` after upgrading daisyUI; `--check` exits with 1 when the file is stale.
 //
-// daisyUI is not a dependency of this package (sites bring their own), so it is resolved from the
-// package first and then from the workspace playground, which builds with it.
+// daisyUI is pinned as a development dependency for reproducible generated-theme checks.
+// Sites still bring their own runtime CSS pipeline.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -12,7 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const themeDefaultsPath = path.join(packageRoot, 'src/admin/themeDefaults.ts');
-const searchRoots = [packageRoot, path.resolve(packageRoot, '../../playground')];
+const searchRoots = [packageRoot];
 
 /** Returns daisyUI's themes and theme order, or null when daisyUI is not installed nearby. */
 export async function loadDaisyUiThemes() {
