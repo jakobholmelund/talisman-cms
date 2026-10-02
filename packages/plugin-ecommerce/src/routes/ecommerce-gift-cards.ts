@@ -5,6 +5,9 @@ import { runtimePaymentAdapters } from '../runtime';
 import { GIFT_CARD_CLAIMS_PER_NETWORK_PER_HOUR, claimGiftCardCode, getGiftCardBalance,
   startGiftCardPurchase } from '../gift-cards';
 import { giftCardAccessCookie } from '../cookies';
+import { shopperFailure } from '../shopper-errors';
+import { GiftCardRefusal } from '../gift-cards';
+import { readBoundedJson } from '../request-body';
 import { StoreSettingsError, reportStoreSettingsError } from '../store-settings';
 import { clientOverLimit } from '../rate-limits';
 
@@ -20,7 +23,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   try {
     const { env } = await import('cloudflare:workers');
     const runtimeEnv = env as unknown as TalismanEnv & Record<string, unknown>;
-    const body = await request.json() as Record<string, unknown> | null;
+    const body = await readBoundedJson(request) as Record<string, unknown> | null;
     if (body && typeof body === 'object' && body.action === 'balance' && typeof body.code === 'string') {
       return Response.json(await getGiftCardBalance(runtimeEnv, body.code), { headers });
     }
@@ -63,7 +66,8 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     if (error instanceof StoreSettingsError) {
       return Response.json({ error: reportStoreSettingsError(error) }, { status: 503, headers });
     }
-    return Response.json({ error: error instanceof Error ? error.message : 'Could not start gift card purchase' },
-      { status: 400, headers });
+    if (error instanceof GiftCardRefusal) return Response.json({ error: 'Gift card purchases are unavailable' }, { status: 409, headers });
+    const failure = shopperFailure(error);
+    return Response.json({ error: failure.error, code: failure.code }, { status: failure.status, headers });
   }
 };
