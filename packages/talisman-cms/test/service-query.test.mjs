@@ -114,3 +114,23 @@ test('the SDK filters the published snapshot, never caches a filtered read, and 
     sqlite.close();
   }
 });
+
+test('bounded literal text search finds matches beyond the first page in both native and JSON collections', { skip }, async () => {
+  const sqlite = database();
+  try {
+    await seed(sqlite);
+    for (let i = 0; i < 55; i++) await seedPost(sqlite, `later-${i}`, { title: `Other ${i}`, body: doc('x') }, 'draft');
+    const response = await call('GET', '/collections/posts/entries?where[title][text]=ALP&limit=10');
+    assert.equal(response.status, 200);
+    assert.deepEqual(ids(response.body.docs), ['a']);
+    const parts = await call('GET', '/collections/parts/entries?where[name][text]=RAM&limit=10');
+    assert.deepEqual(ids(parts.body.docs), ['frame']);
+    for (const query of ['where[title][text]=Alpha', 'where[title][text]=&limit=10', `where[title][text]=${'a'.repeat(201)}&limit=10`, 'where[body][text]=x&limit=10', 'where[tags][text]=x&limit=10']) {
+      assert.equal((await call('GET', `/collections/posts/entries?${query}`)).status, 400, query);
+    }
+    assert.deepEqual(ids((await call('GET', '/collections/posts/entries?where[title][text]=%25&limit=10')).body.docs), [], 'wildcard is literal');
+    assert.deepEqual(ids(await getClient(runtime.env).entries.findMany('posts', { where: { title: { text: 'ALPHA' } }, limit: 10 })), ['a']);
+    await assert.rejects(getClient(runtime.env).entries.findMany('posts', { where: { title: { text: 'ALPHA' } }, limit: 201 }), /text search needs a limit/);
+    assert.equal((await call('GET', '/collections/parts/entries?where[internalNote][text]=private&limit=10')).status, 400);
+  } finally { sqlite.close(); }
+});

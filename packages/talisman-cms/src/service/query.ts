@@ -18,6 +18,8 @@ export interface Operators {
   /** Whether a relationship or array field holds the value. */
   contains?: Scalar;
   isNull?: boolean;
+  /** Literal, case-insensitive substring on text/textarea fields; 1–200 characters. */
+  text?: string;
 }
 
 /** `{ field: value }` means equality; `{ field: { op: value } }` names the comparison. */
@@ -37,7 +39,7 @@ export const MAX_OFFSET = 10_000;
 // D1 binds 100 parameters per statement; the collection and status filters and the page take the rest.
 export const MAX_BOUND_PARAMETERS = 90;
 
-const OPERATORS = new Set(['eq', 'ne', 'in', 'lt', 'lte', 'gt', 'gte', 'contains', 'isNull']);
+const OPERATORS = new Set(['eq', 'ne', 'in', 'lt', 'lte', 'gt', 'gte', 'contains', 'isNull', 'text']);
 const ORDERED_TYPES = new Set(['number', 'date', 'timestamp']);
 const ENTRY_SYSTEM_FIELDS: Record<string, { type: string; column: keyof typeof schema.entries }> = {
   id: { type: 'text', column: 'id' },
@@ -174,6 +176,15 @@ export function compileQuery(target: QueryTarget, query: EntryQuery) {
           parameters += 1;
           const compare = { lt, lte, gt, gte }[operator];
           clauses.push(compare(field.expression, value));
+          break;
+        }
+        case 'text': {
+          const configured = target.fields.some(candidate => candidate.name === name ||
+            (target.kind === 'native' && candidate.name === field.expression.name));
+          if (!configured || field.list || !['text', 'textarea'].includes(field.type)) refuse(name, 'text needs a configured text or textarea field');
+          if (typeof raw !== 'string' || !raw.trim() || raw.length > 200) refuse(name, 'text needs 1–200 characters');
+          parameters += 1;
+          clauses.push(sql`instr(lower(${field.expression}), lower(${raw.trim()})) > 0`);
           break;
         }
         case 'contains': {

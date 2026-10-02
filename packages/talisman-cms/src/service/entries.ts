@@ -226,6 +226,7 @@ export function entriesService(ctx: ServiceContext) {
     async list(slug: string, query: EntryQuery = {}) {
       const collection = await resolveCollection(ctx, slug);
       assertAllowed(ctx.actor, collection.config, 'read');
+      if (Object.values(query.where ?? {}).some(value => value && typeof value === 'object' && 'text' in value)) throw new InvalidInputError('text search needs a limit.');
       if (query.offset !== undefined) throw new InvalidInputError('offset needs a limit.');
       const compiled = compileQuery(queryTarget(collection, 'draft'), query);
       if (collection.nativeTable) {
@@ -457,6 +458,7 @@ export function entriesService(ctx: ServiceContext) {
 
       const collection = await resolveCollection(ctx, slug);
       if (!configured) assertAllowed(ctx.actor, collection.config, 'read');
+      if (Object.values(options.where ?? {}).some(value => value && typeof value === 'object' && 'text' in value) && (options.limit === undefined || options.limit > MAX_PAGE_SIZE)) throw new InvalidInputError(`text search needs a limit from 1 to ${MAX_PAGE_SIZE}.`);
       const compiled = compileQuery(queryTarget(collection, versionMode), options);
       const readStartedAt = new Date();
       let data: any[];
