@@ -100,6 +100,7 @@ export default defineConfig({
         stripePlugin({
           sync: [{
             collection: 'members',
+            identityField: 'email',
             stripeResourceType: 'customers',
             stripeResourceTypeSingular: 'customer',
             fields: [{ fieldPath: 'email', stripeProperty: 'email' }],

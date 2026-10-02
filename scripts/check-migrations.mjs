@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Checks that the migrations of talisman-cms and @talisman-cms/plugin-ecommerce build exactly the
+// Checks that the core, ecommerce and Stripe sync migrations build exactly the
 // database their Drizzle schema files declare. Run after `pnpm build`: the plugin's schema imports
 // the core's auth schema from the core's dist.
 //
 // 1. drizzle-kit exports the DDL each schema declares. Applied to an empty database, the core's DDL must
 //    give the same tables, columns, indexes, foreign keys and CHECK constraints as the core's
-//    migrations, and the core's plus the plugin's DDL the same as both packages' migrations; only the
+//    migrations, and the core's plus each plugin's DDL the same as their assembled migrations; only the
 //    plugin's trigger migration may add anything, and only triggers.
 // 2. drizzle-kit finds no change between each schema and its last snapshot, so a schema edit that was
 //    not followed by `pnpm --filter <package> db:generate` stops here.
@@ -25,7 +25,7 @@ if (!existsSync(kit)) throw new Error(`drizzle-kit's command line entry is not a
 
 // Each package's schema files, as its drizzle.config.ts lists them; drizzle-kit's command line takes them as one glob.
 const core = { name: 'talisman-cms', dir: join(root, 'packages/talisman-cms'), schema: ['./src/db/schema.ts', './src/auth/local-schema.ts'], glob: './src/{db/schema,auth/local-schema}.ts' };
-const plugin = { name: '@talisman-cms/plugin-ecommerce', dir: join(root, 'packages/plugin-ecommerce'), schema: ['./src/schema.ts'], glob: './src/schema.ts' };
+const plugins = ['plugin-ecommerce', 'plugin-stripe'].map((name) => ({ name: `@talisman-cms/${name}`, dir: join(root, 'packages', name), schema: ['./src/schema.ts'], glob: './src/schema.ts' }));
 const MIGRATION_FOLDER = /^\d{14}_[a-z0-9_]+$/;
 const problems = [];
 
@@ -118,27 +118,34 @@ function snapshotCurrent(pkg) {
 }
 
 const coreDdl = declaredDdl(core);
-const pluginDdl = declaredDdl(plugin);
 const coreMigrations = inOrder(migrations(core));
-const pluginMigrations = inOrder(migrations(plugin));
 const read = (paths) => paths.map((path) => readFileSync(path, 'utf8'));
 
 const coreDeclared = outline(database([coreDdl]));
 const coreMigrated = outline(database(read(coreMigrations)));
 compare(core.name, coreDeclared, coreMigrated);
 if (coreMigrated.triggers.length) problems.push(`${core.name}: the core's migrations create triggers: ${coreMigrated.triggers.join(', ')}`);
-
-const bothDeclared = outline(database([coreDdl, pluginDdl]));
-const bothMigrated = outline(database(read(inOrder([...coreMigrations, ...pluginMigrations]))));
-compare(plugin.name, bothDeclared, bothMigrated);
-if (!bothMigrated.triggers.length) problems.push(`${plugin.name}: the commerce triggers are missing from the migrations`);
-
 snapshotCurrent(core);
-snapshotCurrent(plugin);
+
+const checked = plugins.map((pkg) => {
+  const ddl = declaredDdl(pkg);
+  const files = inOrder(migrations(pkg));
+  const declared = outline(database([coreDdl, ddl]));
+  const migrated = outline(database(read(inOrder([...coreMigrations, ...files]))));
+  compare(pkg.name, declared, migrated);
+  if (pkg.name.endsWith('/plugin-ecommerce') && !migrated.triggers.length) problems.push(`${pkg.name}: the commerce triggers are missing from the migrations`);
+  snapshotCurrent(pkg);
+  return { pkg, ddl, files, migrated };
+});
+// Also exercise the combined history sites with both plugins apply.
+compare('core and all schema plugins', outline(database([coreDdl, ...checked.map(({ ddl }) => ddl)])),
+  outline(database(read(inOrder([...coreMigrations, ...checked.flatMap(({ files }) => files)])))));
 
 if (problems.length) {
   console.error(`Migrations check failed:\n- ${problems.join('\n- ')}`);
   process.exit(1);
 }
 console.log(`${core.name}: ${coreMigrations.length} migration(s) build the ${coreDeclared.objects.filter((line) => line.endsWith(' PK')).length} declared tables' schema exactly.`);
-console.log(`${plugin.name}: ${pluginMigrations.length} migration(s) add the commerce tables and ${bothMigrated.triggers.length} triggers; the schema and its snapshot agree.`);
+for (const { pkg, files, migrated } of checked) {
+  console.log(`${pkg.name}: ${files.length} migration(s), ${migrated.triggers.length} triggers; the schema and its snapshot agree.`);
+}
