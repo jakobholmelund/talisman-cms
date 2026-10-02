@@ -1,6 +1,7 @@
 // Serves the Worker env, the plugin's virtual modules and a CMS auth adapter to the built routes and
 // hooks, and answers Stripe API calls without leaving the process. Import it before those modules.
 import assert from 'node:assert/strict';
+import { database } from './database.mjs';
 import { registerHooks } from 'node:module';
 
 export const env = {};
@@ -29,7 +30,7 @@ registerHooks({
 
 export function resetEnv(values = {}) {
   for (const key of Object.keys(env)) delete env[key];
-  Object.assign(env, values);
+  Object.assign(env, { DB: database().DB }, values);
 }
 
 export function cmsRequest(role, method = 'POST') {
@@ -49,10 +50,14 @@ export function mockStripe(t, respond = defaultResponse) {
       method: init.method,
       path: url.pathname,
       params: Object.fromEntries(new URLSearchParams(typeof init.body === 'string' ? init.body : '')),
+      version: new Headers(init.headers).get('stripe-version'),
+      idempotencyKey: new Headers(init.headers).get('idempotency-key'),
+      signal: init.signal,
       authorization: new Headers(init.headers).get('authorization'),
     };
     calls.push(call);
-    return Response.json(respond(call), { headers: { 'request-id': `req_${calls.length}` } });
+    const result = await respond(call);
+    return result instanceof Response ? result : Response.json(result, { headers: { 'request-id': `req_${calls.length}` } });
   });
   return calls;
 }

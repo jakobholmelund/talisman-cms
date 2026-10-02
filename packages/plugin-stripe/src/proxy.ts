@@ -21,7 +21,11 @@ export const stripeProxy = async (args: StripeProxyArgs): Promise<any> => {
   }
 
   const stripe = new Stripe(stripeSecretKey, {
-    apiVersion: '2022-08-01' as any, // Target recent version per docs, or user can override
+    // Preserve the existing collection/proxy API contract. Stripe supports version overrides;
+    // this older supported version deliberately differs from the SDK's latest TypeScript types.
+    apiVersion: '2022-08-01' as Stripe.LatestApiVersion,
+    timeout: 10_000,
+    maxNetworkRetries: 1,
     // fetch works in Workers and Node alike
     httpClient: Stripe.createFetchHttpClient(),
     appInfo: {

@@ -1,5 +1,8 @@
 export interface StripeSyncConfig {
   collection: string;
+  /** Stable unique business key present on the first save (for example an immutable member key).
+   * It cannot change on later saves. Do not use a mutable name or email address. */
+  identityField?: string;
   stripeResourceType: 'customers' | 'products' | 'prices';
   stripeResourceTypeSingular: 'customer' | 'product' | 'price';
   /**

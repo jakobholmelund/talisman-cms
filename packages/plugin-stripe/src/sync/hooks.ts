@@ -1,6 +1,6 @@
 import type { Actor, CollectionHookArgs, CollectionHooks } from 'talisman-cms';
 import type { StripeRuntimeConfig, StripeSyncConfig } from '../types';
-import { stripeProxy } from '../proxy';
+import { bindSyncRecord, digest, syncResource } from './journal';
 import { MISSING_SECRET_KEY, readStripeSecretKey, type StripeEnv } from '../secrets';
 
 export const DEFAULT_STRIPE_ID_FIELD = 'stripeID';
@@ -66,104 +66,62 @@ export function createSyncHooks(
     return check;
   };
 
+  const identityFor = async (data: any, originalDoc?: any) => {
+    const field = syncConfig.identityField;
+    const stored = field && originalDoc?.data?.[field];
+    const value = stored ?? (field ? data[field] : undefined);
+    if (stored !== undefined && data[field!] !== undefined && data[field!] !== stored) {
+      throw new Error('[plugin-stripe] The sync identity cannot be changed after creation.');
+    }
+    if (typeof value === 'string' && value.trim()) return digest(['field', field, value]);
+    if (originalDoc?.id && storedStripeId(originalDoc)) return digest(['legacy', originalDoc.id]);
+    throw new Error('[plugin-stripe] Set identityField to a stable, unique collection field and supply it before syncing a new resource. CMS save refused.');
+  };
+
   return {
-    beforeChange: [
-      async ({ data, originalDoc }: CollectionHookArgs) => {
-        if (missingColumn) throw new Error(missingColumn);
-
-        // The CMS merges hook results into the submitted data, so client values are overwritten
-        // rather than omitted. skipSync was a client-settable flag in earlier versions.
-        const stripeId = storedStripeId(originalDoc);
-        const trusted = { ...data, [idField]: stripeId, skipSync: undefined };
-
-        const stripePayload = mapDataToStripe(data);
-        if (Object.keys(stripePayload).length === 0) {
-          return trusted; // Nothing to sync
-        }
-
-        const stripeSecretKey = await requireSecretKey();
-        try {
-          if (!stripeId) {
-            // Create new Stripe resource
-            const response = await stripeProxy({
-              stripeSecretKey,
-              stripeMethod: `${syncConfig.stripeResourceType}.create`,
-              stripeArgs: [stripePayload],
-            });
-
-            if (response.status !== 200) {
-              console.error(`[plugin-stripe] Failed to create ${resource} in Stripe:`, response);
-              return trusted;
-            }
-
-            if (pluginConfig.logs) {
-               console.log(`[plugin-stripe] Created new ${resource} in Stripe:`, response.data.id);
-            }
-
-            return { ...trusted, [idField]: response.data.id };
-          }
-
-          // Update existing Stripe resource
-          const response = await stripeProxy({
-            stripeSecretKey,
-            stripeMethod: `${syncConfig.stripeResourceType}.update`,
-            stripeArgs: [stripeId, stripePayload],
-          });
-
-          if (response.status !== 200) {
-            console.error(`[plugin-stripe] Failed to update ${resource} in Stripe:`, response);
-          } else if (pluginConfig.logs) {
-            console.log(`[plugin-stripe] Updated ${resource} in Stripe:`, stripeId);
-          }
-        } catch (error: any) {
-          console.error(`[plugin-stripe] Failed to sync ${resource} to Stripe:`, error.message);
-          // Depending on strictness, we might throw here to prevent CMS saving,
-          // but for resilience it's often better to just log it.
-        }
-
-        return trusted;
+    beforeChange: [async ({ data, originalDoc }: CollectionHookArgs) => {
+      if (missingColumn) throw new Error(missingColumn);
+      if (runtime.nativeTable && syncConfig.identityField && !runtime.nativeTable[syncConfig.identityField]) {
+        throw new Error('[plugin-stripe] identityField must name a stored column of the native table. CMS save refused.');
       }
-    ],
-    beforeDelete: [
-      // Refuse before the CMS record is removed, so it cannot outlive its Stripe resource unnoticed.
-      async ({ actor, req, originalDoc }: Omit<CollectionHookArgs, 'data'>) => {
-        if (!storedStripeId(originalDoc)) return;
-        if (!(await isAdmin({ actor, req }))) {
-          throw new Error(`[plugin-stripe] Only CMS admins can delete records linked to a Stripe ${resource}.`);
-        }
-        await requireSecretKey();
+      const stripeId = storedStripeId(originalDoc);
+      const trusted = { ...data, [idField]: stripeId, skipSync: undefined };
+      if (syncConfig.identityField && originalDoc?.data?.[syncConfig.identityField] !== undefined
+        && data[syncConfig.identityField] !== undefined && data[syncConfig.identityField] !== originalDoc.data[syncConfig.identityField]) {
+        throw new Error('[plugin-stripe] The sync identity cannot be changed after creation.');
       }
-    ],
-    afterDelete: [
-      async ({ actor, req, doc }: Omit<CollectionHookArgs, 'data'> & { doc: any }) => {
-        const stripeId = storedStripeId(doc);
-        if (!stripeId) return;
-        if (!(await isAdmin({ actor, req }))) {
-          console.error(`[plugin-stripe] Kept ${resource} ${stripeId} in Stripe: the delete was not made by a CMS admin.`);
-          return;
-        }
-
-        const stripeSecretKey = readStripeSecretKey(await runtime.getEnv());
-        if (!stripeSecretKey) {
-          console.error(MISSING_SECRET_KEY);
-          return;
-        }
-
-        try {
-          // Stripe cannot delete prices, or products that have prices; archiving keeps order history.
-          const response = await stripeProxy(syncConfig.stripeResourceType === 'customers'
-            ? { stripeSecretKey, stripeMethod: 'customers.del', stripeArgs: [stripeId] }
-            : { stripeSecretKey, stripeMethod: `${syncConfig.stripeResourceType}.update`, stripeArgs: [stripeId, { active: false }] });
-
-          if (response.status !== 200) {
-            console.error(`[plugin-stripe] Failed to remove ${resource} from Stripe:`, response);
-          } else if (pluginConfig.logs) {
-             console.log(`[plugin-stripe] Removed ${resource} from Stripe:`, stripeId);
-          }
-        } catch (error: any) {
-          console.error(`[plugin-stripe] Failed to remove ${resource} from Stripe:`, error.message);
-        }
+      const payload = mapDataToStripe(data);
+      if (!Object.keys(payload).length) return trusted;
+      const secret = await requireSecretKey();
+      const identity = await identityFor(data, originalDoc);
+      const resultId = await syncResource({ env: await runtime.getEnv(), secret,
+        collection: syncConfig.collection, resource: syncConfig.stripeResourceType,
+        identity, storedId: stripeId, docId: originalDoc?.id, payload });
+      if (pluginConfig.logs) console.log(`[plugin-stripe] Synced ${resource}.`);
+      return { ...trusted, [idField]: resultId };
+    }],
+    afterChange: [async ({ data, originalDoc, doc }) => {
+      if (!storedStripeId(doc) || !Object.keys(mapDataToStripe(data)).length) return;
+      try {
+        await bindSyncRecord(await runtime.getEnv(), syncConfig.collection, syncConfig.stripeResourceType,
+          await identityFor(data, originalDoc), doc.id);
+      } catch {
+        throw new Error('[plugin-stripe] The CMS record was saved and Stripe synced, but its audit binding failed. Reload this record; do not create a replacement. Ask an administrator to inspect the sync journal.');
       }
-    ]
+    }],
+    beforeDelete: [async ({ actor, req, originalDoc }) => {
+      const stripeId = storedStripeId(originalDoc);
+      if (!stripeId) return;
+      if (!(await isAdmin({ actor, req }))) {
+        throw new Error(`[plugin-stripe] Only CMS admins can delete records linked to a Stripe ${resource}.`);
+      }
+      const secret = await requireSecretKey();
+      await syncResource({ env: await runtime.getEnv(), secret,
+        collection: syncConfig.collection, resource: syncConfig.stripeResourceType,
+        identity: await identityFor(originalDoc.data, originalDoc), storedId: stripeId,
+        docId: originalDoc.id, payload: {}, deleting: true });
+    }],
+    // Stripe removal happens before the CMS delete, so failure never becomes silent success.
+    afterDelete: [],
   };
 }

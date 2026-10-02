@@ -10,6 +10,7 @@ const { sqliteTable, text } = requireFromCms('drizzle-orm/sqlite-core');
 
 const productSync = (overrides = {}) => ({
   collection: 'products',
+  identityField: 'syncKey',
   stripeResourceType: 'products',
   stripeResourceTypeSingular: 'product',
   fields: [{ fieldPath: 'name', stripeProperty: 'name' }],
@@ -17,7 +18,7 @@ const productSync = (overrides = {}) => ({
 });
 
 async function change(hooks, args) {
-  let data = args.data;
+  let data = args.originalDoc ? args.data : { syncKey: 'fixture-key', ...args.data };
   for (const hook of hooks.beforeChange) data = { ...data, ...await hook({ ...args, data, req: args.req ?? cmsRequest('editor') }) };
   return data;
 }
@@ -57,7 +58,9 @@ test('client-sent stripeID and skipSync values are replaced by the stored record
   });
   assert.equal(created.stripeID, 'prod_created');
   assert.equal(created.skipSync, undefined);
-  assert.deepEqual(calls.map(({ method, path, params }) => [method, path, params]), [['POST', '/v1/products', { name: 'Frame' }]]);
+  assert.equal(calls[0].path, '/v1/products');
+  assert.equal(calls[0].params.name, 'Frame');
+  assert.ok(calls[0].params['metadata[talisman_sync_operation]']);
 
   const originalDoc = { id: 'p1', data: { name: 'Frame', stripeID: 'prod_stored' } };
   const updated = await change(hooks, {
@@ -68,7 +71,7 @@ test('client-sent stripeID and skipSync values are replaced by the stored record
   assert.equal(updated.stripeID, 'prod_stored');
   assert.equal(updated.skipSync, undefined);
   assert.deepEqual(calls.at(-1).path, '/v1/products/prod_stored');
-  assert.deepEqual(calls.at(-1).params, { name: 'Frame 2' });
+  assert.equal(calls.at(-1).params.name, 'Frame 2');
 
   // The admin form does not send the ID back; saving must keep it.
   const resaved = await change(hooks, { operation: 'update', originalDoc, data: { name: 'Frame 3' } });
@@ -82,6 +85,7 @@ test('native tables keep the Stripe ID in a real column, so saves do not create 
     id: text('id').primaryKey(),
     name: text('name'),
     stripeID: text('stripe_id'),
+    syncKey: text('sync_key'),
   });
   const hooks = createStripeRuntimeHooks(productSync());
 
@@ -114,6 +118,7 @@ test('native tables without a Stripe ID column are refused before Stripe is call
     id: text('id').primaryKey(),
     name: text('name'),
     stripeProductId: text('stripe_product_id'),
+    syncKey: text('sync_key'),
   });
   const renamed = createStripeRuntimeHooks(productSync({ collection: 'catalog', stripeIdField: 'stripeProductId' }));
   const created = await change(renamed, { operation: 'create', data: { name: 'Frame' } });
@@ -135,7 +140,7 @@ test('only admins can remove linked Stripe resources, and not without the key', 
 
   const editor = cmsRequest('editor', 'DELETE');
   await assert.rejects(customers.beforeDelete[0]({ req: editor, operation: 'delete', originalDoc: linkedCustomer }), /Only CMS admins/);
-  await customers.afterDelete[0]({ req: editor, operation: 'delete', originalDoc: linkedCustomer, doc: linkedCustomer });
+  assert.deepEqual(customers.afterDelete, []);
   assert.equal(calls.length, 0);
   // Records that are not linked to Stripe are unaffected.
   await customers.beforeDelete[0]({ req: editor, operation: 'delete', originalDoc: { id: 'c2', data: {} } });
@@ -148,7 +153,7 @@ test('only admins can remove linked Stripe resources, and not without the key', 
   for (const [hooks, doc] of [[customers, linkedCustomer], [products, linkedProduct]]) {
     const req = admin();
     await hooks.beforeDelete[0]({ req, operation: 'delete', originalDoc: doc });
-    await hooks.afterDelete[0]({ req, operation: 'delete', originalDoc: doc, doc });
+
   }
   // Stripe cannot delete a product that has prices, so products are archived instead.
   assert.deepEqual(calls.map(({ method, path, params }) => [method, path, params]), [
@@ -166,12 +171,12 @@ test('delete hooks trust the actor the CMS names: administrators and server code
 
   // No request is needed when the actor is known.
   await assert.rejects(customers.beforeDelete[0]({ actor: user('editor'), collection, operation: 'delete', originalDoc: linkedCustomer }), /Only CMS admins/);
-  await customers.afterDelete[0]({ actor: user('editor'), collection, operation: 'delete', originalDoc: linkedCustomer, doc: linkedCustomer });
+
   assert.equal(calls.length, 0, 'the Stripe customer is kept');
 
   for (const actor of [user('admin'), { kind: 'system', label: 'cleanup' }]) {
     await customers.beforeDelete[0]({ actor, collection, operation: 'delete', originalDoc: linkedCustomer });
-    await customers.afterDelete[0]({ actor, collection, operation: 'delete', originalDoc: linkedCustomer, doc: linkedCustomer });
+
   }
-  assert.deepEqual(calls.map(({ method, path }) => [method, path]), [['DELETE', '/v1/customers/cus_1'], ['DELETE', '/v1/customers/cus_1']]);
+  assert.deepEqual(calls.map(({ method, path }) => [method, path]), [['DELETE', '/v1/customers/cus_1']]);
 });

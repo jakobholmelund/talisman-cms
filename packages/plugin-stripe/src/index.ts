@@ -30,6 +30,7 @@ export function stripePlugin(config: StripePluginConfig = {}): Plugin {
 
   return {
     name: 'stripe-plugin',
+    migrations: config.sync?.length ? { dir: fileURLToPath(new URL('../drizzle', import.meta.url)) } : undefined,
     onInit: (cmsConfig) => {
       // The Stripe ID is kept in each record's data (or the native column) but is not a form field,
       // because the hooks overwrite any value sent by the admin or an API client.
@@ -76,6 +77,7 @@ export function stripePlugin(config: StripePluginConfig = {}): Plugin {
       }
     },
     endpoints: [
+      ...(config.sync?.length ? [{ path: '/stripe/sync', entrypoint: resolveRouteEntrypoint('sync') }] : []),
       ...(config.rest === true && config.restMethods?.length ? [{
         path: '/stripe/rest',
         entrypoint: resolveRouteEntrypoint('rest')
