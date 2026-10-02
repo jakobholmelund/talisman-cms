@@ -341,6 +341,23 @@ async function withDevServer(dir, log, port, check) {
         reject(new Error(`astro dev exited with ${code}\n${lastLines(output, 30)}`));
       });
     });
+    // The listening URL can appear before Workers SSR dependencies finish optimizing.
+    // Warm the auth route before opening Chrome; a broken route still fails after the deadline.
+    const deadline = Date.now() + 60_000;
+    let ready = false;
+    let last = 'no response';
+    while (Date.now() < deadline && child.exitCode === null) {
+      try {
+        const response = await fetch(new URL('admin/api/auth/session', url), { signal: AbortSignal.timeout(5000) });
+        last = `HTTP ${response.status}`;
+        if (response.ok && response.headers.get('content-type')?.includes('application/json')) {
+          const body = await response.json();
+          if (body && typeof body === 'object' && Object.hasOwn(body, 'user')) { ready = true; break; }
+        }
+      } catch (error) { last = error.message; }
+      await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+    }
+    assert.ok(ready, `auth route did not become ready within 60s (${last})\n${lastLines(output, 30)}`);
     return await check(url, () => output);
   } finally {
     if (child.exitCode === null) {
