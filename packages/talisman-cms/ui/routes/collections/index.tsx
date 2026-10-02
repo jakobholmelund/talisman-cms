@@ -2,8 +2,7 @@ import React from 'react';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { Card } from '../../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
-import { Button } from '../../components/ui/button';
-import { ChevronRight, Plus, Database } from 'lucide-react';
+import { ChevronRight, Database } from 'lucide-react';
 import { filterCollectionsBySection, getEmptyStateCopy, getSectionCollectionLink, getSectionDescription, getSectionTitle, isPagesCollection, type AdminSection } from '../../lib/admin-sections';
 import { fetchCollectionConfigs } from '../../lib/admin-api';
 
@@ -45,9 +44,7 @@ export function CollectionSectionPage({
           <h1 className="text-3xl font-semibold tracking-tight text-white shadow-sm">{getSectionTitle(section)}</h1>
           <p className="text-zinc-400 mt-2 text-sm leading-relaxed max-w-2xl">{getSectionDescription(section)}</p>
         </div>
-        <Button className="gap-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-400 hover:to-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_25px_rgba(99,102,241,0.5)] transition-all duration-300 border-0" disabled>
-          <Plus size={16} strokeWidth={2.5} /> New Collection
-        </Button>
+        <p className="max-w-xs text-sm text-zinc-400">Collections are configured in code. Ask your site developer to add a collection, then deploy the updated site.</p>
       </div>
 
       <Card className="overflow-hidden border-white/10 bg-zinc-950/50 backdrop-blur-2xl shadow-xl">
