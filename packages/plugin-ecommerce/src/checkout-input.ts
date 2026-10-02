@@ -1,4 +1,5 @@
-import { z } from 'zod';
+import { ShopperError } from './shopper-errors';
+import { z } from 'zod/v4';
 import { isCountryCode } from './countries';
 
 /**
@@ -29,7 +30,7 @@ export function withCountryCode<T>(address: T): T {
   const country = (address as { country?: unknown } | null | undefined)?.country;
   if (country === undefined || country === null) return address;
   const code = typeof country === 'string' ? country.trim().toUpperCase() : null;
-  if (code === null || (code && !isCountryCode(code))) throw new Error(INVALID_COUNTRY);
+  if (code === null || (code && !isCountryCode(code))) throw new ShopperError('invalid_country', INVALID_COUNTRY, 400);
   return { ...address, country: code };
 }
 
@@ -42,10 +43,10 @@ const addressSchema = z.object({
   postalCode: z.string().trim().max(30).optional(),
   // Any case. Only officially assigned codes pass, so a mistyped "UK" is refused rather than stored.
   country: z.string().trim().toUpperCase().refine(isCountryCode, INVALID_COUNTRY).optional()
-});
+}).strict();
 
 export const checkoutSchema = z.object({
-  customerEmail: z.string().trim().email().max(254).optional(),
+  customerEmail: z.string().trim().email().max(254),
   discountCode: z.string().trim().max(32).optional(),
   giftCardCode: z.string().trim().max(37).optional(),
   shippingAddress: addressSchema.optional(),
@@ -53,7 +54,7 @@ export const checkoutSchema = z.object({
   // A rate id from the store's shipping rates. Left out or blank, checkout uses the first rate that
   // serves the country.
   shippingRateId: z.string().trim().max(40).optional()
-});
+}).strict();
 
 /** The answer to a checkout body the schema refused. A bad country is named, so the shopper can fix it. */
 export function checkoutInputError(error: z.ZodError) {

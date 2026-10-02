@@ -6,12 +6,14 @@ import type { TalismanEnv } from 'talisman-cms/client';
 import { readSetting } from 'talisman-cms/env';
 import { checkoutInputError, checkoutSchema, isCheckoutDetailsError } from '../checkout-input';
 import { REFERRAL_COOKIE } from '../referrals';
-import { readCartSessionToken } from '../cookies';
+import { readCartSessionToken, setOrderAccess } from '../cookies';
 import { codeRefusalBody } from '../promotions';
 import { CODE_CHECK_LIMIT_MESSAGE, codeChecksOverBasketLimit, codeChecksOverNetworkLimit } from '../code-check-limits';
 import { providerCheckLimitResponse } from '../provider-checks';
 import { StoreSettingsError, readStoreSettings, reportStoreSettingsError } from '../store-settings';
 import { TaxCalculationError } from '../tax';
+import { shopperFailure } from '../shopper-errors';
+import { readBoundedJson } from '../request-body';
 
 export const POST: APIRoute = async ({ request, cookies }) => {
   const { env } = await import('cloudflare:workers');
@@ -34,7 +36,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   try {
     // Invalid store settings stop checkout before the basket is read or written.
     readStoreSettings(runtimeEnv);
-    const parsed = checkoutSchema.safeParse(await request.json());
+    const parsed = checkoutSchema.safeParse(await readBoundedJson(request));
     if (!parsed.success) return Response.json({ error: checkoutInputError(parsed.error) }, { status: 400 });
     const body = parsed.data;
     const api = bindCommerceApi({
@@ -85,7 +87,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       }
     }
 
-    const { order, paymentUrl } = await api.orders.createFromCart(cart.id, {
+    const { order, paymentUrl, orderAccessToken } = await api.orders.createFromCart(cart.id, {
       customerEmail,
       providerId: 'stripe',
       shippingAddress: body.shippingAddress,
@@ -101,6 +103,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       throw new Error('Failed to create order');
     }
 
+    setOrderAccess(cookies, new URL(request.url).protocol === 'https:', order.id, orderAccessToken);
     return new Response(JSON.stringify({
       orderId: order.id,
       redirectUrl: paymentUrl,
@@ -119,26 +122,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     const refusal = codeRefusalBody(error);
     if (refusal) return Response.json(refusal, { status: 409 });
     if (isCheckoutDetailsError(error)) return Response.json({ error: error.message }, { status: 400 });
-    const status = (
-      error.message === 'Cart is empty or not found' ||
-      error.message === 'Cart is closed' ||
-      error.message === 'Checkout already started for this cart' ||
-      error.message?.startsWith('Insufficient stock for ') ||
-      error.message?.startsWith('Insufficient stock or checkout') ||
-      error.message?.startsWith('Product is not available') ||
-      error.message?.startsWith('Select an option for ') ||
-      error.message?.startsWith('A positive price is required') ||
-      error.message?.startsWith('Insufficient shared component stock') ||
-      error.message === 'Shipping address is required for physical products' ||
-      error.message === 'Store credit changed during checkout; please try again' ||
-      error.message?.startsWith('Discount code') ||
-      error.message?.startsWith('Gift card') ||
-      error.message === 'A payment provider must be selected and configured before checkout'
-    ) ? 409 : 500;
-
-    return new Response(JSON.stringify({ error: error.message }), {
-      status,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    const failure = shopperFailure(error);
+    return Response.json({ error: failure.error, code: failure.code }, { status: failure.status });
   }
 };

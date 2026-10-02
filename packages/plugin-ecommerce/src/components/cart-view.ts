@@ -21,6 +21,7 @@ interface CartViewState {
   locked: boolean;
   /** The store currency; prices are in its minor units. */
   currency: string;
+  pricingError?: string | null;
 }
 
 function money(amount: number, currency: string) {
@@ -104,6 +105,11 @@ function renderCart(root: HTMLElement, state: CartViewState) {
   const summaryShippingEl = root.querySelector<HTMLElement>('[data-cart-summary-shipping]');
   const summarySubtotalEl = root.querySelector<HTMLElement>('[data-cart-summary-subtotal]');
 
+  const checkout = root.querySelector<HTMLAnchorElement>('[data-cart-checkout]');
+  if (checkout) {
+    checkout.classList.toggle('pointer-events-none', state.locked || Boolean(state.pricingError));
+    checkout.setAttribute('aria-disabled', String(state.locked || Boolean(state.pricingError)));
+  }
   const itemCount = getItemCount(state.items);
   const subtotal = getSubtotal(state.items);
   const requiresShipping = state.items.some((item) => item.type !== 'digital');
@@ -135,16 +141,53 @@ async function syncCart(items: CartItem[]) {
     }),
   });
 
-  const payload = (await response.json().catch(() => null)) as { error?: string; items?: { quantity?: number }[] } | null;
-  if (!response.ok) {
-    throw new Error(payload?.error || 'Failed to update cart');
-  }
+  const payload = await response.json().catch(() => null) as (Partial<CartResponse> & { error?: unknown }) | null;
+  if (!response.ok || !Array.isArray(payload?.items)) throw new Error(typeof payload?.error === 'string' ? payload.error : 'Failed to update cart');
+  return payload as CartResponse;
+}
 
-  const itemCount = Array.isArray(payload?.items)
-    ? payload.items.reduce((total: number, item: { quantity?: number }) => total + Number(item.quantity || 0), 0)
-    : 0;
+type CartResponse = { items: Array<{ productId: string; variantId?: string; quantity: number }>; locked?: boolean;
+  pricingError?: string | null; quote?: { currency: string; lines: Array<{ productId: string; variantId?: string;
+    unitAmount: number; lineTotal: number }> } | null };
 
-  dispatchCartUpdated({ itemCount });
+/** Every intent is computed from the last server result, so rapid clicks never race or roll back a later save. */
+export function createCartUpdateQueue(state: CartViewState, save: (items: CartItem[]) => Promise<CartResponse>,
+  render: () => void, feedback: (message: string) => void, refresh?: () => Promise<CartResponse>) {
+  let tail = Promise.resolve();
+  const adopt = (payload: CartResponse) => {
+    const old = state.items;
+    state.items = payload.items.map(line => {
+      const previous = old.find(item => matchesItem(item, line.productId, line.variantId || ''));
+      if (!previous) throw new Error('Basket changed in another window. Reload the page.');
+      const price = payload.quote?.lines.find(item => item.productId === line.productId && (item.variantId || '') === (line.variantId || ''));
+      return { ...previous, ...line, unitPrice: price?.unitAmount ?? previous.unitPrice,
+        lineTotal: price?.lineTotal ?? previous.unitPrice * line.quantity };
+    });
+    state.locked = Boolean(payload.locked);
+    state.pricingError = payload.pricingError;
+    if (payload.quote) state.currency = payload.quote.currency;
+    render(); dispatchCartUpdated({ itemCount: getItemCount(state.items) });
+  };
+  return (action: string, productId: string, variantId = '') => {
+    tail = tail.then(async () => {
+      if (state.locked) return;
+      const items = state.items.flatMap(item => {
+        if (!matchesItem(item, productId, variantId)) return [item];
+        const quantity = action === 'remove' ? 0 : item.quantity + (action === 'increment' ? 1 : -1);
+        return quantity > 0 ? [{ ...item, quantity, lineTotal: item.unitPrice * quantity }] : [];
+      });
+      feedback('Updating cart...');
+      try {
+        adopt(await save(items));
+        feedback(state.pricingError || `Cart updated. ${getItemCount(state.items)} items in cart.`);
+      } catch (error) {
+        // A lost reply may have committed: reload before computing the next intent.
+        if (refresh) { try { adopt(await refresh()); } catch { state.locked = true; render(); } }
+        feedback(error instanceof Error ? error.message : 'Failed to update cart');
+      }
+    });
+    return tail;
+  };
 }
 
 function initCartRoot(root: HTMLElement) {
@@ -156,46 +199,16 @@ function initCartRoot(root: HTMLElement) {
 
   if (state.locked) return;
 
+  const enqueue = createCartUpdateQueue(state, syncCart, () => renderCart(root, state),
+    message => { if (feedbackEl) feedbackEl.textContent = message; }, async () => {
+      const response = await fetch('/api/ecommerce/cart');
+      if (!response.ok) throw new Error('Basket could not be refreshed');
+      return response.json();
+    });
   root.addEventListener('click', async (event) => {
-    const button = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>('[data-cart-action]')
-      : null;
-    if (!button) return;
-
-    const action = button.dataset.cartAction || '';
-    const productId = button.dataset.productId || '';
-    const variantId = button.dataset.variantId || '';
-    const previousItems = state.items.map((item) => ({ ...item }));
-
-    if (action === 'remove') {
-      state.items = state.items.filter((item) => !matchesItem(item, productId, variantId));
-    } else if (action === 'increment' || action === 'decrement') {
-      const delta = action === 'increment' ? 1 : -1;
-      state.items = state.items
-        .map((item) => matchesItem(item, productId, variantId)
-          ? { ...item, quantity: item.quantity + delta, lineTotal: item.unitPrice * (item.quantity + delta) }
-          : item)
-        .filter((item) => item.quantity > 0);
-    } else {
-      return;
-    }
-
-    renderCart(root, state);
-
-    try {
-      if (feedbackEl) feedbackEl.textContent = 'Updating cart...';
-      await syncCart(state.items);
-      if (feedbackEl) {
-        const itemCount = getItemCount(state.items);
-        feedbackEl.textContent = itemCount > 0
-          ? `Cart updated. ${itemCount} item${itemCount === 1 ? '' : 's'} in cart.`
-          : 'Cart emptied.';
-      }
-    } catch (error) {
-      state.items = previousItems;
-      renderCart(root, state);
-      if (feedbackEl) feedbackEl.textContent = error instanceof Error ? error.message : 'Failed to update cart';
-    }
+    const button = event.target instanceof Element ? event.target.closest<HTMLButtonElement>('[data-cart-action]') : null;
+    if (!button || !['remove', 'increment', 'decrement'].includes(button.dataset.cartAction || '')) return;
+    await enqueue(button.dataset.cartAction || '', button.dataset.productId || '', button.dataset.variantId || '');
   });
 }
 

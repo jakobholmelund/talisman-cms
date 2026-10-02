@@ -1,3 +1,5 @@
+import { hashOrderAccess } from './cookies';
+import { ShopperError } from './shopper-errors';
 import { and, eq, isNull, lt, notExists, sql } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import type { CommerceContext } from './commerce-context';
@@ -6,7 +8,7 @@ import * as schema from './schema';
 import { hasPurchaseHistory } from './accounts';
 import { aggregateComponentDemand, loadBasketCatalog, requireVariantChoice, resolveSelectedVariant,
   type InventoryTarget, type RequiredComponent } from './basket';
-import { UNDELIVERABLE_COUNTRY, withCountryCode } from './checkout-input';
+import { checkoutSchema, checkoutInputError, UNDELIVERABLE_COUNTRY, withCountryCode } from './checkout-input';
 import { canonicalEmail, canonicalEmails, hasCanonicalPurchase } from './email-identity';
 import { evaluateGiftCard } from './gift-cards';
 import { INVENTORY_COLUMNS } from './inventory';
@@ -42,24 +44,29 @@ export async function createOrderFromCart(ctx: CommerceContext, cartId: string, 
   giftCardCode?: string;
 }) {
   const { env, db, adapters: paymentAdapters } = ctx;
+  const details = checkoutSchema.safeParse({ customerEmail: options.customerEmail, shippingAddress: options.shippingAddress,
+    billingAddress: options.billingAddress, shippingRateId: options.shippingRateId,
+    discountCode: options.discountCode, giftCardCode: options.giftCardCode });
+  if (!details.success) throw new ShopperError('invalid_checkout', checkoutInputError(details.error), 400);
+  options = { ...options, ...details.data };
   // Read before the basket is locked, so invalid store settings stop checkout without writes.
   const settings = readStoreSettings(env);
   const { currency, deliveryCountries } = settings;
   const cart = await db.select().from(schema.carts).where(eq(schema.carts.id, cartId)).get();
   if (!cart || cart.items.length === 0) {
-    throw new Error('Cart is empty or not found');
+    throw new ShopperError('basket_conflict', 'Cart is empty or not found', 409);
   }
   if (cart.closed) {
-    throw new Error('Cart is closed');
+    throw new ShopperError('basket_conflict', 'Cart is closed', 409);
   }
   if (cart.checkoutSessionId) {
-    throw new Error('Checkout already started for this cart');
+    throw new ShopperError('basket_conflict', 'Checkout already started for this cart', 409);
   }
   // The simulated admin_test provider is used only when a caller names it.
   const defaultAdapter = options.providerId
     ? paymentAdapters.find((adapter) => adapter.providerId === options.providerId)
     : paymentAdapters.length === 1 && paymentAdapters[0].providerId !== 'admin_test' ? paymentAdapters[0] : undefined;
-  if (!defaultAdapter) throw new Error('A payment provider must be selected and configured before checkout');
+  if (!defaultAdapter) throw new ShopperError('provider_unavailable', 'Checkout is unavailable right now. Please try again later.', 503);
 
   let requiresShipping = false;
   let totalAmount = 0;
@@ -72,10 +79,10 @@ export async function createOrderFromCart(ctx: CommerceContext, cartId: string, 
   for (const item of cart.items) {
      const product = catalog.products.get(String(item.productId));
      if (!product) {
-        throw new Error(`Product not found: ${item.productId}`);
+        throw new ShopperError('basket_conflict', `Product not found: ${item.productId}`, 409);
      }
      if (product.status !== 'active') {
-        throw new Error(`Product is not available: ${item.productId}`);
+        throw new ShopperError('basket_conflict', `Product is not available: ${item.productId}`, 409);
      }
      // A line saved before its product had variants must be changed to one of them first.
      requireVariantChoice(catalog, product, item.variantId);
@@ -102,7 +109,7 @@ export async function createOrderFromCart(ctx: CommerceContext, cartId: string, 
 
      const tracksInventory = product.type === 'standard';
      if (tracksInventory && availableQuantity < item.quantity) {
-        throw new Error(`Insufficient stock for ${finalName}`);
+        throw new ShopperError('basket_conflict', `Insufficient stock for ${finalName}`, 409);
      }
      if (tracksInventory && requiredComponents.length) {
        componentItems.push({ quantity: item.quantity, components: requiredComponents });
@@ -113,10 +120,10 @@ export async function createOrderFromCart(ctx: CommerceContext, cartId: string, 
      }
 
      if (!Number.isSafeInteger(price) || price <= 0) {
-       throw new Error(`A positive price is required for ${finalName}`);
+       throw new ShopperError('basket_conflict', `A positive price is required for ${finalName}`, 409);
      }
      totalAmount += price * item.quantity;
-     if (!Number.isSafeInteger(totalAmount)) throw new Error('Order total is too large');
+     if (!Number.isSafeInteger(totalAmount)) throw new ShopperError('basket_conflict', 'Order total is too large', 409);
 
      orderItems.push({
         ...item,
@@ -129,21 +136,21 @@ export async function createOrderFromCart(ctx: CommerceContext, cartId: string, 
   const componentDemand = aggregateComponentDemand(componentItems);
   for (const component of componentDemand.values()) {
     if (component.available < component.quantity) {
-      throw new Error(`Insufficient stock for component ${component.name}`);
+      throw new ShopperError('basket_conflict', `Insufficient stock for component ${component.name}`, 409);
     }
   }
 
   if (requiresShipping && (!options.shippingAddress ||
     !['name', 'line1', 'city', 'postalCode', 'country'].every((key) =>
       typeof options.shippingAddress[key] === 'string' && options.shippingAddress[key].trim()))) {
-     throw new Error('Shipping address is required for physical products');
+     throw new ShopperError('shipping_address_required', 'Shipping address is required for physical products', 400);
   }
   // The same rule for every provider, the simulated one too. The billing country must be a
   // country code but is not restricted, and a basket with nothing to ship is not held to the list.
   const shippingAddress = withCountryCode(options.shippingAddress);
   const billingAddress = withCountryCode(options.billingAddress);
   if (requiresShipping && deliveryCountries && !deliveryCountries.includes(shippingAddress.country)) {
-    throw new Error(UNDELIVERABLE_COUNTRY);
+    throw new ShopperError('country_unavailable', UNDELIVERABLE_COUNTRY, 400);
   }
   // With shipping rates, an order that ships goes only where a rate serves, at the one the
   // shopper chose or else the first. Without rates, or with nothing to ship, shipping is free.
@@ -156,6 +163,8 @@ export async function createOrderFromCart(ctx: CommerceContext, cartId: string, 
   const taxAddress = taxBehavior ? taxAddressFor(requiresShipping, shippingAddress, billingAddress) : null;
 
   const orderId = `ord_${crypto.randomUUID()}`;
+  const orderAccessToken = `${crypto.randomUUID()}${crypto.randomUUID()}`;
+  const guestAccessTokenHash = await hashOrderAccess(orderAccessToken);
   const referralsPolicy = await getReferralPolicy(env);
   const subtotalAmount = totalAmount;
   const discount = options.discountCode && defaultAdapter.providerId === 'stripe'
@@ -186,7 +195,7 @@ export async function createOrderFromCart(ctx: CommerceContext, cartId: string, 
   // Exclusive tax is added to what the shopper pays; inclusive tax is already in the prices.
   const exclusiveTax = tax?.behavior === 'exclusive' ? tax.amount : 0;
   const amountDue = merchandise - creditApplied + shippingAmount + exclusiveTax;
-  if (!Number.isSafeInteger(amountDue)) throw new Error('Order total is too large');
+  if (!Number.isSafeInteger(amountDue)) throw new ShopperError('basket_conflict', 'Order total is too large', 409);
   // A gift card is a means of payment: it can pay for shipping too.
   const giftCard = options.giftCardCode && defaultAdapter.providerId === 'stripe'
     ? await evaluateGiftCard(env, options.giftCardCode, amountDue) : null;
@@ -211,7 +220,7 @@ export async function createOrderFromCart(ctx: CommerceContext, cartId: string, 
     }
   }
   if (!defaultAdapter.expireCheckoutSession) {
-    throw new Error('Payment provider must support checkout session expiry');
+    throw new ShopperError('basket_conflict', 'Payment provider must support checkout session expiry', 409);
   }
   const successUrl = options.successUrl.replaceAll('{ORDER_ID}', orderId);
   const cancelUrl = options.cancelUrl.replaceAll('{ORDER_ID}', orderId);
@@ -224,7 +233,7 @@ export async function createOrderFromCart(ctx: CommerceContext, cartId: string, 
     .where(and(eq(schema.carts.id, cartId), eq(schema.carts.closed, false), isNull(schema.carts.checkoutSessionId),
       eq(schema.carts.items, cart.items), eq(schema.carts.version, cart.version)))
     .returning({ id: schema.carts.id });
-  if (!lock.length) throw new Error('Checkout already started for this cart');
+  if (!lock.length) throw new ShopperError('basket_conflict', 'Checkout already started for this cart', 409);
 
   let session: Awaited<ReturnType<typeof defaultAdapter.createCheckoutSession>> | undefined;
   let committed = false;
@@ -253,14 +262,15 @@ export async function createOrderFromCart(ctx: CommerceContext, cartId: string, 
      successUrl,
      cancelUrl
   });
-  if (!session.providerSessionId || !session.url) throw new Error('Payment provider did not return a checkout session');
+  if (!session.providerSessionId || !session.url) throw new ShopperError('basket_conflict', 'Payment provider did not return a checkout session', 409);
   const checkoutSessionId = session.providerSessionId;
   const statements: BatchItem<'sqlite'>[] = [
     db.insert(schema.orders).values({
-      id: orderId, cartId, userId: cart.userId, checkoutSessionId, paymentProvider: internallyPaid ? 'gift_card' : defaultAdapter.providerId,
+      id: orderId, cartId, guestAccessTokenHash, guestBasketTokenHash: !cart.userId && cart.sessionToken ? await hashOrderAccess(cart.sessionToken) : null, userId: cart.userId, checkoutSessionId, paymentProvider: internallyPaid ? 'gift_card' : defaultAdapter.providerId,
       status: 'pending', items: orderItems.map(({ name, ...rest }) => rest), totalAmount,
       subtotalAmount, creditApplied, discountCode: discount?.code ?? null, discountAmount,
       giftCardId: giftCard?.id ?? null, giftCardApplied,
+      referralTerms: referralCode ? { minOrderCents: referralsPolicy.minOrderCents, holdDays: referralsPolicy.holdDays, maxPerPeriod: referralsPolicy.maxPerPeriod, periodDays: referralsPolicy.periodDays } : null,
       referralCode, referralRewardCents: referralCode ? referralsPolicy.rewardCents : 0, currency,
       shippingAmount, shippingRateId: shippingRate?.id ?? null, shippingLabel: shippingRate?.label ?? null,
       taxAmount: tax?.amount ?? 0, taxBehavior: tax?.behavior ?? null, taxCalculationId: tax?.calculationId ?? null,
@@ -325,27 +335,30 @@ export async function createOrderFromCart(ctx: CommerceContext, cartId: string, 
   } catch (cause) {
     // The database's refusal, a trigger's or a constraint's message, is under the query error.
     const refused = errorText(cause);
+    if (refused.includes('Shopper account changed during checkout')) {
+      throw new ShopperError('account_changed', 'Your account changed during checkout; please sign in again', 409, { cause });
+    }
     if (refused.includes('Discount code is no longer available')) {
-      throw new Error('Discount code is no longer available', { cause });
+      throw new ShopperError('discount_changed', 'Discount code is no longer available', 409, { cause });
     }
     if (refused.includes('Insufficient store credit')) {
-      throw new Error('Store credit changed during checkout; please try again', { cause });
+      throw new ShopperError('credit_changed', 'Store credit changed during checkout; please try again', 409, { cause });
     }
     if (refused.includes('Gift card is no longer available')) {
-      throw new Error('Gift card is no longer available', { cause });
+      throw new ShopperError('gift_card_changed', 'Gift card is no longer available', 409, { cause });
     }
-    throw new Error('Insufficient stock or checkout already started', { cause });
+    throw new ShopperError('stock_changed', 'Insufficient stock or checkout already started', 409, { cause });
   }
 
   const order = await findOrder(ctx, orderId);
-  if (!order) throw new Error('Checkout was created but the order could not be loaded');
+  if (!order) throw new ShopperError('basket_conflict', 'Checkout was created but the order could not be loaded', 409);
   if (internallyPaid) {
     await finalizeOrderPayment(ctx, { orderId, provider: 'gift_card',
       providerId: checkoutSessionId, paymentStatus: 'success', amount: 0,
       customerEmail: options.customerEmail });
-    return { order: (await findOrder(ctx, orderId))!, paymentUrl: session.url };
+    return { order: (await findOrder(ctx, orderId))!, paymentUrl: session.url, orderAccessToken };
   }
-  return { order, paymentUrl: session.url };
+  return { order, paymentUrl: session.url, orderAccessToken };
   } catch (error) {
     if (committed) throw error;
     try {

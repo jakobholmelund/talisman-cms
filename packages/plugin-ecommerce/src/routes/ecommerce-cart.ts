@@ -7,8 +7,13 @@ import type { carts } from '../schema';
 import type { TalismanEnv } from 'talisman-cms/client';
 
 /** The basket as the browser sees it; the token stays in its httpOnly cookie. */
-function publicCart(cart: Pick<typeof carts.$inferSelect, 'id' | 'items' | 'checkoutSessionId'> | null | undefined) {
-  return { id: cart?.id ?? null, items: cart?.items ?? [], locked: Boolean(cart?.checkoutSessionId) };
+async function publicCart(api: ReturnType<typeof bindCommerceApi>, cart: Pick<typeof carts.$inferSelect, 'id' | 'items' | 'checkoutSessionId'> | null | undefined) {
+  let quote = null; let pricingError: string | null = null;
+  if (cart?.items.length) {
+    try { quote = await api.carts.quote(cart.id); }
+    catch { pricingError = 'Some basket items are unavailable. Remove them before checkout.'; }
+  }
+  return { id: cart?.id ?? null, items: cart?.items ?? [], locked: Boolean(cart?.checkoutSessionId), quote, pricingError };
 }
 
 /** The shopper's open basket, linking a browser basket to a signed-in account. Never creates one. */
@@ -57,7 +62,7 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
     if (request.method === 'GET') {
       // Reading never creates a basket or its cookie; the first POST does.
       const cart = await currentCart(api, readCartSessionToken(cookies), customer?.id);
-      return Response.json(publicCart(cart), { headers: { 'Cache-Control': 'no-store' } });
+      return Response.json(await publicCart(api, cart), { headers: { 'Cache-Control': 'no-store' } });
     }
 
     if (request.method === 'POST') {
@@ -69,7 +74,7 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
       const existing = await currentCart(api, readCartSessionToken(cookies), customer?.id);
       // Emptying a basket that does not exist yet writes nothing: no row and no cookie.
       if (!items.length && !existing) {
-        return Response.json(publicCart(null));
+        return Response.json(await publicCart(api, null));
       }
       // Limits and catalog ids are checked before a basket or its cookie is created.
       const checked = await api.carts.validateItems(items, existing?.items);
@@ -87,7 +92,7 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
       
       const updated = await api.carts.updateItems(cart.id, checked);
       
-      return new Response(JSON.stringify(publicCart(updated)), {
+      return new Response(JSON.stringify(await publicCart(api, updated)), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
       });

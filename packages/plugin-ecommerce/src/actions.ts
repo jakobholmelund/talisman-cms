@@ -1,5 +1,6 @@
 import { defineAction, ActionError } from 'astro:actions';
 import { z } from 'astro/zod';
+import type { infer as InferSchema } from 'zod/v4';
 import { bindCommerceApi, CART_MAX_LINE_QUANTITY, PARKED_CHECKOUT_MESSAGE } from './api';
 import { runtimePaymentAdapters } from './runtime';
 import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from './accounts';
@@ -13,6 +14,9 @@ import type { TalismanEnv } from 'talisman-cms/client';
 import { readSetting } from 'talisman-cms/env';
 import { StoreSettingsError, readStoreSettings, reportStoreSettingsError } from './store-settings';
 import { TaxCalculationError } from './tax';
+import { isCheckoutDetailsError, checkoutSchema } from './checkout-input';
+import { shopperFailure } from './shopper-errors';
+import { setOrderAccess } from './cookies';
 
 function getOrCreateCartSession(context: any): string {
   if (!context.cookies) return `anon_${crypto.randomUUID()}`;
@@ -123,29 +127,12 @@ export const ecommerceActions = {
   }),
 
   checkout: defineAction({
-    input: z.object({
-      customerEmail: z.string().email(),
-      discountCode: z.string().trim().max(32).optional(),
-      giftCardCode: z.string().trim().max(37).optional(),
-      shippingAddress: z.object({
-        name: z.string().optional(),
-        line1: z.string().optional(),
-        line2: z.string().optional(),
-        city: z.string().optional(),
-        state: z.string().optional(),
-        postalCode: z.string().optional(),
-        country: z.string().optional(),
-      }).passthrough().optional(),
-      billingAddress: z.object({
-        name: z.string().optional(),
-        line1: z.string().optional(),
-        line2: z.string().optional(),
-        city: z.string().optional(),
-        state: z.string().optional(),
-        postalCode: z.string().optional(),
-        country: z.string().optional(),
-      }).passthrough().optional(),
-      shippingRateId: z.string().trim().max(40).optional(),
+    // Astro may carry another Zod major/minor. This adapter validates through the one checkout schema.
+    input: z.custom<InferSchema<typeof checkoutSchema>>().transform((input, context) => {
+      const parsed = checkoutSchema.safeParse(input);
+      if (parsed.success) return parsed.data;
+      for (const issue of parsed.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message });
+      return z.NEVER;
     }),
     handler: async (input: any, context: any) => {
       const { env } = await import('cloudflare:workers');
@@ -216,6 +203,7 @@ export const ecommerceActions = {
           cancelUrl,
         });
 
+        setOrderAccess(context.cookies, context.url?.protocol === 'https:', result.order.id, result.orderAccessToken);
         return {
           success: true,
           redirectUrl: result.paymentUrl,
@@ -233,10 +221,10 @@ export const ecommerceActions = {
         // A refused discount or gift card code gets one answer, whatever the reason.
         const refusal = codeRefusalBody(error);
         if (refusal) throw new ActionError({ code: 'CONFLICT', message: refusal.error });
-        throw new ActionError({
-          code: 'BAD_REQUEST',
-          message: error.message || 'Failed to complete checkout',
-        });
+        if (isCheckoutDetailsError(error)) throw new ActionError({ code: 'BAD_REQUEST', message: error.message });
+        const failure = shopperFailure(error);
+        throw new ActionError({ code: failure.status === 400 ? 'BAD_REQUEST' : failure.status === 409 ? 'CONFLICT'
+          : failure.status === 503 ? 'SERVICE_UNAVAILABLE' : 'INTERNAL_SERVER_ERROR', message: failure.error });
       }
     },
   }),

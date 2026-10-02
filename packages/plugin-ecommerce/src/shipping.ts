@@ -1,3 +1,4 @@
+import { ShopperError } from './shopper-errors';
 import { isCountryCode } from './countries';
 import { SHIPPING_OPTION_UNAVAILABLE, UNDELIVERABLE_COUNTRY } from './checkout-input';
 import type { ShippingRate, StoreSettings } from './store-settings';
@@ -44,10 +45,10 @@ function ratesServing(settings: ShippingSettings, country: string) {
  */
 export function chooseShippingRate(settings: ShippingSettings, country: string, chosenId?: string) {
   const serving = ratesServing(settings, country);
-  if (!serving.length) throw new Error(UNDELIVERABLE_COUNTRY);
+  if (!serving.length) throw new ShopperError('checkout_details', UNDELIVERABLE_COUNTRY, 400);
   const chosen = chosenId?.trim();
   const rate = chosen ? serving.find((candidate) => candidate.id === chosen) : serving[0];
-  if (!rate) throw new Error(SHIPPING_OPTION_UNAVAILABLE);
+  if (!rate) throw new ShopperError('checkout_details', SHIPPING_OPTION_UNAVAILABLE, 400);
   return rate;
 }
 

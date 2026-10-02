@@ -1,3 +1,4 @@
+import { hashOrderAccess } from './cookies';
 import { and, eq, exists, isNull, notInArray, sql } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import type { CommerceContext } from './commerce-context';
@@ -36,15 +37,17 @@ export const PARKED_CHECKOUT_MESSAGE = 'The store is reviewing the payment for t
 // Best effort: the provider's discount is single-use and expires with its checkout, so a
 // failed delete is logged and never blocks releasing the order.
 export async function discardCheckoutDiscount(adapter: PaymentProviderAdapter | undefined, orderId: string) {
-  if (!adapter?.discardCheckoutDiscount) return;
+  if (!adapter?.discardCheckoutDiscount) return false;
   try {
     await adapter.discardCheckoutDiscount(orderId);
+    return true;
   } catch (error) {
     console.warn('[commerce] Checkout discount could not be discarded', {
       provider: adapter.providerId,
       name: error instanceof Error ? error.name : typeof error,
       code: typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : undefined,
     });
+    return false;
   }
 }
 
@@ -57,12 +60,14 @@ export async function findOrder(ctx: CommerceContext, id: string) {
   return order;
 }
 
-export async function findOrderForSession(ctx: CommerceContext, id: string, sessionToken: string | undefined, customerId?: string) {
+export async function findOrderForSession(ctx: CommerceContext, id: string, sessionToken: string | undefined, customerId?: string, orderAccessToken?: string) {
   const { db } = ctx;
   const order = await findOrder(ctx, id);
-  if (!order?.cartId) return null;
+  if (!order) return null;
   if (customerId && order.userId === customerId) return order;
-  if (!sessionToken) return null;
+  if (orderAccessToken && order.guestAccessTokenHash === await hashOrderAccess(orderAccessToken)) return order;
+  if (sessionToken && order.guestBasketTokenHash === await hashOrderAccess(sessionToken)) return order;
+  if (!sessionToken || !order.cartId) return null;
   const cart = await db.select().from(schema.carts).where(eq(schema.carts.id, order.cartId)).get();
   return cart?.sessionToken === sessionToken ? order : null;
 }
@@ -93,6 +98,7 @@ export async function createOrder(ctx: CommerceContext, data: {
     paymentProvider: null,
     status: data.status || 'draft',
     totalAmount: data.totalAmount,
+    subtotalAmount: data.totalAmount,
     currency: data.currency || readStoreSettings(env).currency,
     customerEmail: data.customerEmail,
     items: data.items,
@@ -194,7 +200,7 @@ export async function finalizeOrderPayment(ctx: CommerceContext, params: {
     // Each referrer has at most maxPerPeriod referrals within periodDays, counted across the accounts
     // whose addresses share the referrer's canonical form. The awards stay pending
     // until releaseReferralAwards releases them after the hold.
-    const policy = await getReferralPolicy(env);
+    const policy = order.referralTerms ?? await getReferralPolicy(env);
     const referrer = await db.select({ emailNormalized: schema.customerAccounts.emailNormalized })
       .from(schema.referralCodes)
       .innerJoin(schema.customerAccounts, eq(schema.customerAccounts.id, schema.referralCodes.accountId))
@@ -225,7 +231,7 @@ export async function finalizeOrderPayment(ctx: CommerceContext, params: {
             JOIN _ecommerce_customer_accounts recent_referrer ON recent_referrer.id = recent.referrer_account_id
             WHERE recent.status = 'approved' AND recent.created_at > ${timestamp - policy.periodDays * 24 * 60 * 60}
               AND (recent.referrer_account_id = rc.account_id
-                OR ${sql.raw(canonicalEmailSql('recent_referrer.email_normalized'))} = ${referrerCanonical})) < ${policy.maxPerPeriod}
+                OR ${sql.raw("recent_referrer.email_canonical")} = ${referrerCanonical})) < ${policy.maxPerPeriod}
         ON CONFLICT DO NOTHING`));
     }
   }
@@ -408,7 +414,8 @@ export async function cancelOrder(ctx: CommerceContext, id: string, options: {
   }
   const released = orderIn(db, id, 'cancelled');
   const statements: BatchItem<'sqlite'>[] = [
-    db.update(schema.orders).set({ status: 'cancelled', updatedAt: at(timestamp) })
+    db.update(schema.orders).set({ status: 'cancelled', updatedAt: at(timestamp),
+      discountCleanupPending: order.creditApplied + order.discountAmount + order.giftCardApplied > 0 && (order.paymentProvider ?? 'stripe') === 'stripe' })
       .where(and(eq(schema.orders.id, id), notInArray(schema.orders.status, [...PURCHASED_ORDER_STATUSES]))),
     db.update(schema.discountRedemptions).set({ status: 'cancelled', updatedAt: at(timestamp) })
       .where(and(eq(schema.discountRedemptions.orderId, id), eq(schema.discountRedemptions.status, 'reserved'), released)),
@@ -465,8 +472,9 @@ export async function cancelOrder(ctx: CommerceContext, id: string, options: {
   // the session.
   if (cancelled?.status === 'cancelled' && !otherModeSession &&
       order.creditApplied + order.discountAmount + order.giftCardApplied > 0) {
-    await discardCheckoutDiscount(
+    const removed = await discardCheckoutDiscount(
       paymentAdapters.find((candidate) => candidate.providerId === (order.paymentProvider ?? 'stripe')), id);
+    if (removed) await db.update(schema.orders).set({ discountCleanupPending: false }).where(eq(schema.orders.id, id));
   }
   return cancelled;
 }

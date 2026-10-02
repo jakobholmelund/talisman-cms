@@ -3,7 +3,7 @@ import type { TalismanEnv } from 'talisman-cms/client';
 import { bindCommerceApi } from '../api';
 import { runtimePaymentAdapters } from '../runtime';
 import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from '../accounts';
-import { readCartSessionToken } from '../cookies';
+import { readCartSessionToken, readOrderAccess } from '../cookies';
 import { PROVIDER_CHECK_MIN_ORDER_AGE_SECONDS, ProviderCheckLimitedError, mayAskPaymentProvider,
   providerCheckLimitResponse } from '../provider-checks';
 import { reconcileFailure } from '../reconcile';
@@ -27,10 +27,11 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
     const { env } = await import('cloudflare:workers');
     const runtimeEnv = env as unknown as TalismanEnv & Record<string, unknown>;
     const customer = await findCustomerSession(runtimeEnv, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
-    if (!sessionToken && !customer) return Response.json({ error: 'Order not found' }, { status: 404 });
+    const orderAccessToken = readOrderAccess(cookies, orderId);
+    if (!sessionToken && !customer && !orderAccessToken) return Response.json({ error: 'Order not found' }, { status: 404 });
     const paymentAdapters = runtimePaymentAdapters(runtimeEnv);
     const api = bindCommerceApi({ env: runtimeEnv, paymentAdapters });
-    let order = await api.orders.findForSession(orderId, sessionToken, customer?.id);
+    let order = await api.orders.findForSession(orderId, sessionToken, customer?.id, orderAccessToken);
     if (!order) return Response.json({ error: 'Order not found' }, { status: 404 });
 
     if (request.method === 'POST') {
@@ -55,7 +56,7 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
         // and parks a permanent one.
         console.warn('[commerce] Order status check failed', { code: reconcileFailure(error).code });
       }
-      order = await api.orders.findForSession(orderId, sessionToken, customer?.id);
+      order = await api.orders.findForSession(orderId, sessionToken, customer?.id, orderAccessToken);
       if (!order) return Response.json({ error: 'Order not found' }, { status: 404 });
     }
     return Response.json({

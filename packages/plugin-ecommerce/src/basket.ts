@@ -1,3 +1,4 @@
+import { ShopperError } from './shopper-errors';
 import { and, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { CommerceContext } from './commerce-context';
 import { batchGroups, chunked } from './db';
@@ -48,18 +49,18 @@ const cartItemKey = (item: { productId: string; variantId?: string | null }) => 
 
 /** Reject a malformed or oversized item list before the catalog is read. */
 export function assertCartItems(items: unknown): asserts items is CartItemInput[] {
-  if (!Array.isArray(items)) throw new Error('Cart items must be an array');
-  if (items.length > CART_MAX_LINES) throw new Error(`Cart items must not exceed ${CART_MAX_LINES} lines`);
+  if (!Array.isArray(items)) throw new ShopperError('basket_conflict', 'Cart items must be an array', 409);
+  if (items.length > CART_MAX_LINES) throw new ShopperError('basket_conflict', `Cart items must not exceed ${CART_MAX_LINES} lines`, 409);
   if (items.some((item) =>
     !item || typeof item.productId !== 'string' || !item.productId.trim() || item.productId.length > CART_ID_MAX_LENGTH ||
     !Number.isSafeInteger(item.quantity) || item.quantity <= 0 || item.quantity > CART_MAX_LINE_QUANTITY ||
     (item.variantId !== undefined && (typeof item.variantId !== 'string' || item.variantId.length > CART_ID_MAX_LENGTH))
   )) {
-    throw new Error(`Cart items must have a product and a whole-number quantity from 1 to ${CART_MAX_LINE_QUANTITY}`);
+    throw new ShopperError('basket_conflict', `Cart items must have a product and a whole-number quantity from 1 to ${CART_MAX_LINE_QUANTITY}`, 409);
   }
   const itemKeys = items.map(cartItemKey);
   if (new Set(itemKeys).size !== itemKeys.length) {
-    throw new Error('Duplicate cart items are not allowed');
+    throw new ShopperError('basket_conflict', 'Duplicate cart items are not allowed', 409);
   }
 }
 
@@ -134,14 +135,14 @@ export function resolveSelectedVariant(catalog: BasketCatalog, product: CatalogP
   if (variantValue) {
     const productVariant = catalog.groups.get(variantValue.groupId);
     if (!productVariant || productVariant.productId !== product.id) {
-      throw new Error(`Variant value not found or mismatch: ${variantId}`);
+      throw new ShopperError('basket_conflict', `Variant value not found or mismatch: ${variantId}`, 409);
     }
 
     const stock = variantValue.stock;
     const components: RequiredComponent[] = [];
     for (const requirement of catalog.requirements.get(variantValue.id) ?? []) {
       const component = requirement.component;
-      if (!component) throw new Error(`Component not found: ${requirement.componentId}`);
+      if (!component) throw new ShopperError('basket_conflict', `Component not found: ${requirement.componentId}`, 409);
       components.push({
         id: component.id,
         name: component.name,
@@ -166,11 +167,11 @@ export function resolveSelectedVariant(catalog: BasketCatalog, product: CatalogP
   // Groups are loaded by product, so a group of another product is not found either.
   const legacyVariant = catalog.groups.get(String(variantId));
   if (!legacyVariant || legacyVariant.productId !== product.id) {
-    throw new Error(`Variant not found or mismatch: ${variantId}`);
+    throw new ShopperError('basket_conflict', `Variant not found or mismatch: ${variantId}`, 409);
   }
   // Only a group without values is a legacy variant. A group with values is the choice itself, so
   // its own price and stock never sell a unit that skips the values' components.
-  if (catalog.groupsWithValues.has(legacyVariant.id)) throw new Error(`Select an option for ${product.name}`);
+  if (catalog.groupsWithValues.has(legacyVariant.id)) throw new ShopperError('basket_conflict', `Select an option for ${product.name}`, 409);
 
   return {
     price: legacyVariant.priceOverride ?? product.basePrice,
@@ -184,7 +185,7 @@ export function resolveSelectedVariant(catalog: BasketCatalog, product: CatalogP
 /** A product with variant groups is sold only as one of its variants, never at its base price and stock. */
 export function requireVariantChoice(catalog: BasketCatalog, product: { id: string; name: string }, variantId?: string | null) {
   if (variantId) return;
-  if (catalog.productsWithGroups.has(product.id)) throw new Error(`Select an option for ${product.name}`);
+  if (catalog.productsWithGroups.has(product.id)) throw new ShopperError('basket_conflict', `Select an option for ${product.name}`, 409);
 }
 
 /**
@@ -203,7 +204,7 @@ export async function checkCartItems(ctx: CommerceContext, items: unknown, curre
     .from(schema.products).where(inArray(schema.products.id, productIds)))
     .filter((product) => product.status !== 'archived').map((product) => product.id) : []);
   const unknownProduct = added.find((item) => !available.has(item.productId));
-  if (unknownProduct) throw new Error(`Cart items must be catalog products; ${unknownProduct.productId} is not available`);
+  if (unknownProduct) throw new ShopperError('basket_conflict', `Cart items must be catalog products; ${unknownProduct.productId} is not available`, 409);
 
   const variantIds = [...new Set(added.flatMap((item) => item.variantId ? [item.variantId] : []))];
   if (variantIds.length) {
@@ -226,9 +227,9 @@ export async function checkCartItems(ctx: CommerceContext, items: unknown, curre
       owners.set(value.id, value.productId);
     }
     const unchosenGroup = added.find((item) => item.variantId && choices.get(item.variantId) === item.productId);
-    if (unchosenGroup) throw new Error(`Cart items must choose one of the variants of ${unchosenGroup.productId}`);
+    if (unchosenGroup) throw new ShopperError('basket_conflict', `Cart items must choose one of the variants of ${unchosenGroup.productId}`, 409);
     const unknownVariant = added.find((item) => item.variantId && owners.get(item.variantId) !== item.productId);
-    if (unknownVariant) throw new Error(`Cart items must use a variant of their product; ${unknownVariant.variantId} is not available`);
+    if (unknownVariant) throw new ShopperError('basket_conflict', `Cart items must use a variant of their product; ${unknownVariant.variantId} is not available`, 409);
   }
   const withoutVariant = [...new Set(added.flatMap((item) => item.variantId ? [] : [item.productId]))];
   if (withoutVariant.length) {
@@ -236,7 +237,7 @@ export async function checkCartItems(ctx: CommerceContext, items: unknown, curre
       .from(schema.productVariants).where(inArray(schema.productVariants.productId, withoutVariant)))
       .map((variant) => variant.productId));
     const unchosen = added.find((item) => !item.variantId && withGroups.has(item.productId));
-    if (unchosen) throw new Error(`Cart items must choose one of the variants of ${unchosen.productId}`);
+    if (unchosen) throw new ShopperError('basket_conflict', `Cart items must choose one of the variants of ${unchosen.productId}`, 409);
   }
   return items.map(({ productId, variantId, quantity }) => variantId ? { productId, variantId, quantity } : { productId, quantity });
 }
@@ -245,7 +246,7 @@ export async function quoteCart(ctx: CommerceContext, cartId: string) {
   const { env, db } = ctx;
   const { currency } = readStoreSettings(env);
   const cart = await db.select().from(schema.carts).where(eq(schema.carts.id, cartId)).get();
-  if (!cart) throw new Error('Cart not found');
+  if (!cart) throw new ShopperError('basket_conflict', 'Cart not found', 409);
   const catalog = await loadBasketCatalog(ctx, cart.items);
   const lines = [];
   let totalAmount = 0;
@@ -253,16 +254,16 @@ export async function quoteCart(ctx: CommerceContext, cartId: string) {
   const componentItems: Array<{ quantity: number; components: RequiredComponent[] }> = [];
   for (const item of cart.items) {
     const product = catalog.products.get(String(item.productId));
-    if (!product || product.status !== 'active') throw new Error(`Product is not available: ${item.productId}`);
+    if (!product || product.status !== 'active') throw new ShopperError('basket_conflict', `Product is not available: ${item.productId}`, 409);
     requireVariantChoice(catalog, product, item.variantId);
     const variant = item.variantId ? resolveSelectedVariant(catalog, product, item.variantId) : null;
     const unitAmount = variant?.price ?? product.basePrice;
     const name = variant?.name ?? product.name;
     if (!Number.isSafeInteger(unitAmount) || unitAmount <= 0) {
-      throw new Error(`A positive price is required for ${name}`);
+      throw new ShopperError('basket_conflict', `A positive price is required for ${name}`, 409);
     }
     if (product.type === 'standard' && (variant?.availableQuantity ?? product.inventoryQuantity) < item.quantity) {
-      throw new Error(`Insufficient stock for ${name}`);
+      throw new ShopperError('basket_conflict', `Insufficient stock for ${name}`, 409);
     }
     if (product.type === 'standard' && variant?.components.length) {
       componentItems.push({ quantity: item.quantity, components: variant.components });
@@ -273,9 +274,9 @@ export async function quoteCart(ctx: CommerceContext, cartId: string) {
     lines.push({ productId: item.productId, variantId: item.variantId, name, quantity: item.quantity, unitAmount, lineTotal });
   }
   for (const demand of aggregateComponentDemand(componentItems).values()) {
-    if (demand.available < demand.quantity) throw new Error(`Insufficient stock for component ${demand.name}`);
+    if (demand.available < demand.quantity) throw new ShopperError('basket_conflict', `Insufficient stock for component ${demand.name}`, 409);
   }
-  if (!Number.isSafeInteger(totalAmount)) throw new Error('Order total is too large');
+  if (!Number.isSafeInteger(totalAmount)) throw new ShopperError('basket_conflict', 'Order total is too large', 409);
   return { lines, totalAmount, currency, requiresShipping, locked: Boolean(cart.checkoutSessionId) };
 }
 
@@ -300,33 +301,40 @@ export async function claimCart(ctx: CommerceContext, sessionToken: string, user
   const { db } = ctx;
   const account = await db.select({ id: schema.customerAccounts.id }).from(schema.customerAccounts)
     .where(eq(schema.customerAccounts.id, userId)).get();
-  if (!account) throw new Error('Customer account not found');
+  if (!account) throw new ShopperError('basket_conflict', 'Customer account not found', 409);
 
-  const guest = await db.select().from(schema.carts)
+  let guest = await db.select().from(schema.carts)
     .where(and(eq(schema.carts.sessionToken, sessionToken), eq(schema.carts.closed, false))).get();
   const owned = await db.select().from(schema.carts)
     .where(and(eq(schema.carts.userId, userId), eq(schema.carts.closed, false))).get();
   if (guest?.userId === userId) return guest;
-  if (guest?.userId) throw new Error('Basket belongs to another account');
-  if (guest?.checkoutSessionId) throw new Error('Checkout already started for this cart');
+  if (guest?.userId) {
+    // Switching accounts preserves the previous account basket and removes browser ownership.
+    const released = await db.update(schema.carts).set({ sessionToken: null, version: sql`${schema.carts.version} + 1` })
+      .where(and(eq(schema.carts.id, guest.id), eq(schema.carts.version, guest.version),
+        eq(schema.carts.sessionToken, sessionToken))).returning({ id: schema.carts.id });
+    if (!released.length) throw new ShopperError('basket_changed', 'Basket changed; reload and try again', 409);
+    guest = undefined;
+  }
+  if (guest?.checkoutSessionId) throw new ShopperError('basket_conflict', 'Checkout already started for this cart', 409);
 
   if (guest && owned && guest.id !== owned.id) {
     if (guest.items.length && owned.items.length) {
-      if (!choice) throw new Error('Both baskets have items; choose which basket to keep before linking this session');
+      if (!choice) throw new ShopperError('basket_conflict', 'Both baskets have items; choose which basket to keep before linking this session', 409);
     }
-    if (owned.checkoutSessionId) throw new Error('Checkout already started for this cart');
+    if (owned.checkoutSessionId) throw new ShopperError('basket_conflict', 'Checkout already started for this cart', 409);
     if (guest.items.length && choice !== 'account') {
       const released = await db.update(schema.carts).set({ userId: null, updatedAt: new Date() })
         .where(and(eq(schema.carts.id, owned.id), eq(schema.carts.userId, userId),
           eq(schema.carts.version, owned.version), eq(schema.carts.closed, false)))
         .returning({ id: schema.carts.id });
-      if (!released.length) throw new Error('Basket changed during account upgrade; reload and try again');
+      if (!released.length) throw new ShopperError('basket_conflict', 'Basket changed during account upgrade; reload and try again', 409);
     } else {
       const released = await db.update(schema.carts).set({ sessionToken: null, updatedAt: new Date() })
         .where(and(eq(schema.carts.id, guest.id), eq(schema.carts.sessionToken, sessionToken),
           eq(schema.carts.version, guest.version), eq(schema.carts.closed, false)))
         .returning({ id: schema.carts.id });
-      if (!released.length) throw new Error('Basket changed during account upgrade; reload and try again');
+      if (!released.length) throw new ShopperError('basket_conflict', 'Basket changed during account upgrade; reload and try again', 409);
     }
   }
 
@@ -341,7 +349,7 @@ export async function claimCart(ctx: CommerceContext, sessionToken: string, user
       .where(and(eq(schema.carts.id, target.id), eq(schema.carts.closed, false),
         isNull(schema.carts.checkoutSessionId), eq(schema.carts.version, target.version)))
       .returning({ id: schema.carts.id });
-    if (!updated.length) throw new Error('Basket changed during account upgrade; reload and try again');
+    if (!updated.length) throw new ShopperError('basket_conflict', 'Basket changed during account upgrade; reload and try again', 409);
     return await db.select().from(schema.carts).where(eq(schema.carts.id, target.id)).get();
   }
   return null;
@@ -390,13 +398,13 @@ export async function updateCartItems(ctx: CommerceContext, cartId: string, item
 
   const cart = await db.select().from(schema.carts).where(eq(schema.carts.id, cartId)).get();
   if (!cart) {
-    throw new Error('Cart not found');
+    throw new ShopperError('basket_conflict', 'Cart not found', 409);
   }
   if (cart.closed) {
-    throw new Error('Cart is closed');
+    throw new ShopperError('basket_conflict', 'Cart is closed', 409);
   }
   if (cart.checkoutSessionId) {
-    throw new Error('Checkout already started for this cart');
+    throw new ShopperError('basket_conflict', 'Checkout already started for this cart', 409);
   }
   const checked = await checkCartItems(ctx, items, cart.items);
 
@@ -405,7 +413,7 @@ export async function updateCartItems(ctx: CommerceContext, cartId: string, item
     .where(and(eq(schema.carts.id, cartId), eq(schema.carts.closed, false),
       isNull(schema.carts.checkoutSessionId), eq(schema.carts.version, cart.version)))
     .returning({ id: schema.carts.id });
-  if (!updated.length) throw new Error('Basket changed or checkout already started; reload and try again');
+  if (!updated.length) throw new ShopperError('basket_conflict', 'Basket changed or checkout already started; reload and try again', 409);
 
   return await db.select().from(schema.carts).where(eq(schema.carts.id, cartId)).get();
 }

@@ -55,3 +55,16 @@ export function ensureCartSession(cookies: CookieJar, secure: boolean): string {
   });
   return sessionToken;
 }
+
+/** Each guest order keeps its own credential when the browser starts another basket. */
+export const ORDER_ACCESS_COOKIE_PREFIX = 'talisman-order-';
+export const orderAccessCookie = (id: string) => `${ORDER_ACCESS_COOKIE_PREFIX}${id}`;
+export function readOrderAccess(cookies: CookieReader, id: string) { return cookies.get(orderAccessCookie(id))?.value; }
+export function setOrderAccess(cookies: CookieJar | undefined, secure: boolean, id: string, token: string) {
+  cookies?.set(orderAccessCookie(id), token, { path: '/', httpOnly: true, sameSite: 'lax', secure,
+    maxAge: CART_SESSION_MAX_AGE });
+}
+export async function hashOrderAccess(token: string) {
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
+}
