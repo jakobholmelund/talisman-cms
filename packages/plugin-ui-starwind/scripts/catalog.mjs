@@ -3,8 +3,6 @@ import process from 'node:process';
 import {
   buildCoverageReport,
   createGeneratedSource,
-  ensureRendererStubs,
-  formatCoverageReport,
   mergeManifestWithUpstreamCatalog,
   readManifest,
   readUpstreamCatalog,
@@ -12,6 +10,8 @@ import {
   writeGeneratedSourceFile,
   writeJson,
 } from '../../talisman-cms/scripts/ui-library-manifest.mjs';
+
+import { validateRenderers } from './renderers.mjs';
 
 const cwd = process.cwd();
 const manifestPath = path.join(cwd, 'catalog.manifest.json');
@@ -37,6 +37,7 @@ function loadInputs() {
 function runGenerate() {
   const { manifest, upstreamCatalog } = loadInputs();
   const validation = validateManifest(manifest, upstreamCatalog);
+  validation.errors.push(...validateRenderers(manifest, cwd));
   if (validation.errors.length > 0) {
     exitWithErrors(validation.errors);
   }
@@ -48,22 +49,27 @@ function runGenerate() {
   });
 
   writeGeneratedSourceFile(getGeneratedFilePath(manifest), source);
-  const createdStubs = ensureRendererStubs(manifest, cwd);
   console.log(`Generated ${manifest.generation.generatedFilePath}`);
-  if (createdStubs.length > 0) {
-    console.log(`Created renderer stubs: ${createdStubs.join(', ')}`);
-  }
 }
 
 function runCoverage(json) {
   const { manifest, upstreamCatalog } = loadInputs();
   const validation = validateManifest(manifest, upstreamCatalog);
-  const report = buildCoverageReport(manifest, upstreamCatalog);
+  validation.errors.push(...validateRenderers(manifest, cwd));
+  const report = {
+    ...buildCoverageReport(manifest, upstreamCatalog),
+    shippedCustomItems: manifest.items.filter((item) => item.catalogOrigin === 'custom' && item.adapter && item.coverageStatus !== 'unsupported').map((item) => item.adapter.slug),
+    rendererErrors: validateRenderers(manifest, cwd),
+  };
+  report.hasErrors ||= validation.errors.length > 0;
 
   if (json) {
     console.log(JSON.stringify(report, null, 2));
   } else {
-    process.stdout.write(formatCoverageReport(report));
+    console.log(`Starwind upstream adapters: ${report.completeCount} complete, ${report.partialCount} partial, ${report.unsupportedCount} unsupported (${report.totalUpstreamItems} catalog entries).`);
+    console.log(`Shipped custom Talisman compositions: ${report.shippedCustomItems.length} (${report.shippedCustomItems.join(', ')}).`);
+    console.log('Catalog accounting does not imply upstream implementation.');
+    for (const error of validation.errors) console.error(error);
   }
 
   if (validation.errors.length > 0) {

@@ -1,24 +1,28 @@
 ---
 import ComponentSlotRenderer from 'talisman-cms/render/ComponentSlotRenderer.astro';
 import { getMediaImageSrcSet } from 'talisman-cms/helpers';
-import { safeHref } from './sanitize';
+import { safeImageSrc, safeText } from './sanitize';
 
-const { eyebrow, title, description, mediaUrl, links, metrics, componentRenderers, presetsById } = Astro.props;
-const mediaSrc = safeHref(mediaUrl, '');
+const { links, metrics, componentRenderers, presetsById } = Astro.props;
+const eyebrow = safeText(Astro.props.eyebrow);
+const title = safeText(Astro.props.title);
+const description = safeText(Astro.props.description);
+const mediaAlt = safeText(Astro.props.mediaAlt);
+const mediaSrc = safeImageSrc(Astro.props.mediaUrl);
 ---
 
 <section class="overflow-hidden rounded-[2rem] bg-slate-950 px-8 py-10 text-white shadow-2xl lg:px-12 lg:py-14">
   <div class="grid gap-10 lg:grid-cols-[1.1fr_0.9fr]">
-    <div>
+    <div class="min-w-0 wrap-anywhere">
       {eyebrow ? <p class="text-sm font-semibold uppercase tracking-[0.35em] text-cyan-300">{eyebrow}</p> : null}
       <h2 class="mt-4 text-4xl font-semibold tracking-tight">{title}</h2>
       <p class="mt-5 max-w-2xl text-base leading-relaxed text-slate-300">{description}</p>
-      <div class="mt-8 flex flex-wrap gap-4">
+      <div class="mt-8 flex flex-wrap gap-4 [&_a]:text-cyan-300 [&_a:hover]:text-cyan-200">
         <ComponentSlotRenderer value={links} componentRenderers={componentRenderers} presetsById={presetsById} />
       </div>
     </div>
-    <div class="space-y-6">
-      {mediaSrc ? <img src={mediaSrc} srcset={getMediaImageSrcSet(mediaSrc)} sizes="(min-width: 1024px) 40vw, 100vw" alt={title} width="800" height="600" loading="lazy" decoding="async" class="h-64 w-full rounded-[1.5rem] object-cover" /> : null}
+    <div class="min-w-0 space-y-6">
+      {mediaSrc ? <img src={mediaSrc} srcset={getMediaImageSrcSet(mediaSrc)} sizes="(min-width: 1024px) 40vw, 100vw" alt={mediaAlt} width="800" height="600" loading="lazy" decoding="async" class="h-64 w-full rounded-[1.5rem] object-cover" /> : null}
       <div class="grid gap-4 md:grid-cols-2">
         <ComponentSlotRenderer value={metrics} componentRenderers={componentRenderers} presetsById={presetsById} />
       </div>

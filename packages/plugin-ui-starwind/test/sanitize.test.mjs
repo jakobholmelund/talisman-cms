@@ -38,8 +38,8 @@ test('every Starwind renderer href and src goes through safeHref', () => {
     for (const [, attribute, expression] of source.matchAll(/\b(href|src)=\{([^}]*)\}/g)) {
       const value = expression.trim();
       const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const isSanitised = value.startsWith('safeHref(')
-        || new RegExp(`const ${escaped} = safeHref\\(`).test(source);
+      const isSanitised = value.startsWith('safeHref(') || value.startsWith('safeImageSrc(')
+        || new RegExp(`const ${escaped} = (?:safeHref|safeImageSrc)\\(`).test(source);
       assert.ok(isSanitised, `${file}: ${attribute}={${value}} is not passed through safeHref`);
     }
   }

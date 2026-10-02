@@ -2,28 +2,19 @@
   "pluginName": "@talisman-cms/plugin-ui-starwind",
   "library": {
     "id": "starwind",
-    "name": "Starwind UI",
+    "name": "Starwind (Talisman compositions)",
     "requirements": [
       {
-        "id": "package",
-        "kind": "package",
-        "label": "Install Starwind UI",
-        "value": "@starwind/ui",
-        "optional": true
-      },
-      {
-        "id": "css",
-        "kind": "css",
-        "label": "Import Starwind styles",
-        "value": "Ensure the Starwind CSS layer is available to the site",
-        "optional": true
+        "id": "tailwind",
+        "kind": "tailwind",
+        "label": "Scan the Talisman composition renderers with Tailwind CSS",
+        "value": "Tailwind v4: add @source \"../../node_modules/@talisman-cms/plugin-ui-starwind/src/renderers\"; in src/styles/global.css"
       }
     ]
   },
   "generation": {
     "generatedFilePath": "src/generated.ts",
-    "importSourcePath": "catalog.upstream.json",
-    "rendererStubTemplate": "astro-component"
+    "importSourcePath": "catalog.upstream.json"
   },
   "upstreamCatalog": [
     {
@@ -357,10 +348,7 @@
       "kind": "component",
       "category": "Overlay & Disclosure",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -376,10 +364,7 @@
       "kind": "component",
       "category": "Feedback & Status",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -395,10 +380,7 @@
       "kind": "component",
       "category": "Overlay & Disclosure",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -414,10 +396,7 @@
       "kind": "component",
       "category": "Layout & Structure",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -433,10 +412,7 @@
       "kind": "component",
       "category": "Content & Media",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -452,10 +428,7 @@
       "kind": "component",
       "category": "Feedback & Status",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -471,10 +444,7 @@
       "kind": "component",
       "category": "Navigation",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -490,10 +460,7 @@
       "kind": "component",
       "category": "Form & Input",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -509,10 +476,7 @@
       "kind": "component",
       "category": "Form & Input",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -528,10 +492,7 @@
       "kind": "component",
       "category": "Layout & Structure",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -547,10 +508,7 @@
       "kind": "component",
       "category": "Content & Media",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -566,10 +524,7 @@
       "kind": "component",
       "category": "Form & Input",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -585,10 +540,7 @@
       "kind": "component",
       "category": "Overlay & Disclosure",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -604,10 +556,7 @@
       "kind": "component",
       "category": "Form & Input",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -623,10 +572,7 @@
       "kind": "component",
       "category": "Overlay & Disclosure",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -642,10 +588,7 @@
       "kind": "component",
       "category": "Overlay & Disclosure",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -661,10 +604,7 @@
       "kind": "component",
       "category": "Form & Input",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -680,10 +620,7 @@
       "kind": "component",
       "category": "Content & Media",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -699,10 +636,7 @@
       "kind": "component",
       "category": "Form & Input",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -718,10 +652,7 @@
       "kind": "component",
       "category": "Form & Input",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -737,10 +668,7 @@
       "kind": "component",
       "category": "Form & Input",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -756,10 +684,7 @@
       "kind": "component",
       "category": "Navigation",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -775,10 +700,7 @@
       "kind": "component",
       "category": "Content & Media",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -794,10 +716,7 @@
       "kind": "component",
       "category": "Form & Input",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -816,8 +735,7 @@
         "growth"
       ],
       "setupRequirements": [
-        "package",
-        "css"
+        "tailwind"
       ],
       "relationships": {
         "slots": [],
@@ -833,7 +751,7 @@
         ]
       },
       "coverageStatus": "complete",
-      "notes": "Talisman-specific stat component composed in a Starwind-inspired style.",
+      "notes": "Talisman-specific stat component composed in a Tailwind-styled style. Not an upstream Starwind adapter.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-starwind/renderers/StarwindMetric.astro",
         "localFilePath": "src/renderers/StarwindMetric.astro"
@@ -841,8 +759,8 @@
       "adapter": {
         "kind": "component",
         "slug": "starwindMetric",
-        "name": "Metric Stat",
-        "description": "Compact metric with label and summary.",
+        "name": "Metric Stat (custom)",
+        "description": "Custom Talisman composition. Compact metric with label and summary.",
         "fields": [
           {
             "name": "value",
@@ -884,8 +802,7 @@
       "category": "Data",
       "variants": [],
       "setupRequirements": [
-        "package",
-        "css"
+        "tailwind"
       ],
       "relationships": {
         "slots": [
@@ -903,7 +820,7 @@
         "usedIn": []
       },
       "coverageStatus": "complete",
-      "notes": "Talisman-specific composed block for repeated metric stats.",
+      "notes": "Talisman-specific composed block for repeated metric stats. Not an upstream Starwind adapter.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-starwind/renderers/StarwindMetricsBand.astro",
         "localFilePath": "src/renderers/StarwindMetricsBand.astro"
@@ -911,8 +828,8 @@
       "adapter": {
         "kind": "block",
         "slug": "starwindMetricsBand",
-        "name": "Metrics Band",
-        "description": "Dense metrics row backed by reusable stat components.",
+        "name": "Metrics Band (custom)",
+        "description": "Custom Talisman composition. Dense metrics row backed by reusable stat components.",
         "fields": [
           {
             "name": "title",
@@ -935,10 +852,7 @@
       "kind": "component",
       "category": "Form & Input",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -954,10 +868,7 @@
       "kind": "component",
       "category": "Navigation",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -973,10 +884,7 @@
       "kind": "component",
       "category": "Overlay & Disclosure",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -992,10 +900,7 @@
       "kind": "component",
       "category": "Feedback & Status",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1011,10 +916,7 @@
       "kind": "component",
       "category": "Content & Media",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1030,10 +932,7 @@
       "kind": "component",
       "category": "Form & Input",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1049,10 +948,7 @@
       "kind": "component",
       "category": "Form & Input",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1068,10 +964,7 @@
       "kind": "component",
       "category": "Layout & Structure",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1087,10 +980,7 @@
       "kind": "component",
       "category": "Overlay & Disclosure",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1106,10 +996,7 @@
       "kind": "component",
       "category": "Navigation",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1125,10 +1012,7 @@
       "kind": "component",
       "category": "Feedback & Status",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1144,10 +1028,7 @@
       "kind": "component",
       "category": "Form & Input",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1163,10 +1044,7 @@
       "kind": "component",
       "category": "Feedback & Status",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1183,8 +1061,7 @@
       "category": "Feature",
       "variants": [],
       "setupRequirements": [
-        "package",
-        "css"
+        "tailwind"
       ],
       "relationships": {
         "slots": [
@@ -1212,7 +1089,7 @@
         "usedIn": []
       },
       "coverageStatus": "complete",
-      "notes": "Talisman-specific composed block built from custom Starwind-inspired components.",
+      "notes": "Talisman-specific composed block built from custom Tailwind-styled components. Not an upstream Starwind adapter.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-starwind/renderers/StarwindSplitFeature.astro",
         "localFilePath": "src/renderers/StarwindSplitFeature.astro"
@@ -1220,8 +1097,8 @@
       "adapter": {
         "kind": "block",
         "slug": "starwindSplitFeature",
-        "name": "Split Feature",
-        "description": "Editorial split section with nested links and metrics.",
+        "name": "Split Feature (custom)",
+        "description": "Custom Talisman composition. Editorial split section with nested links and metrics.",
         "fields": [
           {
             "name": "eyebrow",
@@ -1244,6 +1121,11 @@
             "name": "mediaUrl",
             "label": "Media URL",
             "type": "text"
+          },
+          {
+            "name": "mediaAlt",
+            "label": "Image description (leave empty for decorative images)",
+            "type": "text"
           }
         ]
       }
@@ -1255,10 +1137,7 @@
       "kind": "component",
       "category": "Form & Input",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1274,10 +1153,7 @@
       "kind": "component",
       "category": "Layout & Structure",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1293,10 +1169,7 @@
       "kind": "component",
       "category": "Navigation",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1313,8 +1186,7 @@
       "category": "Actions",
       "variants": [],
       "setupRequirements": [
-        "package",
-        "css"
+        "tailwind"
       ],
       "relationships": {
         "slots": [],
@@ -1326,7 +1198,7 @@
         ]
       },
       "coverageStatus": "complete",
-      "notes": "Talisman-specific link row component used by the Split Feature block.",
+      "notes": "Talisman-specific link row component used by the Split Feature block. Not an upstream Starwind adapter.",
       "rendererTarget": {
         "modulePath": "@talisman-cms/plugin-ui-starwind/renderers/StarwindTextLink.astro",
         "localFilePath": "src/renderers/StarwindTextLink.astro"
@@ -1334,8 +1206,8 @@
       "adapter": {
         "kind": "component",
         "slug": "starwindTextLink",
-        "name": "Text Link",
-        "description": "Editorial style text link for nested action rows.",
+        "name": "Text Link (custom)",
+        "description": "Custom Talisman composition. Editorial style text link for nested action rows.",
         "fields": [
           {
             "name": "label",
@@ -1359,10 +1231,7 @@
       "kind": "component",
       "category": "Form & Input",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1378,10 +1247,7 @@
       "kind": "component",
       "category": "Feedback & Status",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1397,10 +1263,7 @@
       "kind": "component",
       "category": "Feedback & Status",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1416,10 +1279,7 @@
       "kind": "component",
       "category": "Form & Input",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1435,10 +1295,7 @@
       "kind": "component",
       "category": "Overlay & Disclosure",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []
@@ -1454,10 +1311,7 @@
       "kind": "component",
       "category": "Content & Media",
       "variants": [],
-      "setupRequirements": [
-        "package",
-        "css"
-      ],
+      "setupRequirements": [],
       "relationships": {
         "slots": [],
         "usedIn": []

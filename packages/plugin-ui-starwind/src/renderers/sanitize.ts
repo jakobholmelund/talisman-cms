@@ -1,6 +1,5 @@
 // Output helpers for renderers that place editor-supplied values in URL attributes.
 // Astro escapes attribute quoting, but it does not check URL schemes.
-// safeHref is kept in sync with plugin-ui-daisyui/src/renderers/sanitize.ts.
 
 const SAFE_URL_SCHEMES = new Set(['http', 'https', 'mailto', 'tel']);
 
@@ -17,4 +16,16 @@ export function safeHref(value: unknown, fallback = '#'): string {
   const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(trimmed.replace(/[\u0000- \u007f-\u009f]/g, ''));
   if (!scheme) return trimmed;
   return SAFE_URL_SCHEMES.has(scheme[1].toLowerCase()) ? trimmed : fallback;
+}
+
+/** Image sources support web and relative URLs, never action links or embedded data. */
+export function safeImageSrc(value: unknown): string {
+  const url = safeHref(value, '');
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url.replace(/[\u0000- \u007f-\u009f]/g, ''));
+  return scheme && !['http', 'https'].includes(scheme[1].toLowerCase()) ? '' : url;
+}
+
+/** Ignore malformed editor values; Astro escapes the returned text. */
+export function safeText(value: unknown): string {
+  return typeof value === 'string' ? value : typeof value === 'number' && Number.isFinite(value) ? String(value) : '';
 }

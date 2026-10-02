@@ -2,24 +2,17 @@ import type { Plugin, UiLibraryBlockAdapter, UiLibraryComponentAdapter, UiLibrar
 
 const libraryRequirements = [
   {
-    "kind": "package",
-    "label": "Install Starwind UI",
-    "value": "@starwind/ui",
-    "optional": true
-  },
-  {
-    "kind": "css",
-    "label": "Import Starwind styles",
-    "value": "Ensure the Starwind CSS layer is available to the site",
-    "optional": true
+    "kind": "tailwind",
+    "label": "Scan the Talisman composition renderers with Tailwind CSS",
+    "value": "Tailwind v4: add @source \"../../node_modules/@talisman-cms/plugin-ui-starwind/src/renderers\"; in src/styles/global.css"
   }
 ] satisfies UiLibraryDefinition['requirements'];
 const blockAdapters = [
   {
     "block": {
       "slug": "starwindMetricsBand",
-      "name": "Metrics Band",
-      "description": "Dense metrics row backed by reusable stat components.",
+      "name": "Metrics Band (custom)",
+      "description": "Custom Talisman composition. Dense metrics row backed by reusable stat components.",
       "category": "Data",
       "fields": [
         {
@@ -59,8 +52,8 @@ const blockAdapters = [
   {
     "block": {
       "slug": "starwindSplitFeature",
-      "name": "Split Feature",
-      "description": "Editorial split section with nested links and metrics.",
+      "name": "Split Feature (custom)",
+      "description": "Custom Talisman composition. Editorial split section with nested links and metrics.",
       "category": "Feature",
       "fields": [
         {
@@ -83,6 +76,11 @@ const blockAdapters = [
         {
           "name": "mediaUrl",
           "label": "Media URL",
+          "type": "text"
+        },
+        {
+          "name": "mediaAlt",
+          "label": "Image description (leave empty for decorative images)",
           "type": "text"
         }
       ],
@@ -123,8 +121,8 @@ const componentAdapters = [
   {
     "component": {
       "slug": "starwindMetric",
-      "name": "Metric Stat",
-      "description": "Compact metric with label and summary.",
+      "name": "Metric Stat (custom)",
+      "description": "Custom Talisman composition. Compact metric with label and summary.",
       "category": "Data",
       "fields": [
         {
@@ -172,8 +170,8 @@ const componentAdapters = [
   {
     "component": {
       "slug": "starwindTextLink",
-      "name": "Text Link",
-      "description": "Editorial style text link for nested action rows.",
+      "name": "Text Link (custom)",
+      "description": "Custom Talisman composition. Editorial style text link for nested action rows.",
       "category": "Actions",
       "fields": [
         {
@@ -205,7 +203,7 @@ const presets = componentAdapters.flatMap((component) => component.presets || []
 export function starwindUiLibrary(): UiLibraryDefinition {
   return {
     id: "starwind",
-    name: "Starwind UI",
+    name: "Starwind (Talisman compositions)",
     requirements: libraryRequirements,
     blocks: blockAdapters,
     components: componentAdapters,

@@ -1,0 +1,38 @@
+---
+import '../styles/global.css';
+import BlocksRenderer from 'talisman-cms/render/BlocksRenderer.astro';
+import SplitFeature from '@talisman-cms/plugin-ui-starwind/renderers/StarwindSplitFeature.astro';
+import Metric from '@talisman-cms/plugin-ui-starwind/renderers/StarwindMetric.astro';
+import TextLink from '@talisman-cms/plugin-ui-starwind/renderers/StarwindTextLink.astro';
+import { starwindUiLibrary } from '@talisman-cms/plugin-ui-starwind';
+const hostile = '<img src=x onerror="window.editorExecuted=true">';
+const preset = starwindUiLibrary().presets[0];
+// Stored CMS presets carry data.propsJson. This exercises the same shape as the editor saves.
+const presetsById = { [preset.id]: { id: preset.id, data: { componentSlug: preset.componentSlug, propsJson: JSON.stringify(preset.props) } } };
+const split = {
+  blockType: 'starwindSplitFeature', eyebrow: 'Independent makers', title: 'A useful collection', description: 'Made to last, with clear details.',
+  mediaUrl: '/fixture.svg', mediaAlt: 'A geometric product illustration',
+  links: [{ componentType: 'starwindTextLink', label: 'Explore collection', href: '#collection' }],
+  metrics: [{ componentType: 'starwindMetric', value: '12', label: 'Makers', summary: 'Small independent workshops' }, { mode: 'preset', presetId: preset.id }],
+};
+const band = { blockType: 'starwindMetricsBand', title: 'Collection at a glance', description: 'Reusable inline metrics and presets.', items: [{ componentType: 'starwindMetric', value: '24', label: 'Products' }, { mode: 'preset', presetId: preset.id }] };
+const malformed = { blockType: 'starwindSplitFeature', title: { html: hostile }, description: ['bad'], mediaUrl: 'mailto:hello@example.com', metrics: [], links: [] };
+---
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width" /><title>Talisman composition checks</title></head>
+<body style="margin:0;padding:24px;background:white;color:#0f172a;font-family:system-ui;">
+  <main style="max-width:1200px;margin:auto;display:grid;gap:24px;">
+    <h1>Talisman compositions</h1>
+    <BlocksRenderer blocks={[split, band, split, band]} presetsById={presetsById} />
+    <div id="standalone"><Metric value="99" label="Standalone metric" summary="Also useful outside a block" /><TextLink label="Read details" href="#collection" /></div>
+    <div id="hostile"><BlocksRenderer blocks={[{ ...split, eyebrow: hostile, title: hostile, description: hostile, mediaUrl: 'javascript:window.editorExecuted=true', mediaAlt: hostile, links: [{ componentType: 'starwindTextLink', label: hostile, href: 'java\tscript:window.editorExecuted=true' }], metrics: [{ componentType: 'starwindMetric', value: hostile, label: hostile, summary: hostile }] }, malformed]} /></div>
+    <div id="urls">{['https://example.com/path', 'http://example.com', 'mailto:hello@example.com', 'tel:+4512345678', '/relative', 'relative', '?query=1', '#collection', '//example.com/path'].map((href, index) => <TextLink label={`Safe URL ${index}`} href={href} />)}
+      {['javascript:alert(1)', 'data:text/html,bad', 'vbscript:bad', '', null, {}].map((href, index) => <TextLink label={`Unsafe URL ${index}`} href={href} />)}
+      <TextLink label={{ html: hostile }} href="/invalid-label" />
+    </div>
+    <div id="image-caption"><SplitFeature title="Image caption" mediaUrl="/fixture.svg" mediaAlt={hostile} /></div>
+    <div id="image-protocols">{['mailto:hello@example.com', 'tel:+4512345678', 'data:image/svg+xml,bad', 'java\tscript:alert(1)', null, {}].map((mediaUrl) => <SplitFeature title="Invalid image source" mediaUrl={mediaUrl} />)}</div>
+    <div id="collection" tabindex="-1">Collection destination</div>
+    <div id="long"><Metric value={'9'.repeat(180)} label="Long value" summary={'word'.repeat(120)} /></div>
+  </main>
+</body></html>

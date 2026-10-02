@@ -1,10 +1,13 @@
 ---
-import { safeHref } from './sanitize';
+import { safeHref, safeText } from './sanitize';
 
-const { label, href } = Astro.props;
+const label = safeText(Astro.props.label);
+const href = safeHref(Astro.props.href, '');
 ---
 
-<a href={safeHref(href)} class="inline-flex items-center gap-2 text-sm font-medium text-cyan-300 transition-colors hover:text-cyan-200">
-  {label}
-  <span aria-hidden="true">→</span>
-</a>
+{label && (href ? (
+  <a href={href} class="inline-flex max-w-full items-center gap-2 rounded-sm text-sm font-medium text-cyan-700 underline-offset-4 transition-colors hover:text-cyan-800 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-500">
+    <span class="min-w-0 wrap-anywhere">{label}</span>
+    <span aria-hidden="true">→</span>
+  </a>
+) : <span class="text-sm font-medium wrap-anywhere">{label}</span>)}
