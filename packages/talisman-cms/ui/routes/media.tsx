@@ -3,6 +3,8 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { ImageIcon, RefreshCw, Upload } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { DeleteConfirmation } from '../components/DeleteConfirmation';
+import { MediaUsageDialog } from '../components/MediaUsageDialog';
+import { MediaUsageReview } from '../components/MediaUsageReview';
 import { fetchCollectionConfigs } from '../lib/admin-api';
 
 type MediaEntry = {
@@ -60,6 +62,7 @@ export const Route = createFileRoute('/media')({
     const adminBasePath = context.adminBasePath || '/admin';
     const [page, collections] = await Promise.all([fetchMediaPage(adminBasePath), fetchCollectionConfigs(adminBasePath)]);
     return {
+      canReview: context.user?.role === 'admin',
       canDelete: context.user?.role === 'admin' && collections.some((collection) => collection.slug === 'media' && !collection.readOnly),
       adminBasePath,
       entries: page.entries,
@@ -69,7 +72,7 @@ export const Route = createFileRoute('/media')({
 });
 
 function MediaLibraryRoute() {
-  const { canDelete, adminBasePath, entries: initialEntries, nextCursor: initialCursor } = Route.useLoaderData();
+  const { canDelete, canReview, adminBasePath, entries: initialEntries, nextCursor: initialCursor } = Route.useLoaderData();
   const [entries, setEntries] = useState(initialEntries);
   const [cursor, setCursor] = useState<string | null>(initialCursor);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -79,6 +82,9 @@ function MediaLibraryRoute() {
   const [uploadStatus, setUploadStatus] = useState('');
   const [error, setError] = useState('');
   const [deleteEntry, setDeleteEntry] = useState<MediaEntry | null>(null);
+  const [usageEntry, setUsageEntry] = useState<MediaEntry | null>(null);
+  const usageTrigger = useRef<HTMLButtonElement | null>(null);
+  const [usageReady, setUsageReady] = useState(false);
   const refreshRef = useRef<HTMLButtonElement>(null);
 
   const refreshEntries = async () => {
@@ -209,7 +215,7 @@ function MediaLibraryRoute() {
                 </div>
               </div>
             </Link>
-            {canDelete && <div className="px-4 pb-4"><Button type="button" variant="destructive" size="sm" aria-label={`Delete ${entry.filename}`} onClick={() => setDeleteEntry(entry)}>Delete</Button></div>}
+            {canReview && <div className="flex flex-wrap gap-2 px-4 pb-4"><Button type="button" variant="outline" size="sm" aria-label={`Where used ${entry.filename}`} onClick={event => { usageTrigger.current = event.currentTarget; setUsageEntry(entry); }}>Where used</Button>{canDelete && <Button type="button" variant="destructive" size="sm" aria-label={`Delete ${entry.filename}`} onClick={() => { setUsageReady(false); setDeleteEntry(entry); }}>Delete</Button>}</div>}
             </div>
           ))}
         </div>
@@ -222,10 +228,13 @@ function MediaLibraryRoute() {
           </Button>
         </div>
       )}
+      {usageEntry && <MediaUsageDialog id={usageEntry.id} filename={usageEntry.filename} adminPath={adminBasePath} onClose={() => setUsageEntry(null)} getReturnFocus={() => usageTrigger.current?.isConnected ? usageTrigger.current : refreshRef.current} />}
       {deleteEntry && <DeleteConfirmation
         title={`Delete ${deleteEntry.filename}?`}
         url={`${adminBasePath}/api/collections/media/entries/${encodeURIComponent(deleteEntry.id)}`}
         warning="Deleting this asset removes its file. Pages using its URL may show broken images. Relationships and other references are not automatically repaired. Review its usages before deleting."
+        canDelete={usageReady}
+        review={<MediaUsageReview id={deleteEntry.id} adminPath={adminBasePath} onReady={setUsageReady} />}
         onClose={() => setDeleteEntry(null)}
         getReturnFocus={() => refreshRef.current}
         onDeleted={() => {

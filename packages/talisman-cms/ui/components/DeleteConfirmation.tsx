@@ -5,13 +5,15 @@ import { useModalDialog } from '../lib/use-modal-dialog';
 import { describeRequestError, EditorRequestError, requestEditorApi } from '../lib/entry-editor-data';
 
 /** A destructive action starts on Cancel, keeps focus while busy, and leaves the dialog open on failure. */
-export function DeleteConfirmation({ title, url, warning, onClose, onDeleted, getReturnFocus }: {
+export function DeleteConfirmation({ title, url, warning, onClose, onDeleted, getReturnFocus, review, canDelete = true }: {
   title: string;
   url: string;
   warning: string;
   onClose: () => void;
   onDeleted: () => void | Promise<void>;
   getReturnFocus?: () => HTMLElement | null;
+  review?: React.ReactNode;
+  canDelete?: boolean;
 }) {
   const titleId = useId();
   const descriptionId = useId();
@@ -23,7 +25,7 @@ export function DeleteConfirmation({ title, url, warning, onClose, onDeleted, ge
   const dialogRef = useModalDialog<HTMLDivElement>({ open: true, onClose: () => { if (!busyRef.current) onClose(); }, getReturnFocus, inertOutside: true });
   useEffect(() => { if (error) errorRef.current?.focus(); }, [error]);
   const remove = async () => {
-    if (busyRef.current) return;
+    if (busyRef.current || !canDelete) return;
     busyRef.current = true;
     setBusy(true);
     setError('');
@@ -49,14 +51,15 @@ export function DeleteConfirmation({ title, url, warning, onClose, onDeleted, ge
   };
   return createPortal(
     <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/70 p-4">
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} tabIndex={-1} className="w-full max-w-lg space-y-5 rounded-xl border border-white/10 bg-zinc-950 p-6 shadow-2xl">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} tabIndex={-1} className="max-h-[calc(100dvh-2rem)] w-full max-w-lg space-y-5 overflow-y-auto rounded-xl border border-white/10 bg-zinc-950 p-6 shadow-2xl">
         <h2 id={titleId} className="text-lg font-semibold text-white">{title}</h2>
         <p id={descriptionId} className="text-sm text-zinc-300">{warning} This cannot be undone.</p>
+        {review}
         {error && <p ref={errorRef} role="alert" tabIndex={-1} className="text-sm text-red-300 focus:outline-none">{error}</p>}
         <p role="status" className="sr-only">{busy ? 'Deleting…' : ''}</p>
         <div className="flex justify-end gap-3">
           <Button type="button" variant="outline" aria-disabled={busy || undefined} onClick={() => { if (!busyRef.current) onClose(); }}>Cancel</Button>
-          <Button type="button" variant="destructive" aria-disabled={busy || undefined} aria-busy={busy || undefined} onClick={() => void remove()}>{busy ? deleted ? 'Opening updated view…' : 'Deleting…' : deleted ? 'Continue' : 'Delete permanently'}</Button>
+          <Button type="button" variant="destructive" disabled={!canDelete} aria-disabled={busy || !canDelete || undefined} aria-busy={busy || undefined} onClick={() => void remove()}>{busy ? deleted ? 'Opening updated view…' : 'Deleting…' : deleted ? 'Continue' : 'Delete permanently'}</Button>
         </div>
       </div>
     </div>, document.getElementById('talisman-root') || document.body

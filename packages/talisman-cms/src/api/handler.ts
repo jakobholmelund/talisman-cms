@@ -18,6 +18,7 @@ import { createService } from '../service/index';
 import { isGlobalData } from '../types';
 import { HttpError, toErrorResponse } from './http-errors';
 import { parseListQuery } from './list-query';
+import { mediaUsage } from '../service/media-usage';
 
 // The virtual modules stay static imports, so the Worker bundle carries the site's hook modules and
 // a module that fails to load fails the build.
@@ -172,6 +173,17 @@ export const ALL: APIRoute = privateRoute(async ({ request, locals }) => {
   if (authorization.response) return authorization.response;
   const user = authorization.user;
   const actor = userActor(user, request);
+
+  const mediaUsageMatch = path.match(/\/api\/media\/([^/]+)\/usage$/);
+  if (mediaUsageMatch) {
+    if (user.role !== 'admin') return Response.json({ error: 'Admin access required' }, { status: 403 });
+    if (request.method !== 'GET') return Response.json({ error: 'Method not allowed' }, { status: 405 });
+    try {
+      const { env } = await import('cloudflare:workers') as unknown as { env: TalismanEnv };
+      return Response.json(await mediaUsage({ env, db: createDbClient(env), config: serviceConfig, actor },
+        decodePathSegment(mediaUsageMatch[1]), url.origin, url.searchParams.get('cursor')));
+    } catch (error) { return toErrorResponse(error, 'Error checking media usage'); }
+  }
 
   // Get all registered collections
   if (path.endsWith('/api/collections')) {
