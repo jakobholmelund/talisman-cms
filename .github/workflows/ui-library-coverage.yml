@@ -58,6 +58,7 @@ jobs:
       - name: Drive the admin in Chrome against the built playground
         run: |
           set -euo pipefail
+          trap 'pnpm --filter playground exec astro preview stop || true; rm -f playground/.dev.vars playground/dist/server/.dev.vars' EXIT
           TOKEN="$(openssl rand -hex 32)"
           printf 'TALISMAN_AUTH_SECRET=%s\nTALISMAN_AUTH_SETUP_TOKEN=%s\n' "$(openssl rand -hex 32)" "$TOKEN" > playground/.dev.vars
           pnpm --filter playground build
@@ -70,7 +71,6 @@ jobs:
           done
           status=0
           TALISMAN_E2E_SETUP_TOKEN="$TOKEN" node e2e/admin-flows.mjs --base-url http://127.0.0.1:8787 --dist playground/dist --report e2e-report.json || status=$?
-          pnpm --filter playground exec astro preview stop || true
           cat e2e-report.json
           exit "$status"
 

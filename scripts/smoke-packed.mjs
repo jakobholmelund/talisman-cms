@@ -3,8 +3,9 @@
 // `astro dev`; the projects with plugins also serve plugin-stripe's signed webhook route. The
 // workspace hides these failures: it links core as source and hoists shared deps.
 // Needs built dist/ folders (release:verify builds first) and the npm registry. npm uses its
-// default cache; point npm_config_cache at a writable folder if ~/.npm is not writable. The temp
-// projects are kept when a check fails, or always with TALISMAN_SMOKE_KEEP=1.
+// task-owned cache by default; an explicit npm_config_cache is reused and never deleted. The temp
+// fixtures and logs are kept when a check fails. Consumers run sequentially and their runtime
+// directories are removed after each check, unless TALISMAN_SMOKE_KEEP=1 preserves everything.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHmac, randomBytes } from 'node:crypto';
@@ -12,6 +13,7 @@ import { copyFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, re
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { runSmokeProjects } from './smoke-projects.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const fixtures = join(import.meta.dirname, 'smoke-fixtures');
@@ -42,7 +44,14 @@ const projects = [
 const childEnv = Object.fromEntries(
   Object.entries(process.env).filter(([key]) => !/^(npm_(package_|lifecycle_|command$|config_user_agent$|config_verify_deps)|pnpm_)/i.test(key)),
 );
-Object.assign(childEnv, { ASTRO_TELEMETRY_DISABLED: '1', WRANGLER_SEND_METRICS: 'false' });
+Object.assign(childEnv, {
+  ASTRO_TELEMETRY_DISABLED: '1', WRANGLER_SEND_METRICS: 'false',
+  // Defaults stay inside this invocation's workspace. Explicit caller cache locations are reused,
+  // never removed by this script; final cleanup deletes only our fresh `work` directory.
+  npm_config_cache: process.env.npm_config_cache ?? join(work, 'npm-cache'),
+  npm_config_store_dir: process.env.npm_config_store_dir ?? join(work, 'pnpm-store'),
+  WRANGLER_LOG_PATH: join(work, 'wrangler.log'),
+});
 
 const readme = readFileSync(join(root, 'packages/talisman-cms/README.md'), 'utf8');
 function readmeBlock(heading, lang) {
@@ -56,8 +65,7 @@ function readmeBlock(heading, lang) {
 const readmeInstall = readmeBlock('Installation', 'bash').trim().split('\n').map((line) => line.trim().split(/\s+/));
 assert.ok(readmeInstall.every(([tool, command]) => tool === 'pnpm' && command === 'add'), 'README: install steps must be `pnpm add` commands');
 assert.ok(readmeInstall.some((tokens) => tokens.includes('talisman-cms')), 'README: install steps do not add talisman-cms');
-// The one change to the README config: the four dev servers run at once, and each would otherwise
-// claim the adapter's default inspector port, 9229.
+// Disable the inspector: another validation process may already own its default port, 9229.
 const noInspector = 'cloudflare({ inspectorPort: false })';
 const coreConfig = readmeBlock('Basic Setup', 'ts').replace('cloudflare()', noInspector);
 assert.ok(coreConfig.includes(noInspector), 'README: Basic Setup no longer uses `adapter: cloudflare()`');
@@ -125,7 +133,7 @@ function run(command, args, { cwd, log, env = childEnv, timeout = 600_000 }) {
   return new Promise((resolveRun, reject) => {
     const out = createWriteStream(log, { flags: 'a' });
     out.write(`\n$ ${[command, ...args].join(' ')}\n`);
-    const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], shell: isWindows });
+    const child = spawn(command, args, { cwd, env, detached: !isWindows, stdio: ['ignore', 'pipe', 'pipe'], shell: isWindows });
     let tail = '';
     const collect = (chunk) => {
       out.write(chunk);
@@ -133,7 +141,13 @@ function run(command, args, { cwd, log, env = childEnv, timeout = 600_000 }) {
     };
     child.stdout.on('data', collect);
     child.stderr.on('data', collect);
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeout);
+    // A timed-out build/install may own subprocesses. Stop its process group before cleanup.
+    const timer = setTimeout(() => {
+      try {
+        if (isWindows) child.kill('SIGKILL');
+        else process.kill(-child.pid, 'SIGKILL');
+      } catch {}
+    }, timeout);
     child.on('error', (error) => {
       clearTimeout(timer);
       out.end();
@@ -461,11 +475,17 @@ try {
   console.log(`Packed ${packed.map((entry) => `${entry.name}@${entry.manifest.version}`).join(', ')}\nSmoke projects: ${work}`);
 
   browserReady = launchBrowser();
-  await Promise.all(projects.map((project, index) => smokeProject(project, 4400 + index * 10, [core, ...plugins], browserReady)));
+  await runSmokeProjects(projects, work, (project, index) =>
+    smokeProject(project, 4400 + index * 10, [core, ...plugins], browserReady), { keep });
 } catch (error) {
   failures.push({ project: 'setup', check: 'pack and prepare', detail: error.stack ?? String(error) });
 } finally {
   await (await browserReady)?.close();
+  if (!keep) {
+    for (const name of ['tools', 'npm-cache', 'pnpm-store']) {
+      rmSync(join(work, name), { recursive: true, force: true });
+    }
+  }
 }
 
 if (failures.length) {
@@ -475,7 +495,7 @@ if (failures.length) {
     console.error(`\n[${project}] ${check}\n${detail.replace(/^/gm, '  ')}`);
   }
 }
-if (keep) console.log(`\nSmoke projects kept in ${work} (see each project's smoke.log).`);
+if (keep) console.log(`\nSmoke fixtures and logs kept in ${work} (see each project's smoke.log; runtimes require TALISMAN_SMOKE_KEEP=1).`);
 else rmSync(work, { recursive: true, force: true });
 if (failures.length) process.exit(1);
 console.log(`\nPacked consumer smoke test passed (${seconds(started)}).`);

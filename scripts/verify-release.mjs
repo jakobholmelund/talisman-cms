@@ -16,6 +16,7 @@ const checks = [
   ['--filter', 'playground', 'exec', 'astro', 'check'],
   ['--filter', 'playground', 'build'],
   ['release:check:archives'],
+  // Catalog manifest bookkeeping; renderer behavior is covered by separate package tests.
   ['--filter', '@talisman-cms/plugin-ui-daisyui', 'coverage'],
   ['--filter', '@talisman-cms/plugin-ui-starwind', 'coverage'],
 ];
