@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { createFileRoute, Link } from '@tanstack/react-router';
+import { createFileRoute, Link, useRouterState } from '@tanstack/react-router';
 import { ImageIcon, RefreshCw, Upload } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { DeleteConfirmation } from '../components/DeleteConfirmation';
@@ -7,6 +7,9 @@ import { MediaUsageDialog } from '../components/MediaUsageDialog';
 import { MediaUsageReview } from '../components/MediaUsageReview';
 import { fetchCollectionConfigs } from '../lib/admin-api';
 import { getCollectionPermissions } from '../lib/collection-permissions';
+import { MediaFilters } from '../components/MediaFilters';
+import { mediaEntrySearch, validateMediaSearch, type MediaSearch } from '../lib/media-search';
+import { fetchMediaPage, useMediaResults, type MediaPage } from '../lib/use-media-results';
 
 type MediaEntry = {
   id: string;
@@ -43,25 +46,20 @@ function formatBytes(bytes: number | null | undefined) {
 
 const MEDIA_PAGE_SIZE = 60;
 
-/** One page of the library, newest uploads first; `nextCursor` asks for the page after it. */
-async function fetchMediaPage(adminBasePath: string, cursor?: string | null) {
-  const params = new URLSearchParams({ limit: String(MEDIA_PAGE_SIZE) });
-  if (cursor) params.set('cursor', cursor);
-  const res = await fetch(`${adminBasePath}/api/collections/media/entries?${params}`);
-  if (!res.ok) throw new Error(res.status === 401 ? 'Your session has expired. Sign in again in another tab, then refresh.' : `Failed to fetch media library (HTTP ${res.status}).`);
-  const payload = await res.json() as { docs?: unknown; nextCursor?: unknown };
-  const docs = Array.isArray(payload?.docs) ? payload.docs : [];
-  return {
-    entries: docs.map(readMediaEntry).filter((entry): entry is MediaEntry => Boolean(entry?.id)),
-    nextCursor: typeof payload?.nextCursor === 'string' && payload.nextCursor ? payload.nextCursor : null,
-  };
-}
-
 export const Route = createFileRoute('/media')({
   component: MediaLibraryRoute,
-  loader: async ({ context }) => {
+  validateSearch: validateMediaSearch,
+  loaderDeps: ({ search }) => search,
+  gcTime: 0,
+  loader: async ({ context, deps, abortController }) => {
     const adminBasePath = context.adminBasePath || '/admin';
-    const [page, collections] = await Promise.all([fetchMediaPage(adminBasePath), fetchCollectionConfigs(adminBasePath)]);
+    const [result, collections] = await Promise.all([
+      fetchMediaPage(adminBasePath, deps, MEDIA_PAGE_SIZE, null, abortController.signal).then(page => ({ page, error: '' })).catch(cause => {
+        if (abortController.signal.aborted) throw cause;
+        return { page: { docs: [], nextCursor: null } as MediaPage, error: cause instanceof Error ? cause.message : 'Failed to load media library' };
+      }),
+      fetchCollectionConfigs(adminBasePath),
+    ]);
     const collection = collections.find((item) => item.slug === 'media');
     const permissions = getCollectionPermissions(collection, context.user);
     return {
@@ -70,66 +68,50 @@ export const Route = createFileRoute('/media')({
       canReview: context.user?.role === 'admin',
       canDelete: permissions.canDelete,
       adminBasePath,
-      entries: page.entries,
-      nextCursor: page.nextCursor,
+      initialPage: result.page,
+      initialError: result.error,
+      initialSearch: deps,
     };
   },
 });
 
 function MediaLibraryRoute() {
-  const { canDelete, canReview, canUpload, uploadNotice, adminBasePath, entries: initialEntries, nextCursor: initialCursor } = Route.useLoaderData();
-  const [entries, setEntries] = useState(initialEntries);
-  const [cursor, setCursor] = useState<string | null>(initialCursor);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const data = Route.useLoaderData();
+  return <MediaLibraryView data={data} />;
+}
+
+function MediaLibraryView({ data }: { data: ReturnType<typeof Route.useLoaderData> }) {
+  const { canDelete, canReview, canUpload, uploadNotice, adminBasePath, initialPage, initialError, initialSearch } = data;
+  const navigate = Route.useNavigate();
+  const navigating = useRouterState({ select: state => state.isLoading });
+  const results = useMediaResults(adminBasePath, MEDIA_PAGE_SIZE, initialSearch, initialPage, initialError);
+  const entries = results.page.docs.map(readMediaEntry).filter((entry): entry is MediaEntry => Boolean(entry?.id));
+  const cursor = results.page.nextCursor;
+  const isRefreshing = results.busy === 'refresh';
+  const isLoadingMore = results.busy === 'more';
   const [isUploading, setIsUploading] = useState(false);
   // Read out by screen readers: the upload has no other signal than the changed button text.
   const [uploadStatus, setUploadStatus] = useState('');
-  const [error, setError] = useState('');
+  const [uploadError, setUploadError] = useState('');
+  const error = uploadError || results.error;
+  const filtered = Boolean(results.search.q || results.search.type);
+  const changeFilters = (search: MediaSearch) => { if (!navigating && !results.busy) void navigate({ search }); };
   const [deleteEntry, setDeleteEntry] = useState<MediaEntry | null>(null);
   const [usageEntry, setUsageEntry] = useState<MediaEntry | null>(null);
   const usageTrigger = useRef<HTMLButtonElement | null>(null);
   const [usageReady, setUsageReady] = useState(false);
   const refreshRef = useRef<HTMLButtonElement>(null);
+  const summaryRef = useRef<HTMLParagraphElement>(null);
 
-  const refreshEntries = async () => {
-    if (isRefreshing || isLoadingMore) return;
-    setIsRefreshing(true);
-    setError('');
-
-    try {
-      const page = await fetchMediaPage(adminBasePath);
-      setEntries(page.entries);
-      setCursor(page.nextCursor);
-    } catch (nextError: any) {
-      setError(nextError.message || 'Failed to fetch media library');
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  const loadMore = async () => {
-    if (!cursor || isLoadingMore || isRefreshing) return;
-    setIsLoadingMore(true);
-    setError('');
-
-    try {
-      const page = await fetchMediaPage(adminBasePath, cursor);
-      setEntries((current) => [...current, ...page.entries]);
-      setCursor(page.nextCursor);
-    } catch (nextError: any) {
-      setError(nextError.message || 'Failed to fetch media library');
-    } finally {
-      setIsLoadingMore(false);
-    }
-  };
+  const refreshEntries = () => { if (!navigating && !results.busy) { setUploadError(''); return results.refresh(); } };
+  const loadMore = async () => { if (!navigating && await results.loadMore()) summaryRef.current?.focus(); };
 
   const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!canUpload || !file || isUploading) return;
 
     setIsUploading(true);
-    setError('');
+    setUploadError('');
     setUploadStatus(`Uploading ${file.name}…`);
 
     try {
@@ -146,11 +128,11 @@ function MediaLibraryRoute() {
         throw new Error(payload.error || payload.message || 'Failed to upload media');
       }
 
-      await refreshEntries();
+      await results.refresh();
       setUploadStatus(`Uploaded ${file.name}.`);
     } catch (nextError: any) {
       setUploadStatus('');
-      setError(nextError.message || 'Failed to upload media');
+      setUploadError(nextError.message || 'Failed to upload media');
     } finally {
       setIsUploading(false);
       event.target.value = '';
@@ -167,7 +149,7 @@ function MediaLibraryRoute() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button type="button" ref={refreshRef} variant="outline" className="gap-2" onClick={() => void refreshEntries()} aria-disabled={isRefreshing || isLoadingMore || undefined} aria-busy={isRefreshing || undefined}>
+          <Button type="button" ref={refreshRef} variant="outline" className="gap-2" onClick={() => void refreshEntries()} aria-disabled={navigating || isRefreshing || isLoadingMore || undefined} aria-busy={isRefreshing || undefined}>
             <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
             Refresh
           </Button>
@@ -181,20 +163,23 @@ function MediaLibraryRoute() {
       </div>
 
       {!canUpload && <p className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">{uploadNotice}</p>}
+      <MediaFilters search={results.search} busy={navigating || Boolean(results.busy)} onApply={changeFilters} />
       <p role="status" className="sr-only">{uploadStatus}</p>
+      <p ref={summaryRef} tabIndex={-1} role="status" className="text-sm text-zinc-400 focus:outline-none">{navigating || isRefreshing ? 'Loading media assets…' : isLoadingMore ? 'Loading more media…' : error ? 'Media assets could not be loaded.' : `${entries.length} media assets shown`}</p>
       {error && (
         <div role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-          {error}
+          {error} Your filters are kept.
+          <Button type="button" variant="outline" size="sm" className="ml-3" aria-disabled={navigating || Boolean(results.busy) || undefined} onClick={async () => { if (await refreshEntries()) summaryRef.current?.focus(); }}>Retry</Button>
         </div>
       )}
 
-      {entries.length === 0 ? (
+      {!error && entries.length === 0 && !isRefreshing && !navigating ? (
         <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 p-10 text-center">
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-white/[0.04]">
             <ImageIcon size={22} className="text-zinc-400" />
           </div>
-          <div className="mt-4 text-lg font-medium text-white">No media assets yet</div>
-          <p className="mt-2 text-sm text-zinc-400">{canUpload ? 'Upload the first file to start using the media picker in the editor.' : 'No files have been uploaded to this collection yet.'}</p>
+          <div className="mt-4 text-lg font-medium text-white">{filtered ? 'No media assets match these filters.' : 'No media assets yet'}</div>
+          <p className="mt-2 text-sm text-zinc-400">{filtered ? 'Try another filename or file type, or clear the filters.' : canUpload ? 'Upload the first file to start using the media picker in the editor.' : 'No files have been uploaded to this collection yet.'}</p>
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -203,6 +188,7 @@ function MediaLibraryRoute() {
             <Link
               to="/collections/$slug/$entryId"
               params={{ slug: 'media', entryId: entry.id }}
+              search={mediaEntrySearch(results.search)}
               className="block transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400"
             >
               {entry.mimeType.startsWith('image/') ? (
@@ -229,7 +215,7 @@ function MediaLibraryRoute() {
 
       {cursor && (
         <div className="flex justify-center">
-          <Button type="button" variant="outline" size="sm" aria-disabled={isLoadingMore || isRefreshing || undefined} aria-busy={isLoadingMore || undefined} onClick={() => void loadMore()}>
+          <Button type="button" variant="outline" size="sm" aria-disabled={navigating || isLoadingMore || isRefreshing || undefined} aria-busy={isLoadingMore || undefined} onClick={() => void loadMore()}>
             {isLoadingMore ? 'Loading...' : 'Load more media'}
           </Button>
         </div>
@@ -244,7 +230,7 @@ function MediaLibraryRoute() {
         onClose={() => setDeleteEntry(null)}
         getReturnFocus={() => refreshRef.current}
         onDeleted={() => {
-          setEntries((current) => current.filter((entry) => entry.id !== deleteEntry.id));
+          results.remove(deleteEntry.id);
           setUploadStatus(`Deleted ${deleteEntry.filename}.`);
           setDeleteEntry(null);
         }}

@@ -37,6 +37,27 @@ const { validateCollectionListSearch, normalizeCollectionListSearch, getCollecti
 const { revisionData, equalRevisionValues, compareRevisionFields, revisionRichText } =
   await loadAdminModule('lib/revision-comparison.ts');
 
+const { validateMediaSearch, mediaSearchParams, mediaEntrySearch, validateMediaReturnSearch } =
+  await loadAdminModule('lib/media-search.ts');
+
+test('media search bounds filenames and accepts only supported type filters', () => {
+  assert.deepEqual(validateMediaSearch({ q: '  photo_%  ', type: 'png', cursor: 'untrusted' }), { q: 'photo_%', type: 'png' });
+  assert.deepEqual(validateMediaSearch({ q: ['bad'], type: 'image/anything' }), {});
+  assert.equal(validateMediaSearch({ q: 'x'.repeat(201) }).q.length, 200);
+});
+
+test('media queries keep server filters on every cursor page', () => {
+  const params = mediaSearchParams({ q: 'sample_%', type: 'jpeg' }, 48, 'page-two');
+  assert.deepEqual(Object.fromEntries(params), { limit: '48', 'where[filename][text]': 'sample_%', 'where[mimeType]': 'image/jpeg', cursor: 'page-two' });
+  assert.deepEqual(Object.fromEntries(mediaSearchParams({}, 60)), { limit: '60' });
+});
+
+test('media editor return state is bounded and cannot redirect to another destination', () => {
+  assert.deepEqual(mediaEntrySearch({ q: 'photo', type: 'webp' }), { from: 'media', mediaQ: 'photo', mediaType: 'webp' });
+  assert.deepEqual(validateMediaReturnSearch({ from: '//external.example', mediaQ: 'ignored' }), {});
+  assert.deepEqual(validateMediaReturnSearch({ from: 'media', mediaQ: '  photo  ', mediaType: 'unknown' }), { from: 'media', mediaQ: 'photo' });
+});
+
 test('revision comparison ignores object key ordering but preserves array order', () => {
   assert.equal(equalRevisionValues({ settings: { a: 1, b: 2 } }, { settings: { b: 2, a: 1 } }), true);
   assert.equal(equalRevisionValues([1, 2], [2, 1]), false);

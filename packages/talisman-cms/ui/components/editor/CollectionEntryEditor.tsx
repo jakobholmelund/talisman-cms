@@ -1,5 +1,5 @@
 import React, { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Link, useBlocker, useNavigate, useRouter } from '@tanstack/react-router';
+import { Link, useBlocker, useNavigate, useRouter, useRouterState } from '@tanstack/react-router';
 import { useForm, useStore } from '@tanstack/react-form';
 import { getLibraryDefinitions } from '../../lib/ui-libraries';
 import { adminEditorPanels } from 'virtual:talisman-cms/admin-extensions';
@@ -39,6 +39,7 @@ import {
   normalizeStoredFieldData,
 } from '../../lib/page-builder';
 import { validatePresetPayload } from '../../../src/presets';
+import { validateMediaReturnSearch } from '../../lib/media-search';
 
 const RevisionComparisonDialog = React.lazy(() => import('./RevisionComparisonDialog'));
 
@@ -468,6 +469,12 @@ export function CollectionEntryEditor({
   const initialEntry = rawEntry as any;
   const navigate = useNavigate();
   const router = useRouter();
+  const locationSearch = useRouterState({ select: state => state.location.search });
+  const returnSearch = validateMediaReturnSearch(locationSearch);
+  const fromMediaLibrary = slug === 'media' && returnSearch.from === 'media';
+  const returnLink = fromMediaLibrary
+    ? { to: '/media' as const, search: { q: returnSearch.mediaQ, type: returnSearch.mediaType } }
+    : { ...getSectionCollectionLink(section, slug), search: true as const };
   const user = router.options.context.user;
   const permissions = getCollectionPermissions(collection, user);
   const canSave = isNew ? permissions.canCreate : permissions.canUpdate;
@@ -1085,8 +1092,8 @@ export function CollectionEntryEditor({
   return (
     <div className="space-y-6 w-full pb-24">
       <div className="flex items-center justify-between pointer-events-none mb-2">
-        <Link {...getSectionCollectionLink(section, slug)} search={true} className="hover:text-white transition-colors flex items-center gap-1 text-sm bg-white/5 px-2.5 py-1 rounded-md backdrop-blur-sm border border-white/5 hover:bg-white/10 hover:border-white/10 text-zinc-400 pointer-events-auto">
-          <ArrowLeft size={14} /> Back to {collection.name}
+        <Link {...returnLink} className="hover:text-white transition-colors flex items-center gap-1 text-sm bg-white/5 px-2.5 py-1 rounded-md backdrop-blur-sm border border-white/5 hover:bg-white/10 hover:border-white/10 text-zinc-400 pointer-events-auto">
+          <ArrowLeft size={14} /> Back to {fromMediaLibrary ? 'Media Library' : collection.name}
         </Link>
       </div>
 
@@ -1420,7 +1427,7 @@ export function CollectionEntryEditor({
         url={`${basePath}/api/collections/${encodeURIComponent(slug)}/entries/${encodeURIComponent(entryId)}`}
         warning={`${hasUnsavedWork ? 'Your unsaved changes will also be discarded. ' : ''}${slug === 'media' ? 'Deleting this asset removes its file. Pages using its URL may show broken images. ' : nativeCollection ? 'Deleting this record permanently removes the stored row. ' : 'Deleting this entry removes its revisions. '}Relationships and other references are not automatically repaired. Review its usages before deleting.`}
         onClose={() => setDeleteOpen(false)}
-        onDeleted={async () => { leavingEditorRef.current = true; await navigate({ ...getSectionCollectionLink(section, slug), search: true }); }}
+        onDeleted={async () => { leavingEditorRef.current = true; await navigate(returnLink); }}
       />}
     </div>
   );

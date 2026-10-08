@@ -1,6 +1,8 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { Upload, Images, LoaderCircle, RefreshCw } from 'lucide-react';
 import { Button } from './ui/button';
+import { MediaFilters } from './MediaFilters';
+import { useMediaResults } from '../lib/use-media-results';
 
 type MediaLibraryEntry = {
   id: string;
@@ -87,68 +89,26 @@ export function MediaFieldInput({
 }) {
   const fileInputId = useId();
   const libraryPanelId = useId();
+  const summaryRef = useRef<HTMLParagraphElement>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
-  const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
+  const results = useMediaResults(adminBasePath, LIBRARY_PAGE_SIZE);
+  const isLoadingLibrary = results.busy === 'refresh';
+  const isLoadingMore = results.busy === 'more';
+  const libraryItems = readLibraryItems(results.page.docs);
+  const libraryCursor = results.page.nextCursor;
+  const [selectedAsset, setSelectedAsset] = useState<MediaLibraryEntry | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   // Read out by screen readers: an upload otherwise only changes the button text and the URL value.
   const [uploadStatus, setUploadStatus] = useState('');
-  const [libraryError, setLibraryError] = useState('');
-  const [libraryItems, setLibraryItems] = useState<MediaLibraryEntry[]>([]);
-  const [libraryCursor, setLibraryCursor] = useState<string | null>(null);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const libraryError = uploadError || results.error;
   // Opening Browse loads the library once; later loads come from Refresh or an upload, so an
   // empty or failed response cannot trigger another request by itself.
   const libraryRequestedRef = useRef(false);
 
-  const fetchLibraryPage = async (cursor: string | null) => {
-    const params = new URLSearchParams({ limit: String(LIBRARY_PAGE_SIZE) });
-    if (cursor) params.set('cursor', cursor);
-    const res = await fetch(`${adminBasePath}/api/collections/media/entries?${params}`);
-    if (!res.ok) {
-      throw new Error(await readErrorResponse(res, 'Failed to load media library'));
-    }
-
-    const payload = await res.json().catch(() => {
-      throw new Error('Failed to load media library: the server did not return JSON');
-    }) as { docs?: unknown; nextCursor?: unknown };
-    return {
-      items: readLibraryItems(payload?.docs),
-      nextCursor: typeof payload?.nextCursor === 'string' && payload.nextCursor ? payload.nextCursor : null,
-    };
-  };
-
-  const refreshLibrary = async () => {
-    if (isLoadingLibrary || isLoadingMore) return;
-    setIsLoadingLibrary(true);
-    setLibraryError('');
-
-    try {
-      const page = await fetchLibraryPage(null);
-      setLibraryItems(page.items);
-      setLibraryCursor(page.nextCursor);
-    } catch (error: any) {
-      setLibraryError(error.message || 'Failed to load media library');
-    } finally {
-      setIsLoadingLibrary(false);
-    }
-  };
-
-  const loadMoreLibrary = async () => {
-    if (!libraryCursor || isLoadingMore || isLoadingLibrary) return;
-    setIsLoadingMore(true);
-    setLibraryError('');
-
-    try {
-      const page = await fetchLibraryPage(libraryCursor);
-      setLibraryItems((current) => [...current, ...page.items]);
-      setLibraryCursor(page.nextCursor);
-    } catch (error: any) {
-      setLibraryError(error.message || 'Failed to load media library');
-    } finally {
-      setIsLoadingMore(false);
-    }
-  };
+  const refreshLibrary = () => { if (!results.busy) { setUploadError(''); return results.refresh(); } };
+  const loadMoreLibrary = async () => { if (await results.loadMore()) summaryRef.current?.focus(); };
 
   useEffect(() => {
     if (!isLibraryOpen || libraryRequestedRef.current) return;
@@ -160,7 +120,7 @@ export function MediaFieldInput({
     if (!file || isUploading) return;
 
     setIsUploading(true);
-    setLibraryError('');
+    setUploadError('');
     setUploadStatus(`Uploading ${file.name}…`);
 
     try {
@@ -181,14 +141,15 @@ export function MediaFieldInput({
         throw new Error('Upload completed without a usable media URL');
       }
 
+      setSelectedAsset(uploaded);
       onChange(uploaded.url);
       libraryRequestedRef.current = true;
       setIsLibraryOpen(true);
-      await refreshLibrary();
+      await results.refresh();
       setUploadStatus(`Uploaded ${file.name}; URL set.`);
     } catch (error: any) {
       setUploadStatus('');
-      setLibraryError(error.message || 'Failed to upload media');
+      setUploadError(error.message || 'Failed to upload media');
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) {
@@ -197,7 +158,10 @@ export function MediaFieldInput({
     }
   };
 
-  const currentSelection = libraryItems.find((item) => item.url === value) || null;
+  const visibleSelection = libraryItems.find(item => item.url === value);
+  const currentSelection = visibleSelection || (selectedAsset?.url === value ? selectedAsset : null);
+  useEffect(() => { if (visibleSelection) setSelectedAsset(visibleSelection); }, [results.page.docs, value]);
+  const filtered = Boolean(results.search.q || results.search.type);
   const hasValue = Boolean(value.trim());
 
   return (
@@ -248,13 +212,14 @@ export function MediaFieldInput({
       <p role="status" className="sr-only">{uploadStatus}</p>
       {libraryError && (
         <div role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
-          {libraryError}
+          {libraryError} Your selected URL is kept.
+          <Button type="button" variant="outline" size="sm" className="ml-3" aria-disabled={Boolean(results.busy) || undefined} onClick={async () => { if (await refreshLibrary()) summaryRef.current?.focus(); }}>Retry media</Button>
         </div>
       )}
 
       {hasValue && (
         <div className="overflow-hidden rounded-lg border border-white/10 bg-black/30">
-          {isPreviewableImage(currentSelection) || value.startsWith('http') || value.startsWith('/') || value.startsWith('data:') ? (
+          {(currentSelection ? isPreviewableImage(currentSelection) : value.startsWith('http') || value.startsWith('/') || value.startsWith('data:')) ? (
             <img src={value} alt={currentSelection?.altText || currentSelection?.filename || 'Selected media'} className="h-40 w-full object-cover" />
           ) : (
             <div className="flex h-24 items-center justify-between gap-3 px-4">
@@ -288,14 +253,15 @@ export function MediaFieldInput({
             </Button>
           </div>
 
-          <p role="status" className="sr-only">{isLoadingLibrary ? 'Loading media assets...' : ''}</p>
+          <MediaFilters search={results.search} busy={Boolean(results.busy)} onApply={search => { setUploadError(''); void results.refresh(search); }} />
+          <p ref={summaryRef} tabIndex={-1} role="status" className="text-xs text-zinc-400 focus:outline-none">{isLoadingLibrary ? 'Loading media assets…' : isLoadingMore ? 'Loading more media…' : results.error ? 'Media assets could not be loaded.' : `${libraryItems.length} media assets shown`}</p>
           {isLoadingLibrary && libraryItems.length === 0 ? (
             <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-6 text-sm text-zinc-400">
               Loading media assets...
             </div>
-          ) : libraryItems.length === 0 ? (
+          ) : !results.error && libraryItems.length === 0 ? (
             <div className="rounded-lg border border-dashed border-white/10 bg-black/20 px-3 py-6 text-sm text-zinc-500">
-              No media assets yet. Upload the first file from here.
+              {filtered ? 'No media assets match these filters. Try another filename or file type.' : 'No media assets yet. Upload the first file from here.'}
             </div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -306,7 +272,7 @@ export function MediaFieldInput({
                     key={item.id}
                     type="button"
                     aria-pressed={isSelected}
-                    onClick={() => onChange(item.url)}
+                    onClick={() => { setSelectedAsset(item); onChange(item.url); }}
                     className={`overflow-hidden rounded-xl border text-left transition-colors ${
                       isSelected
                         ? 'border-indigo-400/50 bg-indigo-500/10'

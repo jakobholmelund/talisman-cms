@@ -1346,7 +1346,7 @@ const steps = {
     await expectVisible(card, `the uploaded file (${fileName}) in the library`);
     await card.first().click();
     await page.waitForURL((url) => /\/admin\/collections\/media\/[^/?#]+$/.test(url.pathname));
-    const mediaId = page.url().split('/').pop();
+    const mediaId = new URL(page.url()).pathname.split('/').pop();
     await expectVisible(editorHeading(page), 'the media entry editor');
     await labelled(page, 'Alt Text').fill(altText);
     await saveEntry(page, 'media', mediaId, 'saving the alt text');
@@ -1357,6 +1357,127 @@ const steps = {
     ctx.state.mediaId = mediaId;
     ctx.state.mediaFilename = fileName;
     return `${fileName} uploaded, opened, alt text saved`;
+  },
+
+  async 'media-search-filters'(ctx) {
+    const { page } = ctx.admin;
+    const prefix = `media-${ctx.runId}`;
+    const ids = [];
+    const requests = [];
+    let categoryWrites = 0;
+    const observe = request => {
+      const url = new URL(request.url());
+      if (url.pathname === apiPath('/collections/media/entries') && request.method() === 'GET') requests.push(url);
+      if (url.pathname.includes('/collections/_ecommerce_categories/entries') && request.method() !== 'GET') categoryWrites++;
+    };
+    const upload = async (name, mimeType = 'image/png', buffer = makePng(2, 2, [80, 120, 160])) => {
+      const response = await page.request.post(apiPath('/media/upload'), { multipart: { file: { name, mimeType, buffer } }, headers: { Origin: ctx.options.baseUrl } });
+      if (!response.ok()) fail(`media search fixture: ${await responseSummary(response)}`);
+      const record = await response.json(); ids.push(record.id); return record;
+    };
+    const apply = async (scope, query, type) => {
+      await scope.getByRole('searchbox', { name: 'Search filenames', exact: true }).fill(query);
+      await scope.getByRole('combobox', { name: 'File type', exact: true }).selectOption(type);
+      const response = await clickAndAwaitResponse(page, scope.getByRole('button', { name: 'Apply filters', exact: true }), apiResponse('GET', apiPath('/collections/media/entries')), 'applying media filters');
+      if (!response.ok()) fail(`media filtering: ${await responseSummary(response)}`);
+      await waitUntil('media filters should settle', async () => (await scope.getByRole('button', { name: 'Apply filters', exact: true }).getAttribute('aria-disabled')) !== 'true');
+    };
+    page.on('request', observe);
+    try {
+      const target = await upload(`${prefix}-target_%_older.png`);
+      // The target is older than both the library's 60-item and picker's 48-item first page.
+      for (let index = 0; index < 64; index++) await upload(`${prefix}-page-${String(index).padStart(3, '0')}.png`);
+      const gif = await upload(`${prefix}-type.gif`, 'image/gif', Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'));
+      await page.goto(`${ADMIN_PATH}/media`);
+      await expectVisible(page.getByRole('heading', { name: 'Media Library', exact: true }), 'media search library');
+      if (await page.getByRole('link', { name: new RegExp(escapeRegExp(target.filename)) }).count()) fail('fixture target should be beyond first media page');
+      await apply(page, `${prefix}-target_%_`, 'png');
+      const targetCard = page.getByRole('link', { name: new RegExp(escapeRegExp(target.filename)) });
+      await expectVisible(targetCard, 'server search finds older upload');
+      const last = requests.at(-1).searchParams;
+      if (last.get('where[filename][text]') !== `${prefix}-target_%_` || last.get('where[mimeType]') !== 'image/png') fail('media filters were not sent to the server');
+      await page.reload();
+      await expectVisible(targetCard, 'media filters after reload');
+      await targetCard.click();
+      await expectVisible(editorHeading(page), 'filtered media entry');
+      await labelled(page, 'Alt Text').fill('Search fixture description');
+      await saveEntry(page, 'media', target.id, 'saving from filtered media library');
+      await page.getByRole('link', { name: 'Back to Media Library', exact: true }).click();
+      await expectVisible(targetCard, 'saved asset returns to filtered library');
+      if (new URL(page.url()).searchParams.get('q') !== `${prefix}-target_%_` || new URL(page.url()).searchParams.get('type') !== 'png') fail('media return lost URL filters');
+      await apply(page, prefix, '');
+      await expectVisible(page.getByRole('status').filter({ hasText: '60 media assets shown' }), 'first filtered media page');
+      await page.getByRole('button', { name: 'Load more media', exact: true }).click();
+      const summary = page.getByRole('status').filter({ hasText: '66 media assets shown' });
+      await expectVisible(summary, 'complete filtered media pages');
+      if (!(await summary.evaluate(node => node === document.activeElement))) fail('media pagination lost focus');
+      const cards = page.getByRole('link', { name: new RegExp(escapeRegExp(prefix)) });
+      const hrefs = await cards.evaluateAll(nodes => nodes.map(node => node.getAttribute('href')));
+      if (hrefs.length !== 66 || new Set(hrefs).size !== 66) fail('media cursor pages duplicate or omit uploads');
+      const paged = requests.at(-1).searchParams;
+      if (!paged.get('cursor') || paged.get('where[filename][text]') !== prefix) fail('next media page lost server filters');
+      await apply(page, prefix, 'gif');
+      await expectVisible(page.getByRole('link', { name: new RegExp(escapeRegExp(gif.filename)) }), 'GIF filter');
+      if (await page.getByRole('link', { name: new RegExp(escapeRegExp(prefix)+'.*png') }).count()) fail('GIF filter included PNGs');
+      await page.goBack();
+      await expectValue(page.getByRole('searchbox', { name: 'Search filenames', exact: true }), prefix, 'browser back media search');
+      await expectValue(page.getByRole('combobox', { name: 'File type', exact: true }), '', 'browser back media type');
+      await apply(page, 'no-match-'+ctx.runId, 'avif');
+      await expectVisible(page.getByText('No media assets match these filters.', { exact: true }), 'filtered empty library');
+      await page.route('**/api/collections/media/entries?*', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"Media temporarily unavailable"}' }));
+      try {
+        await page.getByRole('searchbox', { name: 'Search filenames', exact: true }).fill(prefix);
+        await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+        await expectVisible(page.getByRole('alert').filter({ hasText: 'Media temporarily unavailable' }), 'recoverable media list error');
+      } finally { await page.unroute('**/api/collections/media/entries?*'); }
+      await page.getByRole('button', { name: 'Retry', exact: true }).click();
+      await expectVisible(page.getByText('No media assets match these filters.', { exact: true }), 'retry retains AVIF filter');
+      if (!(await page.getByRole('status').filter({ hasText: '0 media assets shown' }).evaluate(node => node === document.activeElement))) fail('media retry did not restore useful focus');
+      await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
+      await expectValue(page.getByRole('searchbox', { name: 'Search filenames', exact: true }), '', 'cleared media search');
+      if (!(await page.getByRole('button', { name: 'Clear filters', exact: true }).evaluate(node => node === document.activeElement))) fail('clearing media filters lost focus');
+      if (ctx.options.artifacts) await page.screenshot({ path: path.join(ctx.options.artifacts, 'media-search-library.png') });
+      await openEntry(page, '_ecommerce_categories', 'demo_cat_boards', 'commerce');
+      await labelled(page, 'Name').fill(`Unsaved category ${ctx.runId}`);
+      await page.getByRole('button', { name: 'Browse for Category Image URL', exact: true }).click();
+      const picker = page.getByRole('region', { name: 'Media library', exact: true });
+      await expectVisible(picker.getByRole('status').filter({ hasText: '48 media assets shown' }), 'picker first page');
+      await apply(picker, prefix, 'png');
+      await picker.getByRole('button', { name: 'Load more media', exact: true }).click();
+      await expectVisible(picker.getByRole('status').filter({ hasText: '65 media assets shown' }), 'filtered picker pagination');
+      await picker.getByRole('button', { name: new RegExp(escapeRegExp(target.filename)) }).click();
+      await expectValue(labelled(page, 'Category Image URL'), target.url, 'chosen older media URL');
+      await apply(picker, prefix, 'gif');
+      await expectVisible(picker.getByRole('button', { name: new RegExp(escapeRegExp(gif.filename)) }), 'picker GIF result');
+      await expectValue(labelled(page, 'Category Image URL'), target.url, 'selection retained outside filtered page');
+      await expectVisible(page.getByRole('img', { name: 'Search fixture description', exact: true }), 'selected image description retained');
+      await expectVisible(page.getByText(target.filename, { exact: true }), 'selected filename retained');
+      await expectValue(labelled(page, 'Name'), `Unsaved category ${ctx.runId}`, 'draft retained while filtering');
+      await page.route('**/api/collections/media/entries?*', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"Picker temporarily unavailable"}' }));
+      try {
+        await picker.getByRole('button', { name: 'Refresh the media library for Category Image URL', exact: true }).click();
+        await expectVisible(page.getByRole('alert').filter({ hasText: 'Picker temporarily unavailable' }), 'picker recoverable error');
+        await expectValue(labelled(page, 'Category Image URL'), target.url, 'selection retained on failed read');
+      } finally { await page.unroute('**/api/collections/media/entries?*'); }
+      await page.getByRole('button', { name: 'Retry media', exact: true }).click();
+      await expectHidden(page.getByRole('alert').filter({ hasText: 'Picker temporarily unavailable' }), 'retried picker error');
+      await expectNoAlert(page, 'retried picker');
+      await picker.getByRole('searchbox', { name: 'Search filenames', exact: true }).fill(`${prefix}-target_%_`);
+      await picker.getByRole('combobox', { name: 'File type', exact: true }).selectOption('png');
+      await picker.getByRole('searchbox', { name: 'Search filenames', exact: true }).press('Enter');
+      await expectVisible(picker.getByRole('button', { name: new RegExp(escapeRegExp(target.filename)) }), 'Enter applies picker search');
+      if (categoryWrites) fail('media picker search submitted the unsaved entry form');
+      if (ctx.options.artifacts) await page.screenshot({ path: path.join(ctx.options.artifacts, 'media-search-picker.png') });
+    } finally {
+      page.off('request', observe);
+      const cleanupErrors = [];
+      for (const id of ids) {
+        const response = await page.request.delete(apiPath(`/collections/media/entries/${id}`), { headers: { Origin: ctx.options.baseUrl } });
+        if (!response.ok() && response.status() !== 404) cleanupErrors.push(await responseSummary(response));
+      }
+      if (cleanupErrors.length) fail(`media fixture cleanup: ${cleanupErrors[0]}`);
+    }
+    return 'real server filename/type filtering before cursor pages; URL reload/back/editor return; empty/retry; picker retains selected metadata and draft without saving on Enter';
   },
 
   async 'media-delete-and-busy-focus'(ctx) {

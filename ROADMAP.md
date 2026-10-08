@@ -614,6 +614,10 @@ The release stabilization in `82c16b3`/`1984b94` replaces Overview placeholders,
 
 **Status:** Implemented on `main`. Collection lists search a configured title/name or other text field, filter CMS entries by draft/published/archived status (native tables use their configured business statuses), and sort before 50-result offset pages. Applied filters and the page travel through entry URLs, including creation and saving, and survive reloads and browser history. Failed reads retain filters for retry. The `collection-search-filters` browser flow covers real server queries, pagination and focus, editor return, creation, empty results, retry and native plugin status queries. No API or migration changes.
 
+#### Search and filter media
+
+**Status:** Implemented on `main`. The Media Library and field picker search filenames and filter supported image formats before cursor pagination. Library filters survive URL reloads, browser history and asset editor return; picker filters preserve the selected URL, loaded asset details and unsaved entry values. Failed reads can be retried, and Enter in picker search never submits the entry form. The `media-search-filters` browser flow uses more than one page of real uploads to cover server filtering, cursor pages, navigation, empty results, recovery, selection and draft preservation. No API or migration changes.
+
 #### Compare saved revisions
 
 **Status:** Implemented on `main`. Each history row opens an on-demand, read-only comparison with the saved content loaded in the editor, excluding and preserving unsaved edits. Changed fields include labeled blocks, nested values and rich-text formatting; unchanged fields are optional. Read-only editors retain comparison access, while restore keeps its existing admin permissions, confirmation and stale-write token. The `revision-comparison` browser flow covers deferred snapshot reads, draft preservation, keyboard focus, retry and cancellation, structured content, read-only access and guarded restore. No API or migration changes.

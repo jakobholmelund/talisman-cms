@@ -1,11 +1,12 @@
 import React from 'react';
+import { validateMediaReturnSearch } from '../../../lib/media-search';
 import { validateCollectionListSearch } from '../../../lib/collection-list';
 import { createFileRoute } from '@tanstack/react-router';
 import { CollectionEntryEditor } from '../../../components/editor/CollectionEntryEditor';
 import { loadEntryEditorData } from '../../../lib/entry-editor-data';
 
 export const Route = createFileRoute('/collections/$slug/$entryId')({
-  validateSearch: validateCollectionListSearch,
+  validateSearch: search => ({ ...validateCollectionListSearch(search), ...validateMediaReturnSearch(search) }),
   component: CollectionsEntryEditorRoute,
   loader: async ({ params, context }) => loadEntryEditorData(context.adminBasePath || '/admin', params.slug, params.entryId),
   // The editor keeps its own copy of the entry after saving, so a cached load would be stale when the
