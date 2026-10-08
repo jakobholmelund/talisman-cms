@@ -34,7 +34,7 @@ const { COLLAPSED_STATE_INDEX_KEY, COLLAPSED_STATE_MAX_ENTRIES, pruneCollapsedSt
   await loadAdminModule('lib/collapsed-state.ts');
 const { validateCollectionListSearch, normalizeCollectionListSearch, getCollectionListOptions, collectionListParams } =
   await loadAdminModule('lib/collection-list.ts');
-const { revisionData, equalRevisionValues, compareRevisionFields, revisionRichText } =
+const { revisionData, equalRevisionValues, compareRevisionFields, revisionRichText, compareConflictFields, applyConflictChoices, withFieldChanges, conflictSnapshotData } =
   await loadAdminModule('lib/revision-comparison.ts');
 
 const { validateMediaSearch, mediaSearchParams, mediaEntrySearch, validateMediaReturnSearch } =
@@ -56,6 +56,69 @@ test('media editor return state is bounded and cannot redirect to another destin
   assert.deepEqual(mediaEntrySearch({ q: 'photo', type: 'webp' }), { from: 'media', mediaQ: 'photo', mediaType: 'webp' });
   assert.deepEqual(validateMediaReturnSearch({ from: '//external.example', mediaQ: 'ignored' }), {});
   assert.deepEqual(validateMediaReturnSearch({ from: 'media', mediaQ: '  photo  ', mediaType: 'unknown' }), { from: 'media', mediaQ: 'photo' });
+});
+
+test('conflict review distinguishes overlapping, private and already-saved changes', () => {
+  const original = { data: { title: 'Opened', views: 0, subtitle: 'Original', serverOnly: 'Old' } };
+  const mine = { data: { title: 'Mine', views: 5, subtitle: 'Same', serverOnly: 'Old' } };
+  const latest = { data: { title: 'Latest', views: 0, subtitle: 'Same', serverOnly: 'New' } };
+  const rows = compareConflictFields([{ name: 'title', label: 'Page title' }], original, mine, latest);
+  assert.deepEqual(rows.map(({ key, label, kind }) => ({ key, label, kind })), [
+    { key: 'data:title', label: 'Page title', kind: 'overlap' },
+    { key: 'data:views', label: 'Views', kind: 'mine-only' },
+    { key: 'data:subtitle', label: 'Subtitle', kind: 'already-saved' },
+  ]);
+  assert.throws(() => applyConflictChoices(latest, mine, rows, {}), /Choose a value for Page title/);
+  assert.deepEqual(applyConflictChoices(latest, mine, rows, { 'data:title': 'latest' }), { data: { title: 'Latest', views: 5, subtitle: 'Same', serverOnly: 'New' } });
+  assert.equal(applyConflictChoices(latest, mine, rows, { 'data:title': 'mine' }).data.title, 'Mine');
+  assert.equal(latest.data.views, 0);
+});
+
+test('conflict choices handle additions, deletions and null without merging array positions', () => {
+  const original = { data: { removed: 'Old', empty: null, layout: [{ heading: 'Opened' }] } };
+  const mine = { data: { empty: '', added: null, layout: [{ heading: 'Mine' }] } };
+  const latest = { data: { removed: 'Old', empty: null, layout: [{ heading: 'Latest' }], extra: true } };
+  const rows = compareConflictFields([], original, mine, latest);
+  assert.equal(rows.find(row => row.name === 'layout').kind, 'overlap');
+  assert.deepEqual(applyConflictChoices(latest, mine, rows, { 'data:layout': 'mine' }), { data: { empty: '', layout: [{ heading: 'Mine' }], extra: true, added: null } });
+});
+
+test('URL slug and a data field named slug have independent conflict choices', () => {
+  const original = { data: { slug: 'Data opened' }, slug: 'opened' };
+  const mine = { data: { slug: 'Data mine' }, slug: 'mine' };
+  const latest = { data: { slug: 'Data latest' }, slug: 'latest' };
+  const rows = compareConflictFields([], original, mine, latest);
+  assert.deepEqual(rows.map(row => row.key), ['entry-slug', 'data:slug']);
+  assert.deepEqual(applyConflictChoices(latest, mine, rows, { 'entry-slug': 'latest', 'data:slug': 'mine' }), { data: { slug: 'Data mine' }, slug: 'latest' });
+});
+
+test('conflict review compares rich-text structure and ignores object member order', () => {
+  const content = { type: 'text', text: 'Same' };
+  const original = { data: { content, settings: { a: 1, b: 2 } } };
+  const mine = { data: { content: { ...content, marks: [{ type: 'bold' }] }, settings: { b: 2, a: 1 } } };
+  const latest = { data: { content: { ...content, marks: [{ type: 'italic' }] }, settings: { a: 1, b: 2 } } };
+  assert.deepEqual(compareConflictFields([], original, mine, latest).map(row => [row.name, row.kind]), [['content', 'overlap']]);
+});
+
+test('conflict field changes keep prototype names as values and preserve explicit removals', () => {
+  const mine = JSON.parse('{"__proto__":{"text":"Mine"}}');
+  const rows = compareConflictFields([], { data: {} }, { data: mine }, { data: {} });
+  const result = applyConflictChoices({ data: { untouched: true } }, { data: mine }, rows, {});
+  assert.equal(Object.hasOwn(result.data, '__proto__'), true);
+  assert.equal(Object.getPrototypeOf(result.data), Object.prototype);
+  assert.deepEqual(withFieldChanges({ removed: 'Old', keep: 1 }, { removed: undefined, fresh: null }), { keep: 1, fresh: null });
+});
+
+test('empty nested editor settings do not replace a held draft with the loaded version', () => {
+  const saved = { layout: [{ blockType: 'hero', heading: 'Saved' }], removed: 'Opened' };
+  const form = { layout: [{ blockType: 'hero', heading: 'Saved', presentation: undefined }], removed: undefined };
+  const snapshot = conflictSnapshotData(form);
+  assert.equal(equalRevisionValues(snapshot.layout, saved.layout), true);
+  assert.equal(Object.hasOwn(snapshot, 'removed'), false);
+  const held = { layout: [{ blockType: 'hero', heading: 'Mine' }] };
+  const newer = Object.fromEntries(Object.keys(saved).filter(name => !equalRevisionValues(snapshot[name], saved[name])).map(name => [name, snapshot[name]]));
+  assert.deepEqual(withFieldChanges(saved, { ...held, ...newer }), held);
+  assert.equal(Object.hasOwn(form.layout[0], 'presentation'), true);
 });
 
 test('revision comparison ignores object key ordering but preserves array order', () => {

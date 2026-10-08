@@ -40,8 +40,10 @@ import {
 } from '../../lib/page-builder';
 import { validatePresetPayload } from '../../../src/presets';
 import { validateMediaReturnSearch } from '../../lib/media-search';
+import { conflictSnapshotData, equalRevisionValues, withFieldChanges, type ConflictSnapshot } from '../../lib/revision-comparison';
 
 const RevisionComparisonDialog = React.lazy(() => import('./RevisionComparisonDialog'));
+const ConflictReviewDialog = React.lazy(() => import('./ConflictReviewDialog'));
 
 /** Human-readable label for a form field path such as `layout[0].title`. */
 function describeFieldPath(fieldPath: string, fields: any[], values: any) {
@@ -435,12 +437,13 @@ type EditConflict = {
   /** The edited slug, or null when the user did not change it. */
   slug: string | null;
   latestLoaded: boolean;
+  original: ConflictSnapshot;
 };
 
 /** Top-level fields whose value differs between the edited values and the version the edits started from. */
 function getChangedFieldNames(values: Record<string, any>, baseline: Record<string, any>) {
   return [...new Set([...Object.keys(values), ...Object.keys(baseline)])]
-    .filter((name) => JSON.stringify(values[name]) !== JSON.stringify(baseline[name]));
+    .filter((name) => !equalRevisionValues(values[name], baseline[name]));
 }
 
 export function CollectionEntryEditor({
@@ -535,6 +538,7 @@ export function CollectionEntryEditor({
   const [pendingTransition, setPendingTransition] = useState<(PendingTransition & { phase: 'checking' | 'waiting' }) | null>(null);
   const [serverFieldErrors, setServerFieldErrors] = useState<ServerFieldErrors>({});
   const [conflict, setConflict] = useState<EditConflict | null>(null);
+  const [conflictReview, setConflictReview] = useState<{ original: ConflictSnapshot; mine: ConflictSnapshot; latest: ConflictSnapshot } | null>(null);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const collapseStorageKey = `talisman-cms:collapsed:collection:${slug}:${currentEntry?.id || entryId}`;
 
@@ -814,11 +818,12 @@ export function CollectionEntryEditor({
 
   // Keep only what the user changed. Re-applying the whole form would write back fields that
   // someone else (or a checkout, for stock) changed since the editor loaded.
-  const collectUserChanges = (values: Record<string, any>): Pick<EditConflict, 'changes' | 'slug'> => {
+  const collectUserChanges = (values: Record<string, any>): Pick<EditConflict, 'changes' | 'slug' | 'original'> => {
     const baseline = JSON.parse(savedSnapshotRef.current.values);
-    const changes = Object.fromEntries(getChangedFieldNames(values, baseline).map((name) => [name, values[name]]));
+    const snapshot = conflictSnapshotData(values);
+    const changes = Object.fromEntries(getChangedFieldNames(snapshot, baseline).map((name) => [name, snapshot[name]]));
     const slugChanged = entrySlug !== savedSnapshotRef.current.slug;
-    return { changes, slug: slugChanged ? entrySlug : null };
+    return { changes: structuredClone(changes), slug: slugChanged ? entrySlug : null, original: { data: baseline, ...(!nativeCollection ? { slug: savedSnapshotRef.current.slug } : {}) } };
   };
 
   const handleRequestError = (error: unknown, action: EditorAction) => {
@@ -970,7 +975,7 @@ export function CollectionEntryEditor({
 
   // Edits that only the conflict panel holds are gone once it closes, so ask first.
   const confirmDiscardConflictChanges = (outcome: string) =>
-    !conflictHoldsChanges || window.confirm(`Your changes to ${conflictChangeLabels} have not been put back into the form. ${outcome}`);
+    !conflictHoldsChanges || window.confirm(`Your changes to ${conflictChangeLabels} have not been applied to the form. ${outcome}`);
 
   const dismissConflict = () => {
     if (!confirmDiscardConflictChanges('Dismiss them? They will be lost.')) return;
@@ -991,7 +996,7 @@ export function CollectionEntryEditor({
     if (!conflict || !currentEntry?.id || isWorking) return;
     // The form still holds the user's edits, including any made after the 409: the panel keeps them
     // once the latest version replaces the form.
-    let held: Pick<EditConflict, 'changes' | 'slug'>;
+    let held: Pick<EditConflict, 'changes' | 'slug' | 'original'>;
     try {
       held = collectUserChanges(supportsRawView && viewMode === 'raw' ? parseEditorValues() : form.state.values as Record<string, any>);
     } catch (error) {
@@ -1011,33 +1016,35 @@ export function CollectionEntryEditor({
     }
   };
 
-  // Puts only the fields the user changed back on top of the latest version. Every other field keeps
-  // its latest value, so saving neither reverts someone else's edits nor writes back stale stock.
-  const reapplyConflictDraft = () => {
-    if (!conflict || isWorking) return;
-    let latestValues: Record<string, any>;
+  const openConflictReview = () => {
+    if (!conflict?.latestLoaded || isWorking) return;
     try {
-      latestValues = supportsRawView && viewMode === 'raw' ? parseEditorValues() : form.state.values as Record<string, any>;
-    } catch (error) {
-      setGlobalError(describeRequestError(error));
-      return;
-    }
+      const values = supportsRawView && viewMode === 'raw' ? parseEditorValues() : form.state.values as Record<string, any>;
+      // Edits made after loading the latest version supersede older held edits to the same field.
+      const newer = collectUserChanges(values);
+      const mine: ConflictSnapshot = {
+        data: withFieldChanges(conflict.original.data, { ...conflict.changes, ...newer.changes }),
+        ...(!nativeCollection ? { slug: newer.slug ?? conflict.slug ?? conflict.original.slug } : {}),
+      };
+      const latest: ConflictSnapshot = { data: JSON.parse(savedSnapshotRef.current.values), ...(!nativeCollection ? { slug: savedSnapshotRef.current.slug } : {}) };
+      setGlobalError('');
+      setConflictReview(structuredClone({ original: conflict.original, mine, latest }));
+    } catch (error) { setGlobalError(describeRequestError(error)); }
+  };
 
-    const nextValues = { ...latestValues };
-    for (const [name, value] of Object.entries(conflict.changes)) {
-      if (value === undefined) delete nextValues[name];
-      else nextValues[name] = value;
-    }
+  const applyConflictReview = (resolved: ConflictSnapshot) => {
+    if (!conflict?.latestLoaded || isWorking) return;
+    const nextValues = resolved.data;
     form.reset(nextValues, { keepDefaultValues: true });
-    if (conflict.slug != null) setEntrySlug(conflict.slug);
+    if (!nativeCollection) setEntrySlug(resolved.slug || '');
     setRawJsonStr(JSON.stringify(nextValues, null, 2));
     if (presetCollection) {
-      setSelectedPresetLibraryId(nextValues.libraryId || '');
-      setSelectedPresetComponentSlug(nextValues.componentSlug || '');
+      setSelectedPresetLibraryId(String(nextValues.libraryId || ''));
+      setSelectedPresetComponentSlug(String(nextValues.componentSlug || ''));
     }
+    setConflictReview(null);
     setConflict(null);
-    setNotice(`Your changes are back in the form on top of the latest version; other fields keep their latest values. Save to apply them.`);
-    // The panel closes under the button; the next step is to save.
+    setNotice('Your choices are in the form; other fields keep their latest saved values. Save to apply them.');
     saveButtonRef.current?.focus();
   };
 
@@ -1291,7 +1298,7 @@ export function CollectionEntryEditor({
                         <p className="text-amber-100/80">
                           {conflict.latestLoaded
                             ? conflictHasChanges
-                              ? `Your changes to ${conflictChangeLabels} are kept below. Put them back to apply only those fields on top of the latest version, then save. Everything else keeps its latest value.`
+                              ? `Your changes to ${conflictChangeLabels} are kept below. Review them to choose which values to keep, then save. Other fields keep their latest value.`
                               : `You had no unsaved changes, so nothing was lost. Check the latest version, then retry the ${conflict.action} if it still applies.`
                             : `The ${conflict.action} was refused because ${hasInPlaceFields ? 'another editor or a background update' : 'someone else'} changed this ${recordLabel}. ${conflictHasChanges
                               ? `Your changes to ${conflictChangeLabels} are still in the form. Load the latest version to see what changed; your changes stay available here.`
@@ -1306,8 +1313,8 @@ export function CollectionEntryEditor({
                           {conflict.latestLoaded ? (
                             <>
                               {conflictHasChanges && (
-                                <Button type="button" size="sm" variant="outline" onClick={reapplyConflictDraft} aria-disabled={isWorking || undefined}>
-                                  Put my changes back
+                                <Button type="button" size="sm" variant="outline" onClick={openConflictReview} aria-disabled={isWorking || undefined}>
+                                  Review changes
                                 </Button>
                               )}
                               <Button type="button" size="sm" variant="ghost" onClick={dismissConflict}>
@@ -1417,6 +1424,9 @@ export function CollectionEntryEditor({
         </fieldset>}
       </div>
       </ReadOnlyFieldContext.Provider>
+      {conflictReview && <Suspense fallback={<p role="status" className="text-sm text-zinc-400">Loading conflict review…</p>}>
+        <ConflictReviewDialog {...conflictReview} fields={editorFields} onClose={() => setConflictReview(null)} onApply={applyConflictReview} getReturnFocus={() => saveButtonRef.current} />
+      </Suspense>}
       {comparison && <Suspense fallback={<p role="status" className="text-sm text-zinc-400">Loading revision preview…</p>}>
         <RevisionComparisonDialog {...comparison} fields={collection.fields || []}
           url={`${basePath}/api/collections/${encodeURIComponent(slug)}/entries/${encodeURIComponent(currentEntry.id)}/revisions/${encodeURIComponent(comparison.revision.id)}`}

@@ -71,3 +71,64 @@ export function revisionRichText(value: unknown): string {
   }
   return parts.join('').trim();
 }
+
+export type ConflictSnapshot = { data: Record<string, unknown>; slug?: string };
+export type ConflictChoice = 'mine' | 'latest';
+/** Match saved JSON: optional undefined form settings are not changes to stored objects. */
+export function conflictSnapshotData(values: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(values));
+}
+export type ConflictFieldReview = {
+  key: string;
+  name: string;
+  label: string;
+  field: any;
+  original: unknown;
+  mine: unknown;
+  latest: unknown;
+  kind: 'overlap' | 'mine-only' | 'already-saved';
+};
+
+function sameField(left: Record<string, unknown>, right: Record<string, unknown>, name: string) {
+  const hasLeft = Object.hasOwn(left, name), hasRight = Object.hasOwn(right, name);
+  return hasLeft === hasRight && equalRevisionValues(hasLeft ? left[name] : undefined, hasRight ? right[name] : undefined);
+}
+
+/** Apply only explicit changes, preserving removed fields and keys such as __proto__ as data. */
+export function withFieldChanges(data: Record<string, unknown>, changes: Record<string, unknown>) {
+  const values = new Map(Object.entries(data));
+  for (const [name, value] of Object.entries(changes)) {
+    if (value === undefined) values.delete(name);
+    else values.set(name, value);
+  }
+  return Object.fromEntries(values);
+}
+
+/** Whole top-level fields are atomic: blocks/arrays are never silently merged by position. */
+export function compareConflictFields(fields: any[], original: ConflictSnapshot, mine: ConflictSnapshot, latest: ConflictSnapshot): ConflictFieldReview[] {
+  const rows = compareRevisionFields(fields, original.data, mine.data).filter(row => row.change !== 'unchanged').map(row => ({
+    key: `data:${row.name}`, name: row.name, label: row.label, field: row.field,
+    original: row.before, mine: row.after, latest: Object.hasOwn(latest.data, row.name) ? latest.data[row.name] : undefined,
+    kind: sameField(mine.data, latest.data, row.name) ? 'already-saved' : sameField(original.data, latest.data, row.name) ? 'mine-only' : 'overlap',
+  } as ConflictFieldReview));
+  if (mine.slug !== original.slug) rows.unshift({
+    key: 'entry-slug', name: 'slug', label: 'URL slug', field: { type: 'text' }, original: original.slug, mine: mine.slug, latest: latest.slug,
+    kind: mine.slug === latest.slug ? 'already-saved' : original.slug === latest.slug ? 'mine-only' : 'overlap',
+  });
+  return rows;
+}
+
+/** Refuse unresolved overlaps. Fields changed only by other writers retain their latest value. */
+export function applyConflictChoices(latest: ConflictSnapshot, mine: ConflictSnapshot, rows: ConflictFieldReview[], choices: Record<string, ConflictChoice>): ConflictSnapshot {
+  const result: ConflictSnapshot = { ...latest, data: { ...latest.data } };
+  const changes: Record<string, unknown> = Object.create(null);
+  for (const row of rows) {
+    const selected = Object.hasOwn(choices, row.key) ? choices[row.key] : row.kind === 'mine-only' ? 'mine' : row.kind === 'already-saved' ? 'latest' : undefined;
+    if (selected !== 'mine' && selected !== 'latest') throw new Error(`Choose a value for ${row.label}.`);
+    if (selected === 'latest') continue;
+    if (row.key === 'entry-slug') result.slug = mine.slug;
+    else changes[row.name] = Object.hasOwn(mine.data, row.name) ? mine.data[row.name] : undefined;
+  }
+  result.data = withFieldChanges(result.data, changes);
+  return result;
+}

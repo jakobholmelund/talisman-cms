@@ -1307,9 +1307,10 @@ const steps = {
       await expectValue(labelled(pageB, 'Title'), titleA, "the Title (A's value) after loading the latest version");
       const kept = pageB.getByText(/Your changes to .*Views.* are kept below/);
       await expectVisible(kept, 'the note that the change to Views is kept');
-      const putBack = pageB.getByRole('button', { name: 'Put my changes back', exact: true });
-      await expectVisible(putBack, 'the "Put my changes back" button');
-      await putBack.click();
+      await pageB.getByRole('button', { name: 'Review changes', exact: true }).click();
+      const review = pageB.getByRole('dialog', { name: 'Review conflicting changes', exact: true });
+      await expectVisible(review, 'the held changes review');
+      await review.getByRole('button', { name: 'Apply choices to form', exact: true }).click();
       await expectValue(labelled(pageB, 'Views'), viewsB, 'Views after putting the change back');
       await expectValue(labelled(pageB, 'Title'), titleA, 'the Title after putting the change back');
       await saveEntry(pageB, 'posts', entryId, "B's save after the conflict");
@@ -1324,6 +1325,214 @@ const steps = {
       ctx.sessions = ctx.sessions.filter((session) => session !== second.context);
     }
     return 'HTTP 409 shown as the conflict panel; latest loaded, change put back, both fields saved';
+  },
+
+  async 'conflict-review'(ctx) {
+    const { page } = ctx.admin;
+    const second = await signedInSession(ctx, ctx.options.adminEmail, ctx.options.adminPassword, 'conflict reviewer');
+    const editor = second.page;
+    const fixtures = [];
+    const rich = text => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] });
+    const create = async (collection, data, slug) => {
+      const response = await page.request.post(apiPath(`/collections/${collection}/entries`), { data: { data, slug } });
+      if (!response.ok()) fail(`conflict fixture: ${await responseSummary(response)}`);
+      const entry = await response.json(); fixtures.push([collection, entry.id]); return entry;
+    };
+    const update = async (collection, entry, data, slug) => {
+      const response = await page.request.put(apiPath(`/collections/${collection}/entries/${entry.id}`), { data: { data, slug, expectedRevisionId: entry.latestRevisionId } });
+      if (!response.ok()) fail(`conflict fixture update: ${await responseSummary(response)}`);
+      return response.json();
+    };
+    const refuseStale = async (collection, id) => {
+      const response = await clickAndAwaitResponse(editor, saveButton(editor), apiResponse('PUT', apiPath(`/collections/${collection}/entries/${id}`)), 'stale reviewer save');
+      if (response.status() !== 409) fail(`stale review save returned ${await responseSummary(response)}`);
+      await expectVisible(editor.getByRole('button', { name: 'Load latest version', exact: true }), 'recoverable conflict');
+      return response;
+    };
+    const dialog = editor.getByRole('dialog', { name: 'Review conflicting changes', exact: true });
+    const review = editor.getByRole('button', { name: 'Review changes', exact: true });
+    const load = editor.getByRole('button', { name: 'Load latest version', exact: true });
+    try {
+      const initialTitle = `Originally opened ${ctx.runId}`;
+      const savedTitle = `Latest saved ${ctx.runId}`;
+      const mineTitle = `My revised draft ${ctx.runId}`;
+      const initial = await create('posts', { title: initialTitle, views: 0, content: rich('Original content'), isPublished: false }, `original-${ctx.runId}`);
+      await openEntry(editor, 'posts', initial.id);
+      const saved = await update('posts', initial, { title: savedTitle, views: 0, content: rich('Saved content'), isPublished: true }, `saved-${ctx.runId}`);
+      await labelled(editor, 'Title').fill('My first draft');
+      await labelled(editor, 'Views').fill('42');
+      await editor.getByRole('textbox', { name: 'Content', exact: true }).fill('<img src=x onerror=alert(1)>');
+      await labelled(editor, 'Slug (Optional)').fill(`mine-${ctx.runId}`);
+      await refuseStale('posts', initial.id);
+      await labelled(editor, 'Title').fill('My edits after the refusal');
+      await labelled(editor, 'Views').fill('43');
+      const url = apiPath(`/collections/posts/entries/${initial.id}`);
+      await editor.route(`**${url}`, route => route.request().method() === 'GET' ? route.fulfill({ status: 503, json: { error: 'Latest temporarily unavailable' } }) : route.continue());
+      try {
+        await load.click();
+        await expectVisible(editor.getByRole('alert').filter({ hasText: 'Latest temporarily unavailable' }), 'recoverable latest read failure');
+        await expectValue(labelled(editor, 'Title'), 'My edits after the refusal', 'draft after failed latest read');
+      } finally { await editor.unroute(`**${url}`); }
+      await load.click();
+      await expectVisible(review, 'review after retry');
+      await expectValue(labelled(editor, 'Title'), savedTitle, 'loaded latest title');
+      await labelled(editor, 'Title').fill(mineTitle);
+      const writes = [];
+      const observe = request => { if (request.method() === 'PUT' && new URL(request.url()).pathname === url) writes.push(request.postDataJSON()); };
+      editor.on('request', observe);
+      try {
+        await review.click();
+        const title = dialog.getByRole('region', { name: 'Title', exact: true });
+        await expectVisible(title.getByText(initialTitle, { exact: true }), 'original title');
+        await expectVisible(title.getByText(mineTitle, { exact: true }), 'newest local title');
+        await expectVisible(title.getByText(savedTitle, { exact: true }), 'latest title');
+        await expectVisible(dialog.getByText('3 fields need a choice.', { exact: true }), 'all overlapping fields require choices');
+        await expectValue(dialog.getByLabel('Value to keep for Views', { exact: true }), 'mine', 'default for edits only I made');
+        await expectVisible(dialog.getByText('<img src=x onerror=alert(1)>', { exact: true }), 'literal rich text preview');
+        if (await dialog.locator('img, iframe, [contenteditable="true"], textarea').count()) fail('conflict content is interactive or interpreted as HTML');
+        await dialog.getByRole('button', { name: 'Apply choices to form', exact: true }).click({ force: true });
+        await expectVisible(dialog, 'unresolved review cannot apply');
+        if (writes.length) fail('opening or applying unresolved review sent a write');
+        for (let count = 0; count < 9; count++) {
+          await editor.keyboard.press('Tab');
+          if (!(await dialog.evaluate(node => node.contains(document.activeElement)))) fail('Tab escaped conflict review');
+        }
+        if (ctx.options.artifacts) {
+          await dialog.evaluate(node => { node.scrollTop = 0; });
+          await editor.screenshot({ path: path.join(ctx.options.artifacts, 'conflict-review-dialog.png') });
+          await editor.setViewportSize({ width: 390, height: 844 });
+          await dialog.evaluate(node => { node.scrollTop = 0; });
+          await editor.screenshot({ path: path.join(ctx.options.artifacts, 'conflict-review-mobile.png') });
+          if (await dialog.evaluate(node => node.scrollWidth > node.clientWidth)) fail('conflict review overflows a mobile viewport');
+          await editor.setViewportSize({ width: 1440, height: 1000 });
+        }
+        await editor.keyboard.press('Escape');
+        await expectHidden(dialog, 'cancelled review');
+        if (!(await review.evaluate(node => node === document.activeElement))) fail('conflict cancellation lost focus');
+        await expectValue(labelled(editor, 'Title'), mineTitle, 'post-load edits after cancellation');
+        await review.click();
+        await dialog.getByLabel('Value to keep for Title', { exact: true }).selectOption('mine');
+        await dialog.getByLabel('Value to keep for Content', { exact: true }).selectOption('latest');
+        await dialog.getByLabel('Value to keep for URL slug', { exact: true }).selectOption('latest');
+        await dialog.getByRole('button', { name: 'Apply choices to form', exact: true }).click();
+        await expectHidden(dialog, 'applied review');
+        await expectValue(labelled(editor, 'Title'), mineTitle, 'chosen local title');
+        await expectValue(labelled(editor, 'Views'), '43', 'edits after the refused save');
+        await expectValue(labelled(editor, 'Slug (Optional)'), `saved-${ctx.runId}`, 'chosen saved slug');
+        await expectVisible(editor.getByRole('textbox', { name: 'Content', exact: true }).getByText('Saved content', { exact: true }), 'chosen saved rich text');
+        await waitUntil('apply returns focus to Save', () => saveButton(editor).evaluate(node => node === document.activeElement));
+        if (writes.length) fail('applying resolved choices saved without an explicit Save');
+        // A third writer must still refuse the reviewed, but now stale, draft.
+        const third = await update('posts', saved, { title: savedTitle, views: 0, content: rich('Saved content'), isPublished: true, publishedAt: '2026-01-02T00:00:00.000Z' }, `saved-${ctx.runId}`);
+        const stale = await refuseStale('posts', initial.id);
+        if (stale.request().postDataJSON().expectedRevisionId !== saved.latestRevisionId) fail('review replaced the loaded concurrency token');
+        await load.click(); await expectVisible(review, 'second recovery'); await review.click();
+        await expectVisible(dialog.getByText('All fields are ready to apply.', { exact: true }), 'non-overlapping retry');
+        await dialog.getByRole('button', { name: 'Apply choices to form', exact: true }).click();
+        const successful = await saveEntry(editor, 'posts', initial.id, 'saving chosen values');
+        if (successful.request().postDataJSON().expectedRevisionId !== third.latestRevisionId) fail('recovery did not use the latest loaded revision');
+        await editor.reload();
+        await expectValue(labelled(editor, 'Title'), mineTitle, 'persisted chosen title');
+        await expectValue(labelled(editor, 'Views'), '43', 'persisted chosen views');
+        const final = await (await page.request.get(url)).json();
+        const data = typeof final.data === 'string' ? JSON.parse(final.data) : final.data;
+        if (data.publishedAt !== '2026-01-02T00:00:00.000Z' || !data.isPublished) fail('review reverted fields changed only by other writers');
+      } finally { editor.off('request', observe); }
+
+      // Raw JSON and block arrays are kept as a whole field, never merged by position.
+      const structured = await create('pages', { title: 'Original page', layout: [{ blockType: 'hero', heading: 'Original hero' }] });
+      await openEntry(editor, 'pages', structured.id);
+      await editor.getByRole('button', { name: 'Switch to Raw JSON', exact: true }).click();
+      const raw = editor.getByRole('textbox', { name: 'Raw JSON', exact: true });
+      await raw.fill(JSON.stringify({ title: 'My page', layout: [{ blockType: 'hero', heading: 'My hero' }, { blockType: 'hero', heading: 'Added by me' }] }));
+      await update('pages', structured, { title: 'Original page', layout: [{ blockType: 'hero', heading: 'Saved hero' }] });
+      await refuseStale('pages', structured.id);
+      await raw.fill('{ broken'); await load.click();
+      await expectVisible(editor.getByRole('alert').filter({ hasText: 'Fix the raw JSON' }), 'invalid JSON protects held draft');
+      await expectValue(raw, '{ broken', 'invalid JSON retained');
+      await raw.fill(JSON.stringify({ title: 'My page', layout: [{ blockType: 'hero', heading: 'My hero' }, { blockType: 'hero', heading: 'Added after refusal' }] }));
+      await load.click(); await expectVisible(review, 'raw draft retained'); await review.click();
+      await expectVisible(dialog, 'raw conflict review');
+      await expectVisible(dialog.getByText('Added after refusal', { exact: true }), 'new raw block retained');
+      await dialog.getByLabel('Value to keep for Page Layout', { exact: true }).selectOption('latest');
+      await dialog.getByRole('button', { name: 'Apply choices to form', exact: true }).click();
+      const resolved = JSON.parse(await raw.inputValue());
+      if (resolved.title !== 'My page' || resolved.layout.length !== 1 || resolved.layout[0].heading !== 'Saved hero') fail('raw block choices merged or dropped unrelated fields');
+      await saveEntry(editor, 'pages', structured.id, 'saving raw field choices');
+
+      // Native records use timestamp guards, and their data slug is an ordinary field.
+      const nativeCollection = '_ecommerce_categories';
+      const native = await create(nativeCollection, { id: `review-${ctx.runId}`, name: 'Original category', slug: `category-${ctx.runId}`, description: 'Original description' });
+      await openEntry(editor, nativeCollection, native.id, 'commerce');
+      const nativeSavedResponse = await page.request.put(apiPath(`/collections/${nativeCollection}/entries/${native.id}`), { data: { data: { name: 'Saved category', slug: `category-${ctx.runId}`, description: 'Original description' }, expectedUpdatedAt: native.updatedAt } });
+      if (!nativeSavedResponse.ok()) fail(`native conflict fixture update: ${await responseSummary(nativeSavedResponse)}`);
+      const nativeSaved = await nativeSavedResponse.json();
+      await labelled(editor, 'Name').fill('My category');
+      await labelled(editor, 'Description').fill('My description');
+      const nativeStale = await refuseStale(nativeCollection, native.id);
+      if ((await nativeStale.json()).code !== 'stale_record') fail('native stale review did not use a timestamp conflict');
+      await load.click(); await expectVisible(review, 'native review'); await review.click();
+      await dialog.getByLabel('Value to keep for Name', { exact: true }).selectOption('latest');
+      if (await dialog.getByRole('region', { name: 'URL slug', exact: true }).count()) fail('native review invented a separate URL slug');
+      await dialog.getByRole('button', { name: 'Apply choices to form', exact: true }).click();
+      await expectValue(labelled(editor, 'Name'), 'Saved category', 'chosen native name');
+      await expectValue(labelled(editor, 'Description'), 'My description', 'chosen native description');
+      const nativeSuccessful = await saveEntry(editor, nativeCollection, native.id, 'saving native choices');
+      if (nativeSuccessful.request().postDataJSON().expectedUpdatedAt !== nativeSaved.updatedAt) fail('native review dropped its timestamp guard');
+
+      // Preset props live in a virtual form field, but save as propsJson.
+      const presetData = { name: 'Original preset', libraryId: 'daisyui', componentSlug: 'daisyAlertNotice', propsJson: JSON.stringify({ title: 'Original notice', tone: 'info' }) };
+      const preset = await create('_ui_component_presets', presetData);
+      await openEntry(editor, '_ui_component_presets', preset.id);
+      await update('_ui_component_presets', preset, { ...presetData, propsJson: JSON.stringify({ title: 'Saved notice', tone: 'info' }) });
+      await labelled(editor, 'Preset Name').fill('My preset name');
+      await labelled(editor, 'Title').fill('My notice');
+      await refuseStale('_ui_component_presets', preset.id);
+      await load.click(); await expectVisible(review, 'preset review'); await review.click();
+      await expectVisible(dialog.getByText('My notice', { exact: true }), 'held preset prop');
+      await dialog.getByLabel('Value to keep for Preset Props', { exact: true }).selectOption('mine');
+      await dialog.getByRole('button', { name: 'Apply choices to form', exact: true }).click();
+      await expectValue(labelled(editor, 'Title'), 'My notice', 'chosen virtual preset prop');
+      await saveEntry(editor, '_ui_component_presets', preset.id, 'saving preset choices');
+      await editor.reload();
+      await expectValue(labelled(editor, 'Title'), 'My notice', 'serialized preset prop after reload');
+      await expectValue(labelled(editor, 'Preset Name'), 'My preset name', 'preset name after reload');
+
+      // Retired fields remain reviewable; unseen overlaps on later pages block applying.
+      const retired = value => Object.fromEntries(Array.from({ length: 25 }, (_, index) => [`retired_${index}`, `${value} ${index}`]));
+      const many = await create('posts', { title: 'Many fields', ...retired('Original') });
+      await openEntry(editor, 'posts', many.id);
+      await editor.getByRole('button', { name: 'Switch to Raw JSON', exact: true }).click();
+      await editor.getByRole('textbox', { name: 'Raw JSON', exact: true }).fill(JSON.stringify({ title: 'Many fields', ...retired('Mine') }));
+      await update('posts', many, { title: 'Many fields', ...retired('Saved') });
+      await refuseStale('posts', many.id);
+      await load.click(); await expectVisible(review, 'retired field review'); await review.click();
+      await expectVisible(dialog.getByText('25 fields need a choice.', { exact: true }), 'all retired fields reviewed');
+      let choices = dialog.getByRole('combobox');
+      if (await choices.count() !== 20) fail('conflict field pagination exceeded 20 rows');
+      for (let index = 0; index < 20; index++) await choices.nth(index).selectOption('mine');
+      await expectVisible(dialog.getByText('5 fields need a choice.', { exact: true }), 'unseen overlapping fields block applying');
+      await dialog.getByRole('button', { name: 'Apply choices to form', exact: true }).click({ force: true });
+      await expectVisible(dialog, 'unseen overlaps cannot apply');
+      await dialog.getByRole('button', { name: 'Next fields', exact: true }).click();
+      choices = dialog.getByRole('combobox');
+      if (await choices.count() !== 5) fail('last conflict page omitted or duplicated fields');
+      for (let index = 0; index < 5; index++) await choices.nth(index).selectOption('latest');
+      await dialog.getByRole('button', { name: 'Previous fields', exact: true }).click();
+      await expectValue(dialog.getByRole('combobox').first(), 'mine', 'choices retained across review pages');
+      await dialog.getByRole('button', { name: 'Apply choices to form', exact: true }).click();
+      const manyResolved = JSON.parse(await editor.getByRole('textbox', { name: 'Raw JSON', exact: true }).inputValue());
+      if (manyResolved.retired_0 !== 'Mine 0' || manyResolved.retired_24 !== 'Saved 24') fail('paginated choices did not retain both pages');
+      await saveEntry(editor, 'posts', many.id, 'saving choices from all pages');
+    } finally {
+      await second.context.close().catch(() => {});
+      ctx.sessions = ctx.sessions.filter(session => session !== second.context);
+      for (const [collection, id] of fixtures) {
+        const response = await page.request.delete(apiPath(`/collections/${collection}/entries/${id}`), { headers: { Origin: ctx.options.baseUrl } });
+        if (!response.ok() && response.status() !== 404) fail(`conflict fixture cleanup: ${await responseSummary(response)}`);
+      }
+    }
+    return 'three-way choices, escaped content, focus/cancellation, read retry, post-conflict edits, raw blocks, preset props and revision/timestamp guards';
   },
 
   async 'media-upload'(ctx) {
