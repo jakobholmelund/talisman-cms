@@ -542,6 +542,8 @@ The admin UX overhaul and the SSO redesign can run in parallel. The admin produc
 
 #### Live loader: filters, limits and depth
 
+**Status:** Implemented: typed entry and collection filters use the shared query service; entry reads accept ID or live/draft slug, collection reads filter and sort before bounded offset pagination (50 by default, at most 200), and relationship depth defaults to 0 with a maximum of 5. Draft reads require the request's verified CMS editor/admin session, enforce collection permissions and bypass shared CMS caching. The package README documents native-table publication semantics, native relationship limitations and private preview responses. Loader regression tests cover snapshots, pagination, relationships, native rows, invalid queries and preview authorization.
+
 **Why:** `fetchLiveCollection` ignores filters and has no limit or depth option, `fetchLiveEntry` only understands `id`, and the published mode does not apply to native collections, which have no status.
 
 **Approach:** Support `slug`, `limit` and `depth` (default 0) filters, document that native collections have no draft or published state or filter on a configured status column, and allow draft mode only for an authenticated preview.

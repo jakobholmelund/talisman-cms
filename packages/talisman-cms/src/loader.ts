@@ -1,13 +1,36 @@
+import type { LiveLoader as AstroLiveLoader } from 'astro/loaders';
+import type { EntryQuery } from './service/query';
+
 export interface TalismanLoaderOptions {
   collection: string;
   version?: 'draft' | 'published';
+  /** Relationship levels to embed, from 0 (the default) to 5. */
+  depth?: number;
+  /** Default collection page size, from 1 to 200; defaults to 50. */
+  limit?: number;
   /** Supply published entries from a source available to Node during Astro builds. */
   buildEntries?: () => Promise<LiveDataEntry[]>;
 }
 
 export type TalismanLiveLoaderOptions = TalismanLoaderOptions;
 
-// We define the minimal shape of an Astro LiveLoader to avoid strictly importing internal Astro types
+export interface TalismanLiveReadFilter {
+  version?: 'draft' | 'published';
+  depth?: number;
+  /** Pass Astro.request for draft previews; the configured CMS adapter verifies it. */
+  request?: Request;
+}
+
+export type TalismanLiveEntryFilter = TalismanLiveReadFilter & (
+  | { id: string; slug?: never }
+  | { slug: string; id?: never }
+);
+
+export interface TalismanLiveCollectionFilter extends TalismanLiveReadFilter, EntryQuery {
+  limit?: number;
+}
+
+/** Entry data shared by request-time reads and explicit build-time sources. */
 export interface LiveDataEntry {
   id: string;
   data: Record<string, any>;
@@ -23,11 +46,7 @@ export interface LiveDataEntryResult {
   error?: Error;
 }
 
-export interface LiveLoader {
-  name: string;
-  loadEntry: (context: { filter: any; collection: string }) => Promise<LiveDataEntry | undefined | { error: Error }>;
-  loadCollection: (context: { filter?: any; collection: string }) => Promise<{ entries: Array<LiveDataEntry> } | { error: Error }>;
-}
+export type LiveLoader = AstroLiveLoader<Record<string, any>, TalismanLiveEntryFilter, TalismanLiveCollectionFilter>;
 
 export interface ContentLayerLoaderContext {
   store: {
@@ -78,7 +97,7 @@ export function talismanLoader(options: TalismanLoaderOptions): TalismanLoader {
         });
       }
     },
-    loadEntry: async (context: { filter: any; collection: string }) => {
+    loadEntry: async (context) => {
       try {
         const { fetchLiveEntry } = await import('./loader.server');
         return await fetchLiveEntry(options, context.filter);
@@ -86,7 +105,7 @@ export function talismanLoader(options: TalismanLoaderOptions): TalismanLoader {
         return { error: err };
       }
     },
-    loadCollection: async (context: { filter?: any; collection: string }) => {
+    loadCollection: async (context) => {
       try {
         const { fetchLiveCollection } = await import('./loader.server');
         return await fetchLiveCollection(options, context.filter);

@@ -16,6 +16,56 @@ Drop in a beautifully designed, premium React dashboard directly into your Astro
 - **React 19 Frontend:** Premium, glassmorphic UI built with Radix Primitives and Tailwind CSS v4, utilizing TanStack Router for rapid SPA navigation.
 - **Type-Safe SDK & Actions:** Fetch content via `getClient()` or perform actions via `@talisman-cms/plugin-ecommerce/actions`.
 
+## Astro live collections
+
+Define request-time collections in `src/live.config.ts`:
+
+```ts
+import { defineLiveCollection } from 'astro:content';
+import { talismanLiveLoader } from 'talisman-cms/loader';
+
+export const collections = {
+  posts: defineLiveCollection({
+    loader: talismanLiveLoader({ collection: 'posts', limit: 50, depth: 0 }),
+  }),
+};
+```
+
+In a server-rendered Astro page, query a published snapshot by ID or live slug, or filter a page of entries:
+
+```ts
+import { getLiveCollection, getLiveEntry } from 'astro:content';
+
+const { entry, error: entryError } = await getLiveEntry('posts', { slug: 'hello-world', depth: 1 });
+const { entries, error: listError } = await getLiveCollection('posts', {
+  where: { title: { text: 'Astro' } },
+  sort: '-createdAt',
+  limit: 20,
+  offset: 0,
+});
+```
+
+The loader returns errors through Astro's `error` result; a missing entry returns `undefined` from the loader. Handle errors before rendering. `where` and `sort` use the server client's query rules: equality or `eq`, `ne`, `in`, `lt`, `lte`, `gt`, `gte`, `contains`, `isNull` and literal text search where the field type supports them. Filters apply before pagination and use published data in published mode. Sort accepts at most two configured field names (prefix with `-` for descending); offset is an integer from 0 to 10000. Native collections use their mapped columns.
+
+Collection reads default to 50 entries, with a `limit` from 1 to 200. For more entries, request successive offsets. Relationships remain IDs by default; `depth` from 0 to 5 embeds related entries using the service's access rules. Loader options set the default `limit`, `depth` and `version`; per-query filters override them. Entry filters require exactly one `id` or `slug`. Each result has `{ id, data }`, with `slug`, `status`, `createdAt` and `updatedAt` included in `data` alongside the content fields.
+
+For a draft preview, pass the page's actual request from server code:
+
+```ts
+Astro.response.headers.set('Cache-Control', 'private, no-store');
+const { entry, error } = await getLiveEntry('posts', {
+  slug: 'hello-world-next',
+  version: 'draft',
+  request: Astro.request,
+});
+```
+
+Draft reads require a verified editor or admin from the configured CMS auth adapter, enforce that user's collection read permissions and bypass the shared CMS cache. A query flag or shopper session alone grants no preview access. Draft slug lookups use the pending slug; published lookups use the live slug. Keep preview responses private and uncached, including any CDN or site caching middleware.
+
+Native tables have no CMS draft/published lifecycle: published mode returns their current rows. Use `where` on a configured status column if the site has its own publication rules. Native slug lookup uses the `slug` column when present, otherwise the mapped ID column. Relationship expansion currently resolves targets stored in CMS entries; native relationship targets remain references.
+
+Build-time `talismanLoader({ collection, buildEntries })` continues to use an explicit Node-accessible source; its content-sync behavior is unchanged.
+
 ## Installation
 
 ```bash

@@ -21,6 +21,8 @@ Talisman CMS is at release candidate validation. Publish only after the gates be
 
 ## Deployment gate
 
+Review sites using Astro live collections: reads now default to 50 entries and depth 0. Set explicit depth where related data is rendered, page larger collections with `limit`/`offset`, and pass `Astro.request` to draft queries. Draft previews require a verified CMS editor/admin and must send private, no-store responses. No migration or new binding is needed for these loader changes.
+
 The playground Wrangler files contain local placeholder D1 and KV IDs. Configure the real target resources and validate the deployment bundle before applying migrations or deploying; these files are not production manifests.
 
 This release builds the packages on Drizzle ORM 1.0. Before a site installs them, add `drizzle-orm@rc` to its `package.json` (`"drizzle-orm": "rc"`, Drizzle's release-candidate tag; the CHANGELOG's breaking changes say why not a caret range) and run its install.
