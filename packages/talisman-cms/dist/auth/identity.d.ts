@@ -1,9 +1,10 @@
 import { SQL } from 'drizzle-orm';
-import { T as TalismanEnv } from '../client-CdExBpsX.js';
+import { T as TalismanEnv } from '../client-_Javyso0.js';
 import 'drizzle-orm/d1';
 import '../actor-Daa_hmny.js';
 import '../types-C5a-hx5D.js';
 import 'astro';
+import '../query-DgmKqS5C.js';
 
 /** Statements must include `condition`: it proves the confirmation is unconsumed and the identity unchanged. */
 type IdentityEmailChangeHook = (env: TalismanEnv, change: {

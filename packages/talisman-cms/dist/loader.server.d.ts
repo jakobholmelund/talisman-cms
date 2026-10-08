@@ -1,18 +1,10 @@
-declare function fetchLiveEntry(options: {
-    collection: string;
-    version?: 'draft' | 'published';
-}, filter: any): Promise<{
-    id: any;
-    data: any;
-} | undefined>;
-declare function fetchLiveCollection(options: {
-    collection: string;
-    version?: 'draft' | 'published';
-}, filter?: any): Promise<{
-    entries: {
-        id: any;
-        data: any;
-    }[];
+import { TalismanLoaderOptions, TalismanLiveCollectionFilter, LiveDataEntry, TalismanLiveEntryFilter } from './loader.js';
+import 'astro/loaders';
+import './query-DgmKqS5C.js';
+
+declare function fetchLiveEntry(options: TalismanLoaderOptions, filter: TalismanLiveEntryFilter): Promise<LiveDataEntry | undefined>;
+declare function fetchLiveCollection(options: TalismanLoaderOptions, filter?: TalismanLiveCollectionFilter): Promise<{
+    entries: LiveDataEntry[];
 }>;
 
 export { fetchLiveCollection, fetchLiveEntry };

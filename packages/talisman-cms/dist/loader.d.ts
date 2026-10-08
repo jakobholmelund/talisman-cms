@@ -1,10 +1,34 @@
+import { LiveLoader as LiveLoader$1 } from 'astro/loaders';
+import { E as EntryQuery } from './query-DgmKqS5C.js';
+
 interface TalismanLoaderOptions {
     collection: string;
     version?: 'draft' | 'published';
+    /** Relationship levels to embed, from 0 (the default) to 5. */
+    depth?: number;
+    /** Default collection page size, from 1 to 200; defaults to 50. */
+    limit?: number;
     /** Supply published entries from a source available to Node during Astro builds. */
     buildEntries?: () => Promise<LiveDataEntry[]>;
 }
 type TalismanLiveLoaderOptions = TalismanLoaderOptions;
+interface TalismanLiveReadFilter {
+    version?: 'draft' | 'published';
+    depth?: number;
+    /** Pass Astro.request for draft previews; the configured CMS adapter verifies it. */
+    request?: Request;
+}
+type TalismanLiveEntryFilter = TalismanLiveReadFilter & ({
+    id: string;
+    slug?: never;
+} | {
+    slug: string;
+    id?: never;
+});
+interface TalismanLiveCollectionFilter extends TalismanLiveReadFilter, EntryQuery {
+    limit?: number;
+}
+/** Entry data shared by request-time reads and explicit build-time sources. */
 interface LiveDataEntry {
     id: string;
     data: Record<string, any>;
@@ -17,23 +41,7 @@ interface LiveDataEntryResult {
     entry?: LiveDataEntry;
     error?: Error;
 }
-interface LiveLoader {
-    name: string;
-    loadEntry: (context: {
-        filter: any;
-        collection: string;
-    }) => Promise<LiveDataEntry | undefined | {
-        error: Error;
-    }>;
-    loadCollection: (context: {
-        filter?: any;
-        collection: string;
-    }) => Promise<{
-        entries: Array<LiveDataEntry>;
-    } | {
-        error: Error;
-    }>;
-}
+type LiveLoader = LiveLoader$1<Record<string, any>, TalismanLiveEntryFilter, TalismanLiveCollectionFilter>;
 interface ContentLayerLoaderContext {
     store: {
         get: (id: string) => any;
@@ -77,4 +85,4 @@ declare function talismanLoader(options: TalismanLoaderOptions): TalismanLoader;
  */
 declare const talismanLiveLoader: typeof talismanLoader;
 
-export { type ContentLayerLoaderContext, type LiveDataCollectionResult, type LiveDataEntry, type LiveDataEntryResult, type LiveLoader, type TalismanLiveLoaderOptions, type TalismanLoader, type TalismanLoaderOptions, talismanLiveLoader, talismanLoader };
+export { type ContentLayerLoaderContext, type LiveDataCollectionResult, type LiveDataEntry, type LiveDataEntryResult, type LiveLoader, type TalismanLiveCollectionFilter, type TalismanLiveEntryFilter, type TalismanLiveLoaderOptions, type TalismanLiveReadFilter, type TalismanLoader, type TalismanLoaderOptions, talismanLiveLoader, talismanLoader };

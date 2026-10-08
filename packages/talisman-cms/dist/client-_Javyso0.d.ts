@@ -1,6 +1,7 @@
 import * as drizzle_orm_d1 from 'drizzle-orm/d1';
 import { AnyRelations, EmptyRelations } from 'drizzle-orm';
 import { A as Actor } from './actor-Daa_hmny.js';
+import { E as EntryQuery } from './query-DgmKqS5C.js';
 
 type CacheContext = Pick<ExecutionContext, 'waitUntil'>;
 type CacheEnv = Pick<TalismanEnv, 'KV'>;
@@ -14,32 +15,6 @@ declare function invalidateEntryCache(env: CacheEnv, collectionSlug: string, ent
 declare function invalidateGlobalCache(env: CacheEnv, slug?: string): Promise<void>;
 /** Drops the cached list of collections, for code that writes galaxy_collections itself. */
 declare function invalidateCollectionCache(env: CacheEnv): Promise<void>;
-
-type Scalar = string | number | boolean | null;
-/** The comparisons a `where` clause may make; which apply depends on the field's type. */
-interface Operators {
-    eq?: Scalar;
-    ne?: Scalar;
-    in?: Scalar[];
-    lt?: Scalar;
-    lte?: Scalar;
-    gt?: Scalar;
-    gte?: Scalar;
-    /** Whether a relationship or array field holds the value. */
-    contains?: Scalar;
-    isNull?: boolean;
-    /** Literal, case-insensitive substring on text/textarea fields; 1–200 characters. */
-    text?: string;
-}
-/** `{ field: value }` means equality; `{ field: { op: value } }` names the comparison. */
-type WhereClause = Record<string, Scalar | Operators>;
-interface EntryQuery {
-    where?: WhereClause;
-    /** Field names, `-` for descending; at most two. */
-    sort?: string | string[];
-    /** Rows to skip, with `limit`; at most 10000. */
-    offset?: number;
-}
 
 type VersionMode = 'draft' | 'published';
 
@@ -213,4 +188,4 @@ declare function getClient(env: TalismanEnv, ctx?: CacheContext, options?: Clien
     };
 };
 
-export { type CacheContext as C, type EntryQuery as E, type Operators as O, type SiteReadOptions as S, type TalismanEnv as T, type UpdateEntryInput as U, type VersionMode as V, type WriteExpectation as W, type EntriesPage as a, type CreateEntryInput as b, type CreateGlobalInput as c, type SaveGlobalOptions as d, type ClientOptions as e, type EntryStatusTarget as f, type UpdateOptions as g, type WhereClause as h, invalidateEntryCache as i, createDbClient as j, getClient as k, invalidateCollectionCache as l, invalidateGlobalCache as m };
+export { type CacheContext as C, type EntriesPage as E, type SiteReadOptions as S, type TalismanEnv as T, type UpdateEntryInput as U, type VersionMode as V, type WriteExpectation as W, type CreateEntryInput as a, type CreateGlobalInput as b, type SaveGlobalOptions as c, type ClientOptions as d, type EntryStatusTarget as e, type UpdateOptions as f, createDbClient as g, getClient as h, invalidateEntryCache as i, invalidateCollectionCache as j, invalidateGlobalCache as k };

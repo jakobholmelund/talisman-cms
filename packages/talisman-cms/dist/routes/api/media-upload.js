@@ -1,3 +1,4 @@
+import "../../chunk-UTPZ3FTD.js";
 import {
   authorizeCmsRequest
 } from "../../chunk-2VH4YUXN.js";
@@ -5,7 +6,6 @@ import "../../chunk-RI3U7J5G.js";
 import {
   privateRoute
 } from "../../chunk-7H7KCEZW.js";
-import "../../chunk-UTPZ3FTD.js";
 import {
   createDbClient,
   loadServiceConfig
