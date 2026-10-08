@@ -2,7 +2,7 @@
 // it, JSON requests to plugin endpoints, the settings the admin page exposes and the signed-in
 // user. It ships as source like the rest of ui/, because it reads the site's config module.
 import { useRouter } from '@tanstack/react-router';
-import { adminPath as configuredAdminPath } from 'virtual:talisman-cms/config';
+import { adminPath as configuredAdminPath } from 'virtual:talisman-cms/navigation';
 import type { RouterContext } from './routerContext';
 
 /** `readAdminSetting(name)` reads a setting a plugin exposed with `adminSettings` from the admin page's meta tags. */

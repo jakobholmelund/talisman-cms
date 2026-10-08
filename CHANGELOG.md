@@ -54,8 +54,9 @@
 
 ### Editor stabilization
 
+- Admin startup uses a small navigation module with collection labels, sections, access rules and links, instead of loading full field definitions and UI-library metadata. The plugin SDK's URL helpers use the same module; global editors still load their configuration on demand, and preset authoring still loads the component catalog when needed. Three cold, cache-disabled playground browser loads measured initial decoded JavaScript at 703,973 bytes before and 477,624 after (32% less); localhost timing samples did not establish a speed improvement. The browser harness records startup samples and checks that Overview defers editor configuration.
 - Overview replaces empty metrics with available counts and useful links, and explains that collections are configured in code. Entry and admin-only media deletion use confirmed actions with reference warnings and recoverable errors.
-- Relationship pickers load bounded server search/pages and retain selected labels independently. Nested inspector/preset error summaries open and focus their field; repeated builder controls have distinct labels, media loading preserves focus, and Tiptap uses local styles under strict CSP. The initial navigation configuration still needs a smaller backend export; this remains a follow-up.
+- Relationship pickers load bounded server search/pages and retain selected labels independently. Nested inspector/preset error summaries open and focus their field; repeated builder controls have distinct labels, media loading preserves focus, and Tiptap uses local styles under strict CSP. Navigation now uses the smaller public module described above.
 
 ### Starwind compositions
 

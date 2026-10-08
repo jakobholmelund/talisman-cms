@@ -22,6 +22,7 @@ export default defineConfig({
     'virtual:talisman-cms/auth',
     'virtual:talisman-cms/collection-hooks',
     'virtual:talisman-cms/config',
+    'virtual:talisman-cms/navigation',
     'virtual:talisman-cms/email',
     'virtual:talisman-cms/identity-email-change',
     'virtual:talisman-cms/native-schemas',

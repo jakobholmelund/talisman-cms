@@ -4,10 +4,18 @@ declare module 'virtual:talisman-cms/auth' {
   export const authAdapter: TalismanAuthAdapter | null;
 }
 
+/** Minimal public configuration for admin navigation and the plugin SDK's URL helpers. */
+declare module 'virtual:talisman-cms/navigation' {
+  import type { CollectionConfig } from './types';
+  export const adminPath: string;
+  export const collections: Array<Pick<CollectionConfig, 'name' | 'slug' | 'description' | 'adminSection' | 'readOnly' | 'access'>>;
+  export const adminLinks: { section: string; label: string; description: string; href: string }[];
+}
+
 /**
  * Server code gets the full configuration. The admin SPA's browser bundle is public, so there
  * `collections` and `globals` are a client-safe projection (no `runtimeHooks`, and nothing that looks
- * like a secret) and `publishing` is not exported.
+ * like a secret) and `publishing` is not exported. Editors load this separately from navigation.
  */
 declare module 'virtual:talisman-cms/config' {
   import type { AdminSection, CollectionConfig, GlobalConfig, UiLibraryDefinition } from './types';

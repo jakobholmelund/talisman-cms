@@ -2,7 +2,7 @@
 // each with its own sidebar entry, routes and, optionally, a workspace page. Everything section
 // specific is read from the registered definition, so the core knows no section by name.
 import type { ComponentType, LazyExoticComponent } from 'react';
-import { collections as configuredCollections, adminLinks } from 'virtual:talisman-cms/config';
+import { collections as configuredCollections, adminLinks } from 'virtual:talisman-cms/navigation';
 import { adminSections as registeredSections } from 'virtual:talisman-cms/admin-extensions';
 
 /** A section id: `collections`, or the id of a registered section. */

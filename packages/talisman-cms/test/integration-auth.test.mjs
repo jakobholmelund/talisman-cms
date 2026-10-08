@@ -85,6 +85,44 @@ test('the admin bundle gets a client-safe config while server code keeps the ful
   }
 });
 
+test('admin navigation contains only safe labels, paths and access rules, independent of editor field size', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const registered = setup({
+    adminPath: '/cms/',
+    collections: [{ name: 'Posts', slug: 'posts', description: 'Editorial', adminSection: 'reviews', readOnly: true,
+      access: { read: 'admin' }, fields: [{ name: 'title', type: 'text', defaultValue: 'EDITOR_ONLY_FIELD_VALUE' }],
+      runtimeHooks: [{ moduleId: 'hooks/runtime', args: { webhookSecret: 'whsec_private' } }],
+      nativeSchemaMapping: { schemaPath: 'test/schema', exportName: 'posts' } }],
+    globals: [{ name: 'Site', slug: 'site', fields: [{ name: 'title', type: 'text', defaultValue: 'GLOBAL_ONLY_VALUE' }] }],
+    plugins: [{ name: 'reviews', adminSections: [{ id: 'reviews', label: 'Reviews' }],
+      adminLinks: [{ section: 'reviews', label: 'Queue', description: 'Moderation', href: 'extensions/queue', token: 'PRIVATE_LINK_TOKEN' }] }],
+  });
+  const source = loadVirtual(registered, 'navigation', { consumer: 'client' });
+  assert.doesNotMatch(source, /fields|nativeSchemaMapping|runtimeHooks|webhookSecret|whsec_|uiLibraries|globals|EDITOR_ONLY|GLOBAL_ONLY|PRIVATE_LINK_TOKEN/);
+  const navigation = await importModule(source);
+  assert.deepEqual(Object.keys(navigation).sort(), ['adminLinks', 'adminPath', 'collections']);
+  assert.equal(navigation.adminPath, '/cms');
+  assert.deepEqual(navigation.collections.find(collection => collection.slug === 'posts'), {
+    name: 'Posts', slug: 'posts', description: 'Editorial', adminSection: 'reviews', readOnly: true, access: { read: 'admin' },
+  });
+  assert.deepEqual(navigation.adminLinks, [{ section: 'reviews', label: 'Queue', description: 'Moderation', href: '/cms/extensions/queue' }]);
+  assert.ok(navigation.collections.some(collection => collection.slug === 'media'));
+  assert.equal(loadVirtual(registered, 'navigation', { consumer: 'server' }), source, 'navigation is safe in every Vite environment');
+  const config = await importModule(loadVirtual(registered, 'config', { consumer: 'client' }));
+  assert.equal(config.globals[0].fields[0].defaultValue, 'GLOBAL_ONLY_VALUE', 'on-demand editors retain their fields');
+  const simple = fields => loadVirtual(setup({ collections: [{ name: 'Pages', slug: 'pages', fields }] }), 'navigation');
+  assert.equal(simple([]), simple(Array.from({ length: 100 }, (_, i) => ({ name: `field_${i}`, type: 'text', defaultValue: 'x'.repeat(1000) }))));
+});
+
+test('admin navigation omits secret-looking display values', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const warn = t.mock.method(console, 'warn', () => {});
+  const source = loadVirtual(setup({ collections: [{ name: 'Posts', slug: 'posts', description: 'sk_live_private', fields: [] }] }), 'navigation');
+  assert.doesNotMatch(source, /sk_live_private/);
+  assert.equal(warn.mock.callCount(), 1);
+  assert.equal((await importModule(source)).collections.find(collection => collection.slug === 'posts').description, undefined);
+});
+
 test('plugin endpoints and admin pages require a CMS session unless marked public', async (t) => {
   t.mock.method(console, 'log', () => {});
   const plugin = {

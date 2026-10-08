@@ -280,8 +280,8 @@ function withoutSecretLookingValues(value: unknown, path: string, dropped: strin
 }
 
 /**
- * The admin SPA imports virtual:talisman-cms/config in the browser, and its bundle is a public static asset.
- * The client copy keeps only what the admin navigation and globals editor read: never runtimeHooks (whose
+ * The globals editor and existing plugins can import virtual:talisman-cms/config in the browser,
+ * and its bundle is a public static asset. The client copy keeps editor-safe configuration: never runtimeHooks (whose
  * factory args are server configuration), publishing bindings, or anything that looks like a secret.
  */
 function buildClientConfigModule(options: TalismanCmsOptions, adminPath: string) {
@@ -325,6 +325,25 @@ function buildClientConfigModule(options: TalismanCmsOptions, adminPath: string)
     export const adminSections = ${JSON.stringify(adminSections)};
     export const globals = ${JSON.stringify(safe.globals)};
     export const uiLibraries = ${JSON.stringify(safe.uiLibraries)};
+  `;
+}
+
+/** Navigation must not pull collection fields, global schemas or UI catalogs into the startup bundle. */
+function buildAdminNavigationModule(options: TalismanCmsOptions, adminPath: string) {
+  const collections = (options.collections || []).map(({ name, slug, description, adminSection, readOnly, access }) => ({
+    name, slug, description, adminSection, readOnly, access,
+  }));
+  const adminLinks = (options.plugins || []).flatMap((plugin) => plugin.adminLinks || [])
+    .map(({ section, label, description, href }) => ({ section, label, description, href }));
+  const dropped: string[] = [];
+  const safe = withoutSecretLookingValues({ collections, adminLinks }, 'navigation', dropped) as Record<string, unknown>;
+  if (dropped.length) {
+    console.warn(`[talisman-cms] Left out of the public admin navigation because they look like secrets: ${dropped.join(', ')}. Read secrets from Worker env bindings at request time.`);
+  }
+  return `
+    export const adminPath = ${JSON.stringify(adminPath)};
+    export const collections = ${JSON.stringify(safe.collections)};
+    export const adminLinks = ${JSON.stringify(safe.adminLinks)};
   `;
 }
 
@@ -923,6 +942,15 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
                 }
               },
               {
+                name: 'vite-plugin-talisman-cms-navigation',
+                resolveId(id) {
+                  if (id === 'virtual:talisman-cms/navigation') return '\0virtual:talisman-cms/navigation';
+                },
+                load(id) {
+                  if (id === '\0virtual:talisman-cms/navigation') return buildAdminNavigationModule(finalOptions, adminPath);
+                }
+              },
+              {
                 name: 'vite-plugin-talisman-cms-protected-routes',
                 resolveId(id) {
                   if (id === 'virtual:talisman-cms/protected-routes') return '\0virtual:talisman-cms/protected-routes';
@@ -1086,6 +1114,7 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
                 'virtual:talisman-cms/block-renderers',
                 'virtual:talisman-cms/component-renderers',
                 'virtual:talisman-cms/ui-libraries',
+                'virtual:talisman-cms/navigation',
                 'virtual:talisman-cms/admin-extensions'
               ]
             },

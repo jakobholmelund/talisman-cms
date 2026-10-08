@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RouterProvider, createRouter } from '@tanstack/react-router';
 import './globals.css';
-import { adminPath } from 'virtual:talisman-cms/config';
+import { adminPath } from 'virtual:talisman-cms/navigation';
 
 // Import the generated route tree
 import { routeTree } from './routeTree.gen';

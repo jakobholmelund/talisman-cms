@@ -20,7 +20,7 @@ const router = createRouter({ routeTree: root.addChildren([theme, other]) });
 createRoot(document.getElementById('root')!).render(<RouterProvider router={router} />);`);
   const server = await createServer({ root, configFile: false, server: { host: '127.0.0.1', port: 0 },
     resolve: { alias: { 'react-dom/client': fileURLToPath(new URL('../../talisman-cms/node_modules/react-dom/client.js', import.meta.url)) } },
-    plugins: [{ name: 'theme-browser', resolveId(id) { if (id === 'virtual:talisman-cms/config') return '\0theme-config'; },
+    plugins: [{ name: 'theme-browser', resolveId(id) { if (id === 'virtual:talisman-cms/navigation') return '\0theme-config'; },
       load(id) { if (id === '\0theme-config') return 'export const adminPath = "/cms";'; },
       configureServer(server) { server.middlewares.use((req, res, next) => {
         if (req.url?.startsWith('/cms/daisyui-preview')) { res.setHeader('Content-Type', 'text/html'); res.end('<html><body>Preview</body></html>'); }

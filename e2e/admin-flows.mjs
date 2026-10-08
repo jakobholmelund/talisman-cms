@@ -12,7 +12,7 @@
 //   --setup-token <token>    TALISMAN_E2E_SETUP_TOKEN     used only while the first admin has to be created
 //   --admin-email <email>    TALISMAN_E2E_ADMIN_EMAIL     default e2e-admin@example.com
 //   --admin-password <pw>    TALISMAN_E2E_ADMIN_PASSWORD  default: a fixed 23-character test password
-//   --report <path>          TALISMAN_E2E_REPORT          JSON report (steps, chunks, startedAt, baseUrl)
+//   --report <path>          TALISMAN_E2E_REPORT          JSON report (steps, chunks, startup samples, startedAt, baseUrl)
 //   --dist <dir>             TALISMAN_E2E_DIST            playground dist dir: every .js file with its size
 //   --artifacts <dir>        TALISMAN_E2E_ARTIFACTS       screenshots of failed steps
 //   --only <step,...>                                     run these steps (sign-in always runs first)
@@ -493,6 +493,39 @@ const steps = {
     return 'local editor signs into hybrid mode, saves twice, cannot delete/publish/archive, and signs out of the CMS';
   },
 
+  async 'startup-payload'(ctx) {
+    const samples = [];
+    const storageState = await ctx.admin.context.storageState();
+    for (let run = 0; run < 3; run += 1) {
+      const context = await ctx.browser.newContext({ baseURL: ctx.options.baseUrl, storageState });
+      try {
+        const page = await context.newPage();
+        const network = await context.newCDPSession(page);
+        await network.send('Network.enable');
+        await network.send('Network.setCacheDisabled', { cacheDisabled: true });
+        await page.goto(ADMIN_PATH);
+        await expectVisible(dashboardHeading(page), 'Overview during startup measurement');
+        const readyMs = await page.evaluate(() => performance.now());
+        await page.waitForLoadState('networkidle');
+        samples.push(await page.evaluate((readyMs) => {
+          const scripts = performance.getEntriesByType('resource')
+            .filter((resource) => /\.js$/.test(new URL(resource.name).pathname))
+            .map((resource) => ({ path: new URL(resource.name).pathname, bytes: resource.decodedBodySize, transferBytes: resource.transferSize }));
+          return {
+            readyMs,
+            domContentLoadedMs: performance.getEntriesByType('navigation')[0]?.domContentLoadedEventEnd,
+            scriptBytes: scripts.reduce((sum, script) => sum + script.bytes, 0),
+            transferBytes: scripts.reduce((sum, script) => sum + script.transferBytes, 0),
+            scripts,
+          };
+        }, readyMs));
+      } finally { await context.close(); }
+    }
+    ctx.state.startup = samples;
+    const middle = (key) => samples.map(sample => sample[key]).sort((a, b) => a - b)[1];
+    return `three cold Overview loads: ${formatBytes(middle('scriptBytes'))} decoded JavaScript, ${Math.round(middle('readyMs'))} ms until Overview visible (medians; local timing)`;
+  },
+
   async 'overview-guidance'(ctx) {
     const { page } = ctx.admin;
     await page.goto(ADMIN_PATH);
@@ -509,11 +542,17 @@ const steps = {
   async 'catalog-loading'(ctx) {
     const page = await ctx.admin.context.newPage();
     const catalogRequests = [];
-    page.on('request', (request) => { if (/\/ui-libraries\.[^/]+\.js/.test(new URL(request.url()).pathname)) catalogRequests.push(request.url()); });
+    const configRequests = [];
+    page.on('request', (request) => {
+      const path = new URL(request.url()).pathname;
+      if (/\/ui-libraries\.[^/]+\.js/.test(path)) catalogRequests.push(request.url());
+      if (/\/config\.[^/]+\.js/.test(path)) configRequests.push(request.url());
+    });
     try {
       await page.goto(ADMIN_PATH);
       await expectVisible(dashboardHeading(page), 'Overview before catalog load');
       if (catalogRequests.length) fail('Overview eagerly loaded the UI component catalog');
+      if (configRequests.length) fail('Overview eagerly loaded full editor configuration');
       await openEntry(page, 'posts', 'new');
       await expectVisible(page.getByRole('textbox', { name: 'Content', exact: true }), 'ordinary editor before catalog load');
       if (catalogRequests.length) fail('ordinary entry editor eagerly loaded the UI component catalog');
@@ -521,7 +560,7 @@ const steps = {
       await expectVisible(labelled(page, 'Library'), 'preset authoring after catalog load');
       if (!catalogRequests.length) fail('preset authoring did not load its component catalog');
     } finally { await page.close(); }
-    return 'Overview and ordinary entry editing defer the component catalog until preset authoring needs it';
+    return 'Overview defers editor configuration; ordinary entry editing defers the component catalog until preset authoring needs it';
   },
 
   async 'confirmed-deletion'(ctx) {
@@ -1379,6 +1418,7 @@ async function main() {
   }
 
   const failures = report.steps.filter((step) => step.status === 'fail' && !step.knownGap);
+  report.startup = ctx.state.startup || null;
   const gaps = report.steps.filter((step) => step.status === 'fail' && step.knownGap);
   report.exitCode = failures.length > 0 ? 1 : 0;
 

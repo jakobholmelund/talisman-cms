@@ -29,7 +29,7 @@ const sdks = new Map();
 async function loadSdk(adminPath) {
   if (!sdks.has(adminPath)) {
     sdks.set(adminPath, import(compileModule('sdk.ts', {
-      'virtual:talisman-cms/config': dataUrl(`export const adminPath = ${JSON.stringify(adminPath)};`),
+      'virtual:talisman-cms/navigation': dataUrl(`export const adminPath = ${JSON.stringify(adminPath)};`),
       './lib/entry-labels': entryLabelsUrl,
       '@tanstack/react-router': routerUrl,
     })));
