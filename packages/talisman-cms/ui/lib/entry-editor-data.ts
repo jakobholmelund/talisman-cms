@@ -8,7 +8,7 @@ import { fetchCollectionConfigs, fetchEntriesBySlug } from './admin-api';
 import { loadLibraryDefinitions } from './ui-libraries';
 import { getSupportCollectionSlugs } from './entry-describers';
 import { isSlugConflict, isStaleRecordConflict } from './entry-save';
-import { collectRelationshipFields, getRelationTargets } from './page-builder';
+import { collectRelationshipFields, getRelationTargets } from './relationship-fields';
 
 /** How many revisions the history lists; the newest come first. */
 export const REVISION_LIST_LIMIT = 50;

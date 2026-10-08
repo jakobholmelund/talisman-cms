@@ -5,7 +5,7 @@ import {
   isPolymorphicRelationField,
   isRelationReference,
   type RelationReference,
-} from '../../lib/page-builder';
+} from '../../lib/relationship-fields';
 
 /** A record a relation field can point at, with the collection it belongs to. */
 export type RelationOptionRecord = {

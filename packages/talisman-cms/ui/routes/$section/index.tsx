@@ -8,7 +8,7 @@ import {
   type AdminSectionCollection,
 } from '../../lib/admin-sections';
 import { fetchCollectionConfigs } from '../../lib/admin-api';
-import { CollectionSectionPage } from '../collections/index';
+import { CollectionSectionPage } from '../../components/collections/CollectionSectionPage';
 
 export const Route = createFileRoute('/$section/')({
   component: SectionIndexRoute,

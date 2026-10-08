@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { isRelationshipFieldType } from './relationship-fields';
+export { collectRelationshipFields, isRelationshipFieldType } from './relationship-fields';
 import {
   getRelationOptionKey,
   getRelationTargets,
@@ -19,37 +21,6 @@ const componentPresetReferenceClientSchema = z.object({
   mode: z.literal('preset'),
   presetId: z.string(),
 });
-
-export function isRelationshipFieldType(type: string | undefined) {
-  return type === 'relationship' || type === 'relation';
-}
-
-export function collectRelationshipFields(fields: any[] | undefined, collected = new Map<string, any>()) {
-  if (!fields) return Array.from(collected.values());
-
-  for (const field of fields) {
-    if (isRelationshipFieldType(field.type) && field.relationTo) {
-      collected.set(getRelationOptionKey(field), field);
-    }
-
-    if ((field.type === 'array' || field.type === 'group') && field.fields) {
-      collectRelationshipFields(field.fields, collected);
-    }
-
-    if (field.type === 'blocks' && field.blocks) {
-      for (const block of field.blocks) {
-        collectRelationshipFields(block.fields, collected);
-        for (const slot of block.componentSlots || []) {
-          for (const component of slot.components || []) {
-            collectRelationshipFields(component.fields, collected);
-          }
-        }
-      }
-    }
-  }
-
-  return Array.from(collected.values());
-}
 
 function getZodClientSchemaForComponentSlots(slots: any[] | undefined) {
   const shape: Record<string, z.ZodTypeAny> = {};

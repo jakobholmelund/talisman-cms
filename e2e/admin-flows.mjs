@@ -546,16 +546,20 @@ const steps = {
     const page = await ctx.admin.context.newPage();
     const catalogRequests = [];
     const configRequests = [];
+    const deferredRequests = [];
     page.on('request', (request) => {
       const path = new URL(request.url()).pathname;
       if (/\/ui-libraries\.[^/]+\.js/.test(path)) catalogRequests.push(request.url());
       if (/\/config\.[^/]+\.js/.test(path)) configRequests.push(request.url());
+      if (/\/(?:fields|CollectionEntriesPage|CollectionSectionPage)\.[^/]+\.js/.test(path)) deferredRequests.push(request.url());
     });
     try {
       await page.goto(ADMIN_PATH);
       await expectVisible(dashboardHeading(page), 'Overview before catalog load');
       if (catalogRequests.length) fail('Overview eagerly loaded the UI component catalog');
       if (configRequests.length) fail('Overview eagerly loaded full editor configuration');
+      await page.waitForLoadState('networkidle');
+      if (deferredRequests.length) fail('Overview eagerly loaded validation schemas or collection pages');
       await openEntry(page, 'posts', 'new');
       await expectVisible(page.getByRole('textbox', { name: 'Content', exact: true }), 'ordinary editor before catalog load');
       if (catalogRequests.length) fail('ordinary entry editor eagerly loaded the UI component catalog');
@@ -563,7 +567,7 @@ const steps = {
       await expectVisible(labelled(page, 'Library'), 'preset authoring after catalog load');
       if (!catalogRequests.length) fail('preset authoring did not load its component catalog');
     } finally { await page.close(); }
-    return 'Overview defers editor configuration; ordinary entry editing defers the component catalog until preset authoring needs it';
+    return 'Overview defers editor configuration, validation schemas and collection pages; ordinary editing defers the component catalog until preset authoring needs it';
   },
 
   async 'collection-search-filters'(ctx) {

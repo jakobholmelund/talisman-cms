@@ -2,7 +2,8 @@ import React from 'react';
 import { validateCollectionListSearch } from '../../../lib/collection-list';
 import { createFileRoute, notFound } from '@tanstack/react-router';
 import { getAdminSection } from '../../../lib/admin-sections';
-import { CollectionEntriesPage, loadCollectionEntriesData } from '../../collections/$slug/index';
+import { CollectionEntriesPage } from '../../../components/collections/CollectionEntriesPage';
+import { loadCollectionEntriesData } from '../../../lib/collection-list-data';
 
 export const Route = createFileRoute('/$section/$slug/')({
   component: SectionEntriesRoute,
