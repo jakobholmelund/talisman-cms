@@ -149,8 +149,8 @@ declare function getClient(env: TalismanEnv, ctx?: CacheContext, options?: Clien
          * with a `stale_record` ConflictError when another save came first; without it the save wins.
          */
         save: (slug: string, data: Record<string, any>, opts?: SaveGlobalOptions) => Promise<{
-            data: unknown;
             name: string;
+            data: unknown;
             slug: string;
             description: string | null;
             id: string;
@@ -160,8 +160,8 @@ declare function getClient(env: TalismanEnv, ctx?: CacheContext, options?: Clien
         }>;
         /** The same as `save`, under the name earlier releases used. */
         update: (slug: string, data: Record<string, any>, opts?: SaveGlobalOptions) => Promise<{
-            data: unknown;
             name: string;
+            data: unknown;
             slug: string;
             description: string | null;
             id: string;

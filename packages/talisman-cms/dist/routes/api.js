@@ -28,7 +28,7 @@ import {
   isDatabaseError,
   syncCollectionDefinitions,
   userActor
-} from "../chunk-T4XA2AEL.js";
+} from "../chunk-HEG7DNCN.js";
 import {
   canAccessCollection
 } from "../chunk-7VUPBVR5.js";
@@ -51,7 +51,7 @@ import {
   formatValidationIssues,
   getNativeIdColumn,
   isGlobalData
-} from "../chunk-OAGJMNST.js";
+} from "../chunk-LQQ27M3S.js";
 import "../chunk-MLKGABMK.js";
 
 // src/api/handler.ts

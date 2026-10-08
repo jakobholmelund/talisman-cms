@@ -1,5 +1,5 @@
-import { C as CacheContext, T as TalismanEnv, E as EntriesPage, a as CreateEntryInput, U as UpdateEntryInput, S as SiteReadOptions, W as WriteExpectation, b as CreateGlobalInput, c as SaveGlobalOptions } from './client-_Javyso0.js';
-export { d as ClientOptions, e as EntryStatusTarget, f as UpdateOptions, V as VersionMode, g as createDbClient, h as getClient, j as invalidateCollectionCache, i as invalidateEntryCache, k as invalidateGlobalCache } from './client-_Javyso0.js';
+import { C as CacheContext, T as TalismanEnv, E as EntriesPage, a as CreateEntryInput, U as UpdateEntryInput, S as SiteReadOptions, W as WriteExpectation, b as CreateGlobalInput, c as SaveGlobalOptions } from './client-D1zn08c5.js';
+export { d as ClientOptions, e as EntryStatusTarget, f as UpdateOptions, V as VersionMode, g as createDbClient, h as getClient, j as invalidateCollectionCache, i as invalidateEntryCache, k as invalidateGlobalCache } from './client-D1zn08c5.js';
 export { EntryNotFoundError, PendingPublishWorkflow, RevisionConflictError, SlugConflictError } from './versioning.js';
 import { C as CollectionConfig, G as GlobalConfig, m as UiLibraryDefinition, e as CollectionHooks, p as FieldValidationIssue, d as CollectionHookArgs, F as FieldDefinition } from './fields-CLUM6rSy.js';
 import { E as EntryQuery } from './query-DgmKqS5C.js';
@@ -211,8 +211,8 @@ declare function createService(env: TalismanEnv, options: ServiceOptions): {
             version: number;
         }>;
         save(slug: string, data: unknown, options?: SaveGlobalOptions): Promise<{
-            data: unknown;
             name: string;
+            data: unknown;
             slug: string;
             description: string | null;
             id: string;
@@ -235,8 +235,8 @@ declare function createService(env: TalismanEnv, options: ServiceOptions): {
             createdAt: Date;
         }[]>;
         get(slug: string, entryId: string, revisionId: string): Promise<{
-            data: unknown;
             type: "publish" | "archive" | "restore" | "draft_save";
+            data: unknown;
             status: "draft" | "published" | "archived";
             id: string;
             createdAt: Date;

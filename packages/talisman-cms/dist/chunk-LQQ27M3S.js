@@ -1,6 +1,20 @@
 // src/types.ts
 import { z } from "zod";
 
+// src/relationship-fields.ts
+function getRelationTargets(field) {
+  if (!field?.relationTo) return [];
+  return Array.isArray(field.relationTo) ? field.relationTo : [field.relationTo];
+}
+function isPolymorphicRelationField(field) {
+  return getRelationTargets(field).length > 1;
+}
+function isRelationReference(value) {
+  return Boolean(
+    value && typeof value === "object" && "relationTo" in value && "value" in value && typeof value.relationTo === "string" && typeof value.value === "string"
+  );
+}
+
 // src/db/column-kind.ts
 function columnKind(column) {
   const dataType = column?.dataType;
@@ -24,18 +38,6 @@ var componentPresetReferenceSchema = z.object({
   mode: z.literal("preset"),
   presetId: z.string()
 });
-function getRelationTargets(field) {
-  if (!field?.relationTo) return [];
-  return Array.isArray(field.relationTo) ? field.relationTo : [field.relationTo];
-}
-function isPolymorphicRelationField(field) {
-  return getRelationTargets(field).length > 1;
-}
-function isRelationReference(value) {
-  return Boolean(
-    value && typeof value === "object" && "relationTo" in value && "value" in value && typeof value.relationTo === "string" && typeof value.value === "string"
-  );
-}
 function isInlineComponentValue(value) {
   return Boolean(
     value && typeof value === "object" && "mode" in value && value.mode === "inline" && "componentType" in value && typeof value.componentType === "string"
@@ -598,10 +600,10 @@ function nativeFields(table, picks) {
 }
 
 export {
-  columnKind,
   getRelationTargets,
   isPolymorphicRelationField,
   isRelationReference,
+  columnKind,
   isInlineComponentValue,
   resolveFieldDefinitions,
   getNativeIdColumn,

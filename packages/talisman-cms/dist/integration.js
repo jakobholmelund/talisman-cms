@@ -13,7 +13,7 @@ import {
 import {
   getPluginUiLibraryMetadata,
   resolveFieldDefinitions
-} from "./chunk-OAGJMNST.js";
+} from "./chunk-LQQ27M3S.js";
 import "./chunk-MLKGABMK.js";
 
 // src/integration.ts

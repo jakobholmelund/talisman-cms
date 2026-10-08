@@ -1,8 +1,8 @@
 import * as drizzle_orm_d1 from 'drizzle-orm/d1';
 import * as drizzle_orm from 'drizzle-orm';
 import { collections, entries } from './db/schema.js';
-import { T as TalismanEnv } from './client-_Javyso0.js';
-export { i as invalidateEntryCache } from './client-_Javyso0.js';
+import { T as TalismanEnv } from './client-D1zn08c5.js';
+export { i as invalidateEntryCache } from './client-D1zn08c5.js';
 import 'drizzle-orm/sqlite-core';
 import './actor-Daa_hmny.js';
 import './types-C5a-hx5D.js';
@@ -97,8 +97,8 @@ declare function listEntryRevisions(db: ReturnType<typeof createVersioningDb>, c
     createdAt: Date;
 }[]>;
 declare function getEntryRevision(db: ReturnType<typeof createVersioningDb>, collectionId: string, entryId: string, revisionId: string): Promise<{
-    data: unknown;
     type: "publish" | "archive" | "restore" | "draft_save";
+    data: unknown;
     status: "draft" | "published" | "archived";
     id: string;
     createdAt: Date;
