@@ -243,6 +243,27 @@ function buildClientConfigModule(options, adminPath) {
     export const uiLibraries = ${JSON.stringify(safe.uiLibraries)};
   `;
 }
+function buildAdminNavigationModule(options, adminPath) {
+  const collections = (options.collections || []).map(({ name, slug, description, adminSection, readOnly, access }) => ({
+    name,
+    slug,
+    description,
+    adminSection,
+    readOnly,
+    access
+  }));
+  const adminLinks = (options.plugins || []).flatMap((plugin) => plugin.adminLinks || []).map(({ section, label, description, href }) => ({ section, label, description, href }));
+  const dropped = [];
+  const safe = withoutSecretLookingValues({ collections, adminLinks }, "navigation", dropped);
+  if (dropped.length) {
+    console.warn(`[talisman-cms] Left out of the public admin navigation because they look like secrets: ${dropped.join(", ")}. Read secrets from Worker env bindings at request time.`);
+  }
+  return `
+    export const adminPath = ${JSON.stringify(adminPath)};
+    export const collections = ${JSON.stringify(safe.collections)};
+    export const adminLinks = ${JSON.stringify(safe.adminLinks)};
+  `;
+}
 function registeredAdminSectionIds(plugins) {
   return plugins.flatMap((plugin) => (plugin.adminSections || []).map((section) => section.id));
 }
@@ -731,6 +752,15 @@ function talismanCms(options) {
                 }
               },
               {
+                name: "vite-plugin-talisman-cms-navigation",
+                resolveId(id) {
+                  if (id === "virtual:talisman-cms/navigation") return "\0virtual:talisman-cms/navigation";
+                },
+                load(id) {
+                  if (id === "\0virtual:talisman-cms/navigation") return buildAdminNavigationModule(finalOptions, adminPath);
+                }
+              },
+              {
                 name: "vite-plugin-talisman-cms-protected-routes",
                 resolveId(id) {
                   if (id === "virtual:talisman-cms/protected-routes") return "\0virtual:talisman-cms/protected-routes";
@@ -896,6 +926,7 @@ ${sources}
                 "virtual:talisman-cms/block-renderers",
                 "virtual:talisman-cms/component-renderers",
                 "virtual:talisman-cms/ui-libraries",
+                "virtual:talisman-cms/navigation",
                 "virtual:talisman-cms/admin-extensions"
               ]
             },
