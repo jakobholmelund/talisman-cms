@@ -5,18 +5,19 @@ import { SnapshotValue } from './SnapshotValue';
 import { useModalDialog } from '../../lib/use-modal-dialog';
 import { applyConflictChoices, compareConflictFields, type ConflictChoice, type ConflictSnapshot } from '../../lib/revision-comparison';
 
-export default function ConflictReviewDialog({ original, mine, latest, fields, onClose, onApply, getReturnFocus }: {
+export default function ConflictReviewDialog({ original, mine, latest, fields, editedFields, onClose, onApply, getReturnFocus }: {
   original: ConflictSnapshot;
   mine: ConflictSnapshot;
   latest: ConflictSnapshot;
   fields: any[];
+  editedFields?: string[];
   onClose: () => void;
   onApply: (resolved: ConflictSnapshot) => void;
   getReturnFocus: () => HTMLElement | null;
 }) {
   const id = useId();
   const dialogRef = useModalDialog<HTMLDivElement>({ open: true, onClose, getReturnFocus, inertOutside: true });
-  const rows = useMemo(() => compareConflictFields(fields, original, mine, latest), [fields, original, mine, latest]);
+  const rows = useMemo(() => compareConflictFields(fields, original, mine, latest, editedFields), [fields, original, mine, latest, editedFields]);
   const [choices, setChoices] = useState<Record<string, ConflictChoice>>({});
   const [page, setPage] = useState(0);
   const unresolved = rows.filter(row => row.kind === 'overlap' && !Object.hasOwn(choices, row.key)).length;

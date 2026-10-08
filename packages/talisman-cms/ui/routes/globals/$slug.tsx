@@ -1,9 +1,9 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
-import { createFileRoute } from '@tanstack/react-router';
-import { useForm } from '@tanstack/react-form';
+import React, { Suspense, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { createFileRoute, Link, useBlocker } from '@tanstack/react-router';
+import { useForm, useStore } from '@tanstack/react-form';
 
 import { ArrowLeft, Save } from 'lucide-react';
-import { AdminBasePathContext, FieldRenderer, focusFieldControl } from '../../components/fields';
+import { AdminBasePathContext, ReadOnlyFieldContext, FieldRenderer, focusFieldControl } from '../../components/fields';
 // The loader's helpers come from their own module: importing them through the index would keep the
 // field renderer in the eager admin bundle, while the editor below loads with this route's chunk.
 import { buildRelationOptions, fieldsNeedPresetEntries, type RelationSupportEntries } from '../../components/fields/relations';
@@ -11,11 +11,18 @@ import { Card, CardContent } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { fetchCollectionConfigs, fetchEntriesBySlug } from '../../lib/admin-api';
 import { prepareFieldValuesForSave } from '../../lib/entry-save';
+import { compareConflictFields, conflictFieldChanges, conflictSnapshotData, withFieldChanges, type ConflictSnapshot } from '../../lib/revision-comparison';
+
 import {
   buildDefaultValues,
   getZodClientSchemaForFields,
   normalizeStoredFieldData,
 } from '../../lib/page-builder';
+
+const ConflictReviewDialog = React.lazy(() => import('../../components/editor/ConflictReviewDialog'));
+type GlobalConflict = { original: ConflictSnapshot; mine: ConflictSnapshot; latestLoaded: boolean };
+type GlobalReview = { original: ConflictSnapshot; mine: ConflictSnapshot; latest: ConflictSnapshot; editedFields: string[] };
+
 
 type GlobalRecord = {
   id: string;
@@ -130,15 +137,19 @@ function GlobalEditorRoute() {
   // The last stored record: the loader's copy goes stale after a save, and building the form defaults
   // from it would put the old values back on the next render.
   const [storedGlobal, setStoredGlobal] = useState<GlobalRecord>(global);
-  const computedDefaults = mergeStoredValues(buildDefaultValues(schemaFields), parseGlobalData(storedGlobal.data, schemaFields));
+  const [initialDefaults] = useState(() => mergeStoredValues(buildDefaultValues(schemaFields), parseGlobalData(global.data, schemaFields)));
   const [rawJsonValue, setRawJsonValue] = useState(() => JSON.stringify(parseGlobalData(global.data, schemaFields), null, 2));
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingLatest, setIsLoadingLatest] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
-  // A save was refused because the stored version moved on; the edits are still in the form.
-  const [staleSave, setStaleSave] = useState(false);
+  const [conflict, setConflict] = useState<GlobalConflict | null>(null);
+  const [review, setReview] = useState<GlobalReview | null>(null);
+  const activeSlugRef = useRef(global.slug);
+  const operationRef = useRef(0);
+  activeSlugRef.current = global.slug;
+  useEffect(() => () => { operationRef.current++; }, []);
   const collapseStorageKey = `talisman-cms:collapsed:global:${global.slug}`;
   const conflictTitleId = useId();
   // A failed save moves focus to its message, a refused one to the conflict panel; a successful one
@@ -150,11 +161,11 @@ function GlobalEditorRoute() {
     if (saveError) saveErrorRef.current?.focus();
   }, [saveError]);
   useEffect(() => {
-    if (staleSave) conflictPanelRef.current?.focus();
-  }, [staleSave]);
+    if (conflict) conflictPanelRef.current?.focus();
+  }, [conflict]);
 
   const form = useForm({
-    defaultValues: computedDefaults,
+    defaultValues: initialDefaults,
     validators: hasConfiguredFields
       ? {
           onChange: getZodClientSchemaForFields(schemaFields) as any
@@ -174,24 +185,85 @@ function GlobalEditorRoute() {
     },
   });
 
-  // Reset only when a different global or a newer stored version is loaded; loader reruns return new
-  // objects for unchanged data, which must not discard what the user is typing.
+  const savedSnapshotRef = useRef(JSON.stringify(initialDefaults));
+  const rawSnapshotRef = useRef(rawJsonValue);
+  const formChanged = useStore(form.store, (state: any) => JSON.stringify(state.values) !== savedSnapshotRef.current);
+  const conflictHoldsChanges = Boolean(conflict?.latestLoaded && compareConflictFields([], conflict.original, conflict.mine, conflict.original).length);
+  const hasUnsavedWork = (hasConfiguredFields ? formChanged : rawJsonValue !== rawSnapshotRef.current) || conflictHoldsChanges;
+  const hasUnsavedWorkRef = useRef(hasUnsavedWork);
+  hasUnsavedWorkRef.current = hasUnsavedWork;
+  const storedSlugRef = useRef(global.slug);
+  const shouldBlockNavigation = useCallback(({ current, next }: { current: { pathname: string }; next: { pathname: string } }) => {
+    if (!hasUnsavedWorkRef.current || current.pathname === next.pathname) return false;
+    return !window.confirm('You have unsaved changes. Leave this page and discard them?');
+  }, []);
+  const warnBeforeUnload = useCallback(() => hasUnsavedWorkRef.current, []);
+  useBlocker({ shouldBlockFn: shouldBlockNavigation, enableBeforeUnload: warnBeforeUnload });
+
+  // Background loader refreshes must not replace drafts or edits held for review.
   useEffect(() => {
-    const nextValues = mergeStoredValues(buildDefaultValues(schemaFields), parseGlobalData(global.data, schemaFields));
-    setStoredGlobal(global);
-    form.reset(nextValues);
-    setRawJsonValue(JSON.stringify(parseGlobalData(global.data, schemaFields), null, 2));
+    if (storedSlugRef.current === global.slug && (hasUnsavedWorkRef.current || isSaving || isLoadingLatest)) return;
+    operationRef.current++;
+    showStoredGlobal(global);
     setSaveError('');
     setSaveMessage('');
     setFieldErrors({});
-    setStaleSave(false);
-  }, [form, global.slug, global.updatedAt, schemaFields]);
+    setConflict(null);
+    setReview(null);
+    setIsSaving(false);
+    setIsLoadingLatest(false);
+  }, [global.slug, global.version, global.updatedAt, schemaFields]);
 
-  /** Puts a stored record into the form and remembers it as the version the next save names. */
+  /** Remember the loaded version and its data before resetting the form. */
   function showStoredGlobal(record: GlobalRecord) {
+    const nextValues = mergeStoredValues(buildDefaultValues(schemaFields), parseGlobalData(record.data, schemaFields));
+    const nextRaw = JSON.stringify(parseGlobalData(record.data, schemaFields), null, 2);
+    savedSnapshotRef.current = JSON.stringify(nextValues);
+    rawSnapshotRef.current = nextRaw;
+    storedSlugRef.current = record.slug;
     setStoredGlobal(record);
-    form.reset(mergeStoredValues(buildDefaultValues(schemaFields), parseGlobalData(record.data, schemaFields)));
-    setRawJsonValue(JSON.stringify(parseGlobalData(record.data, schemaFields), null, 2));
+    form.reset(nextValues, { keepDefaultValues: true });
+    setRawJsonValue(nextRaw);
+  }
+
+  function readDraft(): ConflictSnapshot {
+    const data: unknown = hasConfiguredFields ? form.state.values : (rawJsonValue.trim() ? JSON.parse(rawJsonValue) : {});
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('The JSON document must be an object, for example {"title": "Hello"}.');
+    return { data: conflictSnapshotData(data as Record<string, unknown>) };
+  }
+
+  function draftError(error: unknown) {
+    return error instanceof SyntaxError ? 'Invalid JSON. Fix the document before continuing.' : error instanceof Error ? error.message : 'Unable to read your edits.';
+  }
+
+  function confirmDiscardHeld(outcome: string) {
+    return !conflictHoldsChanges || window.confirm(`Your held edits have not been applied to the form. ${outcome}`);
+  }
+
+  function dismissConflict() {
+    if (isSaving || isLoadingLatest || !confirmDiscardHeld('Dismiss them? They will be lost.')) return;
+    setConflict(null);
+    saveButtonRef.current?.focus();
+  }
+
+  function openReview() {
+    if (!conflict?.latestLoaded || isSaving || isLoadingLatest) return;
+    try {
+      const latest = { data: JSON.parse(savedSnapshotRef.current) };
+      const newer = conflictFieldChanges(latest.data, readDraft().data);
+      setSaveError('');
+      setReview({ original: conflict.original, mine: { data: withFieldChanges(conflict.mine.data, newer) }, latest, editedFields: Object.keys(newer) });
+    } catch (error) { setSaveError(draftError(error)); }
+  }
+
+  function applyReview(resolved: ConflictSnapshot) {
+    if (!conflict?.latestLoaded || isSaving || isLoadingLatest) return;
+    form.reset(resolved.data, { keepDefaultValues: true });
+    setRawJsonValue(JSON.stringify(resolved.data, null, 2));
+    setReview(null);
+    setConflict(null);
+    setSaveMessage('Your choices are in the form. Save to apply them.');
+    saveButtonRef.current?.focus();
   }
 
   function showFieldErrors(nextFieldErrors: FieldErrors) {
@@ -201,53 +273,54 @@ function GlobalEditorRoute() {
     }
   }
 
-  // Replaces the form with what is stored now. The edits in the form are lost, so the user confirms first.
   async function loadLatestVersion() {
-    if (isSaving || isLoadingLatest) return;
-    if (!window.confirm('Loading the latest version replaces your unsaved changes. Continue?')) return;
+    if (!conflict || isSaving || isLoadingLatest) return;
+    let mine: ConflictSnapshot;
+    try { mine = readDraft(); } catch (error) { setSaveError(draftError(error)); return; }
+    const targetSlug = global.slug;
+    const operation = ++operationRef.current;
     setIsLoadingLatest(true);
     setSaveError('');
     setSaveMessage('');
     try {
-      const res = await fetch(`${adminBasePath}/api/globals/${global.slug}`);
+      const res = await fetch(`${adminBasePath}/api/globals/${encodeURIComponent(targetSlug)}`);
       if (!res.ok) throw new Error(res.status === 401 ? 'Your session has expired. Sign in again in another tab, then try again.' : `Failed to load the latest version (HTTP ${res.status}).`);
-      showStoredGlobal(await res.json() as GlobalRecord);
+      const latest = await res.json() as GlobalRecord;
+      if (activeSlugRef.current !== targetSlug || operationRef.current !== operation) return;
+      showStoredGlobal(latest);
       setFieldErrors({});
-      setStaleSave(false);
+      setConflict({ original: conflict.original, mine, latestLoaded: true });
       setSaveMessage(LATEST_LOADED_MESSAGE);
-      saveButtonRef.current?.focus();
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : 'Failed to load the latest version.');
+      if (activeSlugRef.current === targetSlug && operationRef.current === operation) setSaveError(error instanceof Error ? error.message : 'Failed to load the latest version.');
     } finally {
-      setIsLoadingLatest(false);
+      if (activeSlugRef.current === targetSlug && operationRef.current === operation) setIsLoadingLatest(false);
     }
   }
 
   async function handleSave() {
-    if (isSaving || isLoadingLatest) return;
+    if (isSaving || isLoadingLatest || !confirmDiscardHeld('The save will omit them. Continue?')) return;
+    const targetSlug = global.slug;
+    const operation = ++operationRef.current;
     setIsSaving(true);
     setSaveError('');
     setSaveMessage('');
     setFieldErrors({});
-    setStaleSave(false);
     for (const field of schemaFields) {
       if (form.getFieldMeta(field.name)?.errorMap?.onServer) setServerFieldError(form, field.name, undefined);
     }
 
     try {
       // Optional fields left blank are sent as null, not as '' (which a number or select refuses).
-      const payload = hasConfiguredFields
-        ? prepareFieldValuesForSave(schemaFields, form.state.values)
-        : (rawJsonValue.trim() ? JSON.parse(rawJsonValue) : {});
-      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-        throw new Error('The JSON document must be an object, for example {"title": "Hello"}.');
-      }
+      const mine = readDraft();
+      const original = { data: JSON.parse(savedSnapshotRef.current) };
+      const payload = hasConfiguredFields ? prepareFieldValuesForSave(schemaFields, mine.data) : mine.data;
 
       // The version the record was loaded with travels as If-Match; the server refuses the save
       // with HTTP 409 when someone else saved in between. Without a version the save wins, as before.
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (typeof storedGlobal.version === 'number') headers['If-Match'] = `"${storedGlobal.version}"`;
-      const res = await fetch(`${adminBasePath}/api/globals/${global.slug}`, {
+      const res = await fetch(`${adminBasePath}/api/globals/${encodeURIComponent(targetSlug)}`, {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),
@@ -260,9 +333,10 @@ function GlobalEditorRoute() {
         fieldErrors?: FieldErrors;
         details?: { fieldErrors?: FieldErrors };
       };
+      if (activeSlugRef.current !== targetSlug || operationRef.current !== operation) return;
       if (res.status === 409 && result.code === STALE_SAVE_CODE) {
         // The edits stay in the form; the panel offers the latest version.
-        setStaleSave(true);
+        setConflict({ original, mine, latestLoaded: false });
         return;
       }
       if (!res.ok) {
@@ -273,15 +347,17 @@ function GlobalEditorRoute() {
 
       // The answer carries the new version, which the next save names.
       showStoredGlobal({ ...storedGlobal, ...result } as GlobalRecord);
+      setConflict(null);
       setSaveMessage('Saved');
     } catch (error) {
+      if (activeSlugRef.current !== targetSlug || operationRef.current !== operation) return;
       if (error instanceof SyntaxError) {
         setSaveError('Invalid JSON. Fix the document before saving.');
       } else {
         setSaveError(error instanceof Error ? error.message : 'Failed to save global');
       }
     } finally {
-      setIsSaving(false);
+      if (activeSlugRef.current === targetSlug && operationRef.current === operation) setIsSaving(false);
     }
   }
 
@@ -289,13 +365,13 @@ function GlobalEditorRoute() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-3">
-          <a
-            href={`${adminBasePath}/globals`}
+          <Link
+            to="/globals"
             className="inline-flex items-center gap-2 text-sm text-zinc-400 transition-colors hover:text-zinc-100"
           >
             <ArrowLeft size={14} />
             Back to Globals
-          </a>
+          </Link>
           <div>
             <h1 className="text-3xl font-semibold tracking-tight">{globalConfig?.name || global.name}</h1>
             <p className="mt-1 text-sm text-zinc-400">
@@ -307,9 +383,10 @@ function GlobalEditorRoute() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {hasUnsavedWork && <span className="text-xs text-amber-300">Unsaved changes</span>}
           {saveMessage ? <p role="status" className="text-sm text-emerald-400">{saveMessage}</p> : null}
-          <p role="status" className="sr-only">{isSaving ? 'Saving...' : ''}</p>
+          <p role="status" className="sr-only">{isSaving ? 'Saving...' : isLoadingLatest ? 'Loading the latest version...' : ''}</p>
           <Button ref={saveButtonRef} className="gap-2" onClick={handleSave} aria-disabled={isSaving || isLoadingLatest || undefined} aria-busy={isSaving || undefined}>
             <Save size={16} />
             {isSaving ? 'Saving...' : 'Save'}
@@ -319,62 +396,66 @@ function GlobalEditorRoute() {
 
       <Card>
         <CardContent className="space-y-6 p-6">
-          {hasConfiguredFields ? (
-            <>
-              <div className="space-y-2">
-                <h2 className="text-sm font-medium text-zinc-200">Configured Fields</h2>
-                <p className="text-sm text-zinc-400">
-                  This global is schema-driven. Changes are validated against the configured field definitions before saving.
-                </p>
-              </div>
-              <AdminBasePathContext.Provider value={adminBasePath}>
-                <div className="space-y-6">
-                  {schemaFields.map((field: any) => (
-                    <FieldRenderer
-                      key={field.name}
-                      field={field}
-                      form={form}
-                      fieldPath=""
-                      relationOptions={relationOptions}
-                      relationSupportEntries={relationSupportEntries}
-                      collapseStorageKey={collapseStorageKey}
-                    />
-                  ))}
-                </div>
-              </AdminBasePathContext.Provider>
-            </>
-          ) : (
-            <>
-              <div className="space-y-2">
-                <h2 className="text-sm font-medium text-zinc-200">JSON Document</h2>
-                <p className="text-sm text-zinc-400">
-                  This global is not configured with fields yet, so it falls back to raw JSON editing.
-                </p>
-              </div>
-              <textarea
-                aria-label="Global JSON document"
-                value={rawJsonValue}
-                onChange={(event) => setRawJsonValue(event.target.value)}
-                spellCheck={false}
-                className="min-h-[420px] w-full rounded-lg border border-zinc-800 bg-zinc-950 px-4 py-3 font-mono text-sm text-zinc-100 outline-none transition focus:border-indigo-500"
-              />
-            </>
-          )}
+          <ReadOnlyFieldContext.Provider value={isSaving || isLoadingLatest}>
+            <fieldset disabled={isSaving || isLoadingLatest} className="space-y-6">
+              {hasConfiguredFields ? (
+                <>
+                  <div className="space-y-2">
+                    <h2 className="text-sm font-medium text-zinc-200">Configured Fields</h2>
+                    <p className="text-sm text-zinc-400">
+                      This global is schema-driven. Changes are validated against the configured field definitions before saving.
+                    </p>
+                  </div>
+                  <AdminBasePathContext.Provider value={adminBasePath}>
+                    <div className="space-y-6">
+                      {schemaFields.map((field: any) => (
+                        <FieldRenderer
+                          key={field.name}
+                          field={field}
+                          form={form}
+                          fieldPath=""
+                          relationOptions={relationOptions}
+                          relationSupportEntries={relationSupportEntries}
+                          collapseStorageKey={collapseStorageKey}
+                        />
+                      ))}
+                    </div>
+                  </AdminBasePathContext.Provider>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <h2 className="text-sm font-medium text-zinc-200">JSON Document</h2>
+                    <p className="text-sm text-zinc-400">
+                      This global is not configured with fields yet, so it falls back to raw JSON editing.
+                    </p>
+                  </div>
+                  <textarea
+                    aria-label="Global JSON document"
+                    value={rawJsonValue}
+                    onChange={(event) => setRawJsonValue(event.target.value)}
+                    spellCheck={false}
+                    className="min-h-[420px] w-full rounded-lg border border-zinc-800 bg-zinc-950 px-4 py-3 font-mono text-sm text-zinc-100 outline-none transition focus:border-indigo-500"
+                  />
+                </>
+              )}
 
+            </fieldset>
+          </ReadOnlyFieldContext.Provider>
           {saveError ? <p role="alert" ref={saveErrorRef} tabIndex={-1} className="text-sm text-red-400 focus:outline-none">{saveError}</p> : null}
           {/* Announces a refused save; the panel itself is a region that takes focus, as it holds controls. */}
-          <p role="alert" className="sr-only">{staleSave ? 'This global changed after you opened it.' : ''}</p>
-          {staleSave ? (
+          <p role="alert" className="sr-only">{conflict && !conflict.latestLoaded ? 'This global changed after you opened it.' : ''}</p>
+          {conflict ? (
             <div ref={conflictPanelRef} role="region" aria-labelledby={conflictTitleId} tabIndex={-1} className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60">
               <div id={conflictTitleId} className="font-medium text-amber-50">This global changed after you opened it</div>
               <p className="text-amber-100/80">
-                The save was refused because another editor saved this global. Your changes are still in the form. Load the latest version to see what changed; it replaces your changes, so copy anything you want to keep first.
+                {conflict.latestLoaded ? 'The latest version is in the form. Your edits are kept for review; choose which values to keep, then save.' : 'The save was refused because another editor saved this global. Your changes are still in the form. Load the latest version to review them alongside the saved values.'}
               </p>
               <div className="flex flex-wrap gap-2">
-                <Button type="button" size="sm" variant="outline" onClick={() => void loadLatestVersion()} aria-disabled={isSaving || isLoadingLatest || undefined} aria-busy={isLoadingLatest || undefined}>
+                {conflict.latestLoaded ? <Button type="button" size="sm" variant="outline" onClick={openReview} aria-disabled={isSaving || isLoadingLatest || undefined}>Review changes</Button> : <Button type="button" size="sm" variant="outline" onClick={() => void loadLatestVersion()} aria-disabled={isSaving || isLoadingLatest || undefined} aria-busy={isLoadingLatest || undefined}>
                   Load latest version
-                </Button>
-                <Button type="button" size="sm" variant="ghost" onClick={() => { setStaleSave(false); saveButtonRef.current?.focus(); }}>
+                </Button>}
+                <Button type="button" size="sm" variant="ghost" onClick={dismissConflict} aria-disabled={isSaving || isLoadingLatest || undefined}>
                   Dismiss
                 </Button>
               </div>
@@ -397,6 +478,9 @@ function GlobalEditorRoute() {
           </div>
         </CardContent>
       </Card>
+      {review && <Suspense fallback={<p role="status" className="text-sm text-zinc-400">Loading conflict review…</p>}>
+        <ConflictReviewDialog {...review} fields={schemaFields} onClose={() => setReview(null)} onApply={applyReview} getReturnFocus={() => saveButtonRef.current} />
+      </Suspense>}
     </div>
   );
 }

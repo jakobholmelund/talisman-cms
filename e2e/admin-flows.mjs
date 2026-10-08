@@ -1911,7 +1911,7 @@ const steps = {
       await expectVisible(pageB.getByRole('alert').filter({ hasText: 'changed after you opened it' }), 'the stale alert ("This global changed after you opened it")');
       await expectValue(labelled(pageB, 'Site Title'), titleB, "B's edit, kept in the form after the refusal");
 
-      // Loading the latest version (its confirm is accepted) shows A's value; B's next save then goes through.
+      // The latest version replaces the form while B's edits remain held for explicit review.
       const loadLatest = pageB.getByRole('button', { name: 'Load latest version', exact: true });
       await expectVisible(loadLatest, 'the "Load latest version" button');
       await loadLatest.click();
@@ -1919,7 +1919,11 @@ const steps = {
       await expectVisible(pageB.getByRole('status').filter({ hasText: 'The latest saved version is now in the form' }), 'the notice after loading the latest version');
       await expectNoAlert(pageB, 'after loading the latest version');
 
-      await labelled(pageB, 'Site Title').fill(titleB);
+      await pageB.getByRole('button', { name: 'Review changes', exact: true }).click();
+      const review = pageB.getByRole('dialog', { name: 'Review conflicting changes', exact: true });
+      await review.getByLabel('Value to keep for Site Title', { exact: true }).selectOption('mine');
+      await review.getByRole('button', { name: 'Apply choices to form', exact: true }).click();
+      await expectValue(labelled(pageB, 'Site Title'), titleB, 'reviewed global title');
       const savedB = await saveGlobal(pageB, "B's save from the latest version");
       if (!savedB.ok()) fail(`B's save from the latest version was refused with ${await responseSummary(savedB)}`);
       await expectVisible(pageB.getByRole('status').filter({ hasText: /^Saved$/ }), 'the "Saved" notice for B');
@@ -1931,7 +1935,221 @@ const steps = {
       await second.context.close().catch(() => {});
       ctx.sessions = ctx.sessions.filter((session) => session !== second.context);
     }
-    return 'HTTP 409 stale_record shown as the stale alert; latest loaded, then saved from the new version';
+    return 'HTTP 409 stale_record preserves edits; latest loaded, field choice reviewed and saved from the new version';
+  },
+
+  async 'globals-draft-recovery'(ctx) {
+    const api = ctx.admin.page.request;
+    const page = await ctx.admin.context.newPage();
+    page.setDefaultTimeout(ACTION_TIMEOUT_MS);
+    page.removeAllListeners('dialog');
+    const prompts = [];
+    let dismissPrompts = false;
+    page.on('dialog', async dialog => {
+      prompts.push({ type: dialog.type(), message: dialog.message() });
+      await (dismissPrompts ? dialog.dismiss() : dialog.accept());
+    });
+    const url = apiPath('/globals/site-settings');
+    const save = (slug, label) => clickAndAwaitResponse(page, page.getByRole('button', { name: 'Save', exact: true }), apiResponse('POST', apiPath(`/globals/${slug}`)), label);
+    const read = async slug => {
+      const response = await api.get(apiPath(`/globals/${slug}`));
+      if (!response.ok()) fail(`global fixture read: ${await responseSummary(response)}`);
+      return response.json();
+    };
+    const dataOf = record => typeof record.data === 'string' ? JSON.parse(record.data) : record.data;
+    const update = async (record, data) => {
+      const response = await api.post(apiPath(`/globals/${record.slug}`), { data, headers: { 'If-Match': `"${record.version}"` } });
+      if (!response.ok()) fail(`global fixture update: ${await responseSummary(response)}`);
+      return response.json();
+    };
+    const open = async slug => {
+      await page.goto(`${ADMIN_PATH}/globals/${slug}`);
+      await expectVisible(page.getByRole('button', { name: 'Save', exact: true }), 'global editor');
+      await expectHidden(page.getByText('Unsaved changes', { exact: true }), 'fresh global dirty marker');
+    };
+    const review = page.getByRole('button', { name: 'Review changes', exact: true });
+    const load = page.getByRole('button', { name: 'Load latest version', exact: true });
+    const dialog = page.getByRole('dialog', { name: 'Review conflicting changes', exact: true });
+    const apply = dialog.getByRole('button', { name: 'Apply choices to form', exact: true });
+    const writes = [];
+    const observe = request => { if (request.method() === 'POST' && new URL(request.url()).pathname.startsWith(apiPath('/globals/'))) writes.push(request); };
+    page.on('request', observe);
+    const blockedNavigation = async label => {
+      dismissPrompts = true;
+      const count = prompts.length;
+      await page.getByRole('link', { name: 'Back to Globals', exact: true }).click();
+      await waitUntil(`${label}: leave confirmation`, () => prompts.length > count);
+      if (!prompts.at(-1).message.includes('unsaved changes')) fail(`${label}: wrong navigation warning`);
+      if (!new URL(page.url()).pathname.endsWith('/globals/site-settings')) fail(`${label}: cancellation left the global`);
+      dismissPrompts = false;
+    };
+    try {
+      const originalTitle = `Original global ${ctx.runId}`;
+      const initial = await update(await read('site-settings'), { title: originalTitle, theme: 'system', showBanner: true, announcement: 'Original copy', seo: { metaTitle: 'Original SEO', metaDescription: 'Original description' } });
+      await open('site-settings');
+      await labelled(page, 'Site Title').fill('My first title');
+      await labelled(page, 'Announcement Copy').fill('My copy');
+      await expectVisible(page.getByText('Unsaved changes', { exact: true }), 'edited global dirty marker');
+      await blockedNavigation('form edits');
+      await expectValue(labelled(page, 'Site Title'), 'My first title', 'draft after cancelled navigation');
+      dismissPrompts = true;
+      let count = prompts.length;
+      await page.reload({ timeout: 3000 }).catch(() => {});
+      await waitUntil('reload warning', () => prompts.length > count);
+      if (prompts.at(-1).type !== 'beforeunload') fail('global reload did not warn before unloading');
+      await expectValue(labelled(page, 'Site Title'), 'My first title', 'draft after cancelled reload');
+      dismissPrompts = false;
+      const savedTitle = `Saved global ${ctx.runId}`;
+      const saved = await update(initial, { ...dataOf(initial), title: savedTitle, theme: 'dark', seo: { metaTitle: 'Saved SEO', metaDescription: 'Saved description' } });
+      const refused = await save('site-settings', 'stale global draft');
+      if (refused.status() !== 409 || refused.request().headers()['if-match'] !== `"${initial.version}"`) fail('global stale save lost its version guard');
+      await labelled(page, 'Site Title').fill('Edits after refusal');
+      await labelled(page, 'Announcement Copy').fill('Copy after refusal');
+      await page.route(`**${url}`, route => route.request().method() === 'GET' ? route.fulfill({ status: 503, json: { error: 'Latest unavailable' } }) : route.continue());
+      try {
+        await load.click();
+        const error = page.getByRole('alert').filter({ hasText: 'Failed to load the latest version' });
+        await expectVisible(error, 'latest read failure');
+        if (!(await error.evaluate(node => node === document.activeElement))) fail('global latest read error lost focus');
+        await expectValue(labelled(page, 'Site Title'), 'Edits after refusal', 'draft after failed latest read');
+      } finally { await page.unroute(`**${url}`); }
+      await load.click(); await expectVisible(review, 'held global review');
+      await expectValue(labelled(page, 'Site Title'), savedTitle, 'latest title in form');
+      await expectVisible(page.getByText('Unsaved changes', { exact: true }), 'held edits count as unsaved');
+      await blockedNavigation('held edits');
+      // Dismiss and Save cannot silently discard changes held outside the latest form.
+      dismissPrompts = true;
+      count = prompts.length;
+      await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
+      await waitUntil('held edits dismiss confirmation', () => prompts.length > count);
+      await expectVisible(review, 'dismiss cancellation preserves held edits');
+      const beforeSave = writes.length;
+      count = prompts.length;
+      await page.getByRole('button', { name: 'Save', exact: true }).click();
+      await waitUntil('held edits save confirmation', () => prompts.length > count);
+      if (writes.length !== beforeSave) fail('cancelled discard saved the latest form');
+      dismissPrompts = false;
+      // Reverting a field to the original value after reload is still an intentional new edit.
+      await labelled(page, 'Site Title').fill(originalTitle);
+      await review.click();
+      await expectVisible(dialog.getByText('Copy after refusal', { exact: true }), 'held copy after failed save');
+      await expectVisible(dialog.getByText(savedTitle, { exact: true }), 'latest title in review');
+      await expectValue(dialog.getByLabel('Value to keep for Site Title', { exact: true }), '', 'post-load original value needs a choice');
+      await apply.click({ force: true }); await expectVisible(dialog, 'unresolved global cannot apply');
+      for (let index = 0; index < 6; index++) {
+        await page.keyboard.press('Tab');
+        if (!(await dialog.evaluate(node => node.contains(document.activeElement)))) fail('global review lost keyboard containment');
+      }
+      if (ctx.options.artifacts) {
+        await dialog.evaluate(node => { node.scrollTop = 0; });
+        await page.screenshot({ path: path.join(ctx.options.artifacts, 'globals-conflict-review.png') });
+      }
+      await page.keyboard.press('Escape'); await expectHidden(dialog, 'cancelled global review');
+      if (!(await review.evaluate(node => node === document.activeElement))) fail('global review cancellation lost focus');
+      await expectValue(labelled(page, 'Site Title'), originalTitle, 'new edits after cancelled review');
+      await review.click();
+      await dialog.getByLabel('Value to keep for Site Title', { exact: true }).selectOption('mine');
+      await dialog.getByLabel('Value to keep for Announcement Copy', { exact: true }).selectOption('latest');
+      count = writes.length;
+      await apply.click(); await expectHidden(dialog, 'applied global choices');
+      if (writes.length !== count) fail('applying global choices saved automatically');
+      await waitUntil('global apply returns focus to Save', () => page.getByRole('button', { name: 'Save', exact: true }).evaluate(node => node === document.activeElement));
+      await expectValue(labelled(page, 'Announcement Copy'), 'Original copy', 'chosen latest announcement');
+      await expectValue(labelled(page, 'Theme'), 'dark', 'server-only theme retained');
+      const third = await update(saved, { ...dataOf(saved), seo: { metaTitle: 'Saved SEO', metaDescription: 'Third writer description' } });
+      const staleAgain = await save('site-settings', 'reviewed but stale global');
+      if (staleAgain.status() !== 409 || staleAgain.request().headers()['if-match'] !== `"${saved.version}"`) fail('review bypassed a later writer');
+      await load.click(); await expectVisible(review, 'second global recovery'); await review.click();
+      await expectVisible(dialog.getByText('All fields are ready to apply.', { exact: true }), 'non-overlapping second review');
+      await apply.click();
+      const successful = await save('site-settings', 'save global choices');
+      if (!successful.ok() || successful.request().headers()['if-match'] !== `"${third.version}"`) fail('global recovery used the wrong loaded version');
+      await expectHidden(page.getByText('Unsaved changes', { exact: true }), 'successful global save clears dirty marker');
+      const final = dataOf(await read('site-settings'));
+      if (final.title !== originalTitle || final.seo.metaDescription !== 'Third writer description' || final.announcement !== 'Original copy') fail('global choices reverted another writer or lost edits');
+      count = prompts.length;
+      await page.reload();
+      await expectValue(labelled(page, 'Site Title'), originalTitle, 'saved global after reload');
+      if (prompts.length !== count) fail('clean global reload warned about unsaved work');
+
+      // An unconfigured global exercises arbitrary JSON fields, removals and whole nested choices.
+      const rawSlug = `draft-recovery-${ctx.runId}`;
+      const rawData = { title: 'Raw original', group: { note: 'Original group' }, layout: [{ heading: 'Original block' }], remove: 'Remove me', nullable: null, slug: 'Original data slug' };
+      const created = await api.post(apiPath('/globals'), { data: { name: 'Raw recovery fixture', slug: rawSlug, data: rawData } });
+      if (!created.ok()) fail(`raw global fixture: ${await responseSummary(created)}`);
+      const rawInitial = await created.json();
+      await open(rawSlug);
+      const raw = page.getByRole('textbox', { name: 'Global JSON document', exact: true });
+      const mine = { title: 'Raw mine', group: { note: 'My group' }, layout: [{ heading: 'My block' }, { heading: 'Added block' }], nullable: '', slug: 'My data slug' };
+      await raw.fill(JSON.stringify(mine));
+      const rawSaved = await update(rawInitial, { ...rawData, title: 'Raw saved', group: { note: 'Saved group' }, layout: [{ heading: 'Saved block' }], slug: 'Saved data slug', serverOnly: true });
+      const rawRefused = await save(rawSlug, 'stale raw global');
+      if (rawRefused.status() !== 409) fail('raw global stale save was not refused');
+      await raw.fill('{ broken'); await load.click();
+      await expectVisible(page.getByRole('alert').filter({ hasText: 'Invalid JSON' }), 'invalid raw JSON blocks latest reload');
+      await expectValue(raw, '{ broken', 'invalid raw draft retained');
+      await raw.fill('[]'); await load.click();
+      await expectVisible(page.getByRole('alert').filter({ hasText: 'must be an object' }), 'raw array cannot replace the document');
+      await raw.fill(JSON.stringify({ ...mine, group: { note: 'Group after refusal' } }));
+      let releaseRead;
+      const readGate = new Promise(resolve => { releaseRead = resolve; });
+      let reading = false;
+      const rawUrl = apiPath(`/globals/${rawSlug}`);
+      await page.route(`**${rawUrl}`, async route => {
+        if (route.request().method() !== 'GET') return route.continue();
+        reading = true; await readGate; await route.fulfill({ status: 200, json: rawSaved });
+      });
+      try {
+        await load.click(); await waitUntil('pending latest read', () => reading);
+        if (!(await raw.isDisabled())) fail('raw document accepts edits while loading its replacement');
+        dismissPrompts = true;
+        count = prompts.length;
+        await page.getByRole('link', { name: 'Back to Globals', exact: true }).click();
+        await waitUntil('pending read leave warning', () => prompts.length > count);
+        if (!new URL(page.url()).pathname.endsWith(`/globals/${rawSlug}`)) fail('cancelled pending-read navigation left the draft');
+        dismissPrompts = false;
+        releaseRead(); await expectVisible(review, 'held raw JSON review');
+      } finally { releaseRead(); await page.unroute(`**${rawUrl}`); }
+      await raw.fill('{ still broken'); await review.click();
+      await expectVisible(page.getByRole('alert').filter({ hasText: 'Invalid JSON' }), 'invalid raw JSON blocks review');
+      await expectValue(raw, '{ still broken', 'invalid post-load raw draft retained');
+      await raw.fill(JSON.stringify(dataOf(rawSaved), null, 2));
+      await review.click();
+      await expectVisible(dialog.getByText('Group after refusal', { exact: true }), 'raw edits after refusal held');
+      if (await dialog.getByRole('region', { name: 'URL slug', exact: true }).count()) fail('global data slug became an entry URL slug');
+      await dialog.getByLabel('Value to keep for Title', { exact: true }).selectOption('latest');
+      await dialog.getByLabel('Value to keep for Group', { exact: true }).selectOption('mine');
+      await dialog.getByLabel('Value to keep for Layout', { exact: true }).selectOption('latest');
+      await dialog.getByLabel('Value to keep for Slug', { exact: true }).selectOption('mine');
+      await apply.click();
+      const resolved = JSON.parse(await raw.inputValue());
+      if ('remove' in resolved || resolved.nullable !== '' || !resolved.serverOnly || resolved.group.note !== 'Group after refusal' || resolved.layout.length !== 1 || resolved.layout[0].heading !== 'Saved block') fail('raw global choices lost removals or merged nested fields');
+      const rawSuccessful = await save(rawSlug, 'save raw choices');
+      if (!rawSuccessful.ok() || rawSuccessful.request().headers()['if-match'] !== `"${rawSaved.version}"`) fail('raw recovery lost its loaded version guard');
+      await expectHidden(page.getByText('Unsaved changes', { exact: true }), 'saved raw document clears dirty marker');
+      // A new edit can remove a field first introduced by another writer.
+      await raw.fill(JSON.stringify({ ...resolved, serverOnly: undefined }));
+      const rawNext = await read(rawSlug);
+      await update(rawNext, { ...dataOf(rawNext), title: 'Another raw title', introducedAfterSave: 'New field' });
+      const removedStale = await save(rawSlug, 'raw removal stale save');
+      if (removedStale.status() !== 409) fail('raw removal stale save was not refused');
+      await load.click(); await expectVisible(review, 'raw removal recovery');
+      const newest = JSON.parse(await raw.inputValue()); delete newest.title; delete newest.introducedAfterSave;
+      await raw.fill(JSON.stringify(newest)); await review.click();
+      await dialog.getByLabel('Value to keep for Title', { exact: true }).selectOption('mine');
+      await dialog.getByLabel('Value to keep for Introduced After Save', { exact: true }).selectOption('mine');
+      await apply.click();
+      const removed = JSON.parse(await raw.inputValue());
+      if ('title' in removed || 'introducedAfterSave' in removed) fail('post-load removal was dropped from review');
+      const removalSaved = await save(rawSlug, 'save explicit raw removals');
+      if (!removalSaved.ok()) fail(`raw removal save: ${await responseSummary(removalSaved)}`);
+      await raw.fill('{ unsaved');
+      count = prompts.length;
+      await page.getByRole('link', { name: 'Back to Globals', exact: true }).click();
+      await expectVisible(page.getByRole('heading', { name: 'Globals', exact: true }), 'accepted raw discard navigates');
+      if (prompts.length !== count + 1) fail('raw navigation did not ask exactly once before discard');
+    } finally { page.off('request', observe); await page.close().catch(() => {}); }
+    return 'form/raw drafts and held edits protected on leave/reload; read failures and invalid JSON recover; explicit choices retain post-load edits and other writers; repeated If-Match saves';
   },
 
   async 'mobile-nav'(ctx) {

@@ -78,6 +78,11 @@ export type ConflictChoice = 'mine' | 'latest';
 export function conflictSnapshotData(values: Record<string, unknown>): Record<string, unknown> {
   return JSON.parse(JSON.stringify(values));
 }
+/** Capture only edited top-level JSON fields, including explicit removals. */
+export function conflictFieldChanges(baseline: Record<string, unknown>, values: Record<string, unknown>): Record<string, unknown> {
+  const snapshot = conflictSnapshotData(values);
+  return Object.fromEntries(compareRevisionFields([], baseline, snapshot).filter(row => row.change !== 'unchanged').map(row => [row.name, row.after]));
+}
 export type ConflictFieldReview = {
   key: string;
   name: string;
@@ -105,8 +110,9 @@ export function withFieldChanges(data: Record<string, unknown>, changes: Record<
 }
 
 /** Whole top-level fields are atomic: blocks/arrays are never silently merged by position. */
-export function compareConflictFields(fields: any[], original: ConflictSnapshot, mine: ConflictSnapshot, latest: ConflictSnapshot): ConflictFieldReview[] {
-  const rows = compareRevisionFields(fields, original.data, mine.data).filter(row => row.change !== 'unchanged').map(row => ({
+export function compareConflictFields(fields: any[], original: ConflictSnapshot, mine: ConflictSnapshot, latest: ConflictSnapshot, editedFields: string[] = []): ConflictFieldReview[] {
+  const edited = new Set(editedFields);
+  const rows = compareRevisionFields([...fields, ...editedFields.map(name => ({ name }))], original.data, mine.data).filter(row => row.change !== 'unchanged' || edited.has(row.name)).map(row => ({
     key: `data:${row.name}`, name: row.name, label: row.label, field: row.field,
     original: row.before, mine: row.after, latest: Object.hasOwn(latest.data, row.name) ? latest.data[row.name] : undefined,
     kind: sameField(mine.data, latest.data, row.name) ? 'already-saved' : sameField(original.data, latest.data, row.name) ? 'mine-only' : 'overlap',

@@ -538,7 +538,7 @@ export function CollectionEntryEditor({
   const [pendingTransition, setPendingTransition] = useState<(PendingTransition & { phase: 'checking' | 'waiting' }) | null>(null);
   const [serverFieldErrors, setServerFieldErrors] = useState<ServerFieldErrors>({});
   const [conflict, setConflict] = useState<EditConflict | null>(null);
-  const [conflictReview, setConflictReview] = useState<{ original: ConflictSnapshot; mine: ConflictSnapshot; latest: ConflictSnapshot } | null>(null);
+  const [conflictReview, setConflictReview] = useState<{ original: ConflictSnapshot; mine: ConflictSnapshot; latest: ConflictSnapshot; editedFields: string[] } | null>(null);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const collapseStorageKey = `talisman-cms:collapsed:collection:${slug}:${currentEntry?.id || entryId}`;
 
@@ -1028,7 +1028,7 @@ export function CollectionEntryEditor({
       };
       const latest: ConflictSnapshot = { data: JSON.parse(savedSnapshotRef.current.values), ...(!nativeCollection ? { slug: savedSnapshotRef.current.slug } : {}) };
       setGlobalError('');
-      setConflictReview(structuredClone({ original: conflict.original, mine, latest }));
+      setConflictReview(structuredClone({ original: conflict.original, mine, latest, editedFields: Object.keys(newer.changes) }));
     } catch (error) { setGlobalError(describeRequestError(error)); }
   };
 

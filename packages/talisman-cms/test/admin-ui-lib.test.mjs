@@ -34,7 +34,7 @@ const { COLLAPSED_STATE_INDEX_KEY, COLLAPSED_STATE_MAX_ENTRIES, pruneCollapsedSt
   await loadAdminModule('lib/collapsed-state.ts');
 const { validateCollectionListSearch, normalizeCollectionListSearch, getCollectionListOptions, collectionListParams } =
   await loadAdminModule('lib/collection-list.ts');
-const { revisionData, equalRevisionValues, compareRevisionFields, revisionRichText, compareConflictFields, applyConflictChoices, withFieldChanges, conflictSnapshotData } =
+const { revisionData, equalRevisionValues, compareRevisionFields, revisionRichText, compareConflictFields, applyConflictChoices, withFieldChanges, conflictSnapshotData, conflictFieldChanges } =
   await loadAdminModule('lib/revision-comparison.ts');
 
 const { validateMediaSearch, mediaSearchParams, mediaEntrySearch, validateMediaReturnSearch } =
@@ -119,6 +119,33 @@ test('empty nested editor settings do not replace a held draft with the loaded v
   const newer = Object.fromEntries(Object.keys(saved).filter(name => !equalRevisionValues(snapshot[name], saved[name])).map(name => [name, snapshot[name]]));
   assert.deepEqual(withFieldChanges(saved, { ...held, ...newer }), held);
   assert.equal(Object.hasOwn(form.layout[0], 'presentation'), true);
+});
+
+test('post-reload edits returning to the original value remain explicit conflict choices', () => {
+  const original = { data: { title: 'Original', views: 0 } };
+  const latest = { data: { title: 'Saved', views: 0 } };
+  const newer = conflictFieldChanges(latest.data, { title: 'Original', views: 0 });
+  const mine = { data: withFieldChanges(original.data, newer) };
+  const rows = compareConflictFields([], original, mine, latest, Object.keys(newer));
+  assert.deepEqual(rows.map(row => [row.name, row.kind]), [['title', 'overlap']]);
+  assert.throws(() => applyConflictChoices(latest, mine, rows, {}), /Choose a value/);
+  assert.equal(applyConflictChoices(latest, mine, rows, { 'data:title': 'mine' }).data.title, 'Original');
+});
+
+test('capturing field changes preserves removals, key ordering and optional editor settings', () => {
+  const baseline = { remove: 'Old', group: { a: 1, b: 2 }, added: null };
+  const draft = { group: { b: 2, a: 1, empty: undefined }, added: 'New', list: [1, 2] };
+  assert.deepEqual(conflictFieldChanges(baseline, draft), { remove: undefined, added: 'New', list: [1, 2] });
+  assert.deepEqual(withFieldChanges(baseline, conflictFieldChanges(baseline, draft)), { group: { a: 1, b: 2 }, added: 'New', list: [1, 2] });
+});
+
+test('post-load removal of a field another writer added remains reviewable', () => {
+  const original = { data: { title: 'Same' } };
+  const latest = { data: { title: 'Same', serverAdded: 'Saved' } };
+  const newer = conflictFieldChanges(latest.data, original.data);
+  const rows = compareConflictFields([], original, original, latest, Object.keys(newer));
+  assert.deepEqual(rows.map(row => [row.name, row.kind]), [['serverAdded', 'overlap']]);
+  assert.deepEqual(applyConflictChoices(latest, original, rows, { 'data:serverAdded': 'mine' }), original);
 });
 
 test('revision comparison ignores object key ordering but preserves array order', () => {
