@@ -678,6 +678,122 @@ const steps = {
     return 'real server search/status/sort before pagination; URL, editor return, reload/back, empty results, retry and native plugin statuses';
   },
 
+  async 'revision-comparison'(ctx) {
+    const { page } = ctx.admin;
+    const ids = [];
+    let reviewer;
+    const oldTitle = `Earlier title ${ctx.runId}`;
+    const savedTitle = `Saved title ${ctx.runId}`;
+    const draftTitle = `Unsaved title ${ctx.runId}`;
+    const hostileText = '<img src=x onerror=alert(1)>';
+    const rich = (text, bold = false) => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text, ...(bold ? { marks: [{ type: 'bold' }] } : {}) }] }] });
+    const create = async (slug, data) => {
+      const response = await page.request.post(apiPath(`/collections/${slug}/entries`), { data: { data } });
+      if (!response.ok()) fail(`revision fixture: ${await responseSummary(response)}`);
+      const entry = await response.json(); ids.push([slug, entry.id]); return entry;
+    };
+    const update = async (slug, entry, data) => {
+      const response = await page.request.put(apiPath(`/collections/${slug}/entries/${entry.id}`), { data: { data, expectedRevisionId: entry.latestRevisionId } });
+      if (!response.ok()) fail(`revision fixture update: ${await responseSummary(response)}`);
+      return response.json();
+    };
+    const detailRequests = [];
+    const observe = request => { if (/\/revisions\/[^/?]+$/.test(new URL(request.url()).pathname)) detailRequests.push(request.url()); };
+    page.on('request', observe);
+    try {
+      const initial = await create('posts', { title: oldTitle, content: rich(hostileText) });
+      const saved = await update('posts', initial, { title: savedTitle, content: rich('Saved content', true) });
+      await openEntry(page, 'posts', saved.id);
+      if (detailRequests.length) fail('revision snapshots load before comparison is opened');
+      await labelled(page, 'Title').fill(draftTitle);
+      const opener = page.getByRole('button', { name: 'Compare revision 1', exact: true });
+      await opener.click();
+      const dialog = page.getByRole('dialog', { name: 'Compare revision #1', exact: true });
+      await expectVisible(dialog.getByRole('status').filter({ hasText: '2 fields differ.' }), 'changed field summary');
+      const title = dialog.getByRole('region', { name: 'Title', exact: true });
+      await expectVisible(title.getByText(oldTitle, { exact: true }), 'earlier title');
+      await expectVisible(title.getByText(savedTitle, { exact: true }), 'saved title');
+      if (await dialog.getByText(draftTitle, { exact: true }).count()) fail('comparison used unsaved form values');
+      await expectVisible(dialog.getByText('Your unsaved edits are excluded and remain in the editor.', { exact: false }), 'unsaved comparison explanation');
+      await expectVisible(dialog.getByText(hostileText, { exact: true }), 'literal hostile rich text');
+      if (await dialog.locator('img, iframe, [contenteditable="true"], textarea').count()) fail('historical content was rendered as HTML or an editable field');
+      if (!detailRequests.some(url => new URL(url).pathname.endsWith(`/revisions/${initial.latestRevisionId}`))) fail('selected snapshot was not loaded on demand');
+      for (let count = 0; count < 6; count++) {
+        await page.keyboard.press('Tab');
+        if (!(await dialog.evaluate(node => node.contains(document.activeElement)))) fail('Tab escaped revision preview');
+      }
+      if (ctx.options.artifacts) await page.screenshot({ path: path.join(ctx.options.artifacts, 'revision-comparison.png') });
+      await page.keyboard.press('Escape');
+      await expectHidden(dialog, 'closed revision preview');
+      if (!(await opener.evaluate(node => node === document.activeElement))) fail('preview close did not restore focus');
+      await expectValue(labelled(page, 'Title'), draftTitle, 'unsaved title after comparison');
+      const revisionUrl = apiPath(`/collections/posts/entries/${saved.id}/revisions/${initial.latestRevisionId}`);
+      await page.route(`**${revisionUrl}`, route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Preview temporarily unavailable' }) }));
+      try {
+        await opener.click();
+        await expectVisible(dialog.getByRole('alert'), 'recoverable revision fetch error');
+        if (!(await dialog.getByRole('alert').evaluate(node => node === document.activeElement))) fail('preview fetch error did not receive focus');
+      } finally { await page.unroute(`**${revisionUrl}`); }
+      await dialog.getByRole('button', { name: 'Retry preview', exact: true }).click();
+      await expectVisible(dialog.getByRole('status').filter({ hasText: '2 fields differ.' }), 'retried snapshot comparison');
+      await dialog.getByRole('button', { name: 'Close preview', exact: true }).click();
+      await expectValue(labelled(page, 'Title'), draftTitle, 'unsaved title after retry');
+      // Closing a loading preview aborts it and cannot later overwrite another comparison.
+      let release, arrived;
+      const gate = new Promise(resolve => { release = resolve; });
+      const requested = new Promise(resolve => { arrived = resolve; });
+      await page.route(`**${revisionUrl}`, async route => { arrived(); await gate; await route.continue().catch(() => {}); });
+      try {
+        await opener.click(); await requested;
+        await expectVisible(dialog.getByRole('status').filter({ hasText: 'Loading revision' }), 'loading preview');
+        await dialog.getByRole('button', { name: 'Close preview', exact: true }).click();
+      } finally { release(); await page.unroute(`**${revisionUrl}`, { behavior: 'wait' }); }
+      await page.getByRole('button', { name: 'Compare revision 2', exact: true }).click();
+      const same = page.getByRole('dialog', { name: 'Compare revision #2', exact: true });
+      await expectVisible(same.getByText('No content changes between these versions.', { exact: true }), 'unchanged saved snapshot');
+      await same.getByRole('checkbox', { name: 'Show unchanged fields', exact: true }).check();
+      await expectVisible(same.getByRole('region', { name: 'Title', exact: true }).getByText(savedTitle, { exact: true }).first(), 'unchanged field preview');
+      await same.getByRole('button', { name: 'Close preview', exact: true }).click();
+      // Existing restore still asks before replacing unsaved work and sends the loaded revision token.
+      await page.evaluate(() => { const original = window.confirm; window.confirm = () => { window.confirm = original; return false; }; });
+      const restore = page.getByRole('button', { name: 'Restore revision 1', exact: true });
+      await restore.click();
+      await expectValue(labelled(page, 'Title'), draftTitle, 'cancelled restore retains draft');
+      const restoreResponse = await clickAndAwaitResponse(page, restore, apiResponse('POST', `${revisionUrl}/restore`), 'restoring inspected revision');
+      if (!restoreResponse.ok()) fail(`restore after comparison: ${await responseSummary(restoreResponse)}`);
+      if (restoreResponse.request().postDataJSON().expectedRevisionId !== saved.latestRevisionId) fail('restore discarded its concurrency guard');
+      await expectValue(labelled(page, 'Title'), oldTitle, 'restored revision content');
+      const readonlyInitial = await create('submissions', { title: oldTitle });
+      const readonlySaved = await update('submissions', readonlyInitial, { title: savedTitle });
+      const email = `revision-reviewer-${ctx.runId}@example.com`;
+      const user = await page.request.post(apiPath('/auth/admin/create-user'), { data: { name: 'Revision reviewer', email, password: EDITOR_PASSWORD, role: 'editor' }, headers: { Origin: ctx.options.baseUrl } });
+      if (!user.ok()) fail('could not create revision reviewer');
+      reviewer = await signedInSession(ctx, email, EDITOR_PASSWORD, 'revision reviewer');
+      await openEntry(reviewer.page, 'submissions', readonlySaved.id);
+      if (await reviewer.page.getByRole('button', { name: /^Restore/ }).count()) fail('editor comparison exposes restore');
+      await reviewer.page.getByRole('button', { name: 'Compare revision 1', exact: true }).click();
+      const readOnlyDialog = reviewer.page.getByRole('dialog', { name: 'Compare revision #1', exact: true });
+      await expectVisible(readOnlyDialog.getByRole('status').filter({ hasText: '1 field differs.' }), 'read-only editor comparison');
+      if (await readOnlyDialog.getByRole('button', { name: /^Restore/ }).count()) fail('read-only comparison exposes restore');
+      await reviewer.page.keyboard.press('Escape');
+      // Structured page-builder content is readable without editable builder controls.
+      const structured = await create('pages', { title: 'Structured revision', layout: [{ blockType: 'hero', heading: 'Earlier hero' }] });
+      const structuredSaved = await update('pages', structured, { title: 'Structured revision', layout: [{ blockType: 'hero', heading: 'Saved hero' }] });
+      await openEntry(page, 'pages', structuredSaved.id);
+      await page.getByRole('button', { name: 'Compare revision 1', exact: true }).click();
+      const blocks = page.getByRole('dialog', { name: 'Compare revision #1', exact: true });
+      await expectVisible(blocks.getByText('Earlier hero', { exact: true }), 'historical structured field');
+      await expectVisible(blocks.getByText('Saved hero', { exact: true }), 'saved structured field');
+      if (ctx.options.artifacts) await page.screenshot({ path: path.join(ctx.options.artifacts, 'revision-block-comparison.png') });
+      await blocks.getByRole('button', { name: 'Close preview', exact: true }).click();
+    } finally {
+      page.off('request', observe);
+      for (const [slug, id] of ids) await page.request.delete(apiPath(`/collections/${slug}/entries/${id}`));
+      if (reviewer) { await reviewer.context.close(); ctx.sessions = ctx.sessions.filter(session => session !== reviewer.context); }
+    }
+    return 'lazy saved-snapshot comparison; unchanged/structured/rich text fields; draft preservation, focus, retry/cancellation, read-only editor access and guarded admin restore';
+  },
+
   async 'confirmed-deletion'(ctx) {
     const { page } = ctx.admin;
     const created = await page.request.post(apiPath('/collections/posts/entries'), { data: { slug: `delete-${ctx.runId}`, data: { title: 'Delete regression fixture' } } });

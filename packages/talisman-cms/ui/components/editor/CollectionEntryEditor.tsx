@@ -40,6 +40,8 @@ import {
 } from '../../lib/page-builder';
 import { validatePresetPayload } from '../../../src/presets';
 
+const RevisionComparisonDialog = React.lazy(() => import('./RevisionComparisonDialog'));
+
 /** Human-readable label for a form field path such as `layout[0].title`. */
 function describeFieldPath(fieldPath: string, fields: any[], values: any) {
   if (!fieldPath) return 'Entry';
@@ -473,6 +475,7 @@ export function CollectionEntryEditor({
   const canArchive = permissions.canArchive && !isNew;
   const writeNotice = getCollectionWriteNotice(collection, user, isNew ? 'create' : 'update');
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [comparison, setComparison] = useState<{ revision: any; savedEntry: any; hasUnsavedWork: boolean } | null>(null);
   const nativeCollection = isNativeCollection(collection);
   const presetCollection = isComponentPresetCollection(collection);
   const versioningEnabled = !nativeCollection;
@@ -1380,9 +1383,14 @@ export function CollectionEntryEditor({
                                  <h3 className="text-sm text-zinc-200">Revision #{revision.revisionNumber}</h3>
                                  <div className="text-[11px] uppercase tracking-widest text-zinc-500">{revision.type.replace('_', ' ')}</div>
                                </div>
+                               <div className="flex items-center gap-1">
+                               <Button type="button" variant="ghost" size="sm" aria-disabled={entryActionsLocked || undefined} onClick={() => {
+                                 if (!entryActionsLocked) setComparison({ revision, savedEntry: currentEntry, hasUnsavedWork });
+                               }}>Compare<span className="sr-only"> revision {revision.revisionNumber}</span></Button>
                                {permissions.canRestore && <Button type="button" variant="ghost" size="sm" aria-disabled={entryActionsLocked || undefined} onClick={() => void handleRestoreRevision(revision)}>
                                  Restore<span className="sr-only"> revision {revision.revisionNumber}</span>
                                </Button>}
+                               </div>
                              </div>
                              <div className="flex items-center gap-2 text-xs text-zinc-500">
                                <Clock3 size={12} />
@@ -1402,6 +1410,11 @@ export function CollectionEntryEditor({
         </fieldset>}
       </div>
       </ReadOnlyFieldContext.Provider>
+      {comparison && <Suspense fallback={<p role="status" className="text-sm text-zinc-400">Loading revision preview…</p>}>
+        <RevisionComparisonDialog {...comparison} fields={collection.fields || []}
+          url={`${basePath}/api/collections/${encodeURIComponent(slug)}/entries/${encodeURIComponent(currentEntry.id)}/revisions/${encodeURIComponent(comparison.revision.id)}`}
+          onClose={() => setComparison(null)} />
+      </Suspense>}
       {deleteOpen && permissions.canDelete && <DeleteConfirmation
         title={`Delete ${recordLabel}?`}
         url={`${basePath}/api/collections/${encodeURIComponent(slug)}/entries/${encodeURIComponent(entryId)}`}

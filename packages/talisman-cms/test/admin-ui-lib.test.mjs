@@ -34,6 +34,55 @@ const { COLLAPSED_STATE_INDEX_KEY, COLLAPSED_STATE_MAX_ENTRIES, pruneCollapsedSt
   await loadAdminModule('lib/collapsed-state.ts');
 const { validateCollectionListSearch, normalizeCollectionListSearch, getCollectionListOptions, collectionListParams } =
   await loadAdminModule('lib/collection-list.ts');
+const { revisionData, equalRevisionValues, compareRevisionFields, revisionRichText } =
+  await loadAdminModule('lib/revision-comparison.ts');
+
+test('revision comparison ignores object key ordering but preserves array order', () => {
+  assert.equal(equalRevisionValues({ settings: { a: 1, b: 2 } }, { settings: { b: 2, a: 1 } }), true);
+  assert.equal(equalRevisionValues([1, 2], [2, 1]), false);
+  assert.equal(equalRevisionValues([], {}), false);
+  assert.equal(equalRevisionValues(false, 0), false);
+});
+
+test('revision comparison describes added, removed and changed fields using schema labels', () => {
+  const rows = compareRevisionFields([{ name: 'title', label: 'Page title' }], { title: 'Old', retired_copy: 'Removed', empty: null }, { title: 'New', fresh: 'Added', empty: null });
+  assert.deepEqual(rows.map(({ name, label, change }) => ({ name, label, change })), [
+    { name: 'title', label: 'Page title', change: 'changed' },
+    { name: 'retired_copy', label: 'Retired copy', change: 'removed' },
+    { name: 'empty', label: 'Empty', change: 'unchanged' },
+    { name: 'fresh', label: 'Fresh', change: 'added' },
+  ]);
+  assert.equal(compareRevisionFields([], {}, { empty: null })[0].change, 'added');
+});
+
+test('revision comparison retains nested block, rich text formatting and schema-removed changes', () => {
+  const before = { layout: [{ blockType: 'hero', heading: 'A' }], content: { type: 'text', text: 'Same words' }, legacy: 'Old schema' };
+  const after = { layout: [{ blockType: 'hero', heading: 'B' }], content: { type: 'text', text: 'Same words', marks: [{ type: 'bold' }] } };
+  assert.deepEqual(compareRevisionFields([], before, after).map(row => row.change), ['changed', 'changed', 'removed']);
+  assert.equal(revisionRichText(before.content), revisionRichText(after.content));
+});
+
+test('revision comparison never treats inherited properties as saved content', () => {
+  const before = JSON.parse('{"__proto__":{"text":"Old"}}');
+  assert.equal(compareRevisionFields([], before, {})[0].change, 'removed');
+  assert.equal(equalRevisionValues(before, {}), false);
+});
+
+test('revision data accepts serialized snapshots and refuses unreadable content', () => {
+  assert.deepEqual(revisionData({ data: '{"title":"Old"}' }), { title: 'Old' });
+  for (const data of [null, [], 3, 'invalid']) assert.throws(() => revisionData({ data }));
+});
+
+test('rich text revision previews preserve paragraph boundaries and literal hostile text', () => {
+  const value = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '<img src=x onerror=alert(1)>' }] }, { type: 'paragraph', content: [{ type: 'text', text: 'Second paragraph' }] }] };
+  assert.equal(revisionRichText(value), '<img src=x onerror=alert(1)>\nSecond paragraph');
+});
+
+test('deeply nested stored JSON compares without consuming a recursive call stack', () => {
+  let before = { value: 1 }, after = { value: 1 };
+  for (let index = 0; index < 10000; index++) { before = { nested: before }; after = { nested: after }; }
+  assert.equal(equalRevisionValues(before, after), true);
+});
 
 test('collection list URLs bound query/page input and discard arbitrary sort keys', () => {
   assert.deepEqual(validateCollectionListSearch({ q: '  %_needle  ', status: 'draft', sort: 'name', page: '2' }), { q: '%_needle', status: 'draft', sort: 'name', page: 2 });
