@@ -1,10 +1,12 @@
 import React from 'react';
+import { validateCollectionListSearch } from '../../../lib/collection-list';
 import { createFileRoute, notFound } from '@tanstack/react-router';
 import { getAdminSection } from '../../../lib/admin-sections';
 import { CollectionEntryEditor } from '../../../components/editor/CollectionEntryEditor';
 import { loadEntryEditorData } from '../../../lib/entry-editor-data';
 
 export const Route = createFileRoute('/$section/$slug/$entryId')({
+  validateSearch: validateCollectionListSearch,
   component: SectionEntryEditorRoute,
   loader: async ({ params, context }) => {
     const data = await loadEntryEditorData(context.adminBasePath || '/admin', params.slug, params.entryId);

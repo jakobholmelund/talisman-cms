@@ -563,6 +563,121 @@ const steps = {
     return 'Overview defers editor configuration; ordinary entry editing defers the component catalog until preset authoring needs it';
   },
 
+  async 'collection-search-filters'(ctx) {
+    const { page } = ctx.admin;
+    const prefix = `Browsing ${ctx.runId}`;
+    const ids = [];
+    const requests = [];
+    const observe = request => {
+      const url = new URL(request.url());
+      if (url.pathname === apiPath('/collections/posts/entries')) requests.push(url);
+    };
+    page.on('request', observe);
+    const listRows = () => page.locator('tbody').getByRole('link', { name: new RegExp(escapeRegExp(prefix)) });
+    const expectPage = async (number, count) => {
+      await expectVisible(page.getByRole('status').filter({ hasText: `Page ${number} · ${count} ${count === 1 ? 'entry' : 'entries'} shown` }), `filtered page ${number}`);
+      if (await listRows().count() !== count) fail(`page ${number} did not show ${count} matching entries`);
+    };
+    const apply = () => page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+    try {
+      for (let index = 0; index < 54; index++) {
+        const response = await page.request.post(apiPath('/collections/posts/entries'), { data: { slug: `browse-${ctx.runId}-${index}`, data: { title: `${prefix} item ${String(index).padStart(2, '0')}` } } });
+        if (!response.ok()) fail(`creating list fixture: ${await responseSummary(response)}`);
+        const entry = await response.json();
+        ids.push(entry.id);
+        if (index >= 52) {
+          const changed = await page.request.post(apiPath(`/collections/posts/entries/${entry.id}/${index === 52 ? 'publish' : 'archive'}`), { data: { expectedRevisionId: entry.latestRevisionId } });
+          if (!changed.ok()) fail(`changing list fixture status: ${await responseSummary(changed)}`);
+        }
+      }
+      await page.goto(`${ADMIN_PATH}/collections/posts`);
+      await expectVisible(page.getByRole('form', { name: 'Collection filters' }), 'collection filter controls');
+      await labelled(page, 'Search Title').fill(prefix);
+      await labelled(page, 'Status').selectOption('draft');
+      await labelled(page, 'Sort by').selectOption('name');
+      await apply();
+      await expectPage(1, 50);
+      if ((await listRows().first().innerText()).trim() !== `${prefix} item 00`) fail('title sorting did not run before pagination');
+      await page.getByRole('button', { name: 'Next page', exact: true }).click();
+      await expectPage(2, 2);
+      if (!(await page.getByRole('status').filter({ hasText: 'Page 2 ·' }).evaluate(node => node === document.activeElement))) fail('pagination did not focus the results summary');
+      if ((await listRows().first().innerText()).trim() !== `${prefix} item 50`) fail('second page lost its sort or overlaps page one');
+      const query = new URL(page.url()).searchParams;
+      if (query.get('q') !== prefix || query.get('status') !== 'draft' || query.get('sort') !== 'name' || query.get('page') !== '2') fail('list state was not written into the URL');
+      if ((await page.getByRole('button', { name: 'Next page', exact: true }).getAttribute('aria-disabled')) !== 'true') fail('last page still offers another page');
+      if (!requests.some(url => url.searchParams.get('where[title][text]') === prefix && url.searchParams.get('where[status]') === 'draft' && url.searchParams.get('sort') === 'title' && url.searchParams.get('offset') === '50')) fail('combined filters did not reach the server on page two');
+      await listRows().first().click();
+      await expectVisible(editorHeading(page), 'entry opened from filtered page');
+      await page.getByRole('link', { name: 'Back to Posts', exact: true }).click();
+      await expectPage(2, 2);
+      await expectValue(labelled(page, 'Search Title'), prefix, 'search after returning');
+      await page.reload();
+      await expectPage(2, 2);
+      await page.getByRole('button', { name: 'Previous page', exact: true }).click();
+      await expectPage(1, 50);
+      await page.goBack();
+      await expectPage(2, 2);
+      await page.getByRole('link', { name: 'Create entry', exact: true }).click();
+      await expectVisible(editorHeading(page, 'new'), 'new entry from filtered view');
+      await labelled(page, 'Title').fill(`Created from a filtered view ${ctx.runId}`);
+      const saved = await clickAndAwaitResponse(page, saveButton(page), apiResponse('POST', apiPath('/collections/posts/entries')), 'saving from filtered view');
+      if (!saved.ok()) fail(`filtered create: ${await responseSummary(saved)}`);
+      const newEntry = await saved.json();
+      ids.push(newEntry.id);
+      await page.waitForURL(url => url.pathname.endsWith(`/${newEntry.id}`));
+      await expectVisible(editorHeading(page), 'saved entry from filtered view');
+      await page.getByRole('link', { name: 'Back to Posts', exact: true }).click();
+      await expectPage(2, 2);
+      await labelled(page, 'Status').selectOption('published');
+      await apply();
+      await expectPage(1, 1);
+      await expectVisible(listRows().filter({ hasText: 'item 52' }), 'published filter result');
+      await labelled(page, 'Status').selectOption('archived');
+      await apply();
+      await expectPage(1, 1);
+      await expectVisible(listRows().filter({ hasText: 'item 53' }), 'archived filter result');
+      await labelled(page, 'Search Title').fill(`No match ${ctx.runId}`);
+      await apply();
+      await expectVisible(page.getByText('No entries match these filters.', { exact: true }), 'filtered empty state');
+      if (await page.getByRole('link', { name: 'Create the first entry', exact: true }).count()) fail('filtered empty result is presented as an empty collection');
+      const pattern = '**/api/collections/posts/entries?*';
+      await page.route(pattern, route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'List temporarily unavailable' }) }));
+      try {
+        await labelled(page, 'Search Title').fill(prefix);
+        await apply();
+        await expectVisible(page.getByRole('alert').filter({ hasText: 'List temporarily unavailable' }), 'recoverable list error');
+        await expectValue(labelled(page, 'Search Title'), prefix, 'search retained after failed load');
+      } finally { await page.unroute(pattern); }
+      await page.getByRole('button', { name: 'Retry', exact: true }).click();
+      await expectPage(1, 1);
+      await expectNoAlert(page, 'successful list retry');
+      if (ctx.options.artifacts) await page.screenshot({ path: path.join(ctx.options.artifacts, 'collection-filters.png') });
+      await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
+      await waitUntil('filters should clear from URL', async () => !new URL(page.url()).search);
+      await expectValue(labelled(page, 'Search Title'), '', 'cleared search');
+      // A registered plugin's native collection must use its business status, not CMS draft states.
+      await page.goto(`${ADMIN_PATH}/commerce/_ecommerce_orders`);
+      await expectVisible(page.getByRole('form', { name: 'Collection filters' }), 'native plugin list filters');
+      const statuses = await labelled(page, 'Status').locator('option').evaluateAll(options => options.map(option => option.value));
+      if (!statuses.includes('paid') || !statuses.includes('pending') || statuses.includes('archived')) fail('native list received CMS lifecycle statuses');
+      await labelled(page, 'Status').selectOption('paid');
+      const nativeResponse = page.waitForResponse(response => {
+        const url = new URL(response.url());
+        return url.pathname === apiPath('/collections/_ecommerce_orders/entries') && url.searchParams.get('where[status]') === 'paid';
+      });
+      await apply();
+      const nativeFiltered = await nativeResponse;
+      if (!nativeFiltered.ok()) fail(`native status query failed: ${await responseSummary(nativeFiltered)}`);
+      await waitUntil('native filtered list should settle', async () => !(await page.getByRole('status').filter({ hasText: 'Loading entries' }).count()));
+      await expectNoAlert(page, 'native filtered query');
+      if (ctx.options.artifacts) await page.screenshot({ path: path.join(ctx.options.artifacts, 'native-collection-filters.png') });
+    } finally {
+      page.off('request', observe);
+      for (const id of ids) await page.request.delete(apiPath(`/collections/posts/entries/${id}`));
+    }
+    return 'real server search/status/sort before pagination; URL, editor return, reload/back, empty results, retry and native plugin statuses';
+  },
+
   async 'confirmed-deletion'(ctx) {
     const { page } = ctx.admin;
     const created = await page.request.post(apiPath('/collections/posts/entries'), { data: { slug: `delete-${ctx.runId}`, data: { title: 'Delete regression fixture' } } });

@@ -799,7 +799,7 @@ export function CollectionEntryEditor({
   // A new entry opens at its own URL; the route remounts the editor there with the saved state.
   const openCreatedEntry = (createdEntryId: string) => {
     leavingEditorRef.current = true;
-    void navigate({ ...getSectionEntryLink(section, slug, createdEntryId), replace: true });
+    void navigate({ ...getSectionEntryLink(section, slug, createdEntryId), replace: true, search: true });
   };
 
   // Keep only what the user changed. Re-applying the whole form would write back fields that
@@ -1082,7 +1082,7 @@ export function CollectionEntryEditor({
   return (
     <div className="space-y-6 w-full pb-24">
       <div className="flex items-center justify-between pointer-events-none mb-2">
-        <Link {...getSectionCollectionLink(section, slug)} className="hover:text-white transition-colors flex items-center gap-1 text-sm bg-white/5 px-2.5 py-1 rounded-md backdrop-blur-sm border border-white/5 hover:bg-white/10 hover:border-white/10 text-zinc-400 pointer-events-auto">
+        <Link {...getSectionCollectionLink(section, slug)} search={true} className="hover:text-white transition-colors flex items-center gap-1 text-sm bg-white/5 px-2.5 py-1 rounded-md backdrop-blur-sm border border-white/5 hover:bg-white/10 hover:border-white/10 text-zinc-400 pointer-events-auto">
           <ArrowLeft size={14} /> Back to {collection.name}
         </Link>
       </div>
@@ -1407,7 +1407,7 @@ export function CollectionEntryEditor({
         url={`${basePath}/api/collections/${encodeURIComponent(slug)}/entries/${encodeURIComponent(entryId)}`}
         warning={`${hasUnsavedWork ? 'Your unsaved changes will also be discarded. ' : ''}${slug === 'media' ? 'Deleting this asset removes its file. Pages using its URL may show broken images. ' : nativeCollection ? 'Deleting this record permanently removes the stored row. ' : 'Deleting this entry removes its revisions. '}Relationships and other references are not automatically repaired. Review its usages before deleting.`}
         onClose={() => setDeleteOpen(false)}
-        onDeleted={async () => { leavingEditorRef.current = true; await navigate(getSectionCollectionLink(section, slug)); }}
+        onDeleted={async () => { leavingEditorRef.current = true; await navigate({ ...getSectionCollectionLink(section, slug), search: true }); }}
       />}
     </div>
   );

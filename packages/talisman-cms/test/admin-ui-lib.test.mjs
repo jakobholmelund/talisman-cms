@@ -32,6 +32,49 @@ const { describeEntryWith, describeEntryGeneric, getEntryOptionLabel, getSupport
   await loadAdminModule('lib/entry-labels.ts');
 const { COLLAPSED_STATE_INDEX_KEY, COLLAPSED_STATE_MAX_ENTRIES, pruneCollapsedState, readCollapsedCards, writeCollapsedCards } =
   await loadAdminModule('lib/collapsed-state.ts');
+const { validateCollectionListSearch, normalizeCollectionListSearch, getCollectionListOptions, collectionListParams } =
+  await loadAdminModule('lib/collection-list.ts');
+
+test('collection list URLs bound query/page input and discard arbitrary sort keys', () => {
+  assert.deepEqual(validateCollectionListSearch({ q: '  %_needle  ', status: 'draft', sort: 'name', page: '2' }), { q: '%_needle', status: 'draft', sort: 'name', page: 2 });
+  for (const page of [-1, 0, 1.5, 202, Infinity, 'invalid']) {
+    assert.deepEqual(validateCollectionListSearch({ q: {}, sort: 'privateField', page }), {});
+  }
+  assert.equal(validateCollectionListSearch({ q: 'x'.repeat(300) }).q.length, 200);
+});
+
+test('collection list search/status/sort apply before offset pagination', () => {
+  const collection = { fields: [{ name: 'title', label: 'Title', type: 'text' }, { name: 'name', type: 'text' }] };
+  const params = collectionListParams(collection, { q: 'needle', status: 'published', sort: 'name-desc', page: 2 });
+  assert.equal(params.get('where[title][text]'), 'needle');
+  assert.equal(params.get('where[status]'), 'published');
+  assert.equal(params.get('sort'), '-title');
+  assert.equal(params.get('limit'), '51');
+  assert.equal(params.get('offset'), '50');
+  assert.equal(params.has('cursor'), false);
+  assert.equal(collectionListParams(collection, { page: 201 }).get('offset'), '10000');
+});
+
+test('native lists use configured business statuses and a stable ID sort', () => {
+  const collection = { nativeSchemaMapping: { idColumn: 'recordId' }, fields: [
+    { name: 'name', label: 'Name', type: 'text' },
+    { name: 'status', type: 'select', options: ['active', { label: 'On hold', value: 'on_hold' }] },
+  ] };
+  const options = getCollectionListOptions(collection);
+  assert.deepEqual(options.statuses, [{ label: 'active', value: 'active' }, { label: 'On hold', value: 'on_hold' }]);
+  assert.deepEqual(normalizeCollectionListSearch(collection, { q: 'A', status: 'draft', sort: 'updated' }), { q: 'A' });
+  const params = collectionListParams(collection, { q: 'A', status: 'active', sort: 'name' });
+  assert.equal(params.get('where[name][text]'), 'A');
+  assert.equal(params.get('where[status]'), 'active');
+  assert.equal(params.get('sort'), 'name,recordId');
+});
+
+test('lists without searchable text or native status fields do not issue unsupported filters', () => {
+  const collection = { nativeSchemaMapping: {}, fields: [{ name: 'price', type: 'number' }] };
+  assert.deepEqual(normalizeCollectionListSearch(collection, { q: 'needle', status: 'draft', sort: 'name' }), {});
+  assert.deepEqual(getCollectionListOptions(collection).sorts, [{ value: '', label: 'Newest first' }]);
+  assert.equal(collectionListParams(collection, {}).toString(), 'limit=51&offset=0');
+});
 
 const fields = [
   { name: 'title', type: 'text', required: true },

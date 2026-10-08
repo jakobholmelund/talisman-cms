@@ -1,12 +1,16 @@
 import React from 'react';
+import { validateCollectionListSearch } from '../../../lib/collection-list';
 import { createFileRoute, notFound } from '@tanstack/react-router';
 import { getAdminSection } from '../../../lib/admin-sections';
 import { CollectionEntriesPage, loadCollectionEntriesData } from '../../collections/$slug/index';
 
 export const Route = createFileRoute('/$section/$slug/')({
   component: SectionEntriesRoute,
-  loader: async ({ params, context }) => {
-    const data = await loadCollectionEntriesData(context.adminBasePath || '/admin', params.slug);
+  validateSearch: validateCollectionListSearch,
+  loaderDeps: ({ search }) => search,
+  gcTime: 0,
+  loader: async ({ params, context, deps, abortController }) => {
+    const data = await loadCollectionEntriesData(context.adminBasePath || '/admin', params.slug, deps, abortController.signal);
 
     // The section layout shows this as a collection the section does not have.
     if (!data.collection || getAdminSection(data.collection) !== params.section) {
@@ -18,8 +22,8 @@ export const Route = createFileRoute('/$section/$slug/')({
 });
 
 function SectionEntriesRoute() {
-  const { collection, entries, nextCursor } = Route.useLoaderData();
+  const { collection, entries, hasNextPage, listSearch, listError } = Route.useLoaderData();
   const { section, slug } = Route.useParams();
 
-  return <CollectionEntriesPage collection={collection} entries={entries} nextCursor={nextCursor} slug={slug} section={section} />;
+  return <CollectionEntriesPage collection={collection} entries={entries} hasNextPage={hasNextPage} listSearch={listSearch} listError={listError} slug={slug} section={section} />;
 }
