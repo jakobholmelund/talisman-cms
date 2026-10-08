@@ -210,3 +210,10 @@ VALUES
   ('demo_stock_signal_black', 'demo_pvv_signal_black', 8, CAST(strftime('%s','now') AS INTEGER), CAST(strftime('%s','now') AS INTEGER)),
   ('demo_stock_signal_sand', 'demo_pvv_signal_sand', 5, CAST(strftime('%s','now') AS INTEGER), CAST(strftime('%s','now') AS INTEGER)),
   ('demo_stock_signal_cobalt', 'demo_pvv_signal_cobalt', 3, CAST(strftime('%s','now') AS INTEGER), CAST(strftime('%s','now') AS INTEGER));
+
+-- Read-only content fixture: server code may write collections whose admin editor cannot.
+INSERT INTO `galaxy_collections` (`id`, `name`, `slug`, `fields`, `created_at`)
+VALUES ('demo_managed_notes', 'Managed Notes', 'managed-notes', '[]', strftime('%s', 'now'))
+ON CONFLICT(`slug`) DO NOTHING;
+INSERT OR IGNORE INTO `galaxy_entries` (`id`, `collection_id`, `slug`, `status`, `data`, `created_at`, `updated_at`)
+VALUES ('demo_managed_note', (SELECT `id` FROM `galaxy_collections` WHERE `slug` = 'managed-notes'), 'managed-note', 'draft', '{"title":"Server-managed note"}', strftime('%s', 'now'), strftime('%s', 'now'));

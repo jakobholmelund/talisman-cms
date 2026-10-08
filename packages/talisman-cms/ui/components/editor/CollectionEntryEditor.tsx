@@ -7,9 +7,10 @@ import { Card, CardContent } from '../ui/card';
 import { Button } from '../ui/button';
 import { DeleteConfirmation } from '../DeleteConfirmation';
 import { ArrowLeft, Archive, Clock3, Database, History, Save, Send } from 'lucide-react';
-import { AdminBasePathContext, FieldRenderer, focusFieldControl, ServerFieldErrorsContext, type RelationOptionRecord, type RelationSupportEntries, type ServerFieldErrors } from '../fields';
+import { ReadOnlyFieldContext, AdminBasePathContext, FieldRenderer, focusFieldControl, ServerFieldErrorsContext, type RelationOptionRecord, type RelationSupportEntries, type ServerFieldErrors } from '../fields';
 import { getAdminSection, getSectionCollectionLink, getSectionEntryLink, type AdminSection } from '../../lib/admin-sections';
 import { fetchCollectionConfigs, fetchEntriesBySlug } from '../../lib/admin-api';
+import { getCollectionPermissions, getCollectionWriteNotice } from '../../lib/collection-permissions';
 import { panelMatchesCollection, type AdminEditorPanelPlacement, type AdminEditorPanelProps } from './panels';
 import {
   describeRequestError,
@@ -466,7 +467,11 @@ export function CollectionEntryEditor({
   const navigate = useNavigate();
   const router = useRouter();
   const user = router.options.context.user;
-  const isAdmin = user?.role === 'admin';
+  const permissions = getCollectionPermissions(collection, user);
+  const canSave = isNew ? permissions.canCreate : permissions.canUpdate;
+  const canPublish = permissions.canPublish && (!isNew || permissions.canCreate);
+  const canArchive = permissions.canArchive && !isNew;
+  const writeNotice = getCollectionWriteNotice(collection, user, isNew ? 'create' : 'update');
   const [deleteOpen, setDeleteOpen] = useState(false);
   const nativeCollection = isNativeCollection(collection);
   const presetCollection = isComponentPresetCollection(collection);
@@ -538,7 +543,7 @@ export function CollectionEntryEditor({
   const savedSnapshotRef = useRef({ values: JSON.stringify(defaultValues), slug: initialEntry?.slug || '' });
   const rawSnapshotRef = useRef(rawJsonStr);
   const formValuesChanged = useStore(form.store, (state: any) => JSON.stringify(state.values) !== savedSnapshotRef.current.values);
-  const hasUnsavedChanges = Boolean(collection) && !collection.readOnly && (
+  const hasUnsavedChanges = Boolean(collection) && (
     formValuesChanged ||
     entrySlug !== savedSnapshotRef.current.slug ||
     (viewMode === 'raw' && rawJsonStr !== rawSnapshotRef.current)
@@ -753,6 +758,7 @@ export function CollectionEntryEditor({
   };
 
   const persistDraft = async () => {
+    if (!canSave) throw new EditorRequestError(writeNotice || 'Collection access denied', 403);
     const value = parseEditorValues();
     if (presetCollection) {
       const presetValidation = validatePresetPayload(getLibraryDefinitions() as any, value);
@@ -838,7 +844,8 @@ export function CollectionEntryEditor({
   };
 
   const runEntryAction = async (action: Exclude<EditorAction, 'restore'>) => {
-    if (entryActionsLocked) return;
+    const allowed = action === 'save' ? canSave : action === 'publish' ? canPublish : canArchive;
+    if (!allowed || entryActionsLocked) return;
     if (!confirmDiscardConflictChanges(`The ${action} will not include them and they will be lost. Continue?`)) return;
     resetFeedback();
     setWorking({ action, message: action === 'save' ? 'Saving...' : action === 'publish' ? 'Publishing...' : 'Archiving...' });
@@ -919,7 +926,7 @@ export function CollectionEntryEditor({
   };
 
   const handleRestoreRevision = async (revision: any) => {
-    if (!currentEntry?.id || entryActionsLocked) return;
+    if (!permissions.canRestore || !currentEntry?.id || entryActionsLocked) return;
     if (hasUnsavedWorkRef.current && !window.confirm('Restoring this revision replaces your unsaved changes. Continue?')) return;
 
     resetFeedback();
@@ -1088,12 +1095,13 @@ export function CollectionEntryEditor({
         <p className="text-zinc-400 mt-2 text-sm max-w-xl">
           {collection.description || `Edit this ${nativeCollection ? 'record' : 'content entry'} in ${collection.name}.`}
         </p>
-        {collection.readOnly && <p id={`${slugInputId}-readonly`} className="mt-4 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">This record is managed by server code and is read-only in the CMS.</p>}
+        {writeNotice && <p id={`${slugInputId}-readonly`} className="mt-4 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">{writeNotice}</p>}
       </div>
 
+      <ReadOnlyFieldContext.Provider value={!canSave}>
       <div className="space-y-8 w-full">
         {/* A fieldset, so a read-only record disables its controls for the keyboard too, not only for the mouse. */}
-        <fieldset disabled={collection.readOnly || undefined} aria-describedby={collection.readOnly ? `${slugInputId}-readonly` : undefined} className={`min-w-0 space-y-6 scroll-mt-24 ${collection.readOnly ? 'pointer-events-none opacity-80' : ''}`}>
+        <fieldset disabled={!canSave || undefined} aria-describedby={writeNotice ? `${slugInputId}-readonly` : undefined} className={`min-w-0 space-y-6 scroll-mt-24 ${!canSave ? 'pointer-events-none opacity-80' : ''}`}>
           <Card>
              <CardContent className="pt-6">
                 <div className="space-y-8">
@@ -1215,20 +1223,20 @@ export function CollectionEntryEditor({
 
                  <div className="pt-2">
                     {/* The buttons stay focusable while an action runs (aria-disabled); the status line says what is happening. */}
-                    {!collection.readOnly && <Button ref={saveButtonRef} onClick={handleManualSaveClick} aria-disabled={entryActionsLocked || undefined} aria-busy={working?.action === 'save' || undefined} className="w-full gap-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-400 hover:to-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_25px_rgba(99,102,241,0.5)] transition-all duration-300 border-0 h-11 text-base">
+                    {canSave && <Button ref={saveButtonRef} onClick={handleManualSaveClick} aria-disabled={entryActionsLocked || undefined} aria-busy={working?.action === 'save' || undefined} className="w-full gap-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-400 hover:to-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_25px_rgba(99,102,241,0.5)] transition-all duration-300 border-0 h-11 text-base">
                       <Save size={18} /> {isWorking ? 'Working...' : versioningEnabled ? 'Save Draft' : 'Save Changes'}
                     </Button>}
-                    {versioningEnabled && !collection.readOnly && isAdmin && (
+                    {(canPublish || canArchive) && (
                       <div className="grid grid-cols-2 gap-3 mt-3">
-                        <Button type="button" variant="outline" aria-disabled={entryActionsLocked || undefined} aria-busy={working?.action === 'publish' || pendingTransition?.action === 'publish' || undefined} onClick={() => void runEntryAction('publish')} className="gap-2">
+                        {canPublish && <Button type="button" variant="outline" aria-disabled={entryActionsLocked || undefined} aria-busy={working?.action === 'publish' || pendingTransition?.action === 'publish' || undefined} onClick={() => void runEntryAction('publish')} className="gap-2">
                           <Send size={16} /> {pendingTransition?.action === 'publish' ? 'Publishing...' : 'Publish'}
-                        </Button>
-                        <Button type="button" variant="outline" disabled={isNew} aria-disabled={entryActionsLocked || undefined} aria-busy={working?.action === 'archive' || pendingTransition?.action === 'archive' || undefined} onClick={() => void runEntryAction('archive')} className="gap-2">
+                        </Button>}
+                        {canArchive && <Button type="button" variant="outline" aria-disabled={entryActionsLocked || undefined} aria-busy={working?.action === 'archive' || pendingTransition?.action === 'archive' || undefined} onClick={() => void runEntryAction('archive')} className="gap-2">
                           <Archive size={16} /> {pendingTransition?.action === 'archive' ? 'Archiving...' : 'Archive'}
-                        </Button>
+                        </Button>}
                       </div>
                     )}
-                    {!isNew && isAdmin && !collection.readOnly && <Button type="button" variant="destructive" className="mt-3 w-full" aria-disabled={entryActionsLocked || undefined} onClick={() => { if (!entryActionsLocked) setDeleteOpen(true); }}>Delete {slug === 'media' ? 'media' : recordLabel}</Button>}
+                    {!isNew && permissions.canDelete && <Button type="button" variant="destructive" className="mt-3 w-full" aria-disabled={entryActionsLocked || undefined} onClick={() => { if (!entryActionsLocked) setDeleteOpen(true); }}>Delete {slug === 'media' ? 'media' : recordLabel}</Button>}
                     <p role="status" className="sr-only">{working?.message ?? ''}</p>
                     {hasUnsavedWork && !isWorking && (
                       <p className="text-xs text-amber-300 mt-3 text-center">Unsaved changes</p>
@@ -1372,7 +1380,7 @@ export function CollectionEntryEditor({
                                  <h3 className="text-sm text-zinc-200">Revision #{revision.revisionNumber}</h3>
                                  <div className="text-[11px] uppercase tracking-widest text-zinc-500">{revision.type.replace('_', ' ')}</div>
                                </div>
-                               {isAdmin && !collection.readOnly && <Button type="button" variant="ghost" size="sm" aria-disabled={entryActionsLocked || undefined} onClick={() => void handleRestoreRevision(revision)}>
+                               {permissions.canRestore && <Button type="button" variant="ghost" size="sm" aria-disabled={entryActionsLocked || undefined} onClick={() => void handleRestoreRevision(revision)}>
                                  Restore<span className="sr-only"> revision {revision.revisionNumber}</span>
                                </Button>}
                              </div>
@@ -1389,11 +1397,12 @@ export function CollectionEntryEditor({
               </CardContent>
            </Card>
         </div>
-        {panelsAfterForm.length > 0 && <fieldset disabled={collection.readOnly || undefined} aria-describedby={collection.readOnly ? `${slugInputId}-readonly` : undefined} className={`min-w-0 space-y-8 scroll-mt-24 ${collection.readOnly ? 'pointer-events-none opacity-80' : ''}`}>
+        {panelsAfterForm.length > 0 && <fieldset disabled={!canSave || undefined} aria-describedby={writeNotice ? `${slugInputId}-readonly` : undefined} className={`min-w-0 space-y-8 scroll-mt-24 ${!canSave ? 'pointer-events-none opacity-80' : ''}`}>
           <EditorPanels panels={panelsAfterForm} form={form} {...panelProps} />
         </fieldset>}
       </div>
-      {deleteOpen && <DeleteConfirmation
+      </ReadOnlyFieldContext.Provider>
+      {deleteOpen && permissions.canDelete && <DeleteConfirmation
         title={`Delete ${recordLabel}?`}
         url={`${basePath}/api/collections/${encodeURIComponent(slug)}/entries/${encodeURIComponent(entryId)}`}
         warning={`${hasUnsavedWork ? 'Your unsaved changes will also be discarded. ' : ''}${slug === 'media' ? 'Deleting this asset removes its file. Pages using its URL may show broken images. ' : nativeCollection ? 'Deleting this record permanently removes the stored row. ' : 'Deleting this entry removes its revisions. '}Relationships and other references are not automatically repaired. Review its usages before deleting.`}

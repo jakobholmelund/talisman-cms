@@ -6,6 +6,7 @@ import { Button } from '../../../components/ui/button';
 import { Plus, MoreHorizontal, ArrowLeft, ChevronRight } from 'lucide-react';
 import { getSectionEntryLink, getSectionIndexLink, getSectionLabel, type AdminSection } from '../../../lib/admin-sections';
 import { fetchCollectionConfigs } from '../../../lib/admin-api';
+import { getCollectionPermissions, getCollectionWriteNotice } from '../../../lib/collection-permissions';
 import { getPagePath, getPendingSlugRename } from '../../../lib/entry-save';
 
 export const Route = createFileRoute('/collections/$slug/')({
@@ -85,7 +86,9 @@ export function CollectionEntriesPage({
   section: AdminSection;
 }) {
   const navigate = useNavigate();
-  const basePath = (useRouter().options.context as { adminBasePath?: string }).adminBasePath || '/admin';
+  const context = useRouter().options.context;
+  const basePath = context.adminBasePath || '/admin';
+  const permissions = getCollectionPermissions(collection, context.user);
   const loaderCursor = useLoaderData({ strict: false, select: (data: any) => data?.nextCursor ?? null } as any) as string | null;
   const initialCursor = firstCursor !== undefined ? firstCursor : loaderCursor;
   const [entries, setEntries] = useState(firstPage);
@@ -146,12 +149,14 @@ export function CollectionEntriesPage({
           </p>
         </div>
         {/* One link styled as a button, so the keyboard reaches it once. */}
-        {!collection.readOnly && <Button asChild className="gap-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-400 hover:to-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_25px_rgba(99,102,241,0.5)] transition-all duration-300 border-0">
+        {permissions.canCreate && <Button asChild className="gap-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-400 hover:to-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_25px_rgba(99,102,241,0.5)] transition-all duration-300 border-0">
           <Link {...getSectionEntryLink(section, slug, 'new')}>
             <Plus size={16} strokeWidth={2.5} aria-hidden="true" /> Create {entryLabel}
           </Link>
         </Button>}
       </div>
+
+      {!permissions.canCreate && <p className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">{getCollectionWriteNotice(collection, context.user, 'create')}</p>}
 
       <Card className="overflow-hidden border-white/10 bg-zinc-950/50 backdrop-blur-2xl shadow-xl">
         <Table>
@@ -176,7 +181,7 @@ export function CollectionEntriesPage({
                       <MoreHorizontal size={24} aria-hidden="true" className="text-zinc-500" />
                     </div>
                     <p className="text-sm font-medium text-zinc-300">No {entryLabel}s found for {collection.name}.</p>
-                    {!collection.readOnly && <Button asChild variant="outline" size="sm" className="mt-2 text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/10">
+                    {permissions.canCreate && <Button asChild variant="outline" size="sm" className="mt-2 text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/10">
                       <Link {...getSectionEntryLink(section, slug, 'new')}>
                         Create the first {entryLabel}
                       </Link>

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { registerHooks } from 'node:module';
 import { skip } from './helpers/handler-harness.mjs';
 
 let actorModule;
@@ -60,4 +61,61 @@ test('authorization rules apply to users per operation, with the admin API messa
 
   assert.deepEqual([actorRole(editor), actorRole(admin), actorRole(system), actorRole(plugin)], ['editor', 'admin', 'admin', 'admin']);
   assert.deepEqual(systemActor(), { kind: 'system', label: undefined });
+});
+
+if (!skip) {
+  const uiUrl = new URL('../ui/', import.meta.url).href;
+  registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (context.parentURL?.startsWith(uiUrl) && specifier.startsWith('.') && !/\.[cm]?[jt]s$/.test(specifier)) {
+        return nextResolve(`${specifier}.ts`, context);
+      }
+      return nextResolve(specifier, context);
+    },
+  });
+}
+const permissionsModule = !skip ? await import('../ui/lib/collection-permissions.ts') : null;
+
+test('editor capabilities follow server user-actor authorization across collection policies', { skip }, () => {
+  const operations = ['read', 'create', 'update', 'delete', 'publish', 'archive', 'restore'];
+  // Exhaust the independent read/create/update/delete requirements, readOnly, role and mapping.
+  for (const role of ['admin', 'editor']) for (let mask = 0; mask < 16; mask++) {
+    for (const readOnly of [false, true]) for (const schemaPath of [null, 'example/schema', 'talisman-cms/db/media']) {
+      const collection = { name: 'Fixture', slug: 'fixture', readOnly, access: Object.fromEntries(
+        ['read', 'create', 'update', 'delete'].map((operation, index) => [operation, mask & (1 << index) ? 'admin' : 'editor'])
+      ), ...(schemaPath ? { nativeSchemaMapping: { schemaPath, exportName: 'fixture' } } : {}) };
+      const user = { id: 'staff', email: 'staff@example.test', role };
+      const actor = actorModule.userActor(user, request());
+      const permissions = permissionsModule.getCollectionPermissions(collection, user);
+      for (const operation of operations) {
+        let serverAllowed = true;
+        try { actorModule.assertAllowed(actor, collection, operation); } catch { serverAllowed = false; }
+        // The UI must also be able to read an entry, and native records have no revision workflow.
+        const expected = serverAllowed && permissions.canRead &&
+          (!['publish', 'archive', 'restore'].includes(operation) || !schemaPath);
+        assert.equal(permissions[`can${operation[0].toUpperCase()}${operation.slice(1)}`], expected,
+          `${role} ${operation} ${JSON.stringify(collection)}`);
+      }
+      assert.equal(permissions.canUpload, schemaPath === 'talisman-cms/db/media' && permissions.canRead && !readOnly &&
+        (role === 'admin' || collection.access.create !== 'admin'));
+    }
+  }
+});
+
+test('missing collections and non-staff users expose no editor capabilities', { skip }, () => {
+  for (const collection of [null, undefined, {}]) for (const user of [null, undefined, {}, { role: 'customer' }]) {
+    assert.ok(Object.values(permissionsModule.getCollectionPermissions(collection, user)).every(value => value === false));
+  }
+});
+
+test('write notices distinguish server-managed, upload-only and role-restricted collections', { skip }, () => {
+  const { getCollectionWriteNotice } = permissionsModule;
+  const editor = { role: 'editor' };
+  assert.match(getCollectionWriteNotice({ readOnly: true }, { role: 'admin' }, 'update'), /read-only/);
+  assert.match(getCollectionWriteNotice({ nativeSchemaMapping: { schemaPath: 'talisman-cms/db/media' } }, editor, 'create'), /uploading/);
+  assert.match(getCollectionWriteNotice({ access: { create: 'admin' } }, editor, 'create'), /administrators can create/);
+  assert.match(getCollectionWriteNotice({ access: { update: 'admin' } }, editor, 'update'), /view this entry/);
+  assert.equal(getCollectionWriteNotice({}, editor, 'update'), null);
+  assert.equal(getCollectionWriteNotice(null, editor, 'create'), null);
+  assert.equal(getCollectionWriteNotice(undefined, editor, 'update'), null);
 });

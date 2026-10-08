@@ -6,12 +6,21 @@ import { media } from '../../db/schema';
 import { authorizeCmsRequest } from '../../auth/guard';
 import { MAX_MEDIA_BYTES, isMediaCollection, mediaPath, rasterImageType } from '../../db/media-policy';
 import { loadServiceConfig } from '../../service/config';
+import { assertCollectionAccess, userActor } from '../../service/actor';
+import { isServiceError, NotFoundError } from '../../service/errors';
 
 export const POST: APIRoute = privateRoute(async ({ request }) => {
   const authorization = await authorizeCmsRequest(request);
   if (authorization.response) return authorization.response;
 
   try {
+    const { collections } = await loadServiceConfig();
+    const collection = collections.find(item => item.slug === 'media' && isMediaCollection(item));
+    if (!collection) throw new NotFoundError('Media collection not found');
+    const actor = userActor(authorization.user, request);
+    assertCollectionAccess(actor, collection, 'read');
+    // Uploads create the media record directly; generic entry creation remains upload-only.
+    assertCollectionAccess(actor, collection, 'create');
     const formData = await request.formData();
     const file = formData.get('file');
 
@@ -68,7 +77,6 @@ export const POST: APIRoute = privateRoute(async ({ request }) => {
     }
 
     // The library's cached reads no longer match the table.
-    const { collections } = await loadServiceConfig();
     await Promise.all(collections.filter(isMediaCollection).map((collection) => invalidateEntryCache(env, collection.slug, fileId)));
 
     const insertedRecord = await db.select().from(media).where(eq(media.id, fileId)).get();
@@ -79,6 +87,7 @@ export const POST: APIRoute = privateRoute(async ({ request }) => {
     });
 
   } catch (error: any) {
+    if (isServiceError(error)) return Response.json({ error: error.message }, { status: error.status });
     // Database errors carry the statement and its values, so the details stay in the logs.
     console.error('Media upload error:', error);
     return new Response(JSON.stringify({ error: 'The upload could not be saved. Check the server logs for details.' }), {

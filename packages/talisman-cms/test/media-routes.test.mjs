@@ -9,11 +9,12 @@ import { applyCoreMigrations } from './helpers/migrations.mjs';
 const canLoadSource = Boolean(process.features.typescript) && typeof registerHooks === 'function';
 const skip = canLoadSource ? false : 'needs Node type stripping and module.registerHooks';
 
-const runtime = globalThis.__talismanMediaTest = { env: {} };
+const mediaCollection = { name: 'Media', slug: 'media', fields: [], nativeSchemaMapping: { schemaPath: 'talisman-cms/db/media', exportName: 'media', idColumn: 'id' } };
+const runtime = globalThis.__talismanMediaTest = { env: {}, user: { id: 'editor-1', email: 'e@example.test', role: 'editor' }, collections: [mediaCollection] };
 const stubs = {
   'cloudflare:workers': 'export const env = new Proxy({}, { get: (_, key) => globalThis.__talismanMediaTest.env[key] });',
-  'virtual:talisman-cms/auth': 'export const authConfigured = true; export const authAdapter = { async getUser() { return { id: "editor-1", email: "e@example.test", role: "editor" }; } };',
-  'virtual:talisman-cms/config': 'export const collections = [{ name: "Media", slug: "media", fields: [], nativeSchemaMapping: { schemaPath: "talisman-cms/db/media", exportName: "media", idColumn: "id" } }]; export const globals = []; export const publishing = {};',
+  'virtual:talisman-cms/auth': 'export const authConfigured = true; export const authAdapter = { async getUser() { return globalThis.__talismanMediaTest.user; } };',
+  'virtual:talisman-cms/config': 'export const collections = globalThis.__talismanMediaTest.collections; export const globals = []; export const publishing = {};',
 };
 const srcUrl = new URL('../src/', import.meta.url).href;
 let serve;
@@ -208,4 +209,33 @@ test('a durable tombstone denies warm caches in other locations and conditional 
     for (const width of [320,640,960,1280,1920]) assert.equal((await get(`/api/media/media_abc?w=${width}`)).status, 404);
     for (const path of ['/api/media/bad', '/api/media/media_missing', '/api/media/media_abc?w=01', '/api/media/media_abc?w=-320', '/api/media/media_abc?w=Infinity']) assert.ok([400,404].includes((await get(path)).status));
   } finally { delete globalThis.caches; }
+});
+
+test('media uploads enforce collection access before reading bytes or writing storage', { skip }, async () => {
+  const objects = new Map();
+  runtime.env = { STORAGE: bucket(objects), DB: { prepare() { assert.fail('a denied upload reached D1'); } } };
+  const originalUser = runtime.user;
+  try {
+    for (const role of ['editor', 'admin']) {
+      runtime.user = { ...originalUser, role };
+      for (const policy of [{ readOnly: true }, ...(role === 'editor' ? [{ access: { create: 'admin' } }, { access: { read: 'admin' } }] : [])]) {
+        Object.assign(mediaCollection, policy);
+        const request = uploadRequest();
+        const response = await upload({ request });
+        assert.equal(response.status, 403, `${role} ${JSON.stringify(policy)}`);
+        assert.equal(request.bodyUsed, false);
+        assert.match((await response.json()).error, /read-only|access denied/);
+        assert.equal(objects.size, 0);
+        delete mediaCollection.access;
+        delete mediaCollection.readOnly;
+      }
+    }
+    runtime.collections.splice(0, 1);
+    assert.equal((await upload({ request: uploadRequest() })).status, 404);
+  } finally {
+    runtime.collections.splice(0, runtime.collections.length, mediaCollection);
+    runtime.user = originalUser;
+    delete mediaCollection.access;
+    delete mediaCollection.readOnly;
+  }
 });

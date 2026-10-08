@@ -18,6 +18,7 @@ test('published demo seed uses seconds and preserves existing collection definit
     db.exec(`UPDATE galaxy_collections SET name = 'Custom posts', fields = '[{"name":"custom","type":"text"}]' WHERE slug = 'posts'`);
     db.exec(seed);
     assert.deepEqual({ ...db.prepare("SELECT name,fields FROM galaxy_collections WHERE slug = 'posts'").get() }, { name: 'Custom posts', fields: '[{"name":"custom","type":"text"}]' });
-    assert.equal(db.prepare('SELECT COUNT(*) n FROM galaxy_entries').get().n, 4);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM galaxy_entries').get().n, 5);
+    assert.equal(db.prepare("SELECT json_extract(data, '$.title') title FROM galaxy_entries WHERE id = 'demo_managed_note'").get().title, 'Server-managed note');
   } finally { db.close(); }
 });

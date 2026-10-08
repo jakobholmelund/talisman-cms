@@ -6,6 +6,7 @@ import { Bold, Italic, Strikethrough, Heading1, Heading2, List, ListOrdered, Quo
 
 export interface RichTextEditorProps {
   value?: any;
+  readOnly?: boolean;
   onChange?: (value: any) => void;
   className?: string;
   hasError?: boolean;
@@ -108,10 +109,11 @@ const MenuBar = ({ editor, ariaLabelledBy }: { editor: any; ariaLabelledBy?: str
   );
 };
 
-export function RichTextEditor({ value, onChange, className = '', hasError, ariaLabelledBy, ariaDescribedBy, required }: RichTextEditorProps) {
+export function RichTextEditor({ value, onChange, className = '', readOnly = false, hasError, ariaLabelledBy, ariaDescribedBy, required }: RichTextEditorProps) {
   const editor = useEditor({
     injectCSS: false,
     extensions: [StarterKit],
+    editable: !readOnly,
     content: value || { type: 'doc', content: [] },
     editorProps: {
       attributes: {
@@ -119,6 +121,7 @@ export function RichTextEditor({ value, onChange, className = '', hasError, aria
         // The editable area is a multi-line text box named by the field's label.
         role: 'textbox',
         'aria-multiline': 'true',
+        'aria-readonly': String(readOnly),
         ...(ariaLabelledBy ? { 'aria-labelledby': ariaLabelledBy } : {}),
         ...(required ? { 'aria-required': 'true' } : {}),
       },
@@ -126,12 +129,16 @@ export function RichTextEditor({ value, onChange, className = '', hasError, aria
     onUpdate: ({ editor, transaction }) => {
       // Only report the user's own document changes. Plugins such as StarterKit's TrailingNode append
       // doc-changing transactions to a mere click or focus, which would otherwise count as an edit.
-      if (!transaction.docChanged) return;
+      if (readOnly || !transaction.docChanged) return;
       // Export JSON content
       const json = editor.getJSON();
       onChange?.(json);
     },
   });
+
+  useEffect(() => {
+    editor?.setEditable(!readOnly);
+  }, [editor, readOnly]);
 
   // Sync value if changed externally (e.g. form reset from raw JSON mode or loading the latest version).
   // The sync never emits an update: Tiptap normalises the JSON it loads, and echoing that back through
@@ -169,11 +176,12 @@ export function RichTextEditor({ value, onChange, className = '', hasError, aria
     };
     setAttribute('aria-describedby', ariaDescribedBy);
     setAttribute('aria-invalid', hasError ? 'true' : undefined);
-  }, [editor, ariaDescribedBy, hasError]);
+    setAttribute('aria-readonly', String(readOnly));
+  }, [editor, ariaDescribedBy, hasError, readOnly]);
 
   return (
     <div className={`border rounded-lg bg-zinc-950/50 flex flex-col shadow-inner transition-all duration-200 ${hasError ? 'border-red-500/50 hover:border-red-500 focus-within:ring-2 focus-within:ring-red-500/50' : 'border-white/10 hover:border-white/20 focus-within:ring-2 focus-within:ring-indigo-500/50 focus-within:border-indigo-500/50'} ${className}`}>
-      <MenuBar editor={editor} ariaLabelledBy={ariaLabelledBy} />
+      {!readOnly && <MenuBar editor={editor} ariaLabelledBy={ariaLabelledBy} />}
       <EditorContent editor={editor} className="flex-1 overflow-y-auto" />
     </div>
   );

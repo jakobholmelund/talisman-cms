@@ -6,6 +6,7 @@ import { DeleteConfirmation } from '../components/DeleteConfirmation';
 import { MediaUsageDialog } from '../components/MediaUsageDialog';
 import { MediaUsageReview } from '../components/MediaUsageReview';
 import { fetchCollectionConfigs } from '../lib/admin-api';
+import { getCollectionPermissions } from '../lib/collection-permissions';
 
 type MediaEntry = {
   id: string;
@@ -61,9 +62,13 @@ export const Route = createFileRoute('/media')({
   loader: async ({ context }) => {
     const adminBasePath = context.adminBasePath || '/admin';
     const [page, collections] = await Promise.all([fetchMediaPage(adminBasePath), fetchCollectionConfigs(adminBasePath)]);
+    const collection = collections.find((item) => item.slug === 'media');
+    const permissions = getCollectionPermissions(collection, context.user);
     return {
+      canUpload: permissions.canUpload,
+      uploadNotice: collection?.readOnly ? 'This media collection is read-only in the CMS.' : 'Only administrators can upload files to this media collection.',
       canReview: context.user?.role === 'admin',
-      canDelete: context.user?.role === 'admin' && collections.some((collection) => collection.slug === 'media' && !collection.readOnly),
+      canDelete: permissions.canDelete,
       adminBasePath,
       entries: page.entries,
       nextCursor: page.nextCursor,
@@ -72,7 +77,7 @@ export const Route = createFileRoute('/media')({
 });
 
 function MediaLibraryRoute() {
-  const { canDelete, canReview, adminBasePath, entries: initialEntries, nextCursor: initialCursor } = Route.useLoaderData();
+  const { canDelete, canReview, canUpload, uploadNotice, adminBasePath, entries: initialEntries, nextCursor: initialCursor } = Route.useLoaderData();
   const [entries, setEntries] = useState(initialEntries);
   const [cursor, setCursor] = useState<string | null>(initialCursor);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -121,7 +126,7 @@ function MediaLibraryRoute() {
 
   const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file || isUploading) return;
+    if (!canUpload || !file || isUploading) return;
 
     setIsUploading(true);
     setError('');
@@ -166,15 +171,16 @@ function MediaLibraryRoute() {
             <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
             Refresh
           </Button>
-          <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-indigo-500 px-4 py-2 text-sm font-medium text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] transition-colors hover:bg-indigo-400 focus-within:ring-2 focus-within:ring-indigo-300">
+          {canUpload && <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-indigo-500 px-4 py-2 text-sm font-medium text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] transition-colors hover:bg-indigo-400 focus-within:ring-2 focus-within:ring-indigo-300">
             <Upload size={14} aria-hidden="true" />
             {isUploading ? 'Uploading...' : 'Upload Media'}
             {/* Visually hidden rather than display:none, so the file picker can be reached with the keyboard. */}
             <input type="file" aria-disabled={isUploading || undefined} className="sr-only" accept="image/jpeg,image/png,image/gif,image/webp,image/avif" onChange={(event) => void handleUpload(event)} />
-          </label>
+          </label>}
         </div>
       </div>
 
+      {!canUpload && <p className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">{uploadNotice}</p>}
       <p role="status" className="sr-only">{uploadStatus}</p>
       {error && (
         <div role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
@@ -188,7 +194,7 @@ function MediaLibraryRoute() {
             <ImageIcon size={22} className="text-zinc-400" />
           </div>
           <div className="mt-4 text-lg font-medium text-white">No media assets yet</div>
-          <p className="mt-2 text-sm text-zinc-400">Upload the first file to start using the media picker in the editor.</p>
+          <p className="mt-2 text-sm text-zinc-400">{canUpload ? 'Upload the first file to start using the media picker in the editor.' : 'No files have been uploaded to this collection yet.'}</p>
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -229,7 +235,7 @@ function MediaLibraryRoute() {
         </div>
       )}
       {usageEntry && <MediaUsageDialog id={usageEntry.id} filename={usageEntry.filename} adminPath={adminBasePath} onClose={() => setUsageEntry(null)} getReturnFocus={() => usageTrigger.current?.isConnected ? usageTrigger.current : refreshRef.current} />}
-      {deleteEntry && <DeleteConfirmation
+      {deleteEntry && canDelete && <DeleteConfirmation
         title={`Delete ${deleteEntry.filename}?`}
         url={`${adminBasePath}/api/collections/media/entries/${encodeURIComponent(deleteEntry.id)}`}
         warning="Deleting this asset removes its file. Pages using its URL may show broken images. Relationships and other references are not automatically repaired. Review its usages before deleting."

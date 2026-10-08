@@ -14,6 +14,8 @@ const PageBuilderComposer = lazy(() => import('../PageBuilderComposer').then((mo
 
 /** The admin API base path (normally /admin) for controls that call the API, such as the media field. */
 export const AdminBasePathContext = React.createContext('/admin');
+/** A fieldset disables native inputs; custom editable surfaces need this flag too. */
+export const ReadOnlyFieldContext = React.createContext(false);
 
 export type FieldRendererProps = {
   field: any;
@@ -55,6 +57,7 @@ export function FieldRenderer({ field, form, fieldPath, relationOptions, relatio
   const labelId = `${controlId}-label`;
   const errorId = `${controlId}-error`;
   const adminBasePath = useContext(AdminBasePathContext);
+  const readOnly = useContext(ReadOnlyFieldContext);
   const { errors: serverFieldErrors, clearError: clearServerFieldError } = useContext(ServerFieldErrorsContext);
   const getErrorMessages = (fieldApi: any) =>
     [...new Set([...formatFieldErrors(fieldApi.state.meta.errors), ...(serverFieldErrors[fieldName] || [])])];
@@ -219,6 +222,7 @@ export function FieldRenderer({ field, form, fieldPath, relationOptions, relatio
             ) : field.type === 'richtext' ? (
               <Suspense fallback={<LoadingFieldPlaceholder what="rich text editor" />}>
                 <RichTextEditor
+                  readOnly={readOnly}
                   value={fieldApi.state.value} // ensure value format works with block editor
                   onChange={(val: any) => handleValueChange(val)}
                   hasError={hasError}

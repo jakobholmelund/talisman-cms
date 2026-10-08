@@ -851,6 +851,95 @@ const steps = {
     return pending ? 'published through a pending workflow (HTTP 202); status Published after reload' : 'published; status Published after reload';
   },
 
+  async 'collection-permissions'(ctx) {
+    const page = ctx.admin.page;
+    const email = `e2e-permissions-${ctx.runId}@example.com`;
+    const createdUser = await page.request.post(apiPath('/auth/admin/create-user'), {
+      data: { name: 'Collection permission fixture', email, password: EDITOR_PASSWORD, role: 'editor' },
+      headers: { Origin: ctx.options.baseUrl },
+    });
+    if (!createdUser.ok()) fail(`permission editor account: ${await responseSummary(createdUser)}`);
+    const editor = await signedInSession(ctx, email, EDITOR_PASSWORD, 'collection permissions editor');
+    const ids = {};
+    const assertNoActions = async (target) => {
+      if (await target.getByRole('button', { name: /^(Save Draft|Save Changes|Publish|Archive|Delete entry|Restore)/ }).count()) {
+        fail('a read-only editor exposes a write action');
+      }
+      if (!await labelled(target, 'Title').isDisabled()) fail('read-only fields accept keyboard editing');
+      const richText = target.getByRole('textbox', { name: 'Content', exact: true });
+      if (await richText.count()) {
+        await waitUntil('rich text is read-only', async () => await richText.getAttribute('contenteditable') === 'false');
+        if (await richText.getAttribute('aria-readonly') !== 'true') fail('rich text is not announced as read-only');
+      }
+    };
+    try {
+      for (const slug of ['announcements', 'submissions']) {
+        const response = await page.request.post(apiPath(`/collections/${slug}/entries`), { data: { data: { title: `${slug} fixture` } } });
+        if (!response.ok()) fail(`permission fixture ${slug}: ${await responseSummary(response)}`);
+        ids[slug] = (await response.json()).id;
+      }
+      await editor.page.goto(`${ADMIN_PATH}/collections/announcements`);
+      await expectVisible(editor.page.getByRole('heading', { name: 'Announcements', exact: true }), 'restricted create list');
+      if (await editor.page.getByRole('link', { name: /^Create/ }).count()) fail('editor sees restricted Create link');
+      await expectVisible(editor.page.getByText('Only administrators can create entries in this collection.', { exact: true }), 'restricted create explanation');
+      await openEntry(editor.page, 'announcements', 'new');
+      await assertNoActions(editor.page);
+      const deniedCreate = await editor.page.request.post(apiPath('/collections/announcements/entries'), { data: { data: { title: 'Forbidden' } } });
+      if (deniedCreate.status() !== 403) fail('server allowed restricted editor creation');
+      // An editor denied create still has update access to an existing announcement.
+      await openEntry(editor.page, 'announcements', ids.announcements);
+      await labelled(editor.page, 'Title').fill('Edited announcement');
+      await saveEntry(editor.page, 'announcements', ids.announcements, 'permitted announcement update');
+      if (await editor.page.getByRole('button', { name: /^(Publish|Archive|Delete entry|Restore)/ }).count()) fail('editor sees admin-only actions');
+
+      await openEntry(editor.page, 'submissions', 'new');
+      await labelled(editor.page, 'Title').fill('Editor submission');
+      const submitted = await clickAndAwaitResponse(editor.page, saveButton(editor.page), apiResponse('POST', apiPath('/collections/submissions/entries')), 'permitted submission creation');
+      if (!submitted.ok()) fail(`editor submission: ${await responseSummary(submitted)}`);
+      const submissionId = (await submitted.json()).id;
+      ids.editorSubmission = submissionId;
+      await editor.page.waitForURL(url => url.pathname.endsWith(`/submissions/${submissionId}`));
+      await expectVisible(editorHeading(editor.page, 'existing'), 'created submission becomes read-only');
+      await assertNoActions(editor.page);
+      await expectVisible(editor.page.getByText('You can view this entry. Only administrators can save changes in this collection.', { exact: true }), 'restricted update explanation');
+      const deniedUpdate = await editor.page.request.put(apiPath(`/collections/submissions/entries/${submissionId}`), { data: { data: { title: 'Forbidden' } } });
+      if (deniedUpdate.status() !== 403) fail('server allowed restricted editor update');
+      // Admins retain the draft, publication and revision actions for these role-restricted collections.
+      await openEntry(page, 'submissions', ids.submissions);
+      for (const name of ['Save Draft', 'Publish', 'Archive', 'Delete entry']) {
+        await expectVisible(page.getByRole('button', { name, exact: true }), `admin ${name}`);
+      }
+      await expectVisible(page.getByRole('button', { name: /^Restore/ }).first(), 'admin revision restore');
+      await labelled(page, 'Title').fill('Admin revised submission');
+      await saveEntry(page, 'submissions', ids.submissions, 'admin restricted collection update');
+      for (const target of [page, editor.page]) {
+        await target.goto(`${ADMIN_PATH}/collections/managed-notes`);
+        await expectVisible(target.getByRole('heading', { name: 'Managed Notes', exact: true }), 'managed list');
+        if (await target.getByRole('link', { name: /^Create/ }).count()) fail('managed list exposes Create');
+        await openEntry(target, 'managed-notes', 'demo_managed_note');
+        await assertNoActions(target);
+        await expectVisible(target.getByText('This collection is managed by server code and is read-only in the CMS.', { exact: true }), 'managed explanation');
+        const denied = await target.request.put(apiPath('/collections/managed-notes/entries/demo_managed_note'), { data: { data: { title: 'Forbidden' } } });
+        if (denied.status() !== 403) fail('server allowed staff write to managed collection');
+        await openEntry(target, 'managed-notes', 'new');
+        await assertNoActions(target);
+      }
+      await page.goto(entryPath('missing-permission-fixture', 'new'));
+      await expectVisible(page.getByText('Collection not found.', { exact: true }), 'unknown collection remains a not-found state');
+      await openEntry(page, 'media', 'new');
+      await expectVisible(page.getByText('Media records are created by uploading a file to the media library.', { exact: true }), 'upload-only media creation');
+      if (await saveButton(page).count()) fail('media new route exposes Save Changes');
+      return 'create/update rules enforced independently, allowed editor saves succeed, admin actions remain, and managed content is read-only for both roles';
+    } finally {
+      for (const [key, id] of Object.entries(ids)) {
+        const slug = key === 'editorSubmission' ? 'submissions' : key;
+        await page.request.delete(apiPath(`/collections/${slug}/entries/${id}`));
+      }
+      await editor.context.close();
+      ctx.sessions = ctx.sessions.filter(session => session !== editor.context);
+    }
+  },
+
   async 'editor-role'(ctx) {
     const { page } = ctx.admin;
     const entryId = await ensureEntry(ctx);
@@ -1041,6 +1130,15 @@ const steps = {
 
   async 'media-delete-and-busy-focus'(ctx) {
     const { page } = ctx.admin;
+    const finishUsageCheck = async (report) => {
+      for (let count = 0; count < 30; count++) {
+        await waitUntil('the media usage page should settle', async () => !(await report.getByText('Checking references…', { exact: true }).count()));
+        const more = report.getByRole('button', { name: 'Check more content', exact: true });
+        if (!(await more.count())) return;
+        await more.click();
+      }
+      fail('the media usage report still has unchecked pages');
+    };
     if (!ctx.state.mediaId) await steps['media-upload'](ctx);
     const referenced = await page.request.post(apiPath('/collections/pages/entries'), { data: {
       slug: `media-reference-${ctx.runId}`, data: { title: 'Media usage regression fixture', layout: [{ blockType: 'hero', heading: 'Usage fixture', backgroundImage: ctx.state.mediaId }] },
@@ -1063,6 +1161,7 @@ const steps = {
     const usageButton = page.getByRole('button', { name: `Where used ${ctx.state.mediaFilename}`, exact: true });
     await usageButton.click();
     const usageDialog = page.getByRole('dialog', { name: `Usage of ${ctx.state.mediaFilename}`, exact: true });
+    await finishUsageCheck(usageDialog);
     await expectVisible(usageDialog.getByRole('link', { name: 'Media usage regression fixture', exact: true }).first(), 'standalone media usage report');
     if (await usageDialog.getByRole('checkbox').count()) fail('read-only media report asks for deletion acknowledgment');
     await page.keyboard.press('Escape');
@@ -1076,12 +1175,7 @@ const steps = {
     await expectVisible(deleteButton, 'asset after cancel');
     await deleteButton.click();
     await expectVisible(dialog.getByRole('heading', { name: 'Where this asset is used', exact: true }), 'media usage review');
-    for (let count = 0; count < 30; count++) {
-      await waitUntil('the media usage page should settle', async () => !(await dialog.getByText('Checking references…', { exact: true }).count()));
-      const more = dialog.getByRole('button', { name: 'Check more content', exact: true });
-      if (!(await more.count())) break;
-      await more.click();
-    }
+    await finishUsageCheck(dialog);
     await expectVisible(dialog.getByRole('link', { name: 'Media usage regression fixture', exact: true }).first(), 'the draft using this asset');
     const acknowledgment = dialog.getByRole('checkbox');
     if (await acknowledgment.count()) {

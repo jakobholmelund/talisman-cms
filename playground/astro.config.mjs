@@ -124,6 +124,34 @@ export default defineConfig({
           { name: 'publishedAt', label: 'Published Date', type: 'date' }
         ]
       },
+      // Separate create/update rules exercise the generic editor's permission controls.
+      {
+        name: 'Announcements',
+        slug: 'announcements',
+        description: 'Administrators create announcements; editors may revise their drafts.',
+        access: { create: 'admin' },
+        fields: [{ name: 'title', label: 'Title', type: 'text', required: true }]
+      },
+      {
+        name: 'Submissions',
+        slug: 'submissions',
+        description: 'Editors submit entries; administrators manage later changes.',
+        access: { update: 'admin' },
+        fields: [
+          { name: 'title', label: 'Title', type: 'text', required: true },
+          { name: 'content', label: 'Content', type: 'richtext' }
+        ]
+      },
+      {
+        name: 'Managed Notes',
+        slug: 'managed-notes',
+        description: 'Server-managed content, available for staff to read.',
+        readOnly: true,
+        fields: [
+          { name: 'title', label: 'Title', type: 'text', required: true },
+          { name: 'content', label: 'Content', type: 'richtext' }
+        ]
+      },
       {
         name: 'Pages',
         slug: 'pages',
