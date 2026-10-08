@@ -19,7 +19,7 @@
 .ecom-admin input:disabled, .ecom-admin input:read-only { opacity: .65; }
 .ecom-admin button { width: fit-content; padding: 9px 14px; border: 1px solid #6366f1; border-radius: 8px; background: #4f46e5; color: white; font: inherit; font-weight: 600; cursor: pointer; }
 .ecom-admin button:hover { background: #6366f1; }
-.ecom-admin button:disabled { opacity: .5; cursor: wait; }
+.ecom-admin button:disabled, .ecom-admin button[aria-disabled="true"] { opacity: .5; cursor: wait; }
 .ecom-admin button.ecom-admin__secondary { border-color: #52525b; background: #27272a; }
 .ecom-admin button.ecom-admin__secondary:hover { background: #3f3f46; }
 .ecom-admin__actions, .ecom-admin__toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin: 16px 0; }

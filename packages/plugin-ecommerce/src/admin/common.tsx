@@ -67,8 +67,8 @@ export function Stat({ label, value, detail }: { label: string; value: ReactNode
   return <div className="ecom-admin__stat"><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>;
 }
 
-export function Panel({ title, children }: { title: string; children: ReactNode }) {
-  return <section className="ecom-admin__panel"><h2>{title}</h2>{children}</section>;
+export function Panel({ title, children, label }: { title: string; children: ReactNode; label?: string }) {
+  return <section className="ecom-admin__panel" aria-label={label}><h2>{title}</h2>{children}</section>;
 }
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {

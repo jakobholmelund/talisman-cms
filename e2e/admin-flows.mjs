@@ -24,6 +24,7 @@
 // the exit code; they are printed as GAP.
 
 import { chromium } from 'playwright-core';
+import { ordersFlow } from './orders-flow.mjs';
 import { deflateSync } from 'node:zlib';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -492,6 +493,8 @@ const steps = {
     await expectVisible(page.getByRole('button', { name: 'Sign in', exact: true }), 'hybrid editor sign-out');
     return 'local editor signs into hybrid mode, saves twice, cannot delete/publish/archive, and signs out of the CMS';
   },
+
+  'orders-workflow': ctx => ordersFlow(ctx, { fail, expectVisible, expectHidden, expectValue, expectNoAlert, waitUntil }),
 
   async 'startup-payload'(ctx) {
     const samples = [];
