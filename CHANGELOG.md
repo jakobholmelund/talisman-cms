@@ -14,6 +14,7 @@
 
 ### Release tooling
 
+- Updated the locked `http-cache-semantics` to 4.3.0 and `source-map-js` to 1.2.2; the production audit no longer reports their high-severity advisories. The dated rehearsal in [RELEASE.md](RELEASE.md#release-rehearsal-8-october-2026) records the remaining release gates.
 - Release schema checks include Stripe and the combined plugin history. Plugin type checks retain package compiler settings while loading the core virtual-module declarations used by Astro; CI adds daisyUI renderer and Theme Builder interaction checks.
 - Updated compatible Cloudflare tooling to use miniflare's patched `undici@7.29.1`, without an override.
 - Packed npm and pnpm consumers now run sequentially and release their runtime directories between projects. Failed checks retain fixtures and logs; `TALISMAN_SMOKE_KEEP=1` retains full runtimes when requested.
