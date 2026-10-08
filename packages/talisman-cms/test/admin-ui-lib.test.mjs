@@ -30,7 +30,7 @@ const {
 const { fetchAllEntries, fetchCollectionConfigs, fetchEntriesBySlug, fetchEntriesPage } = await loadAdminModule('lib/admin-api.ts');
 const { describeEntryWith, describeEntryGeneric, getEntryOptionLabel, getSupportCollectionSlugsWith, readAdminSetting } =
   await loadAdminModule('lib/entry-labels.ts');
-const { COLLAPSED_STATE_INDEX_KEY, COLLAPSED_STATE_MAX_ENTRIES, pruneCollapsedState, readCollapsedCards, writeCollapsedCards } =
+const { COLLAPSED_STATE_INDEX_KEY, COLLAPSED_STATE_MAX_ENTRIES, pruneCollapsedState, readCollapsedCards, writeCollapsedCards, moveCollapsedState } =
   await loadAdminModule('lib/collapsed-state.ts');
 const { validateCollectionListSearch, normalizeCollectionListSearch, getCollectionListOptions, collectionListParams } =
   await loadAdminModule('lib/collection-list.ts');
@@ -670,6 +670,35 @@ test('collapsed cards are kept under one key per entry and written only when the
   assert.deepEqual(readCollapsedCards(undefined, 'layout', storage), {});
   assert.equal(writeCollapsedCards(undefined, 'layout', { a: true }, storage), false);
   assert.equal(writeCollapsedCards(entry, 'layout', { a: true }, null), false);
+});
+
+test('first save moves all collapsed fields to the saved entry without leaving draft state', () => {
+  const storage = memoryStorage();
+  const draft = 'talisman-cms:collapsed:collection:pages:new';
+  const saved = 'talisman-cms:collapsed:collection:pages:saved';
+  writeCollapsedCards(draft, 'layout', { 'layout:0': true, 'layout[0].content:1': true }, storage);
+  writeCollapsedCards(draft, 'footer', { 'footer:0': true }, storage);
+  assert.equal(moveCollapsedState(draft, saved, storage), true);
+  assert.deepEqual(readCollapsedCards(saved, 'layout', storage), { 'layout:0': true, 'layout[0].content:1': true });
+  assert.deepEqual(readCollapsedCards(saved, 'footer', storage), { 'footer:0': true });
+  assert.equal(storage.getItem(draft), null);
+  assert.deepEqual(JSON.parse(storage.getItem(COLLAPSED_STATE_INDEX_KEY)), [saved]);
+  assert.deepEqual(pruneCollapsedState(storage), []);
+  assert.equal(moveCollapsedState(draft, saved, storage), false);
+  assert.equal(moveCollapsedState(saved, saved, storage), false);
+});
+
+test('collapse handoff respects the cap and keeps the draft when writing the saved key fails', () => {
+  const storage = memoryStorage();
+  for (let i = 0; i < COLLAPSED_STATE_MAX_ENTRIES; i++) writeCollapsedCards(`entry:${i}`, 'layout', { 'layout:0': true }, storage);
+  assert.equal(moveCollapsedState('entry:49', 'saved', storage), true);
+  assert.equal(JSON.parse(storage.getItem(COLLAPSED_STATE_INDEX_KEY)).length, COLLAPSED_STATE_MAX_ENTRIES);
+  assert.notEqual(storage.getItem('entry:0'), null);
+  const blocked = { ...storage, setItem: () => { throw new Error('Storage full'); } };
+  assert.equal(moveCollapsedState('saved', 'another', blocked), false);
+  assert.deepEqual(readCollapsedCards('saved', 'layout', storage), { 'layout:0': true });
+  assert.equal(storage.getItem('another'), null);
+  assert.equal(moveCollapsedState('saved', 'another', null), false);
 });
 
 test('the collapsed-state index keeps the 50 most recently written entries and evicts the oldest', () => {

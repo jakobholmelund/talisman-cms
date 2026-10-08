@@ -32,6 +32,7 @@ import {
   type PendingTransition,
 } from '../../lib/entry-save';
 import { getEntryData } from '../../lib/entry-labels';
+import { moveCollapsedState } from '../../lib/collapsed-state';
 import {
   buildDefaultValues,
   getPresetClientSchema,
@@ -812,6 +813,7 @@ export function CollectionEntryEditor({
 
   // A new entry opens at its own URL; the route remounts the editor there with the saved state.
   const openCreatedEntry = (createdEntryId: string) => {
+    moveCollapsedState(collapseStorageKey, `talisman-cms:collapsed:collection:${slug}:${createdEntryId}`);
     leavingEditorRef.current = true;
     void navigate({ ...getSectionEntryLink(section, slug, createdEntryId), replace: true, search: true });
   };

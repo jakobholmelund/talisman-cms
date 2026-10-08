@@ -1009,6 +1009,50 @@ const steps = {
     return 'rich text edits and toolbar navigation work without injected styles or CSP style violations';
   },
 
+  async 'new-entry-collapsed-cards'(ctx) {
+    const page = await ctx.admin.context.newPage();
+    let entryId;
+    const draftKey = 'talisman-cms:collapsed:collection:pages:new';
+    try {
+      await page.goto(entryPath('pages', 'new'));
+      await expectVisible(editorHeading(page, 'new'), 'new page editor');
+      await page.getByRole('button', { name: 'Switch to Raw JSON', exact: true }).click();
+      await page.getByRole('textbox', { name: 'Raw JSON', exact: true }).fill(JSON.stringify({
+        title: `Collapsed cards ${ctx.runId}`,
+        layout: [0, 1].map(index => ({ blockType: 'sectionLayout', title: `Section ${index}`, content: [
+          { mode: 'inline', componentType: 'daisyAlertNotice', title: `Notice ${index}`, tone: 'info' },
+        ] })),
+      }));
+      await page.getByRole('button', { name: 'Switch to Form', exact: true }).click();
+      const block = page.getByRole('button', { name: 'Collapse Section Layout (block 1) in Page Layout', exact: true });
+      const component = page.getByRole('button', { name: 'Collapse Alert Notice (Content item 1, block 2)', exact: true });
+      await component.click(); await block.click();
+      await waitUntil('new page preferences should be stored', async () => Boolean(await page.evaluate(key => localStorage.getItem(key), draftKey)));
+      const created = await clickAndAwaitResponse(page, saveButton(page), apiResponse('POST', apiPath('/collections/pages/entries')), 'first page save');
+      if (!created.ok()) fail(`collapsed page fixture save: ${await responseSummary(created)}`);
+      entryId = (await created.json()).id;
+      await expectVisible(editorHeading(page, 'existing'), 'saved page editor');
+      const expandBlock = page.getByRole('button', { name: 'Expand Section Layout (block 1) in Page Layout', exact: true });
+      const expandComponent = page.getByRole('button', { name: 'Expand Alert Notice (Content item 1, block 2)', exact: true });
+      await expectVisible(expandBlock, 'block collapsed after first save');
+      await expectVisible(expandComponent, 'component collapsed after first save');
+      if (await page.evaluate(key => localStorage.getItem(key), draftKey)) fail('first save left collapsed preferences on the next new entry');
+      await page.reload();
+      await expectVisible(expandBlock, 'saved block collapse after reload');
+      await expectVisible(expandComponent, 'saved component collapse after reload');
+      await page.goto(entryPath('pages', 'new'));
+      await expectVisible(editorHeading(page, 'new'), 'second new page');
+      if (await page.evaluate(key => localStorage.getItem(key), draftKey)) fail('fresh new page inherited the previous page card state');
+      return 'collapsed block and nested component survive first save and reload; draft storage moves to the saved ID';
+    } finally {
+      if (entryId) {
+        const response = await page.request.delete(apiPath(`/collections/pages/entries/${entryId}`), { headers: { Origin: ctx.options.baseUrl } });
+        if (!response.ok() && response.status() !== 404) fail(`collapsed fixture cleanup: ${await responseSummary(response)}`);
+      }
+      await page.close();
+    }
+  },
+
   async 'new-entry-saves-twice'(ctx) {
     const { page } = ctx.admin;
     const title = `E2E post ${ctx.runId}`;

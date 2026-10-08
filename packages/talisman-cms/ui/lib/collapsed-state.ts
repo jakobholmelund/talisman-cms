@@ -137,6 +137,26 @@ export function writeCollapsedCards(scopeKey: string | undefined, fieldName: str
   }
 }
 
+/** Carries a new entry's card preferences to its saved ID before the editor remounts. */
+export function moveCollapsedState(fromKey: string, toKey: string, storage = getBrowserStorage()) {
+  if (!storage || fromKey === toKey) return false;
+  try {
+    const record = readEntryRecord(storage, fromKey);
+    if (Object.keys(record).length === 0) return false;
+    // Write the destination first: a blocked/full store must not erase the draft's preferences.
+    storage.setItem(toKey, JSON.stringify(record));
+    const index = readIndex(storage).filter(key => key !== fromKey && key !== toKey);
+    index.push(toKey);
+    const evicted = index.splice(0, Math.max(0, index.length - COLLAPSED_STATE_MAX_ENTRIES));
+    writeIndex(storage, index);
+    storage.removeItem(fromKey);
+    for (const key of evicted) storage.removeItem(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Removes every collapsed-state key the index does not list: the one-key-per-field state that
  * earlier versions wrote, and entries left behind by a failed write. Returns the removed keys.
