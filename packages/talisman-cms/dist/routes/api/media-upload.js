@@ -7,8 +7,12 @@ import {
   privateRoute
 } from "../../chunk-7H7KCEZW.js";
 import {
+  NotFoundError,
+  assertCollectionAccess,
   createDbClient,
-  loadServiceConfig
+  isServiceError,
+  loadServiceConfig,
+  userActor
 } from "../../chunk-T4XA2AEL.js";
 import "../../chunk-7VUPBVR5.js";
 import {
@@ -33,6 +37,12 @@ var POST = privateRoute(async ({ request }) => {
   const authorization = await authorizeCmsRequest(request);
   if (authorization.response) return authorization.response;
   try {
+    const { collections } = await loadServiceConfig();
+    const collection = collections.find((item) => item.slug === "media" && isMediaCollection(item));
+    if (!collection) throw new NotFoundError("Media collection not found");
+    const actor = userActor(authorization.user, request);
+    assertCollectionAccess(actor, collection, "read");
+    assertCollectionAccess(actor, collection, "create");
     const formData = await request.formData();
     const file = formData.get("file");
     if (!(file instanceof File)) {
@@ -78,14 +88,14 @@ var POST = privateRoute(async ({ request }) => {
       });
       throw error;
     }
-    const { collections } = await loadServiceConfig();
-    await Promise.all(collections.filter(isMediaCollection).map((collection) => invalidateEntryCache(env, collection.slug, fileId)));
+    await Promise.all(collections.filter(isMediaCollection).map((collection2) => invalidateEntryCache(env, collection2.slug, fileId)));
     const insertedRecord = await db.select().from(media).where(eq(media.id, fileId)).get();
     return new Response(JSON.stringify(insertedRecord), {
       status: 200,
       headers: { "Content-Type": "application/json" }
     });
   } catch (error) {
+    if (isServiceError(error)) return Response.json({ error: error.message }, { status: error.status });
     console.error("Media upload error:", error);
     return new Response(JSON.stringify({ error: "The upload could not be saved. Check the server logs for details." }), {
       status: 500,
