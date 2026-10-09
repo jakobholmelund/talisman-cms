@@ -1,18 +1,18 @@
 import {
   GiftCardRefusal,
   readStoreSettings
-} from "./chunk-HZYMV637.js";
+} from "./chunk-K7KINC5L.js";
 import {
-  getReferralPolicy,
+  referralPolicyFromSaved,
   referralTermsError
-} from "./chunk-IYLXVBBY.js";
+} from "./chunk-OSTMSMQZ.js";
 import {
   hasPurchaseHistory
-} from "./chunk-HYAFBBZB.js";
+} from "./chunk-JHEPRJVB.js";
 import {
   commerceDb,
   commitBatch
-} from "./chunk-P3TQBWDQ.js";
+} from "./chunk-HZZSX5TT.js";
 import {
   customerAccounts,
   discountCodeCreations,
@@ -20,13 +20,13 @@ import {
   discountRedemptions,
   referralCodes,
   referralSettings
-} from "./chunk-IITGXIBG.js";
+} from "./chunk-3XLIJPB2.js";
 import {
   minimumChargeAmount
 } from "./chunk-2UYSCNNW.js";
 
 // src/promotions.ts
-import { and, count, eq, inArray } from "drizzle-orm";
+import { and, count, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 var optionalLimit = z.number().int().positive().max(1e6).nullable();
 var optionalDate = z.number().int().positive().nullable();
@@ -151,7 +151,14 @@ async function getPromotionsAdmin(env) {
     active: referralCodes.active,
     email: customerAccounts.email
   }).from(referralCodes).innerJoin(customerAccounts, eq(referralCodes.accountId, customerAccounts.id));
-  return { referral: await getReferralPolicy(env), referralLinks, codes, usage };
+  const saved = await db.select().from(referralSettings).where(eq(referralSettings.id, "default")).get();
+  return {
+    referral: referralPolicyFromSaved(env, saved),
+    referralRevision: saved ? Math.floor(saved.updatedAt.getTime() / 1e3) : null,
+    referralLinks,
+    codes,
+    usage
+  };
 }
 async function setReferralCodeActive(env, code, active) {
   if (!/^REF-[A-F0-9]{20}$/.test(code) || typeof active !== "boolean") {
@@ -162,13 +169,31 @@ async function setReferralCodeActive(env, code, active) {
   if (!changed.length) throw new Error("Referral code not found");
   return { code, active };
 }
+var PromotionConflictError = class extends Error {
+  name = "PromotionConflictError";
+  constructor() {
+    super("These settings changed since you loaded them. Load the latest version before saving.");
+  }
+};
+function versionedInput(input) {
+  const raw = input && typeof input === "object" ? input : {};
+  const { expectedVersion, ...fields } = raw;
+  if (expectedVersion !== void 0) z.number().int().nonnegative().nullable().parse(expectedVersion);
+  return { fields, expectedVersion };
+}
 async function saveReferralSettings(env, input) {
-  const parsed = referralSettingsSchema.safeParse(input);
+  const { fields, expectedVersion } = versionedInput(input);
+  const parsed = referralSettingsSchema.safeParse(fields);
   if (!parsed.success) throw new Error(parsed.error.issues.map((issue) => issue.message).join("; "));
   const values = parsed.data;
   const db = commerceDb(env);
-  await db.insert(referralSettings).values({ id: "default", ...values, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({ target: referralSettings.id, set: { ...values, updatedAt: /* @__PURE__ */ new Date() } });
-  return getReferralPolicy(env);
+  const now = Math.floor(Date.now() / 1e3);
+  const changed = expectedVersion === null ? await db.insert(referralSettings).values({ id: "default", ...values, updatedAt: new Date(now * 1e3) }).onConflictDoNothing().returning() : expectedVersion !== void 0 ? await db.update(referralSettings).set({ ...values, updatedAt: sql`MAX(${referralSettings.updatedAt} + 1, ${now})` }).where(and(eq(referralSettings.id, "default"), eq(referralSettings.updatedAt, new Date(expectedVersion * 1e3)))).returning() : await db.insert(referralSettings).values({ id: "default", ...values, updatedAt: new Date(now * 1e3) }).onConflictDoUpdate({
+    target: referralSettings.id,
+    set: { ...values, updatedAt: sql`MAX(${referralSettings.updatedAt} + 1, ${now})` }
+  }).returning();
+  if (!changed.length) throw new PromotionConflictError();
+  return referralPolicyFromSaved(env, changed[0]);
 }
 var creationKeySchema = z.string().uuid().transform((value) => value.toLowerCase());
 var creationActorSchema = z.string().trim().min(1).max(128);
@@ -229,7 +254,8 @@ async function createDiscountCode(env, input, actor) {
   return db.select().from(discountCodes).where(eq(discountCodes.code, values.code)).get();
 }
 async function updateDiscountCode(env, code, input) {
-  const values = discountCodeSchema.parse({ ...input, code });
+  const { fields, expectedVersion } = versionedInput(input);
+  const values = discountCodeSchema.parse({ ...fields, code });
   const db = commerceDb(env);
   const current = await db.select().from(discountCodes).where(eq(discountCodes.code, values.code)).get();
   if (!current) throw new Error("Discount code not found");
@@ -237,7 +263,7 @@ async function updateDiscountCode(env, code, input) {
   if (current.type !== values.type || current.value !== values.value || current.minOrderCents !== values.minOrderCents || current.maxDiscountCents !== values.maxDiscountCents || current.firstOrderOnly !== values.firstOrderOnly || JSON.stringify(current.eligibleProductIds) !== JSON.stringify(values.eligibleProductIds)) {
     throw new Error("Financial terms are fixed when a code is created; create a new code for new terms");
   }
-  await db.update(discountCodes).set({
+  const changed = await db.update(discountCodes).set({
     description: values.description,
     type: values.type,
     value: values.value,
@@ -250,9 +276,10 @@ async function updateDiscountCode(env, code, input) {
     startsAt: values.startsAt ? new Date(values.startsAt * 1e3) : null,
     expiresAt: values.expiresAt ? new Date(values.expiresAt * 1e3) : null,
     active: values.active,
-    updatedAt: /* @__PURE__ */ new Date()
-  }).where(eq(discountCodes.code, values.code));
-  return db.select().from(discountCodes).where(eq(discountCodes.code, values.code)).get();
+    updatedAt: sql`MAX(${discountCodes.updatedAt} + 1, ${Math.floor(Date.now() / 1e3)})`
+  }).where(and(eq(discountCodes.code, values.code), expectedVersion === void 0 ? void 0 : expectedVersion === null ? sql`0` : eq(discountCodes.updatedAt, new Date(expectedVersion * 1e3)))).returning();
+  if (!changed.length) throw new PromotionConflictError();
+  return changed[0];
 }
 
 export {
@@ -265,6 +292,7 @@ export {
   evaluateDiscountCode,
   getPromotionsAdmin,
   setReferralCodeActive,
+  PromotionConflictError,
   saveReferralSettings,
   createDiscountCode,
   updateDiscountCode

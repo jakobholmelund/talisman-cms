@@ -1,16 +1,17 @@
 import {
+  PromotionConflictError,
   createDiscountCode,
   getPromotionsAdmin,
   saveReferralSettings,
   setReferralCodeActive,
   updateDiscountCode
-} from "../chunk-6DICT5V4.js";
-import "../chunk-HZYMV637.js";
-import "../chunk-IYLXVBBY.js";
+} from "../chunk-XXEE54YQ.js";
+import "../chunk-K7KINC5L.js";
+import "../chunk-OSTMSMQZ.js";
 import "../chunk-GNU6N22K.js";
-import "../chunk-HYAFBBZB.js";
-import "../chunk-P3TQBWDQ.js";
-import "../chunk-IITGXIBG.js";
+import "../chunk-JHEPRJVB.js";
+import "../chunk-HZZSX5TT.js";
+import "../chunk-3XLIJPB2.js";
 import "../chunk-NMGICNSV.js";
 import "../chunk-2UYSCNNW.js";
 
@@ -47,7 +48,7 @@ var ALL = async ({ request }) => {
   } catch (error) {
     return Response.json(
       { error: error instanceof Error ? error.message : "Promotion could not be saved" },
-      { status: 400, headers }
+      { status: error instanceof PromotionConflictError ? 409 : 400, headers }
     );
   }
 };

@@ -70,7 +70,7 @@ import {
   taxSyncDecisions,
   variantComponents,
   variants
-} from "./chunk-IITGXIBG.js";
+} from "./chunk-3XLIJPB2.js";
 export {
   CREDIT_LEDGER_KINDS,
   CUSTOMER_SESSION_PURPOSES,

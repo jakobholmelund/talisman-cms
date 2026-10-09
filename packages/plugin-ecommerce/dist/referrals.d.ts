@@ -1,7 +1,7 @@
 import { SQL } from 'drizzle-orm';
 import { TalismanEnv } from 'talisman-cms/client';
 import { P as PaymentProviderAdapter } from './payments-C3gqo5tp.js';
-import { orders } from './schema.js';
+import { orders, referralSettings } from './schema.js';
 import 'drizzle-orm/sqlite-core';
 
 /**
@@ -49,6 +49,8 @@ declare function referralTermsError(terms: {
 declare function referralPolicy(env: TalismanEnv): ReferralPolicy;
 /** Saved admin settings win over the Worker settings, in both directions; the limits always come from the Worker. */
 declare function getReferralPolicy(env: TalismanEnv): Promise<ReferralPolicy>;
+/** Build the policy and its admin revision from the same saved row. */
+declare function referralPolicyFromSaved(env: TalismanEnv, saved: typeof referralSettings.$inferSelect | undefined): ReferralPolicy;
 type QualifyingOrder = Pick<typeof orders.$inferSelect, 'status' | 'subtotalAmount' | 'discountAmount' | 'providerRefundedCents' | 'giftCardRefundedCents'> & {
     referralTerms?: {
         minOrderCents: number;
@@ -138,4 +140,4 @@ type ReferralDashboard = {
 };
 declare function getReferralDashboard(env: TalismanEnv, accountId: string): Promise<ReferralDashboard>;
 
-export { REFERRAL_COOKIE, REFERRAL_COOKIE_MAX_AGE, REFERRAL_HOLD_DAYS, REFERRAL_MAX_PER_PERIOD, REFERRAL_MIN_ORDER_CENTS, REFERRAL_PERIOD_DAYS, REFERRAL_REWARD_CENTS, type ReferralDashboard, type ReferralPolicy, type ReferralReleaseResult, canonicalEmail, findReferralCode, getOrCreateReferralCode, getReferralDashboard, getReferralPolicy, referralNetAmount, referralOrderQualifies, referralPolicy, referralReversalStatements, referralTermsError, releaseReferralAwards, reverseReferralForOrder, validReferralCode };
+export { REFERRAL_COOKIE, REFERRAL_COOKIE_MAX_AGE, REFERRAL_HOLD_DAYS, REFERRAL_MAX_PER_PERIOD, REFERRAL_MIN_ORDER_CENTS, REFERRAL_PERIOD_DAYS, REFERRAL_REWARD_CENTS, type ReferralDashboard, type ReferralPolicy, type ReferralReleaseResult, canonicalEmail, findReferralCode, getOrCreateReferralCode, getReferralDashboard, getReferralPolicy, referralNetAmount, referralOrderQualifies, referralPolicy, referralPolicyFromSaved, referralReversalStatements, referralTermsError, releaseReferralAwards, reverseReferralForOrder, validReferralCode };

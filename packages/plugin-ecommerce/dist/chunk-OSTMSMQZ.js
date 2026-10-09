@@ -1,10 +1,10 @@
 import {
   PURCHASED_ORDER_STATUSES
-} from "./chunk-HYAFBBZB.js";
+} from "./chunk-JHEPRJVB.js";
 import {
   commerceDb,
   runStatements
-} from "./chunk-P3TQBWDQ.js";
+} from "./chunk-HZZSX5TT.js";
 import {
   creditLedger,
   customerAccounts,
@@ -12,7 +12,7 @@ import {
   referralCodes,
   referralSettings,
   referrals
-} from "./chunk-IITGXIBG.js";
+} from "./chunk-3XLIJPB2.js";
 
 // src/referrals.ts
 import { and, desc, eq, sql as sql2 } from "drizzle-orm";
@@ -93,6 +93,9 @@ function referralPolicy(env) {
 async function getReferralPolicy(env) {
   const db = commerceDb(env);
   const saved = await db.select().from(referralSettings).where(eq(referralSettings.id, "default")).get();
+  return referralPolicyFromSaved(env, saved);
+}
+function referralPolicyFromSaved(env, saved) {
   if (!saved) return referralPolicy(env);
   return withTerms({
     switchedOn: saved.enabled,
@@ -297,6 +300,7 @@ export {
   referralTermsError,
   referralPolicy,
   getReferralPolicy,
+  referralPolicyFromSaved,
   referralNetAmount,
   referralOrderQualifies,
   referralReversalStatements,

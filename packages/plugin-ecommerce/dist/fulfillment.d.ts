@@ -84,12 +84,28 @@ declare function listCommerceOrdersAdmin(env: TalismanEnv, options?: {
             variantLabel: string | null;
             sku: string | null;
         }[];
+        activity: {
+            id: string;
+            kind: string;
+            createdAt: string;
+            detail: string;
+            actor: string | null;
+            actorName: string | null;
+            amountCents: number | null;
+            email: {
+                status: string;
+                attempts: number;
+                lastError: string | null;
+                sentAt: string | null;
+                nextAttemptAt: string | null;
+            } | null;
+        }[];
         amounts: OrderAmount[];
         shipments: Shipment[];
         fulfillmentEvents: {
+            orderId: string;
             id: string;
             createdAt: Date;
-            orderId: string;
             adminActor: string;
             note: string;
             kind: "shipment" | "correction" | "reopen" | "complete";

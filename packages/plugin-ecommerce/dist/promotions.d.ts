@@ -154,6 +154,7 @@ declare function evaluateDiscountCode(env: TalismanEnv, input: {
 }>;
 declare function getPromotionsAdmin(env: TalismanEnv): Promise<{
     referral: ReferralPolicy;
+    referralRevision: number | null;
     referralLinks: {
         code: string;
         active: boolean;
@@ -187,6 +188,11 @@ declare function setReferralCodeActive(env: TalismanEnv, code: string, active: b
     code: string;
     active: boolean;
 }>;
+/** A stale administrative form must be reloaded before it can replace a newer save. */
+declare class PromotionConflictError extends Error {
+    readonly name = "PromotionConflictError";
+    constructor();
+}
 declare function saveReferralSettings(env: TalismanEnv, input: unknown): Promise<ReferralPolicy>;
 /** Optional requestKey + actor make a creation recoverable without repeating its financial effects. */
 declare function createDiscountCode(env: TalismanEnv, input: unknown, actor?: string): Promise<{
@@ -208,22 +214,22 @@ declare function createDiscountCode(env: TalismanEnv, input: unknown, actor?: st
     updatedAt: Date;
 } | undefined>;
 declare function updateDiscountCode(env: TalismanEnv, code: string, input: unknown): Promise<{
-    code: string;
+    createdAt: Date;
+    updatedAt: Date;
     description: string | null;
     type: "amount" | "credit" | "percent";
+    active: boolean;
     value: number;
+    expiresAt: Date | null;
+    code: string;
+    minOrderCents: number;
     remainingCents: number | null;
     maxDiscountCents: number | null;
-    minOrderCents: number;
     eligibleProductIds: string[];
     maxUses: number | null;
     maxUsesPerCustomer: number | null;
     firstOrderOnly: boolean;
     startsAt: Date | null;
-    expiresAt: Date | null;
-    active: boolean;
-    createdAt: Date;
-    updatedAt: Date;
-} | undefined>;
+}>;
 
-export { CODE_REFUSAL_MESSAGE, type DiscountCodeInput, DiscountCodeRefusal, type DiscountRefusalReason, codeRefusalBody, createDiscountCode, discountAmountForLines, discountCodeSchema, evaluateDiscountCode, getPromotionsAdmin, referralSettingsSchema, saveReferralSettings, setReferralCodeActive, updateDiscountCode };
+export { CODE_REFUSAL_MESSAGE, type DiscountCodeInput, DiscountCodeRefusal, type DiscountRefusalReason, PromotionConflictError, codeRefusalBody, createDiscountCode, discountAmountForLines, discountCodeSchema, evaluateDiscountCode, getPromotionsAdmin, referralSettingsSchema, saveReferralSettings, setReferralCodeActive, updateDiscountCode };

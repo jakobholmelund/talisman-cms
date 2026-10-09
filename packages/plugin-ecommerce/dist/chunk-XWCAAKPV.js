@@ -1,18 +1,19 @@
 import {
   INVENTORY_COLUMNS,
   fullRefundStatements
-} from "./chunk-737MTCCE.js";
+} from "./chunk-VFNKIRVX.js";
 import {
   evaluateDiscountCode
-} from "./chunk-6DICT5V4.js";
+} from "./chunk-XXEE54YQ.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
 import {
+  adminActorNames,
   deliverCommerceEmail,
   deliverPendingCommerceEmails,
   fulfillCommerceOrder
-} from "./chunk-QQAERUXI.js";
+} from "./chunk-AGIIDIRO.js";
 import {
   RECONCILE_FAILURE_MESSAGES,
   RECONCILE_TABLES,
@@ -45,7 +46,7 @@ import {
   recordGiftCardPurchaseRefund,
   sessionLookupFailure,
   uncheckedSessionRefusal
-} from "./chunk-HZYMV637.js";
+} from "./chunk-K7KINC5L.js";
 import {
   canonicalEmail,
   canonicalEmails,
@@ -55,7 +56,7 @@ import {
   hasCanonicalPurchase,
   referralReversalStatements,
   releaseReferralAwards
-} from "./chunk-IYLXVBBY.js";
+} from "./chunk-OSTMSMQZ.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
@@ -64,7 +65,7 @@ import {
   PURCHASED_ORDER_STATUSES,
   claimInterval,
   hasPurchaseHistory
-} from "./chunk-HYAFBBZB.js";
+} from "./chunk-JHEPRJVB.js";
 import {
   batchGroups,
   chunked,
@@ -72,7 +73,7 @@ import {
   commitBatch,
   errorText,
   runStatements
-} from "./chunk-P3TQBWDQ.js";
+} from "./chunk-HZZSX5TT.js";
 import {
   carts,
   componentReservations,
@@ -92,7 +93,7 @@ import {
   referralCodes,
   taxReversals,
   taxSyncDecisions
-} from "./chunk-IITGXIBG.js";
+} from "./chunk-3XLIJPB2.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
@@ -2204,7 +2205,7 @@ async function purgeStaleCommerceData(options) {
 
 // src/reconcile-review.ts
 import { z as z3 } from "zod";
-import { and as and6, eq as eq8, sql as sql8 } from "drizzle-orm";
+import { and as and6, desc, eq as eq8, sql as sql8 } from "drizzle-orm";
 var ReconcileInputError = class extends Error {
   name = "ReconcileInputError";
 };
@@ -2249,9 +2250,39 @@ async function listParkedCommerce(env) {
     db.get(sql8`SELECT (SELECT COUNT(*) FROM _ecommerce_orders WHERE ${parked(orders)})
       + (SELECT COUNT(*) FROM _ecommerce_gift_card_purchases WHERE ${parked(giftCardPurchases)}) AS count`)
   ]);
+  const [paymentHistory, taxHistory] = await db.batch([
+    db.select().from(reconcileDecisions).orderBy(desc(reconcileDecisions.createdAt), desc(reconcileDecisions.id)).limit(50),
+    db.select().from(taxSyncDecisions).orderBy(desc(taxSyncDecisions.createdAt), desc(taxSyncDecisions.id)).limit(50)
+  ]);
+  const names = await adminActorNames(env, [...paymentHistory.map((row) => row.adminActor), ...taxHistory.map((row) => row.actor)]);
+  const history = [
+    ...paymentHistory.map((row) => ({
+      id: row.id,
+      kind: row.orderId ? "order" : "gift_card_purchase",
+      subjectId: row.orderId ?? row.purchaseId,
+      action: row.action,
+      reason: row.reason,
+      actor: row.adminActor,
+      actorName: names.get(row.adminActor) ?? row.adminActor,
+      paymentReturned: row.paymentReturned,
+      createdAt: row.createdAt.toISOString()
+    })),
+    ...taxHistory.map((row) => ({
+      id: row.id,
+      kind: row.reversalId ? "tax_reversal" : "tax_transaction",
+      subjectId: row.reversalId ?? row.orderId,
+      action: row.action,
+      reason: row.reason,
+      actor: row.actor,
+      actorName: names.get(row.actor) ?? row.actor,
+      paymentReturned: null,
+      createdAt: row.createdAt.toISOString()
+    }))
+  ].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)).slice(0, 50);
   const storeMode = runtimeStripeMode(env);
   return {
     storeMode,
+    history,
     tax: await listTaxSyncReview(env),
     parkedCount: Number(counted?.count ?? 0),
     parked: rows.map((row) => {

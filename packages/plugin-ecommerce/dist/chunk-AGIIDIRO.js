@@ -11,18 +11,21 @@ import {
   sendCommerceEmailNow,
   unclaimedAt,
   waitingEmailsResult
-} from "./chunk-HZYMV637.js";
+} from "./chunk-K7KINC5L.js";
 import {
   batchGroups,
   chunked,
   commerceDb,
   errorText
-} from "./chunk-P3TQBWDQ.js";
+} from "./chunk-HZZSX5TT.js";
 import {
+  creditLedger,
   emailDeliveries,
   fulfillments,
-  orders
-} from "./chunk-IITGXIBG.js";
+  giftCardLedger,
+  orders,
+  restocks
+} from "./chunk-3XLIJPB2.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
@@ -31,8 +34,79 @@ import {
   shipmentEmail
 } from "./chunk-NMGICNSV.js";
 
+// src/order-activity.ts
+import { and, eq, inArray as inArray2 } from "drizzle-orm";
+
+// src/admin-actors.ts
+import { inArray } from "drizzle-orm";
+import { user } from "talisman-cms/auth/local-schema";
+async function adminActorNames(env, actorIds) {
+  const db = commerceDb(env);
+  const { users } = await batchGroups(db, { users: chunked([...new Set(actorIds)]).map((ids) => db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, ids))) });
+  return new Map(users.map((row) => [row.id, row.name?.trim() || row.id]));
+}
+
+// src/order-activity.ts
+async function loadOrderActivity(env, orderIds) {
+  const db = commerceDb(env);
+  const groups = chunked(orderIds);
+  const { stock, gift, credit, parcels, confirmations } = await batchGroups(db, {
+    stock: groups.map((ids) => db.select().from(restocks).where(inArray2(restocks.orderId, ids))),
+    gift: groups.map((ids) => db.select().from(giftCardLedger).where(and(inArray2(giftCardLedger.orderId, ids), eq(giftCardLedger.kind, "refund_restore")))),
+    credit: groups.map((ids) => db.select().from(creditLedger).where(and(inArray2(creditLedger.orderId, ids), eq(creditLedger.kind, "purchase_credit_refund")))),
+    parcels: groups.map((ids) => db.select().from(fulfillments).where(inArray2(fulfillments.orderId, ids))),
+    confirmations: groups.map((ids) => db.select().from(emailDeliveries).where(and(inArray2(emailDeliveries.subjectId, ids), eq(emailDeliveries.kind, "order_confirmation"))))
+  });
+  const { notices } = await batchGroups(db, { notices: chunked(parcels.map((row) => row.id)).map((ids) => db.select().from(emailDeliveries).where(and(inArray2(emailDeliveries.subjectId, ids), inArray2(emailDeliveries.kind, ["shipment", "shipment_update"])))) });
+  const names = await adminActorNames(env, [...stock, ...parcels].map((row) => row.adminActor));
+  const parcelOrders = new Map(parcels.map((row) => [row.id, row.orderId]));
+  const activity = /* @__PURE__ */ new Map();
+  function add(orderId, event) {
+    activity.set(orderId, [...activity.get(orderId) ?? [], event]);
+  }
+  const base = (id, kind, createdAt, detail) => ({
+    id,
+    kind,
+    createdAt: createdAt.toISOString(),
+    detail,
+    actor: null,
+    actorName: null,
+    amountCents: null,
+    email: null
+  });
+  for (const row of stock) add(row.orderId, { ...base(
+    row.id,
+    "restock",
+    row.createdAt,
+    `${row.quantity} \xD7 ${row.targetType} ${row.targetId}: ${row.reason}`
+  ), actor: row.adminActor, actorName: names.get(row.adminActor) ?? row.adminActor });
+  for (const row of parcels) add(row.orderId, { ...base(
+    row.id,
+    row.kind,
+    row.createdAt,
+    [row.note, row.carrier, row.trackingNumber].filter(Boolean).join(" \xB7 ")
+  ), actor: row.adminActor, actorName: names.get(row.adminActor) ?? row.adminActor });
+  for (const row of gift) if (row.orderId) add(row.orderId, { ...base(row.id, "gift_card_refund", row.createdAt, `Returned to gift card ${row.cardId}`), amountCents: row.amountCents });
+  for (const row of credit) add(row.orderId, { ...base(row.id, "store_credit_refund", row.createdAt, "Returned to shopper store credit"), amountCents: row.amountCents });
+  for (const row of [...confirmations, ...notices]) {
+    const orderId = row.kind === "order_confirmation" ? row.subjectId : parcelOrders.get(row.subjectId);
+    if (orderId) add(orderId, {
+      ...base(row.id, "email", row.createdAt, row.kind.replaceAll("_", " ")),
+      email: {
+        status: row.status,
+        attempts: row.attempts,
+        lastError: row.lastError,
+        sentAt: row.sentAt?.toISOString() ?? null,
+        nextAttemptAt: row.status === "pending" ? row.nextAttemptAt.toISOString() : null
+      }
+    });
+  }
+  for (const events of activity.values()) events.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  return activity;
+}
+
 // src/fulfillment.ts
-import { and as and2, asc, count, desc, eq as eq2, sql as sql2 } from "drizzle-orm";
+import { and as and3, asc, count, desc, eq as eq3, sql as sql2 } from "drizzle-orm";
 import { z } from "zod";
 
 // src/order-items.ts
@@ -109,10 +183,10 @@ async function describeOrderItems(env, items) {
 }
 
 // src/commerce-emails.ts
-import { and, eq, inArray, lt, lte, sql } from "drizzle-orm";
+import { and as and2, eq as eq2, inArray as inArray3, lt, lte, sql } from "drizzle-orm";
 var at = (seconds) => new Date(seconds * 1e3);
 var storedItems = (items) => Array.isArray(items) ? items.filter((item) => typeof item?.productId === "string") : [];
-var orderOfFulfillment = (db, fulfillmentId) => db.select({ orderId: fulfillments.orderId }).from(fulfillments).where(eq(fulfillments.id, fulfillmentId));
+var orderOfFulfillment = (db, fulfillmentId) => db.select({ orderId: fulfillments.orderId }).from(fulfillments).where(eq2(fulfillments.id, fulfillmentId));
 var BUYER_AMOUNT_LABELS = {
   charged: "Amount charged",
   providerRefunded: "Refunded to your payment method",
@@ -130,7 +204,7 @@ var composeOrderConfirmation = async (env, orderId, setup) => {
     shippingAddress: orders.shippingAddress,
     ...orderAmountColumns,
     createdAt: orders.createdAt
-  }).from(orders).where(eq(orders.id, orderId)).get();
+  }).from(orders).where(eq2(orders.id, orderId)).get();
   if (!order || (order.paymentProvider ?? "stripe") === "admin_test") return { cancel: "not_found" };
   if (!CONFIRMABLE_STATUSES.includes(order.status)) return { cancel: "not_due" };
   const to = bareEmailAddress(order.customerEmail);
@@ -171,7 +245,7 @@ function shipmentComposer(update) {
       carrier: fulfillments.carrier,
       trackingNumber: fulfillments.trackingNumber,
       createdAt: fulfillments.createdAt
-    }).from(fulfillments).where(eq(fulfillments.orderId, orderOfFulfillment(db, fulfillmentId))).orderBy(sql`rowid`);
+    }).from(fulfillments).where(eq2(fulfillments.orderId, orderOfFulfillment(db, fulfillmentId))).orderBy(sql`rowid`);
     const subject = rows.find((row) => row.id === fulfillmentId);
     const shipmentId = update ? subject?.correctsId : subject?.id;
     const index = rows.findIndex((row) => row.id === shipmentId && row.kind === "shipment");
@@ -183,7 +257,7 @@ function shipmentComposer(update) {
       customerEmail: orders.customerEmail,
       paymentProvider: orders.paymentProvider,
       createdAt: orders.createdAt
-    }).from(orders).where(eq(orders.id, shipment.orderId)).get();
+    }).from(orders).where(eq2(orders.id, shipment.orderId)).get();
     if (!order || (order.paymentProvider ?? "stripe") === "admin_test") return { cancel: "not_found" };
     const to = bareEmailAddress(order.customerEmail);
     if (!to) return { fail: "invalid_recipient" };
@@ -220,12 +294,12 @@ async function deliverPendingCommerceEmails(options, { limit = 10, now: givenNow
   const results = [];
   const db = commerceDb(env);
   const pending = sql`${emailDeliveries.status} = 'pending'`;
-  const oldest = db.select({ id: emailDeliveries.id }).from(emailDeliveries).where(and(pending, lt(emailDeliveries.createdAt, at(now - COMMERCE_EMAIL_MAX_AGE_SECONDS)), unclaimedAt(now))).orderBy(emailDeliveries.createdAt).limit(count2);
-  const expired = await db.update(emailDeliveries).set({ status: "failed", lastError: "expired", claimedAt: null }).where(inArray(emailDeliveries.id, oldest)).returning({ kind: emailDeliveries.kind, subjectId: emailDeliveries.subjectId });
+  const oldest = db.select({ id: emailDeliveries.id }).from(emailDeliveries).where(and2(pending, lt(emailDeliveries.createdAt, at(now - COMMERCE_EMAIL_MAX_AGE_SECONDS)), unclaimedAt(now))).orderBy(emailDeliveries.createdAt).limit(count2);
+  const expired = await db.update(emailDeliveries).set({ status: "failed", lastError: "expired", claimedAt: null }).where(inArray3(emailDeliveries.id, oldest)).returning({ kind: emailDeliveries.kind, subjectId: emailDeliveries.subjectId });
   for (const row of expired) {
     results.push({ id: `${row.kind}:${row.subjectId}`, status: "error", error: "Email was not sent within 7 days and was given up" });
   }
-  const due = (kinds2) => db.select({ kind: emailDeliveries.kind, subjectId: emailDeliveries.subjectId }).from(emailDeliveries).where(and(pending, lte(emailDeliveries.nextAttemptAt, at(now)), unclaimedAt(now), sql`+${emailDeliveries.kind} IN ${kinds2}`)).orderBy(emailDeliveries.nextAttemptAt, emailDeliveries.createdAt, sql`${emailDeliveries.kind} <> 'order_confirmation'`, emailDeliveries.id).limit(count2);
+  const due = (kinds2) => db.select({ kind: emailDeliveries.kind, subjectId: emailDeliveries.subjectId }).from(emailDeliveries).where(and2(pending, lte(emailDeliveries.nextAttemptAt, at(now)), unclaimedAt(now), sql`+${emailDeliveries.kind} IN ${kinds2}`)).orderBy(emailDeliveries.nextAttemptAt, emailDeliveries.createdAt, sql`${emailDeliveries.kind} <> 'order_confirmation'`, emailDeliveries.id).limit(count2);
   const setup = await commerceEmailSetup(env);
   const kinds = Object.keys(COMPOSERS);
   const sendable = [];
@@ -363,9 +437,9 @@ async function listCommerceOrdersAdmin(env, options = {}) {
   const view = VIEWS[values.view];
   const conditions = [view.where];
   if (values.query?.includes("@")) {
-    conditions.push(eq2(sql2`lower(${orders.customerEmail})`, values.query.toLowerCase()));
+    conditions.push(eq3(sql2`lower(${orders.customerEmail})`, values.query.toLowerCase()));
   } else if (values.query) {
-    conditions.push(eq2(orders.id, values.query));
+    conditions.push(eq3(orders.id, values.query));
   }
   if (values.cursor) {
     const [createdAt, id] = decodeCursor(values.view, values.cursor);
@@ -375,7 +449,7 @@ async function listCommerceOrdersAdmin(env, options = {}) {
   const db = commerceDb(env);
   const [[counted], found] = await db.batch([
     db.select({ count: count() }).from(orders).where(VIEWS.awaiting.where),
-    db.select(orderColumns).from(orders).where(and2(...conditions)).orderBy(direction(orders.createdAt), direction(orders.id)).limit(values.limit + 1)
+    db.select(orderColumns).from(orders).where(and3(...conditions)).orderBy(direction(orders.createdAt), direction(orders.id)).limit(values.limit + 1)
   ]);
   const rows = found.slice(0, values.limit);
   const storedItems2 = rows.map((row) => Array.isArray(row.items) ? row.items.filter((item) => typeof item?.productId === "string") : []);
@@ -386,6 +460,7 @@ async function listCommerceOrdersAdmin(env, options = {}) {
     where: { orderId: { in: ids }, kind: { in: ["reopen", "complete"] } },
     orderBy: (_row, { sql: sql3 }) => sql3`rowid`
   })) });
+  const activity = await loadOrderActivity(env, rows.map((row) => row.id));
   let offset = 0;
   const orders2 = rows.map((row, index) => {
     const items = described.slice(offset, offset += storedItems2[index].length);
@@ -410,6 +485,7 @@ async function listCommerceOrdersAdmin(env, options = {}) {
         variantLabel: item.variantLabel,
         sku: item.sku
       })),
+      activity: activity.get(row.id) ?? [],
       amounts: orderAmounts(row),
       shipments: shipments.get(row.id) ?? [],
       fulfillmentEvents: events.filter((event) => event.orderId === row.id)
@@ -433,12 +509,12 @@ async function fulfillCommerceOrder(env, actor, input) {
   const requestKey = values.requestKey ?? `legacy_${await hashOrderAccess(JSON.stringify(values))}`;
   const id = `ful_${await hashOrderAccess(`${values.orderId}:${requestKey}`)}`;
   const replay = async () => {
-    const previous2 = await db.select().from(fulfillments).where(eq2(fulfillments.id, id)).get();
+    const previous2 = await db.select().from(fulfillments).where(eq3(fulfillments.id, id)).get();
     if (!previous2) return null;
     if (previous2.kind !== "shipment" || previous2.note !== values.note || previous2.carrier !== values.carrier || previous2.trackingNumber !== values.trackingNumber || previous2.completesOrder !== values.completesOrder) {
       throw new FulfillmentInputError("The shipment request key was already used with other details");
     }
-    const current2 = await db.select({ status: orders.status, fulfillmentStatus: orders.fulfillmentStatus }).from(orders).where(eq2(orders.id, values.orderId)).get();
+    const current2 = await db.select({ status: orders.status, fulfillmentStatus: orders.fulfillmentStatus }).from(orders).where(eq3(orders.id, values.orderId)).get();
     return { fulfillmentId: previous2.id, orderId: values.orderId, ...current2, duplicate: true };
   };
   const previous = await replay();
@@ -447,7 +523,7 @@ async function fulfillCommerceOrder(env, actor, input) {
     status: orders.status,
     fulfillmentStatus: orders.fulfillmentStatus,
     paymentProvider: orders.paymentProvider
-  }).from(orders).where(eq2(orders.id, values.orderId)).get();
+  }).from(orders).where(eq3(orders.id, values.orderId)).get();
   if (!order) throw new Error("Order not found");
   if ((order.paymentProvider ?? "stripe") === "admin_test") throw new Error("Admin test orders cannot be fulfilled");
   if (order.fulfillmentStatus === "fulfilled") throw new Error("Order has already shipped in full");
@@ -475,7 +551,7 @@ async function fulfillCommerceOrder(env, actor, input) {
     throw refusal(cause, "Order is not ready for fulfillment");
   }
   await deliverCommerceEmail(env, "shipment", id);
-  const current = await db.select({ status: orders.status, fulfillmentStatus: orders.fulfillmentStatus }).from(orders).where(eq2(orders.id, values.orderId)).get();
+  const current = await db.select({ status: orders.status, fulfillmentStatus: orders.fulfillmentStatus }).from(orders).where(eq3(orders.id, values.orderId)).get();
   return {
     fulfillmentId: id,
     orderId: values.orderId,
@@ -495,7 +571,7 @@ async function correctCommerceFulfillment(env, actor, input) {
     carrier: fulfillments.carrier,
     trackingNumber: fulfillments.trackingNumber,
     paymentProvider: orders.paymentProvider
-  }).from(fulfillments).innerJoin(orders, eq2(orders.id, fulfillments.orderId)).where(eq2(fulfillments.orderId, db.select({ orderId: fulfillments.orderId }).from(fulfillments).where(eq2(fulfillments.id, values.fulfillmentId)))).orderBy(sql2`${fulfillments}.rowid`);
+  }).from(fulfillments).innerJoin(orders, eq3(orders.id, fulfillments.orderId)).where(eq3(fulfillments.orderId, db.select({ orderId: fulfillments.orderId }).from(fulfillments).where(eq3(fulfillments.id, values.fulfillmentId)))).orderBy(sql2`${fulfillments}.rowid`);
   const shipment = rows.find((row) => row.id === values.fulfillmentId);
   if (!shipment || shipment.kind !== "shipment") throw new Error("Shipment not found");
   if ((shipment.paymentProvider ?? "stripe") === "admin_test") throw new Error("Admin test orders cannot be fulfilled");
@@ -552,7 +628,7 @@ async function adjustCommerceFulfillment(env, actor, input) {
   const db = commerceDb(env);
   const id = `ful_${await hashOrderAccess(`${values.orderId}:${values.requestKey}`)}`;
   const replay = async () => {
-    const row = await db.select().from(fulfillments).where(eq2(fulfillments.id, id)).get();
+    const row = await db.select().from(fulfillments).where(eq3(fulfillments.id, id)).get();
     if (!row) return null;
     if (row.kind !== values.action || row.note !== values.reason) throw new FulfillmentInputError("Request key already used with other details");
     return { fulfillmentId: row.id, orderId: row.orderId, duplicate: true };
@@ -581,6 +657,7 @@ async function adjustCommerceFulfillment(env, actor, input) {
 export {
   deliverCommerceEmail,
   deliverPendingCommerceEmails,
+  adminActorNames,
   ORDERS_PAGE_SIZE,
   ORDERS_PAGE_MAX,
   FulfillmentInputError,
