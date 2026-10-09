@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, type FormEvent } from 'react';
 import { adminRequest, CommerceAdmin, errorText, Feedback, Field, money, Panel, Stat } from './common';
+import OrderRecoveryHistory from './OrderRecoveryHistory';
 import OrderWarehouse from './OrderWarehouse';
 import OrderAdjustments from './OrderAdjustments';
 import ReconcileReview from './ReconcileReview';
@@ -211,6 +212,7 @@ export default function Orders() {
               {event.email.nextAttemptAt && <> · next attempt {when(event.email.nextAttemptAt)}</>}</>}
           </li>)}</ul> : <p className="ecom-admin__muted">No operational activity recorded yet.</p>}
         </details>
+        <OrderRecoveryHistory orderId={order.id}/>
         <h3>Amounts</h3>
         <ul>{order.amounts.map(amount => <li key={amount.key}>{amount.label}: <strong>{money(amount.cents, order.currency)}</strong></li>)}</ul>
         {address && <address>{address.name}<br />{address.line1}<br />{address.line2 && <>{address.line2}<br /></>}{address.city}, {address.state} {address.postalCode}<br />{address.country}</address>}

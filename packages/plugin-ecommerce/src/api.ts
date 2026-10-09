@@ -1,4 +1,4 @@
-import { readCustomerReturns, createCustomerReturn, cancelCustomerReturn, type ReturnOwner } from './return-requests';
+import { readCustomerExchangeChoices, readCustomerReturns, createCustomerReturn, cancelCustomerReturn, type ReturnOwner } from './return-requests';
 import { readOrderTracking } from './order-tracking';
 import { commerceContext, type CommerceApiOptions } from './commerce-context';
 import { checkCartItems, claimCart, findCart, getOrCreateCart, quoteCart, updateCartItems, type CartItemInput } from './basket';
@@ -62,6 +62,7 @@ export function bindCommerceApi(options: CommerceApiOptions) {
       cancel: (id: string, options: CancelOptions = {}) => cancelOrder(ctx, id, options),
     },
     returns: {
+      exchangeChoices:(input:unknown,owner:ReturnOwner={})=>readCustomerExchangeChoices(ctx,input,owner),
       read: (id:string, owner:ReturnOwner={}) => readCustomerReturns(ctx,id,owner),
       request: (input:unknown, owner:ReturnOwner={}) => createCustomerReturn(ctx,input,owner),
       cancel: (input:unknown, owner:ReturnOwner={}) => cancelCustomerReturn(ctx,input,owner),

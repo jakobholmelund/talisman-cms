@@ -1,3 +1,7 @@
+import { listExchangeChoices } from './recoveries';
+import { loadBasketCatalog, requireVariantChoice, resolveSelectedVariant } from './basket';
+import { readStoreCurrency } from './store-settings';
+import type { ReturnExchangePreference } from './schema';
 import { commerceEmailStatement } from './email-deliveries';
 import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -9,14 +13,14 @@ import { describeOrderItems } from './order-items';
 import { hashOrderAccess } from './cookies';
 import { adminActorNames } from './admin-actors';
 import { CommerceOperationsConflict } from './email-recovery';
-import { returnRequests, returnRequestEvents, returnRequestReasons, RETURN_REASON_CODES, REFUND_SOURCE_KINDS, RETURN_REQUEST_STATUSES } from './schema';
+import { returnRequests, returnRequestEvents, returnRequestReasons, returnExchangePreferences, RETURN_REASON_CODES, REFUND_SOURCE_KINDS, RETURN_REQUEST_STATUSES } from './schema';
 import type { CustomerReturns, ReturnRequestReceipt, ReturnDecisionReceipt, AdminReturnRequest, ReturnsQueue } from './return-request-types';
 export type { CustomerReturns } from './return-request-types';
 
 const id = z.string().trim().min(1).max(128), key = id.min(8);
 const items = z.array(z.object({ lineIndex:z.number().int().min(0).max(199), quantity:z.number().int().min(1).max(1000000) }).strict()).min(1).max(50)
   .refine(rows => new Set(rows.map(r=>r.lineIndex)).size === rows.length, 'Choose each line once');
-const createSchema = z.object({ orderId:id, requestKey:key, reason:z.string().trim().min(8).max(1000), reasonCode:z.enum(RETURN_REASON_CODES).default('unspecified'), items }).strict();
+const createSchema = z.object({ orderId:id, requestKey:key, reason:z.string().trim().min(8).max(1000), reasonCode:z.enum(RETURN_REASON_CODES).default('unspecified'), items, exchange:z.object({productId:id,variantId:id.nullable().default(null)}).strict().optional() }).strict().refine(v=>!v.exchange||v.items.length===1,'Request one original item per exchange');
 const decisionSchema = z.object({ requestId:id, requestKey:key, expectedVersion:id, status:z.enum(['approved','declined','closed']),
   reason:z.string().trim().min(8).max(500), customerMessage:z.string().trim().min(8).max(1000) }).strict();
 const cancelSchema = z.object({ orderId:id, requestId:id, requestKey:key, expectedVersion:id }).strict();
@@ -30,7 +34,7 @@ async function owned(ctx:CommerceContext,orderId:string,owner:ReturnOwner) {
 }
 async function requestsForOrder(env:TalismanEnv,orderId:string) {
   return commerceDb(env).query.returnRequests.findMany({where:{orderId},orderBy:{createdAt:'asc'},with:{
-    reasonCategory:true, events:{orderBy:(_t,{sql})=>sql`rowid`},receipts:{with:{receipt:{columns:{items:true,createdAt:true}}}}
+    exchangePreference:true, reasonCategory:true, events:{orderBy:(_t,{sql})=>sql`rowid`},receipts:{with:{receipt:{columns:{items:true,createdAt:true}}}}
   }});
 }
 /** Caller supplies verified credentials, exactly as for private order tracking. */
@@ -53,6 +57,7 @@ export async function readCustomerReturns(ctx:CommerceContext,orderId:string,own
     if(d?.status==='settled')for(const a of d.allocations)sums.set(a.kind,(sums.get(a.kind)??0)+a.amountMinor);
     return {receiptId:r.id,receivedAt:r.createdAt.toISOString(),status:d?.status??'review',amountMinor:d?.amountMinor??0,currency:order.currency,updatedAt:(d?.createdAt??r.createdAt).toISOString(),tenders:[...sums].map(([kind,amountMinor])=>({kind,amountMinor}))};
   }),requests:requests.map(r=>({
+    exchangePreference:r.exchangePreference?{lineIndex:r.exchangePreference.lineIndex,...r.exchangePreference.target}:null,
     id:r.id,reasonCode:r.reasonCategory?.code??'unspecified',status:statusOf(r.events),version:r.events.at(-1)?.id??r.id,reason:r.reason,createdAt:r.createdAt.toISOString(),
     items:r.items.map(i=>({...i,name:lines[i.lineIndex]?.name??'Ordered item',received:receiptQuantity(r,i.lineIndex)})),
     canCancel:['pending','approved'].includes(statusOf(r.events))&&!r.receipts.length,
@@ -60,13 +65,23 @@ export async function readCustomerReturns(ctx:CommerceContext,orderId:string,own
   }))};
 }
 export async function createCustomerReturn(ctx:CommerceContext,input:unknown,owner:ReturnOwner={}):Promise<ReturnRequestReceipt|null> {
-  const v=createSchema.parse(input);if(!await owned(ctx,v.orderId,owner))return null;
+  const v=createSchema.parse(input);const order=await owned(ctx,v.orderId,owner);if(!order)return null;
   const values={...v,items:[...v.items].sort((a,b)=>a.lineIndex-b.lineIndex)};
   const requestId=`rma_${await hashOrderAccess(`${v.orderId}:${v.requestKey}`)}`,hash=await fingerprint(values,'customer');
   const replay=async()=>{const r=await ctx.db.select().from(returnRequests).where(eq(returnRequests.id,requestId)).get();if(!r)return null;if(r.fingerprint!==hash)throw new CommerceOperationsConflict('This return request key was used with different details.');return {requestId,duplicate:true};};
   const previous=await replay();if(previous)return previous;
-  try{await ctx.db.batch([ctx.db.insert(returnRequests).values({id:requestId,orderId:v.orderId,items:values.items,reason:v.reason,fingerprint:hash,createdAt:new Date()}),ctx.db.insert(returnRequestReasons).values({requestId,code:v.reasonCode})]);}
-  catch(error){const previous=await replay();if(previous)return previous;if(!errorText(error).includes('Return request exceeds available shipped goods'))throw error;throw new CommerceOperationsConflict('Return quantities changed or parcel details are unavailable. Refresh before requesting a return.');}
+  let preference:ReturnExchangePreference|undefined;
+  if(v.exchange){
+   if(!['paid','partially_refunded'].includes(order.status)||order.currency!==readStoreCurrency(ctx.env))throw new CommerceOperationsConflict('Exchange requests require a confirmed purchase in the current store currency.');
+   const catalog=await loadBasketCatalog(ctx,[v.exchange]),product=catalog.products.get(v.exchange.productId);
+   if(!product||product.status!=='active'||product.type!=='standard'||!product.isPhysical)throw new CommerceOperationsConflict('Choose an active physical replacement item.');
+   requireVariantChoice(catalog,product,v.exchange.variantId??undefined);const selected=v.exchange.variantId?resolveSelectedVariant(catalog,product,v.exchange.variantId):null,description=(await describeOrderItems(ctx.env,[v.exchange]))[0];
+   preference={productId:product.id,variantId:v.exchange.variantId,name:selected?.name??product.name,sku:description.sku,priceMinor:selected?.price??product.basePrice,currency:order.currency};
+   if(!Number.isSafeInteger(preference.priceMinor)||preference.priceMinor<1||preference.priceMinor>1000000000)throw new CommerceOperationsConflict('Choose a replacement with a valid current price.');
+  }
+  const now=new Date();
+  try{await ctx.db.batch([ctx.db.insert(returnRequests).values({id:requestId,orderId:v.orderId,items:values.items,reason:v.reason,fingerprint:hash,createdAt:now}),ctx.db.insert(returnRequestReasons).values({requestId,code:v.reasonCode}),...(preference?[ctx.db.insert(returnExchangePreferences).values({requestId,lineIndex:v.items[0].lineIndex,target:preference})]:[])]);}
+  catch(error){const previous=await replay();if(previous)return previous;if(!/Return request exceeds available shipped goods|Exchange preference changed/.test(errorText(error)))throw error;throw new CommerceOperationsConflict('Return quantities changed or parcel details are unavailable. Refresh before requesting a return.');}
   return {requestId};
 }
 async function appendDecision(env:TalismanEnv,v:z.output<typeof decisionSchema>|(z.output<typeof cancelSchema>&{status:'cancelled';reason:string;customerMessage:string}),actor:string,actorKind:'staff'|'customer'):Promise<ReturnDecisionReceipt> {
@@ -88,11 +103,11 @@ export async function cancelCustomerReturn(ctx:CommerceContext,input:unknown,own
 }
 export async function readReturnRequestAdmin(env:TalismanEnv,input:unknown):Promise<AdminReturnRequest> {
   const v=z.object({requestId:id}).strict().parse(input),db=commerceDb(env);
-  const request=await db.query.returnRequests.findFirst({where:{id:v.requestId},with:{order:{columns:{id:true,items:true,status:true}},events:{orderBy:(_t,{sql})=>sql`rowid`},receipts:{with:{receipt:{with:{inspections:true}}}}}});
+  const request=await db.query.returnRequests.findFirst({where:{id:v.requestId},with:{exchangePreference:true,order:{columns:{id:true,items:true,status:true}},events:{orderBy:(_t,{sql})=>sql`rowid`},receipts:{with:{receipt:{with:{inspections:true}}}}}});
   if(!request)throw new CommerceOperationsConflict('Return request not found.');
   const names=await adminActorNames(env,request.events.filter(e=>e.actorKind==='staff').map(e=>e.actor));
   const described=await describeOrderItems(env,request.order.items);
-  return {id:request.id,orderId:request.orderId,reason:request.reason,status:statusOf(request.events),version:request.events.at(-1)?.id??request.id,createdAt:request.createdAt.toISOString(),
+  return {exchangePreference:request.exchangePreference?{lineIndex:request.exchangePreference.lineIndex,...request.exchangePreference.target}:null,id:request.id,orderId:request.orderId,reason:request.reason,status:statusOf(request.events),version:request.events.at(-1)?.id??request.id,createdAt:request.createdAt.toISOString(),
     items:request.items.map(i=>({...i,name:[described[i.lineIndex]?.productName||'Ordered item',described[i.lineIndex]?.variantLabel].filter(Boolean).join(' / '),
       restockMapped:!!request.order.items[i.lineIndex]?.stockTargets?.length,
       received:request.receipts.reduce((n,l)=>n+(l.receipt.items.find(j=>j.lineIndex===i.lineIndex)?.quantity??0),0)})),
@@ -116,4 +131,13 @@ export async function listReturnsQueue(env:TalismanEnv,input:unknown={}):Promise
   const where=sql`${filter} AND (${v.orderId}='' OR orderId=${v.orderId})`,db=commerceDb(env);
   const [rows,total]=await db.batch([db.all<{kind:'request'|'inspection';id:string;orderId:string;status:string;createdAt:number;reason:string;pendingUnits:number}>(sql`${queue} SELECT * FROM queue WHERE ${where} ORDER BY createdAt,id LIMIT 50 OFFSET ${v.offset}`),db.all<{n:number}>(sql`${queue} SELECT count(*) n FROM queue WHERE ${where}`)]);
   return {...v,total:total[0]?.n??0,rows:rows.map(r=>({...r,createdAt:new Date(r.createdAt*1000).toISOString()}))};
+}
+
+/** Catalog preferences stay private to the verified order owner and never promise stock. */
+export async function readCustomerExchangeChoices(ctx:CommerceContext,input:unknown,owner:ReturnOwner={}){
+ const v=z.object({orderId:id,lineIndex:z.number().int().min(0).max(199),search:z.string().trim().max(100).default(''),offset:z.number().int().min(0).max(1000000).default(0)}).strict().parse(input);
+ const returns=await readCustomerReturns(ctx,v.orderId,owner);if(!returns)return null;
+ if(!returns.lines.some(l=>l.lineIndex===v.lineIndex&&l.available>0))throw new CommerceOperationsConflict('No received quantities are available for this exchange request.');
+ const choices=await listExchangeChoices(ctx.env,{...v,allowPriceDifference:true});
+ return {rows:choices.rows,total:choices.total,offset:choices.offset,currency:choices.currency,originalUnitPrice:choices.price};
 }

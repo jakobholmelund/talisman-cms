@@ -10,6 +10,15 @@ const {orderId}=Astro.props;
   <div data-refund-history aria-label="Return refunds"></div>
   <form data-return-form aria-label="Request a return" hidden>
     <div data-return-lines></div>
+    <label>Requested outcome<select aria-label="Requested outcome" data-return-intent><option value="return">Return</option><option value="exchange">Exchange</option></select></label>
+    <section data-exchange-picker hidden aria-label="Preferred replacement">
+      <p>Choose a quantity for one original item, then find a preferred replacement. Catalog prices are indicative. Staff approval, inspection, available stock and any agreed payment or refund are required before dispatch.</p>
+      <label>Replacement search<input aria-label="Replacement search" data-exchange-search maxlength="100"/></label>
+      <button type="button" data-exchange-find>Find replacement options</button>
+      <div data-exchange-options></div><p data-exchange-choice aria-live="polite"></p>
+      <button type="button" data-exchange-previous>Previous replacement options</button>
+      <button type="button" data-exchange-next>Next replacement options</button>
+    </section>
     <label>Return category<select aria-label="Return category" name="reasonCode"><option value="other">Other reason</option><option value="size_fit">Size or fit</option><option value="damaged">Damaged item</option><option value="wrong_item">Wrong item</option><option value="changed_mind">Changed my mind</option></select></label>
     <label>Reason for your return<textarea name="reason" minlength="8" maxlength="1000" required></textarea></label>
     <button type="submit">Submit return request</button>
@@ -29,6 +38,7 @@ const {orderId}=Astro.props;
   .talisman-customer-returns label{display:flex;flex-direction:column;gap:.5rem;margin:1rem 0}
   .talisman-customer-returns input,.talisman-customer-returns textarea{font:inherit;padding:.5rem;border:1px solid #aaa;border-radius:.3rem;color:inherit;background:transparent;min-width:0;max-width:100%}
   .talisman-customer-returns input{width:6rem}.talisman-customer-returns select{font:inherit;padding:.5rem;border:1px solid #aaa;border-radius:.3rem;color:inherit;background:transparent;max-width:100%}.talisman-customer-returns textarea{width:100%;min-height:6rem}
+  .talisman-customer-returns [data-exchange-search]{width:100%}
   .talisman-customer-returns button{font:inherit;padding:.6rem .8rem;border:1px solid currentColor;border-radius:.5rem;margin:.25rem .25rem .25rem 0;background:transparent;cursor:pointer}
   .talisman-customer-returns button:disabled{opacity:.6;cursor:wait}
 </style>

@@ -1,3 +1,4 @@
+import { readOrderRecoveryHistory } from '../recovery-journal';
 import type { APIRoute } from 'astro';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
@@ -41,6 +42,7 @@ export const ALL: APIRoute = async ({ request }) => {
     try { body = z.object({action:z.string().optional(),data:z.unknown().optional()}).strict().parse(await readBoundedJson(request)); } catch { return Response.json({ error: 'Invalid request' }, { status: 400, headers }); }
     const actor = String(authorization.user?.id ?? '');
     if (body?.action === 'export') { const result = await exportCommerceOperations(runtimeEnv, body.data); return new Response(result.csv, { headers: { ...headers, 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${result.filename}"`, 'X-Content-Type-Options': 'nosniff', 'X-Export-Rows': String(result.rows) } }); }
+    if(body?.action==='orderRecoveryHistory')return Response.json(await readOrderRecoveryHistory(runtimeEnv,body.data),{headers});
     if (body?.action === 'recoveryRead') return Response.json(await readRecoveryCase(runtimeEnv, body.data), { headers });
     if (body?.action === 'recoveryOrderRead') return Response.json(await readRecoveryOrder(runtimeEnv, body.data), { headers });
     if (body?.action === 'exchangeChoices') return Response.json(await listExchangeChoices(runtimeEnv, body.data), { headers });

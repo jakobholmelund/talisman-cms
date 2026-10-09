@@ -173,3 +173,36 @@ test('shopper privacy export includes their return messages; open work blocks er
  // A caller authenticated immediately before erasure cannot reopen work after its audit commits.
  await assert.rejects(api.returns.request(request(1),{customerId:'buyer'}),/quantities changed/);assert.equal(count(s,'_ecommerce_return_requests'),1);s.close();
 });
+
+const preference=(extra={})=>request(1,{exchange:{productId:'case',variantId:null},...extra});
+test('a catalog preference is private, immutable and atomically attached without reserving stock or promising an exchange',async()=>{
+ const {sqlite:s,api,owner,env}=await setup();const input=preference();const before=qty(s);
+ assert.equal(await api.returns.exchangeChoices({orderId:ORDER,lineIndex:0},{}),null);
+ const choices=await api.returns.exchangeChoices({orderId:ORDER,lineIndex:0},owner);assert.ok(choices.rows.some(r=>r.productId==='case'));assert.doesNotMatch(JSON.stringify(choices),/stockTargets|customer_email|fingerprint/);
+ const r=await api.returns.request(input,owner);assert.equal((await api.returns.request(input,owner)).duplicate,true);assert.equal(count(s,'_ecommerce_return_exchange_preferences'),1);assert.equal(qty(s),before);assert.equal(count(s,'_ecommerce_recovery_cases'),0);
+ const customer=(await api.returns.read(ORDER,owner)).requests[0],staff=await readReturnRequestAdmin(env,{requestId:r.requestId});assert.equal(customer.exchangePreference.productId,'case');assert.equal(staff.exchangePreference.priceMinor,1000);assert.equal(staff.status,'pending');
+ assert.throws(()=>s.exec("UPDATE _ecommerce_return_exchange_preferences SET line_index=1"),/immutable/);
+ s.exec("UPDATE _ecommerce_products SET status='archived' WHERE id='case'");assert.equal((await api.returns.request(input,owner)).duplicate,true);await assert.rejects(api.returns.request({...input,exchange:{productId:'other'}},owner),/different details/);s.close();
+});
+test('invalid or changed catalog preferences roll back the whole request, and competing exchanges share the original quantity cap',async()=>{
+ const {sqlite:s,api,owner,DB}=await setup();await assert.rejects(api.returns.request(preference({exchange:{productId:'missing'}}),owner),/active physical/);assert.equal(count(s,'_ecommerce_return_requests'),0);
+ s.exec("UPDATE _ecommerce_products SET base_price=0 WHERE id='case'");assert.ok(!(await api.returns.exchangeChoices({orderId:ORDER,lineIndex:0},owner)).rows.some(r=>r.productId==='case'));await assert.rejects(api.returns.request(preference(),owner),/valid current price/);assert.equal(count(s,'_ecommerce_return_requests'),0);s.exec("UPDATE _ecommerce_products SET base_price=1000 WHERE id='case'");
+ const prepare=DB.prepare;let race=true;DB.prepare=function(sql){if(race&&/insert into "_ecommerce_return_exchange_preferences"/i.test(sql)){race=false;s.exec("UPDATE _ecommerce_products SET base_price=1200 WHERE id='case'");}return prepare.call(this,sql);};
+ await assert.rejects(api.returns.request(preference(),owner),/quantities changed/);assert.equal(count(s,'_ecommerce_return_requests'),0);assert.equal(count(s,'_ecommerce_return_request_reasons'),0);assert.equal(count(s,'_ecommerce_return_exchange_preferences'),0);DB.prepare=prepare;
+ const outcomes=await Promise.allSettled([api.returns.request(preference({items:[{lineIndex:0,quantity:3}]}),owner),api.returns.request(preference({items:[{lineIndex:0,quantity:3}]}),owner)]);assert.equal(outcomes.filter(r=>r.status==='fulfilled').length,1);assert.equal(count(s,'_ecommerce_return_exchange_preferences'),1);s.close();
+});
+test('exchange choice pagination and original ownership hold across catalog pages and request creation',async()=>{
+ const {sqlite:s,api,owner,env,recorded}=await setup();const insert=s.prepare("INSERT INTO _ecommerce_products(id,name,slug,base_price,inventory_quantity,is_physical,status,created_at,updated_at) VALUES (?, ?, ?, 1300,0,1,'active',1,1)");for(let n=0;n<55;n++)insert.run('alt-'+n,'Alternative '+String(n).padStart(2,'0'),'alt-'+n);
+ const one=await api.returns.exchangeChoices({orderId:ORDER,lineIndex:0,search:'Alternative'},owner),two=await api.returns.exchangeChoices({orderId:ORDER,lineIndex:0,search:'Alternative',offset:50},owner);assert.equal(one.total,55);assert.equal(one.rows.length,50);assert.equal(two.rows.length,5);assert.equal((await api.returns.exchangeChoices({orderId:ORDER,lineIndex:0,search:'Alternative_'},owner)).total,0);
+ const r=await api.returns.request(preference({exchange:{productId:two.rows[0].productId}}),owner);const approved=await decideReturnRequest(env,decision(r),'staff');assert.equal((await api.returns.read(ORDER,owner)).requests[0].exchangePreference.priceMinor,1300);assert.equal(count(s,'_ecommerce_recovery_shipments'),0);assert.equal(qty(s),10);assert.ok(recorded.every(([,params])=>params.length<=100));
+ await api.returns.cancel({orderId:ORDER,requestId:r.requestId,expectedVersion:approved.eventId,requestKey:crypto.randomUUID()},owner);assert.equal((await api.returns.read(ORDER,owner)).requests[0].canCancel,false);s.close();
+});
+test('customer preference lookup uses same-origin uncached ownership and rejects unrelated fields',async()=>{
+ const {sqlite:s,env,owner}=await setup();globalThis.workerEnv=env;const send=(cookies,origin='https://store.test',data={orderId:ORDER,lineIndex:0})=>customerRoute({request:new Request('https://store.test/api/ecommerce/returns',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({action:'exchangeChoices',data})}),cookies});const cookies={get(name){return name===`talisman-order-${ORDER}`?{value:owner.orderAccessToken}:undefined;}};
+ assert.equal((await send({get(){}})).status,404);assert.equal((await send(cookies,'https://other.test')).status,403);assert.equal((await send(cookies,'https://store.test',{orderId:ORDER,lineIndex:0,private:true})).status,400);const response=await send(cookies);assert.equal(response.status,200);assert.match(response.headers.get('cache-control'),/no-store/);delete globalThis.workerEnv;s.close();
+});
+test('shopper export includes the preference, and closed requests erase private reasons without losing catalog history',async()=>{
+ const {sqlite:s,env,api}=await setup();s.exec("INSERT INTO _ecommerce_customer_accounts(id,email,email_normalized,created_at,updated_at) VALUES('buyer','buyer@example.test','buyer@example.test',1,1)");s.prepare('UPDATE _ecommerce_orders SET user_id=? WHERE id=?').run('buyer',ORDER);const r=await api.returns.request(preference(),{customerId:'buyer'});
+ const exported=await manageShopperData(env,'staff',{accountId:'buyer',action:'export',reason:'Customer requested their stored data'});assert.equal(exported.orders[0].operations.returnRequests[0].exchangePreference.target.productId,'case');assert.doesNotMatch(JSON.stringify(exported.orders[0].operations.returnRequests),/fingerprint|Internal approval/);
+ const event=await decideReturnRequest(env,decision(r),'staff');await decideReturnRequest(env,decision(r,{status:'closed',expectedVersion:event.eventId}),'staff');await manageShopperData(env,'staff',{accountId:'buyer',action:'anonymize',reason:'Customer requested data removal'});assert.equal(s.prepare('SELECT reason FROM _ecommerce_return_requests').get().reason,'[redacted]');assert.equal(count(s,'_ecommerce_return_exchange_preferences'),1);s.close();
+});

@@ -1,6 +1,6 @@
 import React,{useCallback,useEffect,useRef,useState} from 'react';
 import type {listReturnsQueue,readReturnRequestAdmin,readOrderWarehouse} from '@talisman-cms/plugin-ecommerce/operations';
-import {CommerceAdmin,Panel,Field,adminRequest,errorText} from './common';
+import {CommerceAdmin,Panel,Field,money,adminRequest,errorText} from './common';
 import {useOperationsRead,OperationsReadStatus,OperationsPagination,dateTime} from './operations-common';
 import {useWarehouseWrite} from './warehouse-write';
 import ReturnInspection from './ReturnInspection';
@@ -23,7 +23,7 @@ function RequestDetail({requestId,refreshQueue,dirtyChanged}:{requestId:string;r
   const r=read.snapshot,locked=write.busy||!!write.pending||read.loading||!!read.error||write.needsReload;
   const reset=()=>{setReason('');setMessage('');setConditions({});setRestock({});form.current?.reset();write.setDirty(false);};
   return <section aria-label={`Return request ${requestId}`} onChange={()=>write.setDirty(true)}>{write.feedback}<OperationsReadStatus loading={read.loading} error={read.error} reload={()=>void read.load()}/>
-    {r&&<><p>Order {r.orderId} · {r.status} · Requested {dateTime(r.createdAt)}</p><p>Customer reason: {r.reason}</p><ul>{r.items.map(i=><li key={i.lineIndex}>{i.quantity} × {i.name} · {i.received} received</li>)}</ul>
+    {r&&<><p>Order {r.orderId} · {r.status} · Requested {dateTime(r.createdAt)}</p><p>Customer reason: {r.reason}</p>{r.exchangePreference&&<section aria-label="Requested exchange"><h3>Requested exchange</h3><p>Preferred replacement: {r.exchangePreference.name}{r.exchangePreference.sku?` · ${r.exchangePreference.sku}`:''} · Indicative unit price {money(r.exchangePreference.priceMinor,r.exchangePreference.currency)}</p><p>Approval provides return instructions. It does not reserve the preference or agree a final price. After intake and inspection, arrange the exchange in Parcel problems and exchanges using the linked receipt; review current catalog stock and any price difference with the customer.</p>{r.receipts.map(x=><p key={x.receiptId}>Exchange intake receipt: {x.receiptId}</p>)}</section>}<ul>{r.items.map(i=><li key={i.lineIndex}>{i.quantity} × {i.name} · {i.received} received</li>)}</ul>
       <details><summary>Decision history</summary><ul>{r.events.map(e=><li key={e.id}>{dateTime(e.createdAt)} · {e.actorName} · {e.status} · Staff reason: {e.reason}<p>Customer message: {e.customerMessage}</p></li>)}</ul></details>
       {['pending','approved'].includes(r.status)&&<form aria-label="Return decision" onSubmit={e=>{e.preventDefault();if(write.blocked()||read.unavailable.current)return;void write.send({path:'operations',body:{action:'returnDecision',data:{requestId,requestKey:crypto.randomUUID(),expectedVersion:r.version,status,reason:reason.trim(),customerMessage:message.trim()}},receipt:'eventId',success:'Return decision recorded. The customer can read your message on their order page.'},reset);}}>
         <Field label="Return decision"><select aria-label="Return decision" value={status} disabled={locked} onChange={e=>setStatus(e.target.value)}>{r.status==='pending'?<><option value="approved">Approve return</option><option value="declined">Decline return</option></>:<option value="closed">Close request</option>}</select></Field>

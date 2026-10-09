@@ -1,10 +1,11 @@
+import { recoveryKindOrder, recoveryJournal, type RecoveryJournalRow } from './recovery-journal';
 import { and, asc, eq, gte, lt, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb } from './db';
 import { orders } from './schema';
 const day=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(s=>Number.isFinite(Date.parse(`${s}T00:00:00Z`))&&new Date(`${s}T00:00:00Z`).toISOString().slice(0,10)===s,'Use a valid calendar date');
-const options=z.object({kind:z.enum(['orders','returns','stock']),from:day,to:day,orderId:z.string().trim().max(128).default(''),status:z.enum(['all','draft','pending','paid','fulfilled','cancelled','partially_refunded','refunded','disputed']).default('all'),targetType:z.enum(['all','product','variant','stock','component']).default('all'),targetId:z.string().trim().max(128).default('')}).strict()
+const options=z.object({kind:z.enum(['orders','returns','stock','recoveries']),from:day,to:day,orderId:z.string().trim().max(128).default(''),status:z.enum(['all','draft','pending','paid','fulfilled','cancelled','partially_refunded','refunded','disputed']).default('all'),targetType:z.enum(['all','product','variant','stock','component']).default('all'),targetId:z.string().trim().max(128).default('')}).strict()
   .refine(v=>v.to>=v.from&&Date.parse(`${v.to}T00:00:00Z`)-Date.parse(`${v.from}T00:00:00Z`)<366*86400000,'Choose at most 366 UTC days')
   .refine(v=>(v.kind==='orders'||v.status==='all')&&(v.kind==='stock'||(v.targetType==='all'&&!v.targetId))&&(!v.targetId||v.targetType!=='all'),'Filters do not match the selected export');
 export class OperationsExportLimit extends Error {}
@@ -31,6 +32,9 @@ export async function exportCommerceOperations(env:TalismanEnv,input:unknown) {
       .from(orders).where(and(gte(orders.createdAt,new Date(from*1000)),lt(orders.createdAt,new Date(to*1000)),
         sql`COALESCE(${orders.paymentProvider},'stripe')<>'admin_test'`,v.orderId?eq(orders.id,v.orderId):undefined,
         v.status==='all'?undefined:eq(orders.status,v.status))).orderBy(asc(orders.createdAt),asc(orders.id)).limit(1001).all();
+  } else if(v.kind==='recoveries'){
+    columns=['record_id', 'kind', 'order_id', 'case_id', 'request_id', 'shipment_id', 'receipt_id', 'verification_id', 'created_at_utc', 'target_name', 'target_sku', 'currency', 'quantity', 'adjustment_minor', 'amount_minor', 'disposition', 'restock', 'carrier', 'tracking_number', 'recorded_status', 'actor', 'reason'];
+    rows=await db.all<RecoveryJournalRow&Record<string,Cell>>(sql`${recoveryJournal(sql`(${v.orderId}='' OR c.order_id=${v.orderId})`,sql`(${v.orderId}='' OR r.order_id=${v.orderId})`)} SELECT * FROM journal WHERE created_at_utc>=${from} AND created_at_utc<${to} ORDER BY created_at_utc,${recoveryKindOrder(sql`kind`)},record_id LIMIT 1001`);
   } else if(v.kind==='returns') {
     columns=['receipt_id','request_id','order_id','created_at_utc','line_index','quantity','condition','restock_selected','awaiting_inspection','actor','reason'];
     rows=await db.all<Record<string,Cell>>(sql`SELECT r.id AS receipt_id,l.request_id,r.order_id,r.created_at AS created_at_utc,json_extract(i.value,'$.lineIndex') AS line_index,json_extract(i.value,'$.quantity') AS quantity,json_extract(i.value,'$.condition') AS condition,json_extract(i.value,'$.restock') AS restock_selected,
@@ -46,7 +50,7 @@ export async function exportCommerceOperations(env:TalismanEnv,input:unknown) {
     const restored=sql`SELECT s.id AS movement_id,r.created_at AS created_at_utc,'return' AS kind,s.target_type,s.target_id,s.quantity AS delta,NULL AS before_quantity,NULL AS after_quantity,s.order_id,r.actor,r.reason FROM _ecommerce_return_stock s JOIN _ecommerce_return_receipts r ON r.id=s.receipt_id
       UNION ALL SELECT s.id,r.created_at,'inspection',s.target_type,s.target_id,s.quantity,NULL,NULL,s.order_id,r.actor,r.reason FROM _ecommerce_inspection_stock s JOIN _ecommerce_return_inspections r ON r.id=s.inspection_id`;
     rows=await db.all<Record<string,Cell>>(sql`WITH inventory AS (${inventory}),component AS (${component}),restored AS (${restored}),events AS (
-      SELECT id AS movement_id,created_at AS created_at_utc,kind,target_type,target_id,delta,before_quantity,after_quantity,NULL AS order_id,actor,reason FROM _ecommerce_stock_movements
+      SELECT m.id AS movement_id,m.created_at AS created_at_utc,m.kind,m.target_type,m.target_id,m.delta,m.before_quantity,m.after_quantity,COALESCE((SELECT c.order_id FROM _ecommerce_recovery_shipments s JOIN _ecommerce_recovery_cases c ON c.id=s.case_id,json_each(s.stock) t WHERE m.id=s.id||'_'||t.key),(SELECT c.order_id FROM _ecommerce_recovery_inspections i JOIN _ecommerce_recovery_receipts r ON r.id=i.receipt_id JOIN _ecommerce_recovery_shipments s ON s.id=r.shipment_id JOIN _ecommerce_recovery_cases c ON c.id=s.case_id,json_each(i.stock) t WHERE m.id=i.id||'_'||t.key)) AS order_id,m.actor,m.reason FROM _ecommerce_stock_movements m
       UNION ALL SELECT * FROM restored
       UNION ALL SELECT id,created_at,'restock',target_type,target_id,quantity,NULL,NULL,order_id,admin_actor,reason FROM _ecommerce_restocks
       UNION ALL SELECT * FROM inventory UNION ALL SELECT * FROM component)

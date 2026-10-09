@@ -1072,6 +1072,14 @@ export const returnRefundDecisions = sqliteTable('_ecommerce_return_refund_decis
   check('return_refund_allocations', sql`json_valid(${t.allocations}) AND json_type(${t.allocations}) = 'array' AND json_array_length(${t.allocations}) <= 20 AND (${t.status} = 'settled' OR json_array_length(${t.allocations}) = 0)`),
   check('return_refund_actor', filled(t.actor)), check('return_refund_reason', trimmed(t.reason, 8))]);
 
+/** A shopper preference, not approval, reservation or an agreed financial adjustment. */
+export type ReturnExchangePreference = { productId:string; variantId:string|null; name:string; sku:string|null; priceMinor:number; currency:string };
+export const returnExchangePreferences = sqliteTable('_ecommerce_return_exchange_preferences', {
+ requestId:text('request_id').primaryKey().references(()=>returnRequests.id),
+ lineIndex:integer('line_index').notNull(),target:text('target',{mode:'json'}).$type<ReturnExchangePreference>().notNull(),
+},t=>[check('return_exchange_line',sql`${t.lineIndex} BETWEEN 0 AND 199`),
+ check('return_exchange_target',sql`json_valid(${t.target}) AND json_type(${t.target}) IS 'object' AND json_type(${t.target},'$.productId') IS 'text' AND length(json_extract(${t.target},'$.productId')) BETWEEN 1 AND 128 AND json_type(${t.target},'$.name') IS 'text' AND json_type(${t.target},'$.priceMinor') IS 'integer' AND json_extract(${t.target},'$.priceMinor') BETWEEN 1 AND 1000000000 AND json_type(${t.target},'$.currency') IS 'text' AND length(json_extract(${t.target},'$.currency'))=3 AND (json_type(${t.target},'$.variantId') IS 'text' OR json_type(${t.target},'$.variantId') IS 'null')`)]);
+
 export const replenishmentPolicies = sqliteTable('_ecommerce_replenishment_policies', {
   id: text('id').primaryKey(), targetType: text('target_type', { enum: RESTOCK_TARGET_TYPES }).notNull(), targetId: text('target_id').notNull(),
   minimumQuantity: integer('minimum_quantity').notNull(), targetQuantity: integer('target_quantity').notNull(),
@@ -1252,7 +1260,7 @@ export const recoveryPaymentEvents = sqliteTable('_ecommerce_recovery_payment_ev
 
 const tables = {
   recoveryCases, recoveryShipments, recoveryEvents, recoveryReceipts, recoveryInspections, recoveryPayments, recoveryPaymentEvents,
-  suppliers, supplierRevisions, purchaseOrders, purchaseOrderEvents, purchaseOrderLines, supplierIssues, supplierIssueEvents, returnRequestReasons,
+  suppliers, supplierRevisions, purchaseOrders, purchaseOrderEvents, purchaseOrderLines, supplierIssues, supplierIssueEvents, returnRequestReasons, returnExchangePreferences,
   returnRefundDecisions, replenishmentPolicies, replenishmentDeliveries, replenishmentDeliveryEvents,
   returnRequests, returnRequestEvents, returnRequestReceipts, parcelContents, returnReceipts, returnStock, returnInspections, inspectionStock, stocktakes, stockMovements, carts, orders, payments, providerRefunds, products, variants, productVariants, productVariantValues, stocks, components,
   variantComponents, componentReservations, inventoryReservations, categories, productCategories, tags, productTags,
@@ -1290,6 +1298,7 @@ export const relations = defineRelations(tables, (r) => ({
   purchaseOrderLines: { issues: r.many.supplierIssues(), purchaseOrder: r.one.purchaseOrders({ from: r.purchaseOrderLines.purchaseOrderId, to: r.purchaseOrders.id, optional: false }), delivery: r.one.replenishmentDeliveries({ from: r.purchaseOrderLines.deliveryId, to: r.replenishmentDeliveries.id, optional: false }) },
   supplierIssues: { line: r.one.purchaseOrderLines({ from: r.supplierIssues.purchaseLineId, to: r.purchaseOrderLines.id, optional: false }), events: r.many.supplierIssueEvents() },
   supplierIssueEvents: { issue: r.one.supplierIssues({ from: r.supplierIssueEvents.issueId, to: r.supplierIssues.id, optional: false }) },
+  returnExchangePreferences: { request:r.one.returnRequests({from:r.returnExchangePreferences.requestId,to:r.returnRequests.id,optional:false}) },
   returnRequestReasons: { request: r.one.returnRequests({ from: r.returnRequestReasons.requestId, to: r.returnRequests.id, optional: false }) },
   returnRefundDecisions: { receipt: r.one.returnReceipts({ from: r.returnRefundDecisions.receiptId, to: r.returnReceipts.id, optional: false }) },
   stockMovements: { deliveries: r.many.replenishmentDeliveryEvents() },
@@ -1432,6 +1441,7 @@ export const relations = defineRelations(tables, (r) => ({
   parcelContents: { order: r.one.orders({ from: r.parcelContents.orderId, to: r.orders.id, optional: false }),
     fulfillment: r.one.fulfillments({ from: r.parcelContents.fulfillmentId, to: r.fulfillments.id, optional: false }) },
   returnRequests: {
+    exchangePreference:r.one.returnExchangePreferences({from:r.returnRequests.id,to:r.returnExchangePreferences.requestId}),
     reasonCategory: r.one.returnRequestReasons({ from: r.returnRequests.id, to: r.returnRequestReasons.requestId }), order: r.one.orders({ from: r.returnRequests.orderId, to: r.orders.id, optional: false }), events: r.many.returnRequestEvents(), receipts: r.many.returnRequestReceipts() },
   returnRequestEvents: { request: r.one.returnRequests({ from: r.returnRequestEvents.requestId, to: r.returnRequests.id, optional: false }) },
   returnRequestReceipts: { request: r.one.returnRequests({ from: r.returnRequestReceipts.requestId, to: r.returnRequests.id, optional: false }), receipt: r.one.returnReceipts({ from: r.returnRequestReceipts.receiptId, to: r.returnReceipts.id, optional: false }) },

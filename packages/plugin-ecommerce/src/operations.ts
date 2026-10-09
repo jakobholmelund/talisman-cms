@@ -19,3 +19,5 @@ export { createRecoveryCase, recordRecoveryEvent, shipRecoveryCase, listRecovery
 
 export { receiveReplacementReturn, inspectReplacementReturn } from './replacement-returns';
 export { verifyExchangeCharge } from './recovery-payments';
+
+export { readOrderRecoveryHistory } from './recovery-journal';

@@ -62,3 +62,7 @@
 
 .ecom-admin__aftercare textarea { min-width: 0; max-width: 100%; box-sizing: border-box; font: inherit; padding: .65rem; color: inherit; background: var(--ecom-bg, transparent); border: 1px solid #8885; border-radius: .4rem; }
 .ecom-admin__preline { white-space: pre-line; }
+
+.ecom-admin__recovery-history ul { list-style: none; padding: 0; }
+.ecom-admin__recovery-history li { padding: 16px 0; border-top: 1px solid #3f3f46; }
+.ecom-admin__recovery-history li p { margin: 6px 0; }

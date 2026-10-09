@@ -210,5 +210,7 @@ export function installTalismanEcommerceBrowserHelpers(target: Window = window) 
 }
 
 export function getCustomerReturns(orderId:string) { return commerceRequest<CustomerReturns>(`/api/ecommerce/returns?order=${encodeURIComponent(orderId)}`, 'GET'); }
-export function submitCustomerReturn(data:{orderId:string;requestKey:string;reason:string;reasonCode?:'size_fit'|'damaged'|'wrong_item'|'changed_mind'|'other'|'unspecified';items:Array<{lineIndex:number;quantity:number}>}) { return commerceRequest<{requestId:string}>('/api/ecommerce/returns','POST',{action:'request',data}); }
+export function submitCustomerReturn(data:{orderId:string;requestKey:string;reason:string;reasonCode?:'size_fit'|'damaged'|'wrong_item'|'changed_mind'|'other'|'unspecified';exchange?:{productId:string;variantId?:string|null};items:Array<{lineIndex:number;quantity:number}>}) { return commerceRequest<{requestId:string}>('/api/ecommerce/returns','POST',{action:'request',data}); }
 export function cancelReturnRequest(data:{orderId:string;requestId:string;requestKey:string;expectedVersion:string}) { return commerceRequest<{eventId:string}>('/api/ecommerce/returns','POST',{action:'cancel',data}); }
+
+export function getCustomerExchangeChoices(data:{orderId:string;lineIndex:number;search?:string;offset?:number}) { return commerceRequest<{rows:Array<{productId:string;variantId:string|null;name:string;sku:string|null;price:number}>;total:number;offset:number;currency:string;originalUnitPrice:number}>('/api/ecommerce/returns','POST',{action:'exchangeChoices',data}); }
