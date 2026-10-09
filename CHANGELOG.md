@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Staff return approvals, declines and closure queue buyer instructions atomically; return intake queues a dated receipt notice. The existing scheduled sender, delivery status and audited recovery tools handle them. Outdated decision notices are suppressed; internal audit notes stay private.
+- **Refund follow-up** keeps each received return visible until a staff decision. Staff plan refunds, record why none is needed, or allocate confirmed provider/gift-card/store-credit ledger amounts without issuing money or reusing a refund across cases. Open follow-up blocks shopper erasure; resolved audit text supports audited redaction.
+- **Replenishment** records minimum/target policies for physical stock pools, subtracts expected deliveries from suggestions, and receives partial deliveries through atomic stock receipts. Cancellation releases outstanding supply; version guards and same-request recovery protect stock counts. Overdue deliveries appear in Needs attention.
+- Two additive aftercare migrations add immutable history and guards and rebuild email kinds while preserving populated recovery history. Apply both before the matching Worker. Release and checkout remain on hold.
+
 - Customers can request bounded item returns and cancel requests before intake. Staff approval, decline and closure record separate internal reasons and customer-visible instructions; quantity guards, version checks and stable retry keys protect overlapping requests and interrupted responses.
 - Commerce adds an oldest-first **Returns** queue for request review, approved partial intake and outstanding inspections, plus attention counts for both kinds of work. Customer order pages show request status, received quantities and staff messages without internal notes.
 - **Operations exports** downloads complete filtered orders, received return items and stock movement CSV files, with inclusive UTC dates, exact IDs, money in minor units and spreadsheet formula protection. Selections over 1,000 rows are refused rather than truncated.
