@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Orders record item quantities per parcel, calculate remaining units and completion, print exact packing slips and include actual parcel contents in shipment notices. Historical parcels require an explicit audited contents backfill.
+- Return intake records received quantities and condition, restores only selected sellable units using checkout stock snapshots, and shares original-reservation caps with the older whole-hold restock tool.
+- Stock overview adds staff-reasoned incoming stock and signed corrections with guarded versions, immutable before/after receipts, retry recovery and paginated history of receipts, corrections, checkout reservations/releases and returns.
+- Three additive warehouse migrations add audit tables, atomic quantity/stock guards and history indexes. Apply them before the matching Worker; release remains on hold.
+
 - Commerce adds Needs attention, Email recovery, and Stock overview screens. Attention shows exact operational counts and bounded oldest-first previews, excluding simulated orders; stock searches and pages effective sellable/component quantities on the server and links to registered stock editors.
 - Failed order and shipment notices support staff-reasoned, atomic and audited requeue requests. Stable retry keys recover lost responses without repeating queue resets; stale observations, active leases and undeliverable recipients are refused. A retry preserves original email dates and starts a fresh delivery window through the existing scheduled sender.
 - Two additive `daily_operations` / `email_recovery_guards` migrations add email retry metadata, recovery history, lookup indexes and append-only history guards. Apply them before the matching Worker; release remains an owner step.
