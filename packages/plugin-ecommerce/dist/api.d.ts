@@ -1,6 +1,6 @@
-import { C as CustomerReturns, R as ReturnRequestReceipt, a as ReturnDecisionReceipt } from './return-request-types-CaKc6AaH.js';
-import { R as ReturnOwner } from './return-requests-Ca2cC1Ih.js';
-import { a as CommerceApiOptions } from './commerce-context-B9gCdqRP.js';
+import { C as CustomerReturns, R as ReturnRequestReceipt, a as ReturnDecisionReceipt } from './return-request-types-CDblNHPy.js';
+import { R as ReturnOwner } from './return-requests-BRcbgxIS.js';
+import { a as CommerceApiOptions } from './commerce-context-DMvZFbwj.js';
 import { TalismanEnv } from 'talisman-cms/client';
 import { a as CommerceEmailResult } from './email-deliveries-CyzibTug.js';
 import { P as PaymentProviderAdapter } from './payments-DiMqRHdo.js';
@@ -1181,12 +1181,28 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
         } | null>;
     };
     returns: {
+        exchangeChoices: (input: unknown, owner?: ReturnOwner) => Promise<{
+            rows: {
+                productId: string;
+                variantId: string | null;
+                name: string;
+                sku: string | null;
+                price: number;
+            }[];
+            total: number;
+            offset: number;
+            currency: string;
+            originalUnitPrice: number;
+        } | null>;
         read: (id: string, owner?: ReturnOwner) => Promise<CustomerReturns | null>;
         request: (input: unknown, owner?: ReturnOwner) => Promise<ReturnRequestReceipt | null>;
         cancel: (input: unknown, owner?: ReturnOwner) => Promise<ReturnDecisionReceipt | null>;
     };
     webhooks: {
         handleStripe: (payload: string, signature: string, secret?: string) => Promise<{
+            success: boolean;
+            recoveryPayment: boolean;
+        } | {
             success: boolean;
             purchaseId: string;
             duplicate: boolean;
@@ -1214,9 +1230,6 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             orderId: string;
             duplicate: boolean;
             status?: undefined;
-        } | {
-            success: boolean;
-            recoveryPayment: boolean;
         } | {
             success: boolean;
             event: string;

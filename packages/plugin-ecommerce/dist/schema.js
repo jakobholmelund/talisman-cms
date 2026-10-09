@@ -96,6 +96,7 @@ import {
   replenishmentDeliveryEvents,
   replenishmentPolicies,
   restocks,
+  returnExchangePreferences,
   returnInspections,
   returnReceipts,
   returnRefundDecisions,
@@ -118,7 +119,7 @@ import {
   taxSyncDecisions,
   variantComponents,
   variants
-} from "./chunk-YT2QU5EG.js";
+} from "./chunk-PLAJXKV3.js";
 export {
   CREDIT_LEDGER_KINDS,
   CUSTOMER_SESSION_PURPOSES,
@@ -217,6 +218,7 @@ export {
   replenishmentDeliveryEvents,
   replenishmentPolicies,
   restocks,
+  returnExchangePreferences,
   returnInspections,
   returnReceipts,
   returnRefundDecisions,

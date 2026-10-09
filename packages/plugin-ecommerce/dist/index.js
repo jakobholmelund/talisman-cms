@@ -5,14 +5,14 @@ import {
   bindCommerceApi,
   reconcileCommerce,
   shippingOptionsFor
-} from "./chunk-JUC2XNS7.js";
+} from "./chunk-AJKVQPDI.js";
 import {
   CART_MAX_LINES,
   CART_MAX_LINE_QUANTITY,
   TaxCalculationError
-} from "./chunk-IK2LAKMW.js";
-import "./chunk-MQQMY6EP.js";
-import "./chunk-LVMYPANC.js";
+} from "./chunk-PYEHVINE.js";
+import "./chunk-BVMDOVSS.js";
+import "./chunk-2WXNU27Y.js";
 import "./chunk-AVWDMCNG.js";
 import {
   StripePaymentAdapter,
@@ -20,20 +20,20 @@ import {
 } from "./chunk-IN4CG7W7.js";
 import {
   deliverPendingCommerceEmails
-} from "./chunk-HYVPTDYO.js";
+} from "./chunk-3SF7AMPH.js";
 import {
   COUNTRY_CODES,
   StoreSettingsError,
   isCountryCode,
   readStoreCurrency,
   readStoreSettings
-} from "./chunk-2QJ6LJ5B.js";
-import "./chunk-TX6OICXZ.js";
+} from "./chunk-L63XGUKQ.js";
+import "./chunk-IC3XDWQU.js";
 import "./chunk-GNU6N22K.js";
-import "./chunk-JTBD4QC4.js";
+import "./chunk-PMYARYOQ.js";
 import {
   commerceDb
-} from "./chunk-4PHEXUQV.js";
+} from "./chunk-SXQHVX4E.js";
 import {
   carts,
   categories,
@@ -82,6 +82,7 @@ import {
   replenishmentDeliveryEvents,
   replenishmentPolicies,
   restocks,
+  returnExchangePreferences,
   returnInspections,
   returnReceipts,
   returnRefundDecisions,
@@ -101,7 +102,7 @@ import {
   tags,
   variantComponents,
   variants
-} from "./chunk-YT2QU5EG.js";
+} from "./chunk-PLAJXKV3.js";
 import "./chunk-NQUBOBQT.js";
 import "./chunk-R2NISKMY.js";
 import {
@@ -1127,6 +1128,7 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
           fields: nativeFields(returnReceipts, ["id", "orderId", "actor", "reason", "createdAt"]),
           nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: "returnReceipts", idColumn: "id" }
         });
+        collections.push({ name: "Exchange Preferences", slug: "_ecommerce_return_exchange_preferences", adminSection: "commerce", readOnly: true, fields: nativeFields(returnExchangePreferences, ["requestId", "lineIndex", { name: "target", label: "Preferred replacement", type: "group" }]), nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: "returnExchangePreferences", idColumn: "requestId" } });
         collections.push({ name: "Return Requests", slug: "_ecommerce_return_requests", adminSection: "commerce", readOnly: true, fields: nativeFields(returnRequests, ["id", "orderId", "reason", "createdAt"]), nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: "returnRequests", idColumn: "id" } });
         collections.push({ name: "Return Request Decisions", slug: "_ecommerce_return_request_events", adminSection: "commerce", readOnly: true, fields: nativeFields(returnRequestEvents, ["id", "requestId", "status", "actorKind", "actor", "reason", "customerMessage", "createdAt"]), nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: "returnRequestEvents", idColumn: "id" } });
         collections.push({ name: "Return Request Receipts", slug: "_ecommerce_return_request_receipts", adminSection: "commerce", readOnly: true, fields: nativeFields(returnRequestReceipts, ["receiptId", "requestId"]), nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: "returnRequestReceipts", idColumn: "receiptId" } });

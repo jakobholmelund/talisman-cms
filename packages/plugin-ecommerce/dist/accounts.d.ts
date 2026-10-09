@@ -1,5 +1,5 @@
 import { TalismanEnv } from 'talisman-cms/client';
-import { ParcelItem, ReturnedItem } from './schema.js';
+import { ParcelItem, ReturnExchangePreference, ReturnedItem } from './schema.js';
 import 'drizzle-orm';
 import 'drizzle-orm/sqlite-core';
 
@@ -113,6 +113,10 @@ declare function manageShopperData(env: TalismanEnv, actor: string, input: unkno
                     status: "closed" | "cancelled" | "pending" | "approved" | "declined";
                     customerMessage: string;
                 }[];
+                exchangePreference: {
+                    lineIndex: number;
+                    target: ReturnExchangePreference;
+                } | null;
                 reasonCategory: {
                     code: "damaged" | "size_fit" | "wrong_item" | "changed_mind" | "other" | "unspecified";
                 } | null;

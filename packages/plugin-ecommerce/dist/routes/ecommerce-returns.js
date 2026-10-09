@@ -1,28 +1,28 @@
 import {
   readBoundedJson
-} from "../chunk-4PPUTU2V.js";
+} from "../chunk-5HFIIT5Q.js";
 import {
   bindCommerceApi
-} from "../chunk-JUC2XNS7.js";
-import "../chunk-IK2LAKMW.js";
-import "../chunk-MQQMY6EP.js";
-import "../chunk-LVMYPANC.js";
+} from "../chunk-AJKVQPDI.js";
+import "../chunk-PYEHVINE.js";
+import "../chunk-BVMDOVSS.js";
+import "../chunk-2WXNU27Y.js";
 import "../chunk-AVWDMCNG.js";
 import "../chunk-IN4CG7W7.js";
 import {
   CommerceOperationsConflict
-} from "../chunk-HYVPTDYO.js";
+} from "../chunk-3SF7AMPH.js";
 import {
   ShopperError
-} from "../chunk-2QJ6LJ5B.js";
-import "../chunk-TX6OICXZ.js";
+} from "../chunk-L63XGUKQ.js";
+import "../chunk-IC3XDWQU.js";
 import "../chunk-GNU6N22K.js";
 import {
   CUSTOMER_SESSION_COOKIE,
   findCustomerSession
-} from "../chunk-JTBD4QC4.js";
-import "../chunk-4PHEXUQV.js";
-import "../chunk-YT2QU5EG.js";
+} from "../chunk-PMYARYOQ.js";
+import "../chunk-SXQHVX4E.js";
+import "../chunk-PLAJXKV3.js";
 import {
   readCartSessionToken,
   readOrderAccess
@@ -38,14 +38,14 @@ var ALL = async ({ request, cookies }) => {
   if (!["GET", "POST"].includes(request.method)) return Response.json({ error: "Method not allowed" }, { status: 405, headers: { ...headers, Allow: "GET, POST" } });
   if (request.method === "POST" && request.headers.get("origin") !== new URL(request.url).origin) return Response.json({ error: "Same-origin request required" }, { status: 403, headers });
   try {
-    const body = request.method === "POST" ? z.object({ action: z.enum(["request", "cancel"]), data: z.record(z.unknown()) }).strict().parse(await readBoundedJson(request, 32768)) : null;
+    const body = request.method === "POST" ? z.object({ action: z.enum(["request", "cancel", "exchangeChoices"]), data: z.record(z.unknown()) }).strict().parse(await readBoundedJson(request, 32768)) : null;
     const orderId = id.parse(body ? body.data.orderId : new URL(request.url).searchParams.get("order"));
     const { env } = await import("cloudflare:workers");
     const runtimeEnv = env;
     const customer = await findCustomerSession(runtimeEnv, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
     const owner = { sessionToken: readCartSessionToken(cookies), customerId: customer?.id, orderAccessToken: readOrderAccess(cookies, orderId) };
     const api = bindCommerceApi({ env: runtimeEnv });
-    const result = body ? body.action === "request" ? await api.returns.request(body.data, owner) : await api.returns.cancel(body.data, owner) : await api.returns.read(orderId, owner);
+    const result = body ? body.action === "exchangeChoices" ? await api.returns.exchangeChoices(body.data, owner) : body.action === "request" ? await api.returns.request(body.data, owner) : await api.returns.cancel(body.data, owner) : await api.returns.read(orderId, owner);
     if (!result) return Response.json({ error: "Order not found" }, { status: 404, headers });
     return Response.json(result, { headers });
   } catch (error) {

@@ -1,7 +1,7 @@
 import {
   commerceDb,
   commitBatch
-} from "./chunk-4PHEXUQV.js";
+} from "./chunk-SXQHVX4E.js";
 import {
   carts,
   creditLedger,
@@ -27,7 +27,7 @@ import {
   returnRequests,
   shopperAudits,
   signInTokens
-} from "./chunk-YT2QU5EG.js";
+} from "./chunk-PLAJXKV3.js";
 
 // src/shopper-privacy.ts
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
@@ -91,7 +91,7 @@ async function manageShopperData(env, actor, input) {
       where: { userId: account.id },
       columns: { id: true },
       with: {
-        returnRequests: { columns: { id: true, items: true, reason: true, createdAt: true }, with: { reasonCategory: { columns: { code: true } }, events: { columns: { status: true, customerMessage: true, createdAt: true } } } },
+        returnRequests: { columns: { id: true, items: true, reason: true, createdAt: true }, with: { exchangePreference: { columns: { lineIndex: true, target: true } }, reasonCategory: { columns: { code: true } }, events: { columns: { status: true, customerMessage: true, createdAt: true } } } },
         returnReceipts: { columns: { id: true, items: true, createdAt: true }, with: { refundDecisions: { columns: { status: true, amountMinor: true, createdAt: true } } } },
         recoveryCases: { columns: { id: true, kind: true, lineIndex: true, quantity: true, createdAt: true }, with: { payments: { columns: { amountMinor: true, currency: true, createdAt: true } }, shipments: { columns: { quantity: true, carrier: true, trackingNumber: true, createdAt: true }, with: { receipts: { columns: { quantity: true, createdAt: true }, with: { inspections: { columns: { quantity: true, disposition: true, restock: true, createdAt: true } } } } } }, events: { columns: { kind: true, status: true, carrier: true, trackingNumber: true, createdAt: true } } } },
         providerRefunds: { columns: { amountCents: true, createdAt: true } },

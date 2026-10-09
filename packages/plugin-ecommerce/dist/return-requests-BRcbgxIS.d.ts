@@ -1,5 +1,5 @@
 import { TalismanEnv } from 'talisman-cms/client';
-import { a as ReturnDecisionReceipt, b as ReturnsQueue, A as AdminReturnRequest } from './return-request-types-CaKc6AaH.js';
+import { a as ReturnDecisionReceipt, b as ReturnsQueue, A as AdminReturnRequest } from './return-request-types-CDblNHPy.js';
 
 type ReturnOwner = {
     sessionToken?: string;

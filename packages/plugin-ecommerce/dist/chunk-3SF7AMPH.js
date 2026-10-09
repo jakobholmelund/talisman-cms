@@ -11,14 +11,14 @@ import {
   sendCommerceEmailNow,
   unclaimedAt,
   waitingEmailsResult
-} from "./chunk-2QJ6LJ5B.js";
+} from "./chunk-L63XGUKQ.js";
 import {
   batchGroups,
   chunked,
   commerceDb,
   commitBatch,
   errorText
-} from "./chunk-4PHEXUQV.js";
+} from "./chunk-SXQHVX4E.js";
 import {
   creditLedger,
   emailDeliveries,
@@ -35,7 +35,7 @@ import {
   returnStock,
   stockMovements,
   stocktakes
-} from "./chunk-YT2QU5EG.js";
+} from "./chunk-PLAJXKV3.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
@@ -1264,10 +1264,8 @@ async function adjustCommerceFulfillment(env, actor, input) {
 }
 
 export {
-  describeOrderItems,
-  deliverCommerceEmail,
-  deliverPendingCommerceEmails,
   adminActorNames,
+  describeOrderItems,
   CommerceOperationsConflict,
   listEmailRecovery,
   retryCommerceEmail,
@@ -1282,6 +1280,8 @@ export {
   recordStocktake,
   listStocktakes,
   readStocktakeTargets,
+  deliverCommerceEmail,
+  deliverPendingCommerceEmails,
   ORDERS_PAGE_SIZE,
   ORDERS_PAGE_MAX,
   FulfillmentInputError,

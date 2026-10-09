@@ -1,5 +1,5 @@
-import { C as CustomerReturns } from './return-request-types-CaKc6AaH.js';
-import { C as CommerceContext } from './commerce-context-B9gCdqRP.js';
+import { C as CustomerReturns } from './return-request-types-CDblNHPy.js';
+import { C as CommerceContext } from './commerce-context-DMvZFbwj.js';
 import './schema.js';
 import 'drizzle-orm';
 import 'drizzle-orm/sqlite-core';
@@ -216,6 +216,10 @@ declare function submitCustomerReturn(data: {
     requestKey: string;
     reason: string;
     reasonCode?: 'size_fit' | 'damaged' | 'wrong_item' | 'changed_mind' | 'other' | 'unspecified';
+    exchange?: {
+        productId: string;
+        variantId?: string | null;
+    };
     items: Array<{
         lineIndex: number;
         quantity: number;
@@ -231,5 +235,23 @@ declare function cancelReturnRequest(data: {
 }): Promise<{
     eventId: string;
 }>;
+declare function getCustomerExchangeChoices(data: {
+    orderId: string;
+    lineIndex: number;
+    search?: string;
+    offset?: number;
+}): Promise<{
+    rows: Array<{
+        productId: string;
+        variantId: string | null;
+        name: string;
+        sku: string | null;
+        price: number;
+    }>;
+    total: number;
+    offset: number;
+    currency: string;
+    originalUnitPrice: number;
+}>;
 
-export { CART_UPDATED_EVENT, type CartUpdatedDetail, type CustomerAccountSummary, type CustomerOrderTracking, CustomerReturns, type TalismanEcommerceBrowserHelpers, activateNewCustomerAccount, cancelCheckout, cancelReturnRequest, chooseCustomerBasket, claimGiftCardCode, dispatchCartUpdated, getCustomerAccount, getCustomerReturns, getOrderStatus, installTalismanEcommerceBrowserHelpers, previewCustomerSignIn, readCustomerSignInToken, readGiftCardClaimToken, requestCustomerEmailSignIn, signOutCustomerAccount, startAdminTestCheckout, startCheckout, submitCustomerReturn, verifyCustomerEmailSignIn };
+export { CART_UPDATED_EVENT, type CartUpdatedDetail, type CustomerAccountSummary, type CustomerOrderTracking, CustomerReturns, type TalismanEcommerceBrowserHelpers, activateNewCustomerAccount, cancelCheckout, cancelReturnRequest, chooseCustomerBasket, claimGiftCardCode, dispatchCartUpdated, getCustomerAccount, getCustomerExchangeChoices, getCustomerReturns, getOrderStatus, installTalismanEcommerceBrowserHelpers, previewCustomerSignIn, readCustomerSignInToken, readGiftCardClaimToken, requestCustomerEmailSignIn, signOutCustomerAccount, startAdminTestCheckout, startCheckout, submitCustomerReturn, verifyCustomerEmailSignIn };

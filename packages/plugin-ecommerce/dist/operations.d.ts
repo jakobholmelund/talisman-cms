@@ -1,10 +1,10 @@
 import { TalismanEnv } from 'talisman-cms/client';
 import { StocktakeLine, ParcelItem, InspectedItem, ReturnedItem, RETURN_REFUND_STATUSES, returnRefundDecisions, REFUND_SOURCE_KINDS, RESTOCK_TARGET_TYPES, replenishmentPolicies, replenishmentDeliveries, SupplierSnapshot, PurchaseLine, RETURN_REASON_CODES, SUPPLIER_ISSUE_KINDS, SUPPLIER_ISSUE_STATUSES, RECOVERY_KINDS } from './schema.js';
 import * as drizzle_orm_sqlite_core from 'drizzle-orm/sqlite-core';
-export { d as decideReturnRequest, l as listReturnsQueue, r as readReturnRequestAdmin } from './return-requests-Ca2cC1Ih.js';
+export { d as decideReturnRequest, l as listReturnsQueue, r as readReturnRequestAdmin } from './return-requests-BRcbgxIS.js';
 import { P as PaymentProviderAdapter } from './payments-DiMqRHdo.js';
 import 'drizzle-orm';
-import './return-request-types-CaKc6AaH.js';
+import './return-request-types-CDblNHPy.js';
 
 type AttentionKind = 'payment_review' | 'older_payments' | 'tax_review' | 'email' | 'gift_hold' | 'shipment' | 'dispute' | 'return_request' | 'inspection' | 'refund' | 'incoming' | 'supplier_issue' | 'parcel_recovery';
 /** A read-only snapshot. Exact counts include every matching record; each category shows its ten
@@ -78,9 +78,9 @@ type StockOverviewRow = {
 /** Filtering and pagination happen after effective quantities are computed, so low stock beyond
  * the first catalog page remains discoverable. Bound search treats SQL wildcard characters literally. */
 declare function readStockOverview(env: TalismanEnv, input?: unknown): Promise<{
-    filter: "all" | "unavailable" | "low";
     search: string;
     offset: number;
+    filter: "all" | "unavailable" | "low";
     view: "components" | "choices";
     threshold: number;
     rows: StockOverviewRow[];
@@ -1122,9 +1122,9 @@ declare function listSuppliers(env: TalismanEnv, input?: unknown): Promise<{
         contact: string;
         address: string;
     }[];
-    filter: "active" | "all";
     search: string;
     offset: number;
+    filter: "active" | "all";
 }>;
 declare function saveSupplier(env: TalismanEnv, input: unknown, actor: string): Promise<{
     supplierId: string;
@@ -1164,9 +1164,9 @@ declare function listPurchaseOrders(env: TalismanEnv, input?: unknown): Promise<
         outstanding: number;
         openIssues: number;
     }[];
-    filter: "draft" | "open" | "ordered" | "cancelled" | "all" | "completed";
     search: string;
     offset: number;
+    filter: "draft" | "open" | "ordered" | "cancelled" | "all" | "completed";
 }>;
 declare function readPurchaseOrder(env: TalismanEnv, input: unknown): Promise<{
     id: string;
@@ -1217,6 +1217,24 @@ declare function readPurchaseOrder(env: TalismanEnv, input: unknown): Promise<{
 
 /** UTC cohorts are deliberately separate from today's backlog. No shopper text or identity is returned. */
 declare function readOperationsReport(env: TalismanEnv, input?: unknown): Promise<{
+    recoveryActivity: {
+        kind: string;
+        currency: string;
+        disposition: string | null;
+        restock: number | null;
+        records: number;
+        units: number;
+    }[];
+    exchangeMoney: {
+        kind: string;
+        currency: string;
+        records: number;
+        amountMinor: number | null;
+    }[];
+    recoveryWork: {
+        inspectionUnits: number;
+        paymentReviews: number;
+    };
     startAt: string;
     endBefore: string;
     asOf: string;
@@ -1285,8 +1303,8 @@ declare function listSupplierIssues(env: TalismanEnv, input?: unknown): Promise<
         supplier: string;
         name: string;
     }[];
-    filter: "open" | "resolved" | "all";
     offset: number;
+    filter: "open" | "resolved" | "all";
     purchaseOrderId?: string | undefined;
 }>;
 declare function readSupplierIssue(env: TalismanEnv, input: unknown): Promise<{
@@ -1346,10 +1364,10 @@ declare function listRecoveryCases(env: TalismanEnv, input?: unknown): Promise<{
         name: string;
         status: "open" | "resolved";
     }[];
-    filter: "open" | "resolved" | "all";
     orderId: string;
     kind: "lost" | "damaged" | "exchange" | "all";
     offset: number;
+    filter: "open" | "resolved" | "all";
 }>;
 declare function readRecoveryCase(env: TalismanEnv, input: unknown): Promise<{
     adjustment: {
@@ -1579,4 +1597,40 @@ declare function verifyExchangeCharge(env: TalismanEnv, input: unknown, actor: s
     decisionId: string;
 }>;
 
-export { type AttentionKind, CommerceOperationsConflict, type StockOverviewRow, createRecoveryCase, exportCommerceOperations, inspectOrderReturn, inspectReplacementReturn, listEmailRecovery, listExchangeChoices, listPurchaseOrders, listRecoveryCases, listRefundFollowUp, listReplenishment, listStockLocations, listStocktakes, listSupplierIssues, listSuppliers, planReplenishmentDelivery, readCommerceAttention, readOperationsReport, readOrderWarehouse, readPurchaseOrder, readRecoveryCase, readRecoveryOrder, readRefundCase, readReplenishment, readStockHistory, readStockOverview, readStocktakeTargets, readSupplierIssue, receiveOrderReturn, receiveReplacementReturn, recordParcelContents, recordPurchaseOrder, recordRecoveryEvent, recordRefundFollowUp, recordReplenishmentDelivery, recordStockMovement, recordStocktake, recordSupplierIssue, reportSupplierIssue, retryCommerceEmail, savePurchaseOrder, saveReplenishmentPolicy, saveSupplier, shipRecoveryCase, verifyExchangeCharge };
+/** The order detail loads a bounded chronological page only when staff open its history. */
+declare function readOrderRecoveryHistory(env: TalismanEnv, input: unknown): Promise<{
+    total: number;
+    rows: {
+        created_at_utc: string;
+        actorName: string | null;
+        emailNext: string | null;
+        record_id: string;
+        kind: string;
+        order_id: string;
+        case_id: string | null;
+        request_id: string | null;
+        shipment_id: string | null;
+        receipt_id: string | null;
+        verification_id: string | null;
+        target_name: string;
+        target_sku: string | null;
+        currency: string;
+        quantity: number | null;
+        adjustment_minor: number | null;
+        amount_minor: number | null;
+        disposition: string | null;
+        restock: number | null;
+        carrier: string | null;
+        tracking_number: string | null;
+        recorded_status: string | null;
+        actor: string | null;
+        reason: string;
+        emailStatus: string | null;
+        emailAttempts: number | null;
+        emailError: string | null;
+    }[];
+    orderId: string;
+    offset: number;
+}>;
+
+export { type AttentionKind, CommerceOperationsConflict, type StockOverviewRow, createRecoveryCase, exportCommerceOperations, inspectOrderReturn, inspectReplacementReturn, listEmailRecovery, listExchangeChoices, listPurchaseOrders, listRecoveryCases, listRefundFollowUp, listReplenishment, listStockLocations, listStocktakes, listSupplierIssues, listSuppliers, planReplenishmentDelivery, readCommerceAttention, readOperationsReport, readOrderRecoveryHistory, readOrderWarehouse, readPurchaseOrder, readRecoveryCase, readRecoveryOrder, readRefundCase, readReplenishment, readStockHistory, readStockOverview, readStocktakeTargets, readSupplierIssue, receiveOrderReturn, receiveReplacementReturn, recordParcelContents, recordPurchaseOrder, recordRecoveryEvent, recordRefundFollowUp, recordReplenishmentDelivery, recordStockMovement, recordStocktake, recordSupplierIssue, reportSupplierIssue, retryCommerceEmail, savePurchaseOrder, saveReplenishmentPolicy, saveSupplier, shipRecoveryCase, verifyExchangeCharge };

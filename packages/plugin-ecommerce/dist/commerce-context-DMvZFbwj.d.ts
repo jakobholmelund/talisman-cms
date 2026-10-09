@@ -1,6 +1,6 @@
 import { TalismanEnv } from 'talisman-cms/client';
 import * as drizzle_orm_d1 from 'drizzle-orm/d1';
-import { RecoveryTarget, RecoveryStock, PurchaseLine, SupplierSnapshot, RefundAllocation, ParcelItem, ReturnedItem, InspectedItem, StocktakeLine } from './schema.js';
+import { RecoveryTarget, RecoveryStock, PurchaseLine, SupplierSnapshot, ReturnExchangePreference, RefundAllocation, ParcelItem, ReturnedItem, InspectedItem, StocktakeLine } from './schema.js';
 import * as drizzle_orm_sqlite_core from 'drizzle-orm/sqlite-core';
 import * as drizzle_orm from 'drizzle-orm';
 import { P as PaymentProviderAdapter } from './payments-DiMqRHdo.js';
@@ -69,6 +69,9 @@ declare const commerceDb: (env: TalismanEnv) => drizzle_orm_d1.DrizzleD1Database
     };
     supplierIssueEvents: {
         issue: drizzle_orm.One<"supplierIssues", false>;
+    };
+    returnExchangePreferences: {
+        request: drizzle_orm.One<"returnRequests", false>;
     };
     returnRequestReasons: {
         request: drizzle_orm.One<"returnRequests", false>;
@@ -206,6 +209,7 @@ declare const commerceDb: (env: TalismanEnv) => drizzle_orm_d1.DrizzleD1Database
         fulfillment: drizzle_orm.One<"fulfillments", false>;
     };
     returnRequests: {
+        exchangePreference: drizzle_orm.One<"returnExchangePreferences", true>;
         reasonCategory: drizzle_orm.One<"returnRequestReasons", true>;
         order: drizzle_orm.One<"orders", false>;
         events: drizzle_orm.Many<"returnRequestEvents">;
@@ -2467,6 +2471,61 @@ declare const commerceDb: (env: TalismanEnv) => drizzle_orm_d1.DrizzleD1Database
                 isAutoincrement: false;
                 hasRuntimeDefault: false;
                 enumValues: ["size_fit", "damaged", "wrong_item", "changed_mind", "other", "unspecified"];
+                baseColumn: never;
+                identity: undefined;
+                generated: undefined;
+            }, {}>;
+        };
+        dialect: "sqlite";
+    }>;
+    returnExchangePreferences: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
+        name: "_ecommerce_return_exchange_preferences";
+        schema: undefined;
+        columns: {
+            requestId: drizzle_orm_sqlite_core.SQLiteColumn<{
+                name: string;
+                tableName: "_ecommerce_return_exchange_preferences";
+                dataType: "string";
+                data: string;
+                driverParam: string;
+                notNull: true;
+                hasDefault: false;
+                isPrimaryKey: true;
+                isAutoincrement: false;
+                hasRuntimeDefault: false;
+                enumValues: [string, ...string[]];
+                baseColumn: never;
+                identity: undefined;
+                generated: undefined;
+            }, {}>;
+            lineIndex: drizzle_orm_sqlite_core.SQLiteColumn<{
+                name: string;
+                tableName: "_ecommerce_return_exchange_preferences";
+                dataType: "number int53";
+                data: number;
+                driverParam: number;
+                notNull: true;
+                hasDefault: false;
+                isPrimaryKey: false;
+                isAutoincrement: false;
+                hasRuntimeDefault: false;
+                enumValues: undefined;
+                baseColumn: never;
+                identity: undefined;
+                generated: undefined;
+            }, {}>;
+            target: drizzle_orm_sqlite_core.SQLiteColumn<{
+                name: string;
+                tableName: "_ecommerce_return_exchange_preferences";
+                dataType: "object json";
+                data: ReturnExchangePreference;
+                driverParam: string;
+                notNull: true;
+                hasDefault: false;
+                isPrimaryKey: false;
+                isAutoincrement: false;
+                hasRuntimeDefault: false;
+                enumValues: undefined;
                 baseColumn: never;
                 identity: undefined;
                 generated: undefined;

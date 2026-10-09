@@ -1,4 +1,4 @@
-import { returnRequests, REFUND_SOURCE_KINDS, RETURN_REASON_CODES, returnRequestEvents, ParcelItem, returnRequestReceipts } from './schema.js';
+import { returnRequests, REFUND_SOURCE_KINDS, ReturnExchangePreference, RETURN_REASON_CODES, returnRequestEvents, ParcelItem, returnRequestReceipts } from './schema.js';
 
 type RequestRow = typeof returnRequests.$inferSelect;
 type EventRow = typeof returnRequestEvents.$inferSelect;
@@ -27,6 +27,9 @@ interface CustomerReturns {
         available: number;
     }>;
     requests: Array<Pick<RequestRow, 'id' | 'reason'> & {
+        exchangePreference: ({
+            lineIndex: number;
+        } & ReturnExchangePreference) | null;
         reasonCode: typeof RETURN_REASON_CODES[number];
         status: Status;
         version: string;
@@ -54,6 +57,9 @@ interface ReturnDecisionReceipt {
 }
 /** Staff details expose only the fields the review and intake workspace needs. */
 type AdminReturnRequest = Pick<RequestRow, 'id' | 'orderId' | 'reason'> & {
+    exchangePreference: ({
+        lineIndex: number;
+    } & ReturnExchangePreference) | null;
     status: Status;
     version: string;
     createdAt: string;

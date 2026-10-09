@@ -22,6 +22,7 @@ import {
   loadBasketCatalog,
   mayAskPaymentProvider,
   quoteCart,
+  readCustomerExchangeChoices,
   readCustomerReturns,
   recordMissingTaxTransactions,
   recordProviderRefund,
@@ -36,19 +37,19 @@ import {
   updateCartItems,
   updateOrderStatus,
   withCountryCode
-} from "./chunk-IK2LAKMW.js";
+} from "./chunk-PYEHVINE.js";
 import {
   INVENTORY_COLUMNS,
   fullRefundStatements
-} from "./chunk-MQQMY6EP.js";
+} from "./chunk-BVMDOVSS.js";
 import {
   evaluateDiscountCode
-} from "./chunk-LVMYPANC.js";
+} from "./chunk-2WXNU27Y.js";
 import {
   adminActorNames,
   deliverPendingCommerceEmails,
   describeOrderItems
-} from "./chunk-HYVPTDYO.js";
+} from "./chunk-3SF7AMPH.js";
 import {
   RECONCILE_FAILURE_MESSAGES,
   RECONCILE_TABLES,
@@ -79,7 +80,7 @@ import {
   recordGiftCardPurchaseRefund,
   sessionLookupFailure,
   uncheckedSessionRefusal
-} from "./chunk-2QJ6LJ5B.js";
+} from "./chunk-L63XGUKQ.js";
 import {
   canonicalEmail,
   canonicalEmails,
@@ -88,21 +89,21 @@ import {
   hasCanonicalPurchase,
   referralReversalStatements,
   releaseReferralAwards
-} from "./chunk-TX6OICXZ.js";
+} from "./chunk-IC3XDWQU.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
 } from "./chunk-GNU6N22K.js";
 import {
   hasPurchaseHistory
-} from "./chunk-JTBD4QC4.js";
+} from "./chunk-PMYARYOQ.js";
 import {
   batchGroups,
   commerceDb,
   commitBatch,
   errorText,
   runStatements
-} from "./chunk-4PHEXUQV.js";
+} from "./chunk-SXQHVX4E.js";
 import {
   carts,
   creditLedger,
@@ -115,7 +116,7 @@ import {
   orders,
   reconcileDecisions,
   taxSyncDecisions
-} from "./chunk-YT2QU5EG.js";
+} from "./chunk-PLAJXKV3.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
@@ -1421,6 +1422,7 @@ function bindCommerceApi(options) {
       cancel: (id, options2 = {}) => cancelOrder(ctx, id, options2)
     },
     returns: {
+      exchangeChoices: (input, owner = {}) => readCustomerExchangeChoices(ctx, input, owner),
       read: (id, owner = {}) => readCustomerReturns(ctx, id, owner),
       request: (input, owner = {}) => createCustomerReturn(ctx, input, owner),
       cancel: (input, owner = {}) => cancelCustomerReturn(ctx, input, owner)

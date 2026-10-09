@@ -8637,6 +8637,70 @@ declare const returnRefundDecisions: drizzle_orm_sqlite_core.SQLiteTableWithColu
     };
     dialect: "sqlite";
 }>;
+/** A shopper preference, not approval, reservation or an agreed financial adjustment. */
+type ReturnExchangePreference = {
+    productId: string;
+    variantId: string | null;
+    name: string;
+    sku: string | null;
+    priceMinor: number;
+    currency: string;
+};
+declare const returnExchangePreferences: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
+    name: "_ecommerce_return_exchange_preferences";
+    schema: undefined;
+    columns: {
+        requestId: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: string;
+            tableName: "_ecommerce_return_exchange_preferences";
+            dataType: "string";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: true;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}>;
+        lineIndex: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: string;
+            tableName: "_ecommerce_return_exchange_preferences";
+            dataType: "number int53";
+            data: number;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}>;
+        target: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: string;
+            tableName: "_ecommerce_return_exchange_preferences";
+            dataType: "object json";
+            data: ReturnExchangePreference;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}>;
+    };
+    dialect: "sqlite";
+}>;
 declare const replenishmentPolicies: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     name: "_ecommerce_replenishment_policies";
     schema: undefined;
@@ -11393,6 +11457,9 @@ declare const relations: drizzle_orm.ExtractTablesWithRelations<{
     supplierIssueEvents: {
         issue: drizzle_orm.One<"supplierIssues", false>;
     };
+    returnExchangePreferences: {
+        request: drizzle_orm.One<"returnRequests", false>;
+    };
     returnRequestReasons: {
         request: drizzle_orm.One<"returnRequests", false>;
     };
@@ -11544,6 +11611,7 @@ declare const relations: drizzle_orm.ExtractTablesWithRelations<{
         fulfillment: drizzle_orm.One<"fulfillments", false>;
     };
     returnRequests: {
+        exchangePreference: drizzle_orm.One<"returnExchangePreferences", true>;
         reasonCategory: drizzle_orm.One<"returnRequestReasons", true>;
         order: drizzle_orm.One<"orders", false>;
         events: drizzle_orm.Many<"returnRequestEvents">;
@@ -13808,6 +13876,61 @@ declare const relations: drizzle_orm.ExtractTablesWithRelations<{
                 isAutoincrement: false;
                 hasRuntimeDefault: false;
                 enumValues: ["size_fit", "damaged", "wrong_item", "changed_mind", "other", "unspecified"];
+                baseColumn: never;
+                identity: undefined;
+                generated: undefined;
+            }, {}>;
+        };
+        dialect: "sqlite";
+    }>;
+    returnExchangePreferences: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
+        name: "_ecommerce_return_exchange_preferences";
+        schema: undefined;
+        columns: {
+            requestId: drizzle_orm_sqlite_core.SQLiteColumn<{
+                name: string;
+                tableName: "_ecommerce_return_exchange_preferences";
+                dataType: "string";
+                data: string;
+                driverParam: string;
+                notNull: true;
+                hasDefault: false;
+                isPrimaryKey: true;
+                isAutoincrement: false;
+                hasRuntimeDefault: false;
+                enumValues: [string, ...string[]];
+                baseColumn: never;
+                identity: undefined;
+                generated: undefined;
+            }, {}>;
+            lineIndex: drizzle_orm_sqlite_core.SQLiteColumn<{
+                name: string;
+                tableName: "_ecommerce_return_exchange_preferences";
+                dataType: "number int53";
+                data: number;
+                driverParam: number;
+                notNull: true;
+                hasDefault: false;
+                isPrimaryKey: false;
+                isAutoincrement: false;
+                hasRuntimeDefault: false;
+                enumValues: undefined;
+                baseColumn: never;
+                identity: undefined;
+                generated: undefined;
+            }, {}>;
+            target: drizzle_orm_sqlite_core.SQLiteColumn<{
+                name: string;
+                tableName: "_ecommerce_return_exchange_preferences";
+                dataType: "object json";
+                data: ReturnExchangePreference;
+                driverParam: string;
+                notNull: true;
+                hasDefault: false;
+                isPrimaryKey: false;
+                isAutoincrement: false;
+                hasRuntimeDefault: false;
+                enumValues: undefined;
                 baseColumn: never;
                 identity: undefined;
                 generated: undefined;
@@ -23043,4 +23166,4 @@ declare const relations: drizzle_orm.ExtractTablesWithRelations<{
     }>;
 }>>;
 
-export { CREDIT_LEDGER_KINDS, CUSTOMER_SESSION_PURPOSES, DISCOUNT_CODE_TYPES, EMAIL_KINDS, EMAIL_STATUSES, FULFILLMENT_KINDS, FULFILLMENT_STATUSES, GIFT_CARD_LEDGER_KINDS, GIFT_CARD_PURCHASE_STATUSES, GIFT_CARD_REVIEW_OUTCOMES, GIFT_CARD_SOURCES, GIFT_CARD_STATUSES, INSPECTION_DISPOSITIONS, type InspectedItem, PARCEL_CONTENT_SOURCES, PAYMENT_RETURNED_KINDS, PRODUCT_STATUSES, PRODUCT_TYPES, PURCHASE_ORDER_STATUSES, type ParcelItem, type PurchaseLine, RECONCILE_DECISION_ACTIONS, RECOVERY_DISPOSITIONS, RECOVERY_EVENT_KINDS, RECOVERY_KINDS, RECOVERY_PAYMENT_EVENTS, RECOVERY_STATUSES, REDEMPTION_STATUSES, REFERRAL_STATUSES, REFUND_SOURCE_KINDS, REPLENISHMENT_EVENT_KINDS, RESERVATION_TARGET_TYPES, RESTOCK_RESERVATION_TYPES, RESTOCK_TARGET_TYPES, RETURN_CONDITIONS, RETURN_REASON_CODES, RETURN_REFUND_STATUSES, RETURN_REQUEST_ACTORS, RETURN_REQUEST_STATUSES, type RecoveryStock, type RecoveryTarget, type RefundAllocation, type ReturnedItem, SHOPPER_AUDIT_ACTIONS, STOCK_MOVEMENT_KINDS, SUPPLIER_ISSUE_KINDS, SUPPLIER_ISSUE_STATUSES, type StocktakeLine, type SupplierSnapshot, TAX_BEHAVIORS, TAX_SYNC_ACTIONS, carts, categories, componentReservations, components, creditLedger, customerAccounts, customerSessions, customers, discountCodeCreations, discountCodes, discountRedemptions, disputes, emailDeliveries, emailRecoveryDecisions, fulfillments, giftCardClaims, giftCardCodeReplacements, giftCardLedger, giftCardOrderRefunds, giftCardPurchases, giftCardRedemptions, giftCardRefunds, giftCardReviews, giftCards, inspectionStock, inventoryReservations, orders, parcelContents, payments, productCategories, productTags, productVariantValues, productVariants, products, providerRefunds, purchaseOrderEvents, purchaseOrderLines, purchaseOrders, rateLimits, reconcileDecisions, recoveryCases, recoveryEvents, recoveryInspections, recoveryPaymentEvents, recoveryPayments, recoveryReceipts, recoveryShipments, referralCodes, referralSettings, referrals, relations, replenishmentDeliveries, replenishmentDeliveryEvents, replenishmentPolicies, restocks, returnInspections, returnReceipts, returnRefundDecisions, returnRequestEvents, returnRequestReasons, returnRequestReceipts, returnRequests, returnStock, shopperAudits, signInTokens, stockMovements, stocks, stocktakes, supplierIssueEvents, supplierIssues, supplierRevisions, suppliers, tags, taxReversals, taxSyncDecisions, variantComponents, variants };
+export { CREDIT_LEDGER_KINDS, CUSTOMER_SESSION_PURPOSES, DISCOUNT_CODE_TYPES, EMAIL_KINDS, EMAIL_STATUSES, FULFILLMENT_KINDS, FULFILLMENT_STATUSES, GIFT_CARD_LEDGER_KINDS, GIFT_CARD_PURCHASE_STATUSES, GIFT_CARD_REVIEW_OUTCOMES, GIFT_CARD_SOURCES, GIFT_CARD_STATUSES, INSPECTION_DISPOSITIONS, type InspectedItem, PARCEL_CONTENT_SOURCES, PAYMENT_RETURNED_KINDS, PRODUCT_STATUSES, PRODUCT_TYPES, PURCHASE_ORDER_STATUSES, type ParcelItem, type PurchaseLine, RECONCILE_DECISION_ACTIONS, RECOVERY_DISPOSITIONS, RECOVERY_EVENT_KINDS, RECOVERY_KINDS, RECOVERY_PAYMENT_EVENTS, RECOVERY_STATUSES, REDEMPTION_STATUSES, REFERRAL_STATUSES, REFUND_SOURCE_KINDS, REPLENISHMENT_EVENT_KINDS, RESERVATION_TARGET_TYPES, RESTOCK_RESERVATION_TYPES, RESTOCK_TARGET_TYPES, RETURN_CONDITIONS, RETURN_REASON_CODES, RETURN_REFUND_STATUSES, RETURN_REQUEST_ACTORS, RETURN_REQUEST_STATUSES, type RecoveryStock, type RecoveryTarget, type RefundAllocation, type ReturnExchangePreference, type ReturnedItem, SHOPPER_AUDIT_ACTIONS, STOCK_MOVEMENT_KINDS, SUPPLIER_ISSUE_KINDS, SUPPLIER_ISSUE_STATUSES, type StocktakeLine, type SupplierSnapshot, TAX_BEHAVIORS, TAX_SYNC_ACTIONS, carts, categories, componentReservations, components, creditLedger, customerAccounts, customerSessions, customers, discountCodeCreations, discountCodes, discountRedemptions, disputes, emailDeliveries, emailRecoveryDecisions, fulfillments, giftCardClaims, giftCardCodeReplacements, giftCardLedger, giftCardOrderRefunds, giftCardPurchases, giftCardRedemptions, giftCardRefunds, giftCardReviews, giftCards, inspectionStock, inventoryReservations, orders, parcelContents, payments, productCategories, productTags, productVariantValues, productVariants, products, providerRefunds, purchaseOrderEvents, purchaseOrderLines, purchaseOrders, rateLimits, reconcileDecisions, recoveryCases, recoveryEvents, recoveryInspections, recoveryPaymentEvents, recoveryPayments, recoveryReceipts, recoveryShipments, referralCodes, referralSettings, referrals, relations, replenishmentDeliveries, replenishmentDeliveryEvents, replenishmentPolicies, restocks, returnExchangePreferences, returnInspections, returnReceipts, returnRefundDecisions, returnRequestEvents, returnRequestReasons, returnRequestReceipts, returnRequests, returnStock, shopperAudits, signInTokens, stockMovements, stocks, stocktakes, supplierIssueEvents, supplierIssues, supplierRevisions, suppliers, tags, taxReversals, taxSyncDecisions, variantComponents, variants };

@@ -125,6 +125,9 @@ function submitCustomerReturn(data) {
 function cancelReturnRequest(data) {
   return commerceRequest("/api/ecommerce/returns", "POST", { action: "cancel", data });
 }
+function getCustomerExchangeChoices(data) {
+  return commerceRequest("/api/ecommerce/returns", "POST", { action: "exchangeChoices", data });
+}
 export {
   CART_UPDATED_EVENT,
   activateNewCustomerAccount,
@@ -134,6 +137,7 @@ export {
   claimGiftCardCode,
   dispatchCartUpdated,
   getCustomerAccount,
+  getCustomerExchangeChoices,
   getCustomerReturns,
   getOrderStatus,
   installTalismanEcommerceBrowserHelpers,
