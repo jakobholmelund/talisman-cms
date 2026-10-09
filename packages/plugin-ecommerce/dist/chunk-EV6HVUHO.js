@@ -883,6 +883,8 @@ var purchaseSchema = z2.object({
 }).strict();
 var adminIssueSchema = z2.object({
   amountCents: amountSchema,
+  // A private caller-held key recovers one issuance after an interrupted response.
+  requestKey: z2.string().uuid().transform((value) => value.toLowerCase()).optional(),
   reason: z2.string().trim().min(8).max(500),
   // A card support issues in place of a purchased one takes over the value left on the purchase's card.
   replacesPurchaseId: purchaseIdSchema.optional()
@@ -1060,15 +1062,38 @@ function giftCardCurrency(env) {
 }
 async function issueAdminGiftCard(env, actor, input) {
   const currency = giftCardCurrency(env);
-  const { amountCents, reason, replacesPurchaseId } = adminIssueSchema.parse(input);
+  const { amountCents, reason, replacesPurchaseId, requestKey } = adminIssueSchema.parse(input);
   if (!actor.trim()) throw new Error("Administrator identity is required");
   const replaces = replacesPurchaseId ?? null;
   const db = commerceDb(env);
+  const digest = requestKey ? await hashGiftCardSecret(`admin-issue:${requestKey}`) : null;
+  const derived = digest && `${digest.slice(0, 8)}-${digest.slice(8, 12)}-8${digest.slice(13, 16)}-${(parseInt(digest[16], 16) & 3 | 8).toString(16)}${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+  const id = `gift_${derived ?? crypto.randomUUID()}`;
+  const replay = async () => {
+    if (!requestKey) return null;
+    const card = await db.select({
+      id: giftCards.id,
+      encryptedCode: giftCards.encryptedCode,
+      codeHash: giftCards.codeHash,
+      source: giftCards.source,
+      adminActor: giftCards.adminActor,
+      adminReason: giftCards.adminReason,
+      initialCents: giftCards.initialCents,
+      currency: giftCards.currency,
+      replacesPurchaseId: giftCards.replacesPurchaseId
+    }).from(giftCards).where(eq3(giftCards.id, id)).get();
+    if (!card) return null;
+    if (card.source !== "admin" || card.adminActor !== actor || card.adminReason !== reason || card.initialCents !== amountCents || card.currency !== currency || card.replacesPurchaseId !== replaces) {
+      throw new Error("This issuance request was already used by another administrator or with different details");
+    }
+    return { id, code: await decryptCardSecret(await giftCardKeyring(env), card), amountCents, currency, replacesPurchaseId: replaces };
+  };
+  const recovered = await replay();
+  if (recovered) return recovered;
   if (replaces) await assertReplaceable(db, replaces, amountCents);
-  const id = `gift_${crypto.randomUUID()}`;
   const secret = await newCardSecret(env, id);
   const timestamp = Math.floor(Date.now() / 1e3);
-  const replacementIssued = sql3`EXISTS (SELECT 1 FROM _ecommerce_gift_cards n WHERE n.id = ${id})`;
+  const replacementIssued = sql3`EXISTS (SELECT 1 FROM _ecommerce_gift_cards n WHERE n.id = ${id} AND n.code_hash = ${secret.codeHash})`;
   const [inserted] = await db.batch([
     db.all(sql3`INSERT INTO _ecommerce_gift_cards
       (id,code_hash,code_suffix,encrypted_code,source,admin_actor,admin_reason,replaces_purchase_id,initial_cents,balance_cents,currency,status,created_at,updated_at)
@@ -1076,10 +1101,10 @@ async function issueAdminGiftCard(env, actor, input) {
       WHERE ${replaces} IS NULL OR EXISTS (SELECT 1 FROM _ecommerce_gift_card_purchases p
         WHERE p.id = ${replaces} AND p.currency = ${currency} AND p.status IN ('paid','partially_refunded') AND ${settledPurchase(p)}
           AND NOT ${pendingCheckout(p.id)} AND ${cardValue(p.id)} = ${amountCents})
-      RETURNING id`),
+      ON CONFLICT(id) DO NOTHING RETURNING id`),
     db.run(sql3`INSERT INTO _ecommerce_gift_card_ledger
       (id,card_id,purchase_id,kind,amount_cents,created_at)
-      SELECT ${`gcl_issue_${id}`},id,replaces_purchase_id,'issue',initial_cents,${timestamp} FROM _ecommerce_gift_cards WHERE id = ${id}`),
+      SELECT ${`gcl_issue_${id}`},id,replaces_purchase_id,'issue',initial_cents,${timestamp} FROM _ecommerce_gift_cards WHERE id = ${id} AND code_hash = ${secret.codeHash}`),
     ...replaces ? [
       db.run(sql3`INSERT INTO _ecommerce_gift_card_ledger
         (id,card_id,purchase_id,kind,amount_cents,created_at)
@@ -1094,7 +1119,11 @@ async function issueAdminGiftCard(env, actor, input) {
       ))
     ] : []
   ]);
-  if (!inserted.length) throw new Error("The purchase changed while its card was being replaced; reload and try again");
+  if (!inserted.length) {
+    const raced = await replay();
+    if (raced) return raced;
+    throw new Error("The purchase changed while its card was being replaced; reload and try again");
+  }
   return { id, code: secret.code, amountCents, currency, replacesPurchaseId: replaces };
 }
 var isoSeconds = (seconds) => typeof seconds === "number" ? new Date(seconds * 1e3).toISOString() : null;

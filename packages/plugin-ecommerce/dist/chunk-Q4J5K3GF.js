@@ -1,6 +1,6 @@
 import {
   ShopperError
-} from "./chunk-DN5M73UO.js";
+} from "./chunk-EV6HVUHO.js";
 
 // src/request-body.ts
 async function readBoundedJson(request, maximum = 64 * 1024) {
