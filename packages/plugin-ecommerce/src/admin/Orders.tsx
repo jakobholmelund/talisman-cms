@@ -19,6 +19,8 @@ type Order = {
   id: string; paymentProvider: string; status: string; fulfillmentStatus: string; customerEmail: string | null; currency: string;
   createdAt: string; shippingAddress: Address | null; canShip: boolean; items: Item[];
   fulfillmentEvents: Array<{ id: string; kind: string; note: string; adminActor: string; createdAt: string }>;
+  activity?: Array<{ id: string; kind: string; createdAt: string; detail: string; actor: string | null; actorName: string | null;
+    amountCents: number | null; email: { status: string; attempts: number; lastError: string | null; sentAt: string | null; nextAttemptAt: string | null } | null }>;
   amounts: Array<{ key: string; label: string; cents: number }>; shipments: Shipment[];
 };
 type OrdersPage = { view: View; pageSize: number; awaitingCount: number; nextCursor: string | null; orders: Order[] };
@@ -213,6 +215,18 @@ export default function Orders() {
           {item.quantity} × {item.productName ?? `${item.productId} (no longer in the catalog)`}{item.variantLabel ? ` — ${item.variantLabel}` : ''}
           {item.sku ? ` · SKU ${item.sku}` : ' · No SKU'} · {money(item.lineTotal, order.currency)}
         </li>)}</ul>
+        <details><summary>Order activity</summary>
+          <p className="ecom-admin__muted">Recorded shipments, stock returns, tender refunds and email status. Sent means accepted by the email provider.</p>
+          {order.activity?.length ? <ul>{order.activity.map(event => <li key={event.id}>
+            <strong>{statusLabel(event.kind)}</strong> · {when(event.createdAt)} · {event.detail}
+            {event.actor && <> · <span title={event.actor}>{event.actorName || event.actor}</span></>}
+            {event.amountCents !== null && <> · {money(event.amountCents, order.currency)}</>}
+            {event.email && <> · {statusLabel(event.email.status)} · {event.email.attempts} attempts
+              {event.email.sentAt && <> · accepted {when(event.email.sentAt)}</>}
+              {event.email.lastError && <> · {event.email.lastError}</>}
+              {event.email.nextAttemptAt && <> · next attempt {when(event.email.nextAttemptAt)}</>}</>}
+          </li>)}</ul> : <p className="ecom-admin__muted">No operational activity recorded yet.</p>}
+        </details>
         <h3>Amounts</h3>
         <ul>{order.amounts.map(amount => <li key={amount.key}>{amount.label}: <strong>{money(amount.cents, order.currency)}</strong></li>)}</ul>
         {address && <address>{address.name}<br />{address.line1}<br />{address.line2 && <>{address.line2}<br /></>}{address.city}, {address.state} {address.postalCode}<br />{address.country}</address>}

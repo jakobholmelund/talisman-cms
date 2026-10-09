@@ -26,6 +26,7 @@ const { bindCommerceApi } = await import('../dist/api.js');
 const { hasPurchaseHistory, listCustomerOrders } = await import('../dist/accounts.js');
 const { AdminTestPaymentAdapter } = await import('../dist/adapters/admin-test.js');
 const { issueAdminGiftCard, refundGiftCardTender } = await import('../dist/gift-cards.js');
+const { restockOrder } = await import('../dist/order-adjustments.js');
 const { correctCommerceFulfillment, fulfillCommerceOrder, listCommerceOrdersAdmin } = await import('../dist/fulfillment.js');
 const fulfillmentRoute = (await import('../dist/routes/ecommerce-admin-fulfillment.js')).ALL;
 const orderRoute = (await import('../dist/routes/ecommerce-order.js')).ALL;
@@ -179,6 +180,8 @@ test('a refund after shipping keeps the shipment visible, whichever tender it re
   await fulfillCommerceOrder({ DB }, 'admin-1', shipment(split.order.id));
   await refundGiftCardTender({ DB }, 'admin-1', { orderId: split.order.id, amountCents: 2000, reason: 'Returned one lens pair' });
   assert.deepEqual(state(sqlite, split.order.id), { status: 'partially_refunded', fulfillment_status: 'fulfilled' });
+  const activity = (await listCommerceOrdersAdmin({ DB }, { view: 'recent', query: split.order.id })).orders[0].activity;
+  assert.deepEqual(activity.filter(row => row.kind === 'gift_card_refund').map(row => row.amountCents), [2000]);
   sqlite.close();
 });
 
@@ -555,8 +558,8 @@ test('the queue queries use the orders and fulfillments indexes', async () => {
     assert.match(count.plan, /^SCAN _ecommerce_orders USING (COVERING )?INDEX _ecommerce_orders_awaiting_idx$/, `count: ${count.plan}`);
     assert.match(page.plan, index, `${JSON.stringify(options)}: ${page.plan}`);
     if (!options.query) assert.doesNotMatch(page.plan, /TEMP B-TREE/, 'the index gives the page its order');
-    for (const shipments of rest) assert.match(shipments.plan, /SEARCH d0 USING INDEX _ecommerce_fulfillments_order_idx \(order_id=\?\)/);
-    assert.equal(rest.length, 2, 'shipments and progress events each read once per page');
+    for (const shipments of rest) assert.match(shipments.plan, /SEARCH (?:d0|_ecommerce_fulfillments) USING INDEX _ecommerce_fulfillments_order_idx \(order_id=\?\)/);
+    assert.equal(rest.length, 3, 'shipments, progress events and activity each use the order index');
   }
   sqlite.close();
 });
@@ -670,5 +673,31 @@ test('shoppers see the fulfillment status, and a legacy fulfilled order still co
   const legacy = insertOrder(sqlite, { email: 'legacy@example.test' });
   sqlite.prepare(`UPDATE _ecommerce_orders SET status = 'fulfilled' WHERE id = ?`).run(legacy);
   assert.equal(await hasPurchaseHistory({ DB }, { emails: ['legacy@example.test'] }), true);
+  sqlite.close();
+});
+
+
+test('order activity scopes email status and resolves staff names while preserving audit identities', async () => {
+  const { sqlite, DB } = database();
+  const { api, order } = await paidOrder(DB, 'activity');
+  const { order: other } = await paidOrder(DB, 'activity-other');
+  sqlite.prepare(`INSERT INTO galaxy_auth_user (id,name,email,created_at,updated_at) VALUES ('staff','Alex','staff@example.test',?,?)`).run(NOW,NOW);
+  const parcel = await fulfillCommerceOrder({ DB }, 'staff', shipment(order.id));
+  sqlite.prepare(`UPDATE _ecommerce_email_deliveries SET status='sent',sent_at=?,attempts=1 WHERE kind='shipment' AND subject_id=?`).run(NOW,parcel.fulfillmentId);
+  await correctCommerceFulfillment({ DB }, 'deleted-staff', { fulfillmentId: parcel.fulfillmentId,
+    carrier: 'DHL', trackingNumber: 'CHANGED', reason: 'Correcting carrier details' });
+  sqlite.prepare(`UPDATE _ecommerce_email_deliveries SET status='sent',sent_at=?,attempts=1 WHERE kind='order_confirmation' AND subject_id=?`).run(NOW,order.id);
+  await refund(api, order, order.totalAmount);
+  await restockOrder({ DB }, 'staff', { orderId: order.id, reason: 'Parcel returned unopened' });
+  const [listed] = (await listCommerceOrdersAdmin({ DB }, { view: 'recent', query: order.id })).orders;
+  assert.ok(listed.activity.some(event => event.kind === 'restock' && event.actorName === 'Alex' && event.detail.includes('Parcel returned unopened')));
+  assert.ok(listed.activity.some(event => event.actor === 'staff' && event.actorName === 'Alex'));
+  assert.ok(listed.activity.some(event => event.actor === 'deleted-staff' && event.actorName === 'deleted-staff'));
+  assert.ok(listed.activity.some(event => event.email?.status === 'sent' && event.email.attempts === 1));
+  assert.ok(listed.activity.some(event => event.detail === 'shipment' && event.email?.status === 'sent'));
+  assert.ok(listed.activity.some(event => event.detail === 'shipment update' && event.email));
+  assert.doesNotMatch(JSON.stringify(listed.activity), new RegExp(other.id + '|staff@example|encrypted|tokenHash'));
+  const dates = listed.activity.map(event => event.createdAt);
+  assert.deepEqual(dates, [...dates].sort());
   sqlite.close();
 });

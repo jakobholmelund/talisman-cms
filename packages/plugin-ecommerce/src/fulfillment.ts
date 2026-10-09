@@ -1,3 +1,4 @@
+import { loadOrderActivity } from './order-activity';
 import { hashOrderAccess } from './cookies';
 import { and, asc, count, desc, eq, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
@@ -176,6 +177,7 @@ export async function listCommerceOrdersAdmin(env: TalismanEnv, options: {
   const { events } = await batchGroups(db, { events: chunked(rows.map(row => row.id)).map(ids =>
     db.query.fulfillments.findMany({ columns: { id: true, orderId: true, kind: true, note: true, adminActor: true, createdAt: true },
       where: { orderId: { in: ids }, kind: { in: ['reopen', 'complete'] } }, orderBy: (_row, { sql }) => sql`rowid` })) });
+  const activity = await loadOrderActivity(env, rows.map(row => row.id));
   let offset = 0;
   const orders = rows.map((row, index) => {
     const items = described.slice(offset, offset += storedItems[index].length);
@@ -195,6 +197,7 @@ export async function listCommerceOrdersAdmin(env: TalismanEnv, options: {
         unitAmount: item.priceAtPurchase, lineTotal: item.priceAtPurchase * item.quantity,
         productName: item.productName, variantLabel: item.variantLabel, sku: item.sku,
       })),
+      activity: activity.get(row.id) ?? [],
       amounts: orderAmounts(row),
       shipments: shipments.get(row.id) ?? [],
       fulfillmentEvents: events.filter(event => event.orderId === row.id),

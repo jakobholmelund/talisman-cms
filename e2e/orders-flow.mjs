@@ -10,6 +10,7 @@ export async function ordersFlow(ctx, { fail, expectVisible, expectHidden, expec
     fulfillmentStatus: 'unfulfilled', customerEmail: `shopper${index}@example.com`, currency: 'usd',
     createdAt: '2026-01-01T12:00:00.000Z', shippingAddress: null, canShip: true,
     items: [{ productId: 'fixture', variantId: null, quantity: 1, lineTotal: 1200, productName: 'Browser fixture', variantLabel: null, sku: 'FIXTURE' }],
+    activity: [{ id: 'activity-'+index, kind: 'restock', createdAt: '2026-01-02T12:00:00Z', detail: 'Returned one parcel', actor: 'staff', actorName: 'Alex', amountCents: null, email: null }],
     amounts: [{ key: 'total', label: 'Total', cents: 1200 }], shipments: [], fulfillmentEvents: [],
   }));
   let failRead = true;
@@ -76,6 +77,9 @@ export async function ordersFlow(ctx, { fail, expectVisible, expectHidden, expec
     await page.getByRole('button', { name: 'Retry loading orders', exact: true }).click();
     await expectVisible(card(order.id), 'recovered orders'); await settle();
     await expectNoAlert(page, 'recovered orders');
+    await card(order.id).getByText('Order activity', { exact: true }).click();
+    await expectVisible(card(order.id).getByText('Alex', { exact: true }), 'activity staff name');
+    await expectVisible(card(order.id).getByText(/Returned one parcel/), 'activity restock reason');
     if (await page.getByRole('region', { name: /^Order ord_browser_/ }).count() !== 50) fail('orders first page was not bounded');
     await form().getByLabel('Shipment note', { exact: true }).fill('Keep this draft parcel');
     failRead = true;

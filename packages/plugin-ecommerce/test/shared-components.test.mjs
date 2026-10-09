@@ -706,6 +706,8 @@ test('a released referral awards both shoppers once and store credit reduces onl
   } }), 'test-signature', 'test-secret');
   assert.equal((await getReferralDashboard({ DB }, friend.userId)).creditBalance, 0);
   assert.equal(sqlite.prepare(`SELECT COUNT(*) AS count FROM _ecommerce_credit_ledger WHERE kind = 'purchase_credit_refund'`).get().count, 1);
+  const activity = (await listCommerceOrdersAdmin({ DB }, { view: 'recent', query: friendPurchase.id })).orders[0].activity;
+  assert.deepEqual(activity.filter(row => row.kind === 'store_credit_refund').map(row => row.amountCents), [1000]);
   const afterRefund = await api.carts.getOrCreate('friend-next', friend.userId);
   await api.carts.updateItems(afterRefund.id, [{ productId: 'forrest', variantId: 'forrest-amber', quantity: 1 }]);
   const noCredit = (await api.orders.createFromCart(afterRefund.id, {
