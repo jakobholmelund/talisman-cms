@@ -47,6 +47,7 @@ function database() {
       const prepared = sqlite.prepare(sql);
       let values = [];
       return {
+        sqlText: sql,
         bind(...params) { values = params; return this; },
         async all() { return { results: prepared.all(...values) }; },
         async first() { return prepared.get(...values) ?? null; },
@@ -61,7 +62,7 @@ function database() {
     async batch(statements) {
       const hook = DB.beforeNextBatch;
       DB.beforeNextBatch = null;
-      await hook?.();
+      await hook?.(statements);
       sqlite.exec('BEGIN');
       try {
         const result = [];
@@ -393,6 +394,37 @@ test('the admin code replacement route requires administrator, same origin and a
   const first = await callAdmin(env, admin, { body }); assert.equal(first.status, 200);
   assert.deepEqual(await callAdmin(env, admin, { body }), first);
   assert.equal(codeAudits(sqlite).length, 1); sqlite.close();
+});
+
+test('checkout reserves only the code it evaluated when a staff replacement commits first', async () => {
+  for (const amountCents of [5000, 2000]) {
+    const { sqlite, DB } = database(); const env = giftEnv(DB); const expired = [];
+    const adapter = { ...stripe, async expireCheckoutSession(id) { expired.push(id); } };
+    const api = bindCommerceApi({ env, paymentAdapters: [adapter] });
+    const card = await issueAdminGiftCard(env, 'admin-1', { amountCents, reason: 'Checkout code authorization check' });
+    const cart = await api.carts.getOrCreate(`basket-${++basket}`);
+    await api.carts.updateItems(cart.id, [{ productId: 'frame', quantity: 1 }]);
+    let replaced;
+    const beforeReservation = async statements => {
+      if (!statements.some(statement => /insert into "_ecommerce_gift_card_redemptions"/i.test(statement.sqlText))) {
+        DB.beforeNextBatch = beforeReservation; return;
+      }
+      replaced = await replaceAdminGiftCardCode(env, 'support-1', replacementInput(card));
+    };
+    DB.beforeNextBatch = beforeReservation;
+    await assert.rejects(api.orders.createFromCart(cart.id, { ...checkout, giftCardCode: card.code }), error => error.code === 'gift_card_changed' && error.status === 409);
+    assert.equal(rows(sqlite, 'SELECT id FROM _ecommerce_orders').length, 0);
+    assert.equal(rows(sqlite, 'SELECT id FROM _ecommerce_gift_card_redemptions').length, 0);
+    assert.equal(rows(sqlite, 'SELECT id FROM _ecommerce_inventory_reservations').length, 0);
+    assert.equal(row(sqlite, 'SELECT inventory_quantity FROM _ecommerce_products WHERE id = ?', 'frame').inventory_quantity, 50);
+    assert.equal(row(sqlite, 'SELECT checkout_session_id FROM _ecommerce_carts WHERE id = ?', cart.id).checkout_session_id, null);
+    assert.equal(ledgerBalance(sqlite, card.id), amountCents);
+    assert.equal(expired.length, amountCents < 3000 ? 1 : 0); assert.equal(codeAudits(sqlite).length, 1);
+    const { order } = await api.orders.createFromCart(cart.id, { ...checkout, giftCardCode: replaced.code });
+    assert.equal(order.status, amountCents < 3000 ? 'pending' : 'paid'); assert.equal(order.giftCardId, card.id);
+    assert.equal(ledgerBalance(sqlite, card.id), Math.max(0, amountCents - 3000));
+    sqlite.close();
+  }
 });
 
 test('a code encrypted before a key rotation still decrypts after it, and new codes use the new key', async () => {

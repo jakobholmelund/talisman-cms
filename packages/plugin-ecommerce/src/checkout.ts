@@ -10,7 +10,7 @@ import { aggregateComponentDemand, loadBasketCatalog, requireVariantChoice, reso
   type InventoryTarget, type RequiredComponent } from './basket';
 import { checkoutSchema, checkoutInputError, UNDELIVERABLE_COUNTRY, withCountryCode } from './checkout-input';
 import { canonicalEmail, canonicalEmails, hasCanonicalPurchase } from './email-identity';
-import { evaluateGiftCard } from './gift-cards';
+import { evaluateGiftCard, hashGiftCardSecret } from './gift-cards';
 import { INVENTORY_COLUMNS } from './inventory';
 import { minimumChargeAmount } from './money';
 import { cancelOrder, discardCheckoutDiscount, finalizeOrderPayment, findOrder } from './orders';
@@ -285,8 +285,14 @@ export async function createOrderFromCart(ctx: CommerceContext, cartId: string, 
     }));
   }
   if (giftCard) {
+    // Authorize the same bearer code at reservation time, inside the atomic batch. A replacement
+    // between evaluation and this write makes the scalar subquery NULL, which the existing
+    // redemption guard/NOT NULL constraint refuses, rolling back the order and all reservations.
+    const authorizedHash = await hashGiftCardSecret(options.giftCardCode!.trim().toUpperCase());
+    const authorizedCard = db.select({ id: schema.giftCards.id }).from(schema.giftCards)
+      .where(and(eq(schema.giftCards.id, giftCard.id), eq(schema.giftCards.codeHash, authorizedHash)));
     statements.push(db.insert(schema.giftCardRedemptions).values({
-      id: `gcr_${orderId}`, cardId: giftCard.id, orderId, amountCents: giftCardApplied, status: 'reserved', createdAt: now, updatedAt: now,
+      id: `gcr_${orderId}`, cardId: sql`(${authorizedCard})`, orderId, amountCents: giftCardApplied, status: 'reserved', createdAt: now, updatedAt: now,
     }));
   }
   if (creditApplied && cart.userId) {
