@@ -3,7 +3,7 @@ import { TalismanEnv } from 'talisman-cms/client';
 import { z } from 'zod';
 import { discountCodes } from './schema.js';
 import 'drizzle-orm';
-import './payments-C3gqo5tp.js';
+import './payments-DiMqRHdo.js';
 import 'drizzle-orm/sqlite-core';
 
 declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
@@ -21,12 +21,12 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     expiresAt: z.ZodNullable<z.ZodNumber>;
     active: z.ZodBoolean;
 }, "strict", z.ZodTypeAny, {
-    description: string | null;
+    value: number;
+    code: string;
     type: "amount" | "credit" | "percent";
     active: boolean;
-    value: number;
+    description: string | null;
     expiresAt: number | null;
-    code: string;
     minOrderCents: number;
     maxDiscountCents: number | null;
     eligibleProductIds: string[];
@@ -35,12 +35,12 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     firstOrderOnly: boolean;
     startsAt: number | null;
 }, {
-    description: string | null;
+    value: number;
+    code: string;
     type: "amount" | "credit" | "percent";
     active: boolean;
-    value: number;
+    description: string | null;
     expiresAt: number | null;
-    code: string;
     minOrderCents: number;
     maxDiscountCents: number | null;
     eligibleProductIds: string[];
@@ -49,12 +49,12 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     firstOrderOnly: boolean;
     startsAt: number | null;
 }>, {
-    description: string | null;
+    value: number;
+    code: string;
     type: "amount" | "credit" | "percent";
     active: boolean;
-    value: number;
+    description: string | null;
     expiresAt: number | null;
-    code: string;
     minOrderCents: number;
     maxDiscountCents: number | null;
     eligibleProductIds: string[];
@@ -63,12 +63,12 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     firstOrderOnly: boolean;
     startsAt: number | null;
 }, {
-    description: string | null;
+    value: number;
+    code: string;
     type: "amount" | "credit" | "percent";
     active: boolean;
-    value: number;
+    description: string | null;
     expiresAt: number | null;
-    code: string;
     minOrderCents: number;
     maxDiscountCents: number | null;
     eligibleProductIds: string[];
@@ -84,23 +84,23 @@ declare const referralSettingsSchema: z.ZodEffects<z.ZodObject<{
     minOrderCents: z.ZodNumber;
     attributionDays: z.ZodNumber;
 }, "strict", z.ZodTypeAny, {
-    rewardCents: number;
     enabled: boolean;
+    rewardCents: number;
     minOrderCents: number;
     attributionDays: number;
 }, {
-    rewardCents: number;
     enabled: boolean;
+    rewardCents: number;
     minOrderCents: number;
     attributionDays: number;
 }>, {
-    rewardCents: number;
     enabled: boolean;
+    rewardCents: number;
     minOrderCents: number;
     attributionDays: number;
 }, {
-    rewardCents: number;
     enabled: boolean;
+    rewardCents: number;
     minOrderCents: number;
     attributionDays: number;
 }>;
@@ -180,7 +180,7 @@ declare function getPromotionsAdmin(env: TalismanEnv): Promise<{
     }[];
     usage: {
         code: string;
-        status: "reserved" | "confirmed" | "cancelled" | "refunded";
+        status: "refunded" | "cancelled" | "reserved" | "confirmed";
         uses: number;
     }[];
 }>;
@@ -214,14 +214,14 @@ declare function createDiscountCode(env: TalismanEnv, input: unknown, actor?: st
     updatedAt: Date;
 } | undefined>;
 declare function updateDiscountCode(env: TalismanEnv, code: string, input: unknown): Promise<{
+    value: number;
+    code: string;
+    type: "amount" | "credit" | "percent";
+    active: boolean;
     createdAt: Date;
     updatedAt: Date;
     description: string | null;
-    type: "amount" | "credit" | "percent";
-    active: boolean;
-    value: number;
     expiresAt: Date | null;
-    code: string;
     minOrderCents: number;
     remainingCents: number | null;
     maxDiscountCents: number | null;

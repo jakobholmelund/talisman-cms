@@ -63,6 +63,15 @@ type PaymentReferences = {
     giftCardPurchaseId?: string | null;
 };
 interface PaymentProviderAdapter {
+    /** Read an independently collected exchange upgrade, including its current refund/dispute state. */
+    getExchangePayment?(paymentIntentId: string): Promise<{
+        caseId: string | null;
+        status: string;
+        amountMinor: number;
+        currency: string;
+        refundedMinor: number;
+        disputed: boolean;
+    } | null>;
     /**
      * Identifies the provider (e.g., 'stripe', 'paypal')
      */

@@ -1,7 +1,7 @@
 import {
   getReferralPolicy,
   referralReversalStatements
-} from "./chunk-GB3RDLKI.js";
+} from "./chunk-TX6OICXZ.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
@@ -9,7 +9,7 @@ import {
 import {
   commerceDb,
   commitBatch
-} from "./chunk-7BTUQQDZ.js";
+} from "./chunk-4PHEXUQV.js";
 import {
   creditLedger,
   discountRedemptions,
@@ -23,11 +23,11 @@ import {
   giftCards,
   orders,
   payments
-} from "./chunk-KLQ2VU7R.js";
+} from "./chunk-YT2QU5EG.js";
 import {
   emailLink,
   giftCardClaimEmail
-} from "./chunk-QVPX4QWC.js";
+} from "./chunk-R2NISKMY.js";
 import {
   SUPPORTED_CURRENCIES,
   isSupportedCurrency,
@@ -640,6 +640,9 @@ var KIND_HEADERS = {
   shipment: "order-shipment",
   shipment_update: "order-shipment-update",
   gift_card_claim: "gift-card-claim",
+  recovery_shipment: "replacement-shipment",
+  recovery_tracking: "replacement-tracking",
+  recovery_received: "replacement-return-received",
   return_refund: "return-refund",
   return_decision: "return-decision",
   return_received: "return-received"
@@ -649,6 +652,9 @@ var KIND_LABELS = {
   shipment: "Shipment email",
   shipment_update: "Shipment update email",
   gift_card_claim: "Gift card claim email",
+  recovery_shipment: "Replacement shipment email",
+  recovery_tracking: "Replacement tracking email",
+  recovery_received: "Replacement return email",
   return_refund: "Return refund email",
   return_decision: "Return decision email",
   return_received: "Return receipt email"

@@ -1,7 +1,7 @@
 import { BlockDefinition, Plugin } from 'talisman-cms';
 export { CART_MAX_LINES, CART_MAX_LINE_QUANTITY, TaxCalculationError, bindCommerceApi, deliverPendingCommerceEmails, reconcileCommerce } from './api.js';
 import { IdentityEmailChangeHook } from 'talisman-cms/auth/identity';
-export { P as PaymentProviderAdapter, a as PaymentReferences, T as TaxAddressError, b as TaxCalculation, c as TaxCalculationParams, V as ValidatedWebhookEvent } from './payments-C3gqo5tp.js';
+export { P as PaymentProviderAdapter, a as PaymentReferences, T as TaxAddressError, b as TaxCalculation, c as TaxCalculationParams, V as ValidatedWebhookEvent } from './payments-DiMqRHdo.js';
 export { CommerceEmailTemplates } from './emails.js';
 export { StripePaymentAdapter } from './adapters/stripe.js';
 export { AdminTestPaymentAdapter } from './adapters/admin-test.js';
@@ -12,7 +12,7 @@ import 'drizzle-orm';
 import 'drizzle-orm/sqlite-core';
 import './return-requests-Ca2cC1Ih.js';
 import 'talisman-cms/client';
-import './commerce-context-o8Ob_RVh.js';
+import './commerce-context-B9gCdqRP.js';
 import 'drizzle-orm/d1';
 import './email-deliveries-CyzibTug.js';
 import 'talisman-cms/email';

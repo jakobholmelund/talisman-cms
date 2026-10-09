@@ -1,6 +1,6 @@
 import { SQL } from 'drizzle-orm';
 import { TalismanEnv } from 'talisman-cms/client';
-import { P as PaymentProviderAdapter } from './payments-C3gqo5tp.js';
+import { P as PaymentProviderAdapter } from './payments-DiMqRHdo.js';
 import { orders, referralSettings } from './schema.js';
 import 'drizzle-orm/sqlite-core';
 

@@ -17,6 +17,21 @@ function shopperSignInEmail({ link, siteName }) {
     })
   };
 }
+function recoveryNoticeEmail(email) {
+  const { store, orderId, kind, exchange, occurredAt, name, sku, quantity, carrier, trackingNumber } = email;
+  const heading = kind === "received" ? "Your returned replacement was received" : kind === "tracking" ? "Your replacement tracking was updated" : exchange ? "Your exchange has shipped" : "Your replacement has shipped";
+  return { subject: oneLine(`${heading} \u2014 ${store.name}`), ...renderCommerceEmail({
+    storeName: store.name,
+    heading,
+    paragraphs: [`Order ${orderId} \xB7 ${formatDate(occurredAt)}`, kind === "received" ? "We will inspect the returned goods separately. Receipt does not confirm a refund." : "This parcel is additional to your original shipment."],
+    sections: [{
+      title: kind === "received" ? "Received goods" : "Parcel contents",
+      rows: [{ label: `${name}${sku ? ` \xB7 ${sku}` : ""}`, value: `${quantity} units` }],
+      ...kind === "received" ? {} : { lines: [carrier || "Carrier not provided", trackingNumber ? `Tracking: ${trackingNumber}` : "Tracking number not provided"] }
+    }, ...storeSections(store)],
+    footer: [`Questions? Please ${contact(store)} and mention the order number.`]
+  }) };
+}
 function formatMoney2(cents, currency) {
   try {
     return formatMoney(cents, currency);
@@ -210,6 +225,7 @@ function returnRefundEmail(email) {
 
 export {
   shopperSignInEmail,
+  recoveryNoticeEmail,
   formatMoney2 as formatMoney,
   formatDate,
   formatAddress,

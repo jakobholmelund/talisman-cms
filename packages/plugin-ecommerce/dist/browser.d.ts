@@ -1,11 +1,11 @@
 import { C as CustomerReturns } from './return-request-types-CaKc6AaH.js';
-import { C as CommerceContext } from './commerce-context-o8Ob_RVh.js';
+import { C as CommerceContext } from './commerce-context-B9gCdqRP.js';
 import './schema.js';
 import 'drizzle-orm';
 import 'drizzle-orm/sqlite-core';
 import 'talisman-cms/client';
 import 'drizzle-orm/d1';
-import './payments-C3gqo5tp.js';
+import './payments-DiMqRHdo.js';
 
 /** The same owner/guest credentials as order status, with a deliberately shopper-only projection. */
 declare function readOrderTracking(ctx: CommerceContext, orderId: string, sessionToken?: string, customerId?: string, orderAccessToken?: string): Promise<{
@@ -47,10 +47,17 @@ declare function readOrderTracking(ctx: CommerceContext, orderId: string, sessio
         quantity: number;
         name: string;
         sku: string | null;
+        adjustment: {
+            amountMinor: number;
+            currency: string;
+            status: string;
+        };
         status: "open" | "resolved";
         shipments: {
             id: string;
             quantity: number;
+            returned: number;
+            awaitingInspection: number;
             shippedAt: string;
             carrier: string | null;
             trackingNumber: string | null;

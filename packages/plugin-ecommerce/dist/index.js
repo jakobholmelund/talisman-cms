@@ -2,39 +2,38 @@ import {
   AdminTestPaymentAdapter
 } from "./chunk-FK3KKBW6.js";
 import {
-  StripePaymentAdapter
-} from "./chunk-DR67UJVQ.js";
-import {
   bindCommerceApi,
   reconcileCommerce,
   shippingOptionsFor
-} from "./chunk-35CXWIDR.js";
+} from "./chunk-JUC2XNS7.js";
 import {
   CART_MAX_LINES,
   CART_MAX_LINE_QUANTITY,
   TaxCalculationError
-} from "./chunk-NXQCYUOX.js";
-import "./chunk-PD7I5B62.js";
-import "./chunk-IT7W6TQQ.js";
+} from "./chunk-IK2LAKMW.js";
+import "./chunk-MQQMY6EP.js";
+import "./chunk-LVMYPANC.js";
+import "./chunk-AVWDMCNG.js";
 import {
+  StripePaymentAdapter,
   TaxAddressError
-} from "./chunk-BGDJXEM5.js";
+} from "./chunk-IN4CG7W7.js";
 import {
   deliverPendingCommerceEmails
-} from "./chunk-J7AA22HC.js";
+} from "./chunk-HYVPTDYO.js";
 import {
   COUNTRY_CODES,
   StoreSettingsError,
   isCountryCode,
   readStoreCurrency,
   readStoreSettings
-} from "./chunk-6OI6C5UV.js";
-import "./chunk-GB3RDLKI.js";
+} from "./chunk-2QJ6LJ5B.js";
+import "./chunk-TX6OICXZ.js";
 import "./chunk-GNU6N22K.js";
-import "./chunk-WPNOY6AW.js";
+import "./chunk-JTBD4QC4.js";
 import {
   commerceDb
-} from "./chunk-7BTUQQDZ.js";
+} from "./chunk-4PHEXUQV.js";
 import {
   carts,
   categories,
@@ -71,6 +70,10 @@ import {
   reconcileDecisions,
   recoveryCases,
   recoveryEvents,
+  recoveryInspections,
+  recoveryPaymentEvents,
+  recoveryPayments,
+  recoveryReceipts,
   recoveryShipments,
   referralCodes,
   referralSettings,
@@ -98,9 +101,9 @@ import {
   tags,
   variantComponents,
   variants
-} from "./chunk-KLQ2VU7R.js";
+} from "./chunk-YT2QU5EG.js";
 import "./chunk-NQUBOBQT.js";
-import "./chunk-QVPX4QWC.js";
+import "./chunk-R2NISKMY.js";
 import {
   SUPPORTED_CURRENCIES,
   currencyMinorUnits,
@@ -903,6 +906,10 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
           fields: nativeFields(purchaseOrderLines, ["id", "purchaseOrderId", "lineIndex", "deliveryId"]),
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "purchaseOrderLines", idColumn: "id" }
         });
+        collections.push({ name: "Returned Replacement Receipts", slug: "_ecommerce_recovery_receipts", readOnly: true, adminSection: "commerce", fields: nativeFields(recoveryReceipts, ["id", "shipmentId", "quantity", "actor", "reason", "fingerprint", "createdAt", "redactedAt"]), nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "recoveryReceipts", idColumn: "id" } });
+        collections.push({ name: "Replacement Inspections", slug: "_ecommerce_recovery_inspections", readOnly: true, adminSection: "commerce", fields: nativeFields(recoveryInspections, ["id", "receiptId", "quantity", "disposition", "restock", "stock", "actor", "reason", "fingerprint", "createdAt", "redactedAt"]), nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "recoveryInspections", idColumn: "id" } });
+        collections.push({ name: "Exchange Upgrade Payments", slug: "_ecommerce_recovery_payments", readOnly: true, adminSection: "commerce", fields: nativeFields(recoveryPayments, ["id", "caseId", "expectedVersion", "provider", "paymentId", "amountMinor", "currency", "actor", "reason", "fingerprint", "createdAt", "redactedAt"]), nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "recoveryPayments", idColumn: "id" } });
+        collections.push({ name: "Exchange Payment Events", slug: "_ecommerce_recovery_payment_events", readOnly: true, adminSection: "commerce", fields: nativeFields(recoveryPaymentEvents, ["id", "paymentId", "kind", "createdAt"]), nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "recoveryPaymentEvents", idColumn: "id" } });
         collections.push({
           name: "Parcel and Exchange Cases",
           slug: "_ecommerce_recovery_cases",

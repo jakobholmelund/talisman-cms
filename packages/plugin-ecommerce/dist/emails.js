@@ -5,12 +5,13 @@ import {
   formatMoney,
   giftCardClaimEmail,
   orderConfirmationEmail,
+  recoveryNoticeEmail,
   renderCommerceEmail,
   returnNoticeEmail,
   returnRefundEmail,
   shipmentEmail,
   shopperSignInEmail
-} from "./chunk-QVPX4QWC.js";
+} from "./chunk-R2NISKMY.js";
 import "./chunk-2UYSCNNW.js";
 export {
   emailLink,
@@ -19,6 +20,7 @@ export {
   formatMoney,
   giftCardClaimEmail,
   orderConfirmationEmail,
+  recoveryNoticeEmail,
   renderCommerceEmail,
   returnNoticeEmail,
   returnRefundEmail,

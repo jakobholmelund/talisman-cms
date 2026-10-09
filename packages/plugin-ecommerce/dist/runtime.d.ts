@@ -1,6 +1,6 @@
 import { StripePaymentAdapter } from './adapters/stripe.js';
 import 'stripe';
-import './payments-C3gqo5tp.js';
+import './payments-DiMqRHdo.js';
 
 type StripeMode = 'test' | 'live';
 

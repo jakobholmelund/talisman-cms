@@ -1,10 +1,11 @@
 import {
   readBoundedJson
-} from "../chunk-TCFYJEFQ.js";
+} from "../chunk-4PPUTU2V.js";
 import {
   OperationsExportLimit,
   createRecoveryCase,
   exportCommerceOperations,
+  inspectReplacementReturn,
   listExchangeChoices,
   listPurchaseOrders,
   listRecoveryCases,
@@ -22,6 +23,7 @@ import {
   readReplenishment,
   readStockOverview,
   readSupplierIssue,
+  receiveReplacementReturn,
   recordPurchaseOrder,
   recordRecoveryEvent,
   recordRefundFollowUp,
@@ -32,14 +34,16 @@ import {
   saveReplenishmentPolicy,
   saveSupplier,
   shipRecoveryCase
-} from "../chunk-6QHM5YDB.js";
+} from "../chunk-ZMZLQPQT.js";
 import {
   decideReturnRequest,
   listReturnsQueue,
-  readReturnRequestAdmin
-} from "../chunk-NXQCYUOX.js";
-import "../chunk-PD7I5B62.js";
-import "../chunk-BGDJXEM5.js";
+  readReturnRequestAdmin,
+  verifyExchangeCharge
+} from "../chunk-IK2LAKMW.js";
+import "../chunk-MQQMY6EP.js";
+import "../chunk-AVWDMCNG.js";
+import "../chunk-IN4CG7W7.js";
 import {
   CommerceOperationsConflict,
   inspectOrderReturn,
@@ -54,17 +58,17 @@ import {
   recordStockMovement,
   recordStocktake,
   retryCommerceEmail
-} from "../chunk-J7AA22HC.js";
+} from "../chunk-HYVPTDYO.js";
 import {
   ShopperError
-} from "../chunk-6OI6C5UV.js";
-import "../chunk-GB3RDLKI.js";
+} from "../chunk-2QJ6LJ5B.js";
+import "../chunk-TX6OICXZ.js";
 import "../chunk-GNU6N22K.js";
-import "../chunk-WPNOY6AW.js";
-import "../chunk-7BTUQQDZ.js";
-import "../chunk-KLQ2VU7R.js";
+import "../chunk-JTBD4QC4.js";
+import "../chunk-4PHEXUQV.js";
+import "../chunk-YT2QU5EG.js";
 import "../chunk-NQUBOBQT.js";
-import "../chunk-QVPX4QWC.js";
+import "../chunk-R2NISKMY.js";
 import "../chunk-2UYSCNNW.js";
 
 // src/routes/ecommerce-admin-operations.ts
@@ -121,7 +125,7 @@ var ALL = async ({ request }) => {
     if (body?.action === "returnRequestRead") return Response.json(await readReturnRequestAdmin(runtimeEnv, body.data), { headers });
     if (body?.action === "stocktakeRead") return Response.json(await readStocktakeTargets(runtimeEnv, body.data), { headers });
     if (body?.action === "warehouseRead") return Response.json(await readOrderWarehouse(runtimeEnv, body.data), { headers });
-    const actions = { recoveryCreate: createRecoveryCase, recoveryAction: recordRecoveryEvent, recoveryShip: shipRecoveryCase, supplierIssueReport: reportSupplierIssue, supplierIssueAction: recordSupplierIssue, supplierSave: saveSupplier, purchaseOrderSave: savePurchaseOrder, purchaseOrderAction: recordPurchaseOrder, refundDecision: recordRefundFollowUp, replenishmentPolicy: saveReplenishmentPolicy, replenishmentPlan: planReplenishmentDelivery, replenishmentReceive: recordReplenishmentDelivery, retryEmail: retryCommerceEmail, parcelContents: recordParcelContents, receiveReturn: receiveOrderReturn, stockMovement: recordStockMovement, inspectReturn: inspectOrderReturn, stocktake: recordStocktake, returnDecision: decideReturnRequest };
+    const actions = { recoveryReceive: receiveReplacementReturn, recoveryInspect: inspectReplacementReturn, recoveryPayment: verifyExchangeCharge, recoveryCreate: createRecoveryCase, recoveryAction: recordRecoveryEvent, recoveryShip: shipRecoveryCase, supplierIssueReport: reportSupplierIssue, supplierIssueAction: recordSupplierIssue, supplierSave: saveSupplier, purchaseOrderSave: savePurchaseOrder, purchaseOrderAction: recordPurchaseOrder, refundDecision: recordRefundFollowUp, replenishmentPolicy: saveReplenishmentPolicy, replenishmentPlan: planReplenishmentDelivery, replenishmentReceive: recordReplenishmentDelivery, retryEmail: retryCommerceEmail, parcelContents: recordParcelContents, receiveReturn: receiveOrderReturn, stockMovement: recordStockMovement, inspectReturn: inspectOrderReturn, stocktake: recordStocktake, returnDecision: decideReturnRequest };
     const action = body?.action;
     if (!Object.hasOwn(actions, action)) return Response.json({ error: "Invalid operations action" }, { status: 400, headers });
     return Response.json({ result: await actions[action](runtimeEnv, body.data, actor) }, { headers });

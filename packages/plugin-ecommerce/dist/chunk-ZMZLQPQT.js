@@ -1,26 +1,28 @@
 import {
+  checkExchangeCharge,
   commerceContext,
   loadBasketCatalog,
   requireVariantChoice,
   resolveSelectedVariant
-} from "./chunk-NXQCYUOX.js";
+} from "./chunk-IK2LAKMW.js";
 import {
   CommerceOperationsConflict,
   adminActorNames,
   describeOrderItems,
   readOrderWarehouse,
   warehouseFingerprint
-} from "./chunk-J7AA22HC.js";
+} from "./chunk-HYVPTDYO.js";
 import {
   commerceEmailStatement,
   readStoreCurrency
-} from "./chunk-6OI6C5UV.js";
+} from "./chunk-2QJ6LJ5B.js";
 import {
   commerceDb,
   commitBatch,
   errorText
-} from "./chunk-7BTUQQDZ.js";
+} from "./chunk-4PHEXUQV.js";
 import {
+  RECOVERY_DISPOSITIONS,
   RECOVERY_KINDS,
   REFUND_SOURCE_KINDS,
   RESTOCK_TARGET_TYPES,
@@ -33,6 +35,8 @@ import {
   purchaseOrders,
   recoveryCases,
   recoveryEvents,
+  recoveryInspections,
+  recoveryReceipts,
   recoveryShipments,
   replenishmentDeliveries,
   replenishmentDeliveryEvents,
@@ -44,7 +48,7 @@ import {
   supplierIssues,
   supplierRevisions,
   suppliers
-} from "./chunk-KLQ2VU7R.js";
+} from "./chunk-YT2QU5EG.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
@@ -79,7 +83,7 @@ async function listReplenishment(env, input = {}) {
 }
 async function readReplenishment(env, input) {
   const v = z.object({ ...target, deliveryOffset: z.coerce.number().int().min(0).max(1e6).default(0) }).strict().parse(input), db = commerceDb(env);
-  const [row, policies, deliveries, deliveryCount] = await Promise.all([db.get(sql`${cte} SELECT * FROM plans WHERE type=${v.targetType} AND id=${v.targetId}`), db.query.replenishmentPolicies.findMany({ where: { targetType: v.targetType, targetId: v.targetId }, orderBy: (_t, { sql: sql10 }) => sql10`rowid DESC`, limit: 50 }), db.query.replenishmentDeliveries.findMany({ where: { targetType: v.targetType, targetId: v.targetId }, orderBy: { createdAt: "desc", id: "desc" }, limit: 50, offset: v.deliveryOffset, with: { events: { orderBy: (_t, { sql: sql10 }) => sql10`rowid`, with: { movement: { columns: { delta: true } } } } } }), db.select({ n: sql`count(*)`.mapWith(Number) }).from(replenishmentDeliveries).where(sql`${replenishmentDeliveries.targetType}=${v.targetType} AND ${replenishmentDeliveries.targetId}=${v.targetId}`).get()]);
+  const [row, policies, deliveries, deliveryCount] = await Promise.all([db.get(sql`${cte} SELECT * FROM plans WHERE type=${v.targetType} AND id=${v.targetId}`), db.query.replenishmentPolicies.findMany({ where: { targetType: v.targetType, targetId: v.targetId }, orderBy: (_t, { sql: sql11 }) => sql11`rowid DESC`, limit: 50 }), db.query.replenishmentDeliveries.findMany({ where: { targetType: v.targetType, targetId: v.targetId }, orderBy: { createdAt: "desc", id: "desc" }, limit: 50, offset: v.deliveryOffset, with: { events: { orderBy: (_t, { sql: sql11 }) => sql11`rowid`, with: { movement: { columns: { delta: true } } } } } }), db.select({ n: sql`count(*)`.mapWith(Number) }).from(replenishmentDeliveries).where(sql`${replenishmentDeliveries.targetType}=${v.targetType} AND ${replenishmentDeliveries.targetId}=${v.targetId}`).get()]);
   const dates = await db.all(sql`SELECT d.id,${effectiveDeliveryDate} AS expectedDate FROM _ecommerce_replenishment_deliveries d WHERE d.target_type=${v.targetType} AND d.target_id=${v.targetId} ORDER BY d.created_at DESC,d.id DESC LIMIT 50 OFFSET ${v.deliveryOffset}`);
   const effectiveDates = new Map(dates.map((d) => [d.id, d.expectedDate]));
   const names = await adminActorNames(env, [...policies.map((p) => p.actor), ...deliveries.flatMap((d) => [d.actor, ...d.events.map((e) => e.actor)])]);
@@ -180,12 +184,13 @@ var report = z2.object({
   receiptId: id2.nullable().default(null),
   lineIndex: line,
   quantity: units,
+  allowPriceDifference: z2.boolean().default(false),
   productId: id2.optional(),
   variantId: id2.nullable().optional(),
   requestKey: id2.min(8),
   reason: reason2
 }).strict();
-var openRecoveryCase = sql2`COALESCE((SELECT status FROM _ecommerce_recovery_events WHERE case_id=c.id ORDER BY rowid DESC LIMIT 1),'open')='open'`;
+var openRecoveryCase = sql2`COALESCE((SELECT status FROM _ecommerce_recovery_events WHERE case_id=c.id ORDER BY rowid DESC LIMIT 1),'open')='open' OR (COALESCE((SELECT max(rowid) FROM _ecommerce_recovery_events WHERE case_id=c.id AND actor='payment_provider'),0)>COALESCE((SELECT max(rowid) FROM _ecommerce_recovery_events WHERE case_id=c.id AND kind='resolve'),0)) OR EXISTS(SELECT 1 FROM _ecommerce_recovery_receipts r JOIN _ecommerce_recovery_shipments s ON s.id=r.shipment_id WHERE s.case_id=c.id AND r.quantity>COALESCE((SELECT sum(quantity) FROM _ecommerce_recovery_inspections WHERE receipt_id=r.id),0))`;
 var actorRequired = (actor) => {
   if (!actor.trim()) throw new CommerceOperationsConflict("An authenticated staff member is required.");
 };
@@ -196,6 +201,7 @@ function targets(target2) {
     const key2 = `${t.type}:${t.id}`, old = totals.get(key2);
     totals.set(key2, { ...t, units: t.units + (old?.units ?? 0) });
   }
+  if (!Number.isSafeInteger(target2.adjustmentMinor ?? 0) || Math.abs(target2.adjustmentMinor ?? 0) > 1e9) throw new CommerceOperationsConflict("This exchange amount is too large.");
   if (totals.size > 50) throw new CommerceOperationsConflict("This replacement needs more than 50 stock pools.");
   return { ...target2, stockTargets: [...totals.values()].sort((a, b) => `${a.type}:${a.id}`.localeCompare(`${b.type}:${b.id}`)) };
 }
@@ -213,7 +219,7 @@ async function write(fn, replay) {
 async function createRecoveryCase(env, input, actor) {
   const v = report.parse(input);
   actorRequired(actor);
-  const db = commerceDb(env), caseId = `rec_${await hashOrderAccess(`${v.orderId}:${v.requestKey}`)}`, fingerprint = await warehouseFingerprint(v, actor);
+  const db = commerceDb(env), caseId = `rec_${await hashOrderAccess(`${v.orderId}:${v.requestKey}`)}`, fingerprint = await warehouseFingerprint(v.allowPriceDifference ? v : (({ allowPriceDifference, ...old }) => old)(v), actor);
   const replay = async () => {
     const old = await db.select().from(recoveryCases).where(eq2(recoveryCases.id, caseId)).get();
     if (!old) return null;
@@ -224,7 +230,7 @@ async function createRecoveryCase(env, input, actor) {
   if (previous) return previous;
   const order = await db.query.orders.findFirst({ where: { id: v.orderId } });
   const original = order?.items[v.lineIndex];
-  if (!order || !original || order.paymentProvider === "admin_test" || order.status !== "paid") throw new CommerceOperationsConflict("Only paid real orders with an affected item can create replacements or exchanges.");
+  if (!order || !original || order.paymentProvider === "admin_test" || !["paid", "partially_refunded"].includes(order.status)) throw new CommerceOperationsConflict("Only paid real orders with an affected item can create replacements or exchanges.");
   let target2;
   if (v.kind === "exchange") {
     if (!v.receiptId || v.fulfillmentId || v.sourceShipmentId || !v.productId) throw new CommerceOperationsConflict("Choose a received return and an equal-price replacement.");
@@ -234,9 +240,10 @@ async function createRecoveryCase(env, input, actor) {
     requireVariantChoice(catalog, product, v.variantId ?? void 0);
     const selected = v.variantId ? resolveSelectedVariant(catalog, product, v.variantId) : null;
     const price = selected?.price ?? product.basePrice;
-    if (price !== original.priceAtPurchase) throw new CommerceOperationsConflict("The replacement must match the original unit price.");
+    if (!v.allowPriceDifference && price !== original.priceAtPurchase) throw new CommerceOperationsConflict("The replacement must match the original unit price.");
     const described = (await describeOrderItems(env, [{ productId: product.id, variantId: v.variantId }]))[0];
     target2 = {
+      adjustmentMinor: (price - original.priceAtPurchase) * v.quantity,
       productId: product.id,
       variantId: v.variantId ?? null,
       name: selected?.name ?? product.name,
@@ -244,7 +251,9 @@ async function createRecoveryCase(env, input, actor) {
       priceAtPurchase: price,
       stockTargets: selected?.components.length ? selected.components.map((t) => ({ type: "component", id: t.id, units: t.quantity })) : selected?.inventoryTarget ? [{ ...selected.inventoryTarget, units: 1 }] : [{ type: "product", id: product.id, units: 1 }]
     };
+    if (order.status !== "paid" && price >= original.priceAtPurchase) throw new CommerceOperationsConflict("Only a cheaper exchange with a recorded refund may use a partially refunded order.");
   } else {
+    if (order.status !== "paid" || v.allowPriceDifference) throw new CommerceOperationsConflict("Parcel replacements require a paid order.");
     if (v.receiptId || v.productId !== void 0 || v.variantId !== void 0 || !!v.fulfillmentId === !!v.sourceShipmentId) throw new CommerceOperationsConflict("Choose one recorded original or replacement parcel.");
     if (v.sourceShipmentId) {
       const source = await db.query.recoveryShipments.findFirst({ where: { id: v.sourceShipmentId }, with: { case: true } });
@@ -272,7 +281,7 @@ async function recordRecoveryEvent(env, input, actor) {
   };
   const previous = await replay();
   if (previous) return previous;
-  const latest = await db.query.recoveryCases.findFirst({ where: { id: v.caseId }, with: { events: { orderBy: (_t, { sql: sql10 }) => sql10`rowid DESC`, limit: 1 } } });
+  const latest = await db.query.recoveryCases.findFirst({ where: { id: v.caseId }, with: { events: { orderBy: (_t, { sql: sql11 }) => sql11`rowid DESC`, limit: 1 } } });
   if (!latest || latest.redactedAt) throw new CommerceOperationsConflict("Recovery case unavailable.");
   const status = v.kind === "resolve" ? "resolved" : v.kind === "reopen" ? "open" : latest.events[0]?.status ?? "open";
   if (v.kind === "tracking" ? !v.shipmentId : v.shipmentId !== void 0 || v.carrier !== void 0 || v.trackingNumber !== void 0) throw new CommerceOperationsConflict("Choose a replacement parcel only for a tracking correction.");
@@ -289,7 +298,7 @@ var ship = z2.object({
   trackingNumber: z2.string().trim().max(150).nullable().default(null),
   stock: z2.array(z2.object({ targetType: z2.enum(RESTOCK_TARGET_TYPES), targetId: id2, expectedQuantity: z2.number().int().min(0).max(Number.MAX_SAFE_INTEGER), expectedUpdatedAt: timestamp }).strict()).max(50)
 }).strict();
-async function shipRecoveryCase(env, input, actor) {
+async function shipRecoveryCase(env, input, actor, adapters) {
   const v = ship.parse(input);
   actorRequired(actor);
   const db = commerceDb(env), shipmentId = `rcs_${await hashOrderAccess(`${v.caseId}:${v.requestKey}`)}`, fingerprint = await warehouseFingerprint(v, actor);
@@ -304,37 +313,47 @@ async function shipRecoveryCase(env, input, actor) {
   const c = await db.query.recoveryCases.findFirst({ where: { id: v.caseId } });
   if (!c) throw new CommerceOperationsConflict("Recovery case unavailable.");
   if (v.stock.length !== c.target.stockTargets.length || new Set(v.stock.map((t) => `${t.targetType}:${t.targetId}`)).size !== v.stock.length) throw new CommerceOperationsConflict("Reload every stock pool for this replacement.");
-  const stock = v.stock.map((t) => {
+  await checkExchangeCharge(env, c.id, adapters);
+  const stock2 = v.stock.map((t) => {
     const target2 = c.target.stockTargets.find((s) => s.type === t.targetType && s.id === t.targetId);
     if (!target2) throw new CommerceOperationsConflict("The replacement stock mapping changed.");
     const required = target2.units * v.quantity;
     if (!Number.isSafeInteger(required) || required > 1e6) throw new CommerceOperationsConflict("This stock deduction is too large.");
     return { ...t, units: required, expectedUpdatedSeconds: Date.parse(t.expectedUpdatedAt) / 1e3 };
   }).map(({ expectedUpdatedAt, ...t }) => t);
-  const result = await write(() => db.insert(recoveryShipments).values({ id: shipmentId, caseId: c.id, expectedVersion: v.expectedVersion, quantity: v.quantity, stock, carrier: v.carrier || null, trackingNumber: v.trackingNumber || null, actor, reason: v.reason, fingerprint, createdAt: /* @__PURE__ */ new Date() }), replay);
+  const result = await write(() => db.insert(recoveryShipments).values({ id: shipmentId, caseId: c.id, expectedVersion: v.expectedVersion, quantity: v.quantity, stock: stock2, carrier: v.carrier || null, trackingNumber: v.trackingNumber || null, actor, reason: v.reason, fingerprint, createdAt: /* @__PURE__ */ new Date() }), replay);
   return result ?? { shipmentId };
 }
 var queue = sql2`WITH cases AS (SELECT c.id,c.order_id AS orderId,c.kind,c.quantity,c.created_at AS createdAt,json_extract(c.target,'$.name') AS name,
  COALESCE((SELECT status FROM _ecommerce_recovery_events WHERE case_id=c.id ORDER BY rowid DESC LIMIT 1),'open') AS status,
+ (COALESCE((SELECT max(rowid) FROM _ecommerce_recovery_events WHERE case_id=c.id AND actor='payment_provider'),0)>COALESCE((SELECT max(rowid) FROM _ecommerce_recovery_events WHERE case_id=c.id AND kind='resolve'),0)) AS awaitingPaymentReview,
+ EXISTS(SELECT 1 FROM _ecommerce_recovery_receipts r JOIN _ecommerce_recovery_shipments s ON s.id=r.shipment_id WHERE s.case_id=c.id AND r.quantity>COALESCE((SELECT sum(quantity) FROM _ecommerce_recovery_inspections WHERE receipt_id=r.id),0)) AS awaitingInspection,
  COALESCE((SELECT sum(quantity) FROM _ecommerce_recovery_shipments WHERE case_id=c.id),0) AS shipped FROM _ecommerce_recovery_cases c)`;
 async function listRecoveryCases(env, input = {}) {
   const v = z2.object({ filter: z2.enum(["open", "resolved", "all"]).default("open"), kind: z2.enum(["all", ...RECOVERY_KINDS]).default("all"), offset: z2.coerce.number().int().min(0).max(1e6).default(0), orderId: z2.string().trim().max(128).default("") }).strict().parse(input), db = commerceDb(env);
-  const where = sql2`(${v.filter}='all' OR status=${v.filter}) AND (${v.kind}='all' OR kind=${v.kind}) AND (${v.orderId}='' OR orderId=${v.orderId})`;
+  const where = sql2`(${v.filter}='all' OR (${v.filter}='open' AND (status='open' OR awaitingInspection=1 OR awaitingPaymentReview=1)) OR (${v.filter}='resolved' AND status='resolved' AND awaitingInspection=0 AND awaitingPaymentReview=0)) AND (${v.kind}='all' OR kind=${v.kind}) AND (${v.orderId}='' OR orderId=${v.orderId})`;
   const [rows, count] = await db.batch([db.all(sql2`${queue} SELECT * FROM cases WHERE ${where} ORDER BY createdAt,id LIMIT 50 OFFSET ${v.offset}`), db.all(sql2`${queue} SELECT count(*) n FROM cases WHERE ${where}`)]);
   return { ...v, total: count[0]?.n ?? 0, rows: rows.map((r) => ({ ...r, createdAt: new Date(r.createdAt * 1e3).toISOString() })) };
 }
 async function readRecoveryCase(env, input) {
   const { caseId } = z2.object({ caseId: id2 }).strict().parse(input), db = commerceDb(env);
-  const c = await db.query.recoveryCases.findFirst({ where: { id: caseId }, with: { events: { orderBy: (_t, { sql: sql10 }) => sql10`rowid DESC`, limit: 200 }, shipments: { orderBy: (_t, { sql: sql10 }) => sql10`rowid DESC`, limit: 100 }, order: { columns: { status: true, currency: true, shippingAddress: true } } } });
+  const c = await db.query.recoveryCases.findFirst({ where: { id: caseId }, with: { payments: { orderBy: (_t, { sql: sql11 }) => sql11`rowid DESC`, limit: 1, with: { events: { orderBy: (_t, { sql: sql11 }) => sql11`rowid` } } }, events: { orderBy: (_t, { sql: sql11 }) => sql11`rowid DESC`, limit: 200 }, shipments: { orderBy: (_t, { sql: sql11 }) => sql11`rowid DESC`, limit: 100, with: { receipts: { with: { inspections: true } } } }, order: { columns: { status: true, currency: true, shippingAddress: true } } } });
   if (!c) throw new CommerceOperationsConflict("Recovery case unavailable.");
+  const refund = c.receiptId ? await db.query.returnRefundDecisions.findFirst({ where: { receiptId: c.receiptId }, columns: { status: true, amountMinor: true }, orderBy: (_t, { sql: sql11 }) => sql11`rowid DESC` }) : null;
+  const payment = c.payments[0], held = !!payment && (payment.events.some((e) => ["refunded", "lost"].includes(e.kind)) || payment.events.filter((e) => ["disputed", "won"].includes(e.kind)).at(-1)?.kind === "disputed");
+  const adjustmentMinor = c.kind === "exchange" ? c.target.adjustmentMinor ?? 0 : 0;
+  const adjustment = { amountMinor: adjustmentMinor, status: adjustmentMinor > 0 ? payment && !held ? "paid" : "payment_needed" : adjustmentMinor < 0 ? refund?.status === "settled" && refund.amountMinor === -adjustmentMinor ? "refunded" : "refund_needed" : "not_needed", paymentId: payment?.paymentId ?? null };
+  const priceReview = await db.get(sql2`SELECT COALESCE((SELECT max(rowid) FROM _ecommerce_recovery_events WHERE case_id=${caseId} AND actor='payment_provider'),0)>COALESCE((SELECT max(rowid) FROM _ecommerce_recovery_events WHERE case_id=${caseId} AND kind='resolve'),0) n`);
   const shipped = await db.get(sql2`SELECT COALESCE(sum(quantity),0) n FROM _ecommerce_recovery_shipments WHERE case_id=${caseId}`), latest = c.events[0];
-  const stock = await Promise.all(c.target.stockTargets.map(async (t) => {
+  const stock2 = await Promise.all(c.target.stockTargets.map(async (t) => {
     const row = await db.get(sql2`WITH physical AS (${physicalStockLocations}) SELECT name,sku,quantity,updated FROM physical WHERE type=${t.type} AND id=${t.id}`);
     return { ...t, name: row?.name ?? "Unavailable stock pool", sku: row?.sku ?? null, quantity: row?.quantity ?? null, updatedAt: row ? new Date(row.updated * 1e3).toISOString() : null };
   }));
   const names = await adminActorNames(env, [c.actor, ...c.events.map((e) => e.actor)]);
-  const corrections = await db.query.recoveryEvents.findMany({ where: { caseId, kind: "tracking" }, columns: { id: true, shipmentId: true, carrier: true, trackingNumber: true }, orderBy: (_t, { sql: sql10 }) => sql10`rowid` });
+  const corrections = await db.query.recoveryEvents.findMany({ where: { caseId, kind: "tracking" }, columns: { id: true, shipmentId: true, carrier: true, trackingNumber: true }, orderBy: (_t, { sql: sql11 }) => sql11`rowid` });
   return {
+    adjustment,
+    awaitingPaymentReview: !!priceReview?.n,
     id: c.id,
     orderId: c.orderId,
     kind: c.kind,
@@ -353,35 +372,38 @@ async function readRecoveryCase(env, input) {
     paymentStatus: c.order.status,
     currency: c.order.currency,
     shippingAddress: c.order.shippingAddress,
-    stock,
+    stock: stock2,
     historyTruncated: c.events.length === 200,
     shipmentsTruncated: c.shipments.length === 100,
-    history: [...c.events].reverse().map((e) => ({ id: e.id, kind: e.kind, status: e.status, reason: e.reason, actorName: names.get(e.actor) ?? e.actor, createdAt: e.createdAt.toISOString() })),
+    history: [...c.events].reverse().map((e) => ({ id: e.id, kind: e.kind, status: e.status, reason: e.reason, actorName: e.actor === "payment_provider" ? "Payment provider" : names.get(e.actor) ?? e.actor, createdAt: e.createdAt.toISOString() })),
     shipments: [...c.shipments].reverse().map((s) => {
       const correction = corrections.filter((e) => e.shipmentId === s.id).at(-1);
-      return { id: s.id, quantity: s.quantity, carrier: correction ? correction.carrier : s.carrier, trackingNumber: correction ? correction.trackingNumber : s.trackingNumber, createdAt: s.createdAt.toISOString() };
+      return { id: s.id, quantity: s.quantity, returned: s.receipts.reduce((n, r) => n + r.quantity, 0), receipts: s.receipts.map((r) => ({ id: r.id, quantity: r.quantity, remaining: r.quantity - r.inspections.reduce((n, i) => n + i.quantity, 0), createdAt: r.createdAt.toISOString(), inspections: r.inspections.map((i) => ({ id: i.id, quantity: i.quantity, disposition: i.disposition, restock: i.restock, createdAt: i.createdAt.toISOString() })) })), carrier: correction ? correction.carrier : s.carrier, trackingNumber: correction ? correction.trackingNumber : s.trackingNumber, createdAt: s.createdAt.toISOString() };
     })
   };
 }
 async function readRecoveryOrder(env, input) {
   const v = z2.object({ orderId: id2 }).strict().parse(input), db = commerceDb(env), warehouse = await readOrderWarehouse(env, v);
   const cases = await db.query.recoveryCases.findMany({ where: { orderId: v.orderId }, columns: { id: true, lineIndex: true, quantity: true, receiptId: true, fulfillmentId: true, sourceShipmentId: true, kind: true, target: true }, with: { shipments: { columns: { id: true, quantity: true, createdAt: true } } } });
+  const o = await db.query.orders.findFirst({ where: { id: v.orderId }, columns: { items: true, currency: true } });
   return {
     ...warehouse,
-    canCreate: warehouse.status === "paid",
+    currency: o.currency,
+    lines: warehouse.lines.map((l) => ({ ...l, priceAtPurchase: o.items[l.lineIndex].priceAtPurchase })),
+    canCreate: ["paid", "partially_refunded"].includes(warehouse.status),
     replacements: cases.flatMap((c) => c.shipments.map((s) => ({ id: s.id, lineIndex: c.lineIndex, quantity: s.quantity, name: c.target.name, createdAt: s.createdAt.toISOString() }))),
     cases: cases.map(({ target: target2, shipments, ...c }) => c)
   };
 }
 async function listExchangeChoices(env, input) {
-  const v = z2.object({ orderId: id2, lineIndex: line, search: z2.string().trim().max(100).default(""), offset: z2.coerce.number().int().min(0).max(1e6).default(0) }).strict().parse(input), db = commerceDb(env);
+  const v = z2.object({ orderId: id2, lineIndex: line, search: z2.string().trim().max(100).default(""), allowPriceDifference: z2.boolean().default(false), offset: z2.coerce.number().int().min(0).max(1e6).default(0) }).strict().parse(input), db = commerceDb(env);
   const o = await db.query.orders.findFirst({ where: { id: v.orderId }, columns: { items: true, currency: true, status: true, paymentProvider: true } }), item = o?.items[v.lineIndex];
-  if (!item || o?.paymentProvider === "admin_test" || o?.status !== "paid" || o.currency !== readStoreCurrency(env)) throw new CommerceOperationsConflict("Equal-price choices are unavailable for this order.");
+  if (!item || o?.paymentProvider === "admin_test" || !["paid", "partially_refunded"].includes(o?.status ?? "") || o.currency !== readStoreCurrency(env)) throw new CommerceOperationsConflict("Equal-price choices are unavailable for this order.");
   const cte2 = sql2`WITH choices AS (
  SELECT p.id AS productId,NULL AS variantId,p.name,p.sku,p.base_price AS price FROM _ecommerce_products p WHERE p.status='active' AND p.is_physical=1 AND p.type='standard' AND NOT EXISTS(SELECT 1 FROM _ecommerce_product_variants g WHERE g.product_id=p.id)
  UNION ALL SELECT p.id,g.id,p.name||' / '||g.name,COALESCE(g.sku,p.sku),COALESCE(g.price_override,p.base_price) FROM _ecommerce_product_variants g JOIN _ecommerce_products p ON p.id=g.product_id WHERE p.status='active' AND p.is_physical=1 AND p.type='standard' AND NOT EXISTS(SELECT 1 FROM _ecommerce_product_variant_values v WHERE v.product_variant_id=g.id)
  UNION ALL SELECT p.id,v.id,p.name||' / '||g.name||': '||v.value,COALESCE(v.sku,g.sku,p.sku),COALESCE(v.price_override,g.price_override,p.base_price) FROM _ecommerce_product_variant_values v JOIN _ecommerce_product_variants g ON g.id=v.product_variant_id JOIN _ecommerce_products p ON p.id=g.product_id WHERE p.status='active' AND p.is_physical=1 AND p.type='standard')`;
-  const pattern = `%${v.search.replace(/[\\%_]/g, (c) => `\\${c}`)}%`, where = sql2`price=${item.priceAtPurchase} AND name LIKE ${pattern} ESCAPE '\\'`;
+  const pattern = `%${v.search.replace(/[\\%_]/g, (c) => `\\${c}`)}%`, where = sql2`(${v.allowPriceDifference ? 1 : 0}=1 OR price=${item.priceAtPurchase}) AND name LIKE ${pattern} ESCAPE '\\'`;
   const [rows, count] = await db.batch([db.all(sql2`${cte2} SELECT * FROM choices WHERE ${where} ORDER BY name,productId,variantId LIMIT 50 OFFSET ${v.offset}`), db.all(sql2`${cte2} SELECT count(*) n FROM choices WHERE ${where}`)]);
   return { ...v, currency: o.currency, price: item.priceAtPurchase, total: count[0]?.n ?? 0, rows };
 }
@@ -468,8 +490,8 @@ async function listSupplierIssues(env, input = {}) {
 async function readSupplierIssue(env, input) {
   const { issueId } = z3.object({ issueId: id3 }).strict().parse(input), db = commerceDb(env);
   const issue = await db.query.supplierIssues.findFirst({ where: { id: issueId }, with: {
-    events: { orderBy: (_t, { sql: sql10 }) => sql10`rowid DESC`, limit: 100 },
-    line: { with: { purchaseOrder: { with: { events: { orderBy: (_t, { sql: sql10 }) => sql10`rowid DESC`, limit: 1 } } } } }
+    events: { orderBy: (_t, { sql: sql11 }) => sql11`rowid DESC`, limit: 100 },
+    line: { with: { purchaseOrder: { with: { events: { orderBy: (_t, { sql: sql11 }) => sql11`rowid DESC`, limit: 1 } } } } }
   } });
   if (!issue) throw new CommerceOperationsConflict("Supplier issue not found.");
   const latest = issue.events[0], purchase = issue.line.purchaseOrder.events[0];
@@ -686,7 +708,7 @@ async function listRefundFollowUp(env, input = {}) {
 }
 async function readRefundCase(env, input) {
   const v = z6.object({ receiptId: id4 }).strict().parse(input), db = commerceDb(env);
-  const r = await db.query.returnReceipts.findFirst({ where: { id: v.receiptId }, with: { order: { columns: { id: true, items: true, currency: true, paymentProvider: true, userId: true } }, refundDecisions: { orderBy: (_t, { sql: sql10 }) => sql10`rowid` } } });
+  const r = await db.query.returnReceipts.findFirst({ where: { id: v.receiptId }, with: { order: { columns: { id: true, items: true, currency: true, paymentProvider: true, userId: true } }, refundDecisions: { orderBy: (_t, { sql: sql11 }) => sql11`rowid` } } });
   if (!r || r.order.paymentProvider === "admin_test") throw new CommerceOperationsConflict("Received return is unavailable.");
   const [sources, names, items] = await Promise.all([db.all(sql7`WITH sources AS (${sourceRows}) SELECT kind,id,amount_cents AS amountMinor,created_at AS createdAt,
  amount_cents-COALESCE((SELECT sum(json_extract(a.value,'$.amountMinor')) FROM _ecommerce_return_refund_decisions d,json_each(d.allocations) a WHERE d.status='settled' AND json_extract(a.value,'$.kind')=sources.kind AND json_extract(a.value,'$.sourceId')=sources.id),0) AS availableMinor FROM sources WHERE order_id=${r.orderId} ORDER BY created_at,id`), adminActorNames(env, r.refundDecisions.map((d) => d.actor)), describeOrderItems(env, r.items.map((i) => ({ ...r.order.items[i.lineIndex], quantity: i.quantity })))]);
@@ -783,7 +805,7 @@ async function saveSupplier(env, input, actor) {
   const failure = await conflict(() => commitBatch(db, [...!v.supplierId ? [db.insert(suppliers).values({ id: supplierId, createdAt: /* @__PURE__ */ new Date() })] : [], db.insert(supplierRevisions).values({ ...ident, supplierId, expectedVersion: v.expectedVersion, name: v.name, contact: v.contact, address: v.address, active: v.active, actor, reason: v.reason, createdAt: /* @__PURE__ */ new Date() })]), replay);
   return failure ?? { supplierId, revisionId: ident.id };
 }
-var latestSupplier = (env, supplierId) => commerceDb(env).query.supplierRevisions.findFirst({ where: { supplierId }, orderBy: (_t, { sql: sql10 }) => sql10`rowid DESC` });
+var latestSupplier = (env, supplierId) => commerceDb(env).query.supplierRevisions.findFirst({ where: { supplierId }, orderBy: (_t, { sql: sql11 }) => sql11`rowid DESC` });
 var supplierSnapshot = (s) => ({ version: s.id, name: s.name, contact: s.contact, address: s.address });
 async function savePurchaseOrder(env, input, actor) {
   const v = draftInput.parse(input), db = commerceDb(env), ident = await identity3(v, actor, "poe"), purchaseOrderId = v.purchaseOrderId ?? `po_${await hashOrderAccess(v.requestKey)}`;
@@ -794,9 +816,9 @@ async function savePurchaseOrder(env, input, actor) {
   if (!supplier?.active || supplier.id !== v.supplierVersion) throw new CommerceOperationsConflict("Supplier changed or is inactive. Refresh before continuing.");
   const lines = [];
   for (const l of [...v.lines].sort((a, b) => `${a.targetType}:${a.targetId}`.localeCompare(`${b.targetType}:${b.targetId}`))) {
-    const stock = await db.get(sql8`WITH physical AS (${physicalStockLocations}) SELECT name,sku FROM physical WHERE type=${l.targetType} AND id=${l.targetId}`);
-    if (!stock) throw new CommerceOperationsConflict("A stock pool is unavailable. Refresh before continuing.");
-    lines.push({ ...l, ...stock });
+    const stock2 = await db.get(sql8`WITH physical AS (${physicalStockLocations}) SELECT name,sku FROM physical WHERE type=${l.targetType} AND id=${l.targetId}`);
+    if (!stock2) throw new CommerceOperationsConflict("A stock pool is unavailable. Refresh before continuing.");
+    lines.push({ ...l, ...stock2 });
   }
   if (v.purchaseOrderId) {
     const order = await db.select().from(purchaseOrders).where(eq6(purchaseOrders.id, v.purchaseOrderId)).get();
@@ -816,7 +838,7 @@ function eventReplay(db, ident) {
 async function recordPurchaseOrder(env, input, actor) {
   const v = actionInput.parse(input), db = commerceDb(env), ident = await identity3(v, actor, "poe"), replay = eventReplay(db, ident), previous = await replay();
   if (previous) return previous;
-  const order = await db.query.purchaseOrders.findFirst({ where: { id: v.purchaseOrderId }, with: { events: { orderBy: (_t, { sql: sql10 }) => sql10`rowid` }, lines: { with: { delivery: { with: { events: { orderBy: (_t, { sql: sql10 }) => sql10`rowid`, with: { movement: { columns: { delta: true } } } } } } } } } });
+  const order = await db.query.purchaseOrders.findFirst({ where: { id: v.purchaseOrderId }, with: { events: { orderBy: (_t, { sql: sql11 }) => sql11`rowid` }, lines: { with: { delivery: { with: { events: { orderBy: (_t, { sql: sql11 }) => sql11`rowid`, with: { movement: { columns: { delta: true } } } } } } } } } });
   const last = order?.events.at(-1);
   if (!order || !last || last.id !== v.expectedVersion || last.status === "cancelled") throw new CommerceOperationsConflict("Purchase order changed. Refresh before continuing.");
   const statements = [], now = /* @__PURE__ */ new Date();
@@ -855,14 +877,14 @@ async function listPurchaseOrders(env, input = {}) {
 }
 async function readPurchaseOrder(env, input) {
   const { purchaseOrderId } = z7.object({ purchaseOrderId: id5 }).strict().parse(input), db = commerceDb(env);
-  const order = await db.query.purchaseOrders.findFirst({ where: { id: purchaseOrderId }, with: { events: { orderBy: (_t, { sql: sql10 }) => sql10`rowid DESC`, limit: 200 }, lines: { with: { delivery: { with: { events: { orderBy: (_t, { sql: sql10 }) => sql10`rowid`, with: { movement: { columns: { delta: true } } } } } } } } } });
+  const order = await db.query.purchaseOrders.findFirst({ where: { id: purchaseOrderId }, with: { events: { orderBy: (_t, { sql: sql11 }) => sql11`rowid DESC`, limit: 200 }, lines: { with: { delivery: { with: { events: { orderBy: (_t, { sql: sql11 }) => sql11`rowid`, with: { movement: { columns: { delta: true } } } } } } } } } });
   const latest = order?.events[0];
   if (!order || !latest) throw new CommerceOperationsConflict("Purchase order not found.");
   const names = await adminActorNames(env, order.events.map((e) => e.actor)), current = await latestSupplier(env, order.supplierId);
   const deliveries = await Promise.all(order.lines.map(async (l) => {
-    const d = l.delivery, stock = await db.get(sql8`WITH physical AS (${physicalStockLocations}) SELECT * FROM physical WHERE type=${d.targetType} AND id=${d.targetId}`), received = d.events.reduce((n, e) => n + (e.movement?.delta ?? 0), 0), cancelled = d.events.some((e) => e.kind === "cancelled");
+    const d = l.delivery, stock2 = await db.get(sql8`WITH physical AS (${physicalStockLocations}) SELECT * FROM physical WHERE type=${d.targetType} AND id=${d.targetId}`), received = d.events.reduce((n, e) => n + (e.movement?.delta ?? 0), 0), cancelled = d.events.some((e) => e.kind === "cancelled");
     const activeIssues = await db.get(sql8`SELECT COALESCE(sum(quantity),0) AS units FROM _ecommerce_supplier_issues i WHERE purchase_line_id=${l.id} AND ${openSupplierIssue}`);
-    return { purchaseLineId: l.id, issueAllowance: cancelled ? 0 : Math.max(0, d.quantity - received - (activeIssues?.units ?? 0)), lineIndex: l.lineIndex, deliveryId: d.id, version: d.events.at(-1)?.id ?? d.id, received, remaining: cancelled ? 0 : d.quantity - received, cancelled, location: stock ? { type: stock.type, id: stock.id, name: stock.name, sku: stock.sku, quantity: stock.quantity, updatedAt: new Date(stock.updated * 1e3).toISOString() } : null };
+    return { purchaseLineId: l.id, issueAllowance: cancelled ? 0 : Math.max(0, d.quantity - received - (activeIssues?.units ?? 0)), lineIndex: l.lineIndex, deliveryId: d.id, version: d.events.at(-1)?.id ?? d.id, received, remaining: cancelled ? 0 : d.quantity - received, cancelled, location: stock2 ? { type: stock2.type, id: stock2.id, name: stock2.name, sku: stock2.sku, quantity: stock2.quantity, updatedAt: new Date(stock2.updated * 1e3).toISOString() } : null };
   }));
   return {
     id: order.id,
@@ -915,6 +937,67 @@ async function readOperationsReport(env, input = {}) {
   };
 }
 
+// src/replacement-returns.ts
+import { eq as eq7 } from "drizzle-orm";
+import { z as z9 } from "zod";
+var id6 = z9.string().trim().min(1).max(128);
+var quantity2 = z9.number().int().min(1).max(1e6);
+var reason6 = z9.string().trim().min(8).max(500);
+var stock = z9.array(z9.object({
+  targetType: z9.enum(RESTOCK_TARGET_TYPES),
+  targetId: id6,
+  expectedQuantity: z9.number().int().min(0).max(1e6),
+  expectedUpdatedAt: z9.string().refine((s) => Number.isSafeInteger(Date.parse(s)) && Date.parse(s) % 1e3 === 0)
+}).strict()).max(50);
+async function commit(insert, receipt) {
+  try {
+    await insert();
+  } catch (e) {
+    const old = await receipt();
+    if (old) return old;
+    if (!/Recovery|Stock |stock_movement|UNIQUE constraint/.test(errorText(e))) throw e;
+    throw new CommerceOperationsConflict("Returned quantities, the case or stock changed. Refresh before continuing.");
+  }
+  return null;
+}
+async function receiveReplacementReturn(env, input, actor) {
+  const v = z9.object({ shipmentId: id6, quantity: quantity2, reason: reason6, requestKey: id6.min(8) }).strict().parse(input);
+  if (!actor.trim()) throw new CommerceOperationsConflict("An authenticated staff member is required.");
+  const db = commerceDb(env), receiptId = `rcr_${await hashOrderAccess(`${v.shipmentId}:${v.requestKey}`)}`, fingerprint = await warehouseFingerprint(v, actor);
+  const replay = async () => {
+    const old2 = await db.select().from(recoveryReceipts).where(eq7(recoveryReceipts.id, receiptId)).get();
+    if (!old2) return null;
+    if (old2.fingerprint !== fingerprint) throw new CommerceOperationsConflict("This return key was used with different details.");
+    return { receiptId, duplicate: true };
+  };
+  const old = await replay();
+  if (old) return old;
+  return await commit(() => db.insert(recoveryReceipts).values({ id: receiptId, shipmentId: v.shipmentId, quantity: v.quantity, actor, reason: v.reason, fingerprint, createdAt: /* @__PURE__ */ new Date() }), replay) ?? { receiptId };
+}
+async function inspectReplacementReturn(env, input, actor) {
+  const v = z9.object({ receiptId: id6, quantity: quantity2, disposition: z9.enum(RECOVERY_DISPOSITIONS), restock: z9.boolean(), stock: stock.default([]), reason: reason6, requestKey: id6.min(8) }).strict().refine((v2) => v2.restock ? v2.disposition === "sellable" : v2.stock.length === 0, "Only sellable goods may restore stock").parse(input);
+  if (!actor.trim()) throw new CommerceOperationsConflict("An authenticated staff member is required.");
+  const db = commerceDb(env), inspectionId = `rci_${await hashOrderAccess(`${v.receiptId}:${v.requestKey}`)}`, fingerprint = await warehouseFingerprint(v, actor);
+  const replay = async () => {
+    const old2 = await db.select().from(recoveryInspections).where(eq7(recoveryInspections.id, inspectionId)).get();
+    if (!old2) return null;
+    if (old2.fingerprint !== fingerprint) throw new CommerceOperationsConflict("This inspection key was used with different details.");
+    return { inspectionId, duplicate: true };
+  };
+  const old = await replay();
+  if (old) return old;
+  const receipt = await db.query.recoveryReceipts.findFirst({ where: { id: v.receiptId }, with: { shipment: { with: { case: true } } } });
+  if (!receipt) throw new CommerceOperationsConflict("Replacement return not found.");
+  const targets2 = receipt.shipment.case.target.stockTargets;
+  if (v.restock && (v.stock.length !== targets2.length || new Set(v.stock.map((s) => `${s.targetType}:${s.targetId}`)).size !== v.stock.length)) throw new CommerceOperationsConflict("Reload every replacement stock pool.");
+  const pools = v.stock.map((s) => {
+    const target2 = targets2.find((t) => t.type === s.targetType && t.id === s.targetId), units2 = (target2?.units ?? 0) * v.quantity;
+    if (!target2 || !Number.isSafeInteger(units2) || units2 < 1 || units2 > 1e6) throw new CommerceOperationsConflict("The replacement stock mapping is unavailable.");
+    return { targetType: s.targetType, targetId: s.targetId, expectedQuantity: s.expectedQuantity, expectedUpdatedSeconds: Date.parse(s.expectedUpdatedAt) / 1e3, units: units2 };
+  });
+  return await commit(() => db.insert(recoveryInspections).values({ id: inspectionId, receiptId: v.receiptId, quantity: v.quantity, disposition: v.disposition, restock: v.restock, stock: pools, actor, reason: v.reason, fingerprint, createdAt: /* @__PURE__ */ new Date() }), replay) ?? { inspectionId };
+}
+
 export {
   listReplenishment,
   readReplenishment,
@@ -945,5 +1028,7 @@ export {
   recordPurchaseOrder,
   listPurchaseOrders,
   readPurchaseOrder,
-  readOperationsReport
+  readOperationsReport,
+  receiveReplacementReturn,
+  inspectReplacementReturn
 };

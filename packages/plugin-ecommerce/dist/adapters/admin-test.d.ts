@@ -1,4 +1,4 @@
-import { P as PaymentProviderAdapter } from '../payments-C3gqo5tp.js';
+import { P as PaymentProviderAdapter } from '../payments-DiMqRHdo.js';
 
 /** Simulates a successful provider response. Only an authenticated admin route may use it. */
 declare class AdminTestPaymentAdapter implements PaymentProviderAdapter {

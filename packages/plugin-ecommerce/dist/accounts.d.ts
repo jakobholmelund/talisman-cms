@@ -74,6 +74,11 @@ declare function manageShopperData(env: TalismanEnv, actor: string, input: unkno
                 kind: "lost" | "damaged" | "exchange";
                 lineIndex: number;
                 quantity: number;
+                payments: {
+                    createdAt: Date;
+                    currency: string;
+                    amountMinor: number;
+                }[];
                 events: {
                     createdAt: Date;
                     status: "open" | "resolved";
@@ -86,6 +91,16 @@ declare function manageShopperData(env: TalismanEnv, actor: string, input: unkno
                     carrier: string | null;
                     trackingNumber: string | null;
                     quantity: number;
+                    receipts: {
+                        createdAt: Date;
+                        quantity: number;
+                        inspections: {
+                            createdAt: Date;
+                            quantity: number;
+                            disposition: "damaged" | "sellable" | "quarantine";
+                            restock: boolean;
+                        }[];
+                    }[];
                 }[];
             }[];
             returnRequests: {

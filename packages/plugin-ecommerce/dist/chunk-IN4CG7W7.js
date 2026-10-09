@@ -1,9 +1,15 @@
-import {
-  TaxAddressError
-} from "./chunk-BGDJXEM5.js";
-
 // src/adapters/stripe.ts
 import Stripe from "stripe";
+
+// src/payments.ts
+var TaxAddressError = class extends Error {
+  constructor(message = "The address cannot be located for tax", options) {
+    super(message, options);
+    this.name = "TaxAddressError";
+  }
+};
+
+// src/adapters/stripe.ts
 function stripeTaxAddress(address) {
   const result = { country: address.country };
   const parts = {
@@ -181,6 +187,25 @@ var StripePaymentAdapter = class {
     const settled = /* @__PURE__ */ new Set(["won", "prevented", "warning_closed"]);
     return disputes.data.some((dispute) => !settled.has(dispute.status)) ? "open" : "none";
   }
+  async getExchangePayment(paymentIntentId) {
+    try {
+      const intent = await this.stripe.paymentIntents.retrieve(paymentIntentId, { expand: ["latest_charge"] });
+      if (intent.livemode !== this.config.secretKey.startsWith("sk_live_")) return null;
+      const charge = typeof intent.latest_charge === "object" ? intent.latest_charge : null;
+      const dispute = await this.getDisputeStatus(paymentIntentId);
+      return {
+        caseId: intent.metadata?.recoveryCaseId ?? null,
+        status: intent.status,
+        amountMinor: intent.amount_received,
+        currency: intent.currency,
+        refundedMinor: charge?.amount_refunded ?? 0,
+        disputed: dispute !== "none" || !charge || !charge.paid || charge.amount !== intent.amount_received
+      };
+    } catch (error) {
+      if (error?.code === "resource_missing" || error?.statusCode === 404) return null;
+      throw error;
+    }
+  }
   async calculateTax(params) {
     const input = {
       currency: params.currency,
@@ -256,6 +281,7 @@ var StripePaymentAdapter = class {
 };
 
 export {
+  TaxAddressError,
   checkoutCouponId,
   StripePaymentAdapter
 };

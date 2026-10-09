@@ -1,17 +1,21 @@
 import {
   INVENTORY_COLUMNS,
   fullRefundStatements
-} from "./chunk-PD7I5B62.js";
+} from "./chunk-MQQMY6EP.js";
+import {
+  runtimePaymentAdapters
+} from "./chunk-AVWDMCNG.js";
 import {
   TaxAddressError
-} from "./chunk-BGDJXEM5.js";
+} from "./chunk-IN4CG7W7.js";
 import {
   CommerceOperationsConflict,
   adminActorNames,
   deliverCommerceEmail,
   describeOrderItems,
-  fulfillCommerceOrder
-} from "./chunk-J7AA22HC.js";
+  fulfillCommerceOrder,
+  warehouseFingerprint
+} from "./chunk-HYVPTDYO.js";
 import {
   ReconcileFailure,
   ShopperError,
@@ -26,25 +30,25 @@ import {
   readStoreSettings,
   reconcileFailure,
   uncheckedSessionRefusal
-} from "./chunk-6OI6C5UV.js";
+} from "./chunk-2QJ6LJ5B.js";
 import {
   canonicalEmail,
   canonicalEmails,
   canonicalPurchase,
   getReferralPolicy,
   referralReversalStatements
-} from "./chunk-GB3RDLKI.js";
+} from "./chunk-TX6OICXZ.js";
 import {
   PURCHASED_ORDER_STATUSES,
   claimInterval
-} from "./chunk-WPNOY6AW.js";
+} from "./chunk-JTBD4QC4.js";
 import {
   batchGroups,
   chunked,
   commerceDb,
   commitBatch,
   errorText
-} from "./chunk-7BTUQQDZ.js";
+} from "./chunk-4PHEXUQV.js";
 import {
   RETURN_REASON_CODES,
   carts,
@@ -57,13 +61,15 @@ import {
   productVariantValues,
   productVariants,
   products,
+  recoveryPaymentEvents,
+  recoveryPayments,
   referralCodes,
   returnRequestEvents,
   returnRequestReasons,
   returnRequests,
   taxReversals,
   taxSyncDecisions
-} from "./chunk-KLQ2VU7R.js";
+} from "./chunk-YT2QU5EG.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
@@ -493,7 +499,7 @@ async function recoverTaxSync(env, adapters, actor, input) {
 // src/orders.ts
 import { and as and2, eq as eq2, exists, isNull as isNull2, notInArray, sql as sql2 } from "drizzle-orm";
 var at2 = (seconds) => new Date(seconds * 1e3);
-var orderIn = (db, id2, status) => exists(db.select({ one: sql2`1` }).from(orders).where(and2(eq2(orders.id, id2), eq2(orders.status, status))));
+var orderIn = (db, id3, status) => exists(db.select({ one: sql2`1` }).from(orders).where(and2(eq2(orders.id, id3), eq2(orders.status, status))));
 var PARKED_CHECKOUT_MESSAGE = "The store is reviewing the payment for this checkout. Contact the store to release it.";
 async function discardCheckoutDiscount(adapter, orderId) {
   if (!adapter?.discardCheckoutDiscount) return false;
@@ -509,15 +515,15 @@ async function discardCheckoutDiscount(adapter, orderId) {
     return false;
   }
 }
-async function findOrder(ctx, id2) {
+async function findOrder(ctx, id3) {
   const { db } = ctx;
-  const order = await db.select().from(orders).where(eq2(orders.id, id2)).get();
+  const order = await db.select().from(orders).where(eq2(orders.id, id3)).get();
   if (!order) return null;
   return order;
 }
-async function findOrderForSession(ctx, id2, sessionToken, customerId, orderAccessToken) {
+async function findOrderForSession(ctx, id3, sessionToken, customerId, orderAccessToken) {
   const { db } = ctx;
-  const order = await findOrder(ctx, id2);
+  const order = await findOrder(ctx, id3);
   if (!order) return null;
   if (customerId && order.userId === customerId) return order;
   if (orderAccessToken && order.guestAccessTokenHash === await hashOrderAccess(orderAccessToken)) return order;
@@ -549,19 +555,19 @@ async function createOrder(ctx, data) {
   });
   return await findOrder(ctx, orderId);
 }
-async function updateOrderStatus(ctx, id2, status, fulfillment) {
+async function updateOrderStatus(ctx, id3, status, fulfillment) {
   const { env } = ctx;
   if (status !== "fulfilled") throw new Error("Use the payment or cancellation workflow to change order status");
-  const order = await findOrder(ctx, id2);
+  const order = await findOrder(ctx, id3);
   if (order?.paymentProvider === "admin_test") throw new Error("Admin test orders cannot be fulfilled");
   if (!fulfillment) throw new Error("Audited fulfillment details are required");
   await fulfillCommerceOrder(env, fulfillment.actor, {
-    orderId: id2,
+    orderId: id3,
     carrier: fulfillment.carrier,
     trackingNumber: fulfillment.trackingNumber,
     note: fulfillment.note
   });
-  return await findOrder(ctx, id2);
+  return await findOrder(ctx, id3);
 }
 async function finalizeOrderPayment(ctx, params) {
   const { env, db, adapters: paymentAdapters } = ctx;
@@ -729,9 +735,9 @@ async function recordProviderRefund(ctx, params) {
     status: order.status === "disputed" ? "disputed" : full ? "refunded" : "partially_refunded"
   };
 }
-async function cancelOrder(ctx, id2, options = {}) {
+async function cancelOrder(ctx, id3, options = {}) {
   const { env, db, adapters: paymentAdapters } = ctx;
-  const order = await db.select().from(orders).where(eq2(orders.id, id2)).get();
+  const order = await db.select().from(orders).where(eq2(orders.id, id3)).get();
   if (!order) return null;
   if (PURCHASED_ORDER_STATUSES.includes(order.status)) return order;
   const timestamp = Math.floor(Date.now() / 1e3);
@@ -739,8 +745,8 @@ async function cancelOrder(ctx, id2, options = {}) {
   if (order.reconcileReviewAt && !options.sessionExpired && !options.reviewRelease) {
     throw new Error(PARKED_CHECKOUT_MESSAGE);
   }
-  const reservations = await db.select().from(componentReservations).where(eq2(componentReservations.orderId, id2));
-  const inventoryReservations2 = await db.select().from(inventoryReservations).where(eq2(inventoryReservations.orderId, id2));
+  const reservations = await db.select().from(componentReservations).where(eq2(componentReservations.orderId, id3));
+  const inventoryReservations2 = await db.select().from(inventoryReservations).where(eq2(inventoryReservations.orderId, id3));
   const otherModeSession = (order.paymentProvider ?? "stripe") === "stripe" && isOtherStripeModeSession(env, order.checkoutSessionId);
   let paymentReturned = null;
   if (order.checkoutSessionId && !options.sessionExpired && order.paymentProvider !== "admin_test") {
@@ -777,21 +783,21 @@ async function cancelOrder(ctx, id2, options = {}) {
       }
     }
   }
-  const released = orderIn(db, id2, "cancelled");
+  const released = orderIn(db, id3, "cancelled");
   const statements = [
     db.update(orders).set({
       status: "cancelled",
       updatedAt: at2(timestamp),
       discountCleanupPending: order.creditApplied + order.discountAmount + order.giftCardApplied > 0 && (order.paymentProvider ?? "stripe") === "stripe"
-    }).where(and2(eq2(orders.id, id2), notInArray(orders.status, [...PURCHASED_ORDER_STATUSES]))),
-    db.update(discountRedemptions).set({ status: "cancelled", updatedAt: at2(timestamp) }).where(and2(eq2(discountRedemptions.orderId, id2), eq2(discountRedemptions.status, "reserved"), released)),
-    db.update(giftCardRedemptions).set({ status: "cancelled", updatedAt: at2(timestamp) }).where(and2(eq2(giftCardRedemptions.orderId, id2), eq2(giftCardRedemptions.status, "reserved"), released))
+    }).where(and2(eq2(orders.id, id3), notInArray(orders.status, [...PURCHASED_ORDER_STATUSES]))),
+    db.update(discountRedemptions).set({ status: "cancelled", updatedAt: at2(timestamp) }).where(and2(eq2(discountRedemptions.orderId, id3), eq2(discountRedemptions.status, "reserved"), released)),
+    db.update(giftCardRedemptions).set({ status: "cancelled", updatedAt: at2(timestamp) }).where(and2(eq2(giftCardRedemptions.orderId, id3), eq2(giftCardRedemptions.status, "reserved"), released))
   ];
   if (order.creditApplied > 0) {
     statements.push(db.run(sql2`INSERT INTO _ecommerce_credit_ledger
       (id, account_id, order_id, kind, amount_cents, created_at)
-      SELECT ${`credit_release_${id2}`}, user_id, id, 'checkout_release', credit_applied, ${timestamp}
-      FROM _ecommerce_orders WHERE id = ${id2} AND status = 'cancelled' AND user_id IS NOT NULL
+      SELECT ${`credit_release_${id3}`}, user_id, id, 'checkout_release', credit_applied, ${timestamp}
+      FROM _ecommerce_orders WHERE id = ${id3} AND status = 'cancelled' AND user_id IS NOT NULL
       ON CONFLICT(order_id, kind) DO NOTHING`));
   }
   for (const reservation of reservations) {
@@ -800,7 +806,7 @@ async function cancelOrder(ctx, id2, options = {}) {
         WHERE id = ${reservation.id} AND released_at IS NULL), updated_at = MAX(updated_at + 1, ${timestamp})
       WHERE id = ${reservation.componentId} AND EXISTS (SELECT 1 FROM _ecommerce_component_reservations
         WHERE id = ${reservation.id} AND released_at IS NULL)
-        AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ${id2} AND status = 'cancelled')`));
+        AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ${id3} AND status = 'cancelled')`));
     statements.push(db.update(componentReservations).set({ releasedAt: at2(timestamp) }).where(and2(eq2(componentReservations.id, reservation.id), isNull2(componentReservations.releasedAt), released)));
   }
   for (const reservation of inventoryReservations2) {
@@ -810,12 +816,12 @@ async function cancelOrder(ctx, id2, options = {}) {
         WHERE id = ${reservation.id} AND released_at IS NULL), updated_at = MAX(updated_at + 1, ${timestamp})
       WHERE id = ${reservation.targetId} AND EXISTS (SELECT 1 FROM _ecommerce_inventory_reservations
         WHERE id = ${reservation.id} AND released_at IS NULL)
-        AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ${id2} AND status = 'cancelled')`));
+        AND EXISTS (SELECT 1 FROM _ecommerce_orders WHERE id = ${id3} AND status = 'cancelled')`));
     statements.push(db.update(inventoryReservations).set({ releasedAt: at2(timestamp) }).where(and2(eq2(inventoryReservations.id, reservation.id), isNull2(inventoryReservations.releasedAt), released)));
   }
   if (order.cartId) {
     statements.push(db.update(carts).set({ checkoutSessionId: null, updatedAt: at2(timestamp) }).where(and2(eq2(carts.id, order.cartId), released)));
-    statements.push(db.update(orders).set({ cartId: null }).where(and2(eq2(orders.id, id2), eq2(orders.status, "cancelled"))));
+    statements.push(db.update(orders).set({ cartId: null }).where(and2(eq2(orders.id, id3), eq2(orders.status, "cancelled"))));
   }
   if (options.reviewRelease) {
     const { decision } = options.reviewRelease;
@@ -823,17 +829,17 @@ async function cancelOrder(ctx, id2, options = {}) {
       "order",
       "release",
       sql2`status = 'cancelled'`,
-      { id: decision.id, paymentReturned, actor: decision.actor, reason: decision.reason, at: timestamp, recordId: id2 }
+      { id: decision.id, paymentReturned, actor: decision.actor, reason: decision.reason, at: timestamp, recordId: id3 }
     )));
   }
   await commitBatch(db, statements);
-  const cancelled = await findOrder(ctx, id2);
+  const cancelled = await findOrder(ctx, id3);
   if (cancelled?.status === "cancelled" && !otherModeSession && order.creditApplied + order.discountAmount + order.giftCardApplied > 0) {
     const removed = await discardCheckoutDiscount(
       paymentAdapters.find((candidate) => candidate.providerId === (order.paymentProvider ?? "stripe")),
-      id2
+      id3
     );
-    if (removed) await db.update(orders).set({ discountCleanupPending: false }).where(eq2(orders.id, id2));
+    if (removed) await db.update(orders).set({ discountCleanupPending: false }).where(eq2(orders.id, id3));
   }
   return cancelled;
 }
@@ -864,13 +870,13 @@ async function owned(ctx, orderId, owner) {
 async function requestsForOrder(env, orderId) {
   return commerceDb(env).query.returnRequests.findMany({ where: { orderId }, orderBy: { createdAt: "asc" }, with: {
     reasonCategory: true,
-    events: { orderBy: (_t, { sql: sql5 }) => sql5`rowid` },
+    events: { orderBy: (_t, { sql: sql6 }) => sql6`rowid` },
     receipts: { with: { receipt: { columns: { items: true, createdAt: true } } } }
   } });
 }
 async function readCustomerReturns(ctx, orderId, owner = {}) {
   if (!await owned(ctx, orderId, owner)) return null;
-  const order = await ctx.db.query.orders.findFirst({ where: { id: orderId }, with: { parcelContents: true, fulfillments: { columns: { id: true, kind: true } }, returnReceipts: { with: { refundDecisions: { orderBy: (_t, { sql: sql5 }) => sql5`rowid DESC`, limit: 1 } } } } });
+  const order = await ctx.db.query.orders.findFirst({ where: { id: orderId }, with: { parcelContents: true, fulfillments: { columns: { id: true, kind: true } }, returnReceipts: { with: { refundDecisions: { orderBy: (_t, { sql: sql6 }) => sql6`rowid DESC`, limit: 1 } } } } });
   if (!order) return null;
   const requests = await requestsForOrder(ctx.env, orderId), described = await describeOrderItems(ctx.env, order.items);
   const unknown = order.fulfillments.some((f) => f.kind === "shipment" && !order.parcelContents.some((p) => p.fulfillmentId === f.id));
@@ -954,7 +960,7 @@ async function cancelCustomerReturn(ctx, input, owner = {}) {
 }
 async function readReturnRequestAdmin(env, input) {
   const v = z3.object({ requestId: id }).strict().parse(input), db = commerceDb(env);
-  const request = await db.query.returnRequests.findFirst({ where: { id: v.requestId }, with: { order: { columns: { id: true, items: true, status: true } }, events: { orderBy: (_t, { sql: sql5 }) => sql5`rowid` }, receipts: { with: { receipt: { with: { inspections: true } } } } } });
+  const request = await db.query.returnRequests.findFirst({ where: { id: v.requestId }, with: { order: { columns: { id: true, items: true, status: true } }, events: { orderBy: (_t, { sql: sql6 }) => sql6`rowid` }, receipts: { with: { receipt: { with: { inspections: true } } } } } });
   if (!request) throw new CommerceOperationsConflict("Return request not found.");
   const names = await adminActorNames(env, request.events.filter((e) => e.actorKind === "staff").map((e) => e.actor));
   const described = await describeOrderItems(env, request.order.items);
@@ -1348,6 +1354,58 @@ async function updateCartItems(ctx, cartId, items2) {
   return await db.select().from(carts).where(eq4(carts.id, cartId)).get();
 }
 
+// src/recovery-payments.ts
+import { eq as eq5, sql as sql5 } from "drizzle-orm";
+import { z as z4 } from "zod";
+var id2 = z4.string().trim().min(1).max(128);
+var recoveryPaymentHeld = sql5`EXISTS(SELECT 1 FROM _ecommerce_recovery_payment_events e WHERE e.payment_id=p.id AND e.kind IN ('refunded','lost')) OR COALESCE((SELECT kind FROM _ecommerce_recovery_payment_events e WHERE e.payment_id=p.id AND e.kind IN ('disputed','won') ORDER BY rowid DESC LIMIT 1),'won')='disputed'`;
+async function verify(env, caseId, paymentId, amountMinor, currency, adapters) {
+  const adapter = (adapters ?? runtimePaymentAdapters(env)).find((a) => a.providerId === "stripe");
+  if (!adapter?.getExchangePayment) throw new CommerceOperationsConflict("The payment provider is unavailable. No exchange stock was changed.");
+  const payment = await adapter.getExchangePayment(paymentId);
+  if (!payment || payment.caseId !== caseId || payment.status !== "succeeded" || payment.amountMinor !== amountMinor || payment.currency !== currency || payment.refundedMinor !== 0 || payment.disputed)
+    throw new CommerceOperationsConflict("This payment does not confirm the exact exchange amount, or it has been refunded or disputed.");
+  return adapter;
+}
+async function verifyExchangeCharge(env, input, actor, adapters) {
+  const v = z4.object({ caseId: id2, expectedVersion: id2, paymentId: z4.string().regex(/^pi_[A-Za-z0-9_]+$/).max(128), reason: z4.string().trim().min(8).max(500), requestKey: id2.min(8) }).strict().parse(input);
+  if (!actor.trim()) throw new CommerceOperationsConflict("An authenticated staff member is required.");
+  const db = commerceDb(env), decisionId = `rcp_${await hashOrderAccess(`${v.caseId}:${v.requestKey}`)}`, fingerprint2 = await warehouseFingerprint(v, actor);
+  const replay = async () => {
+    const old = await db.select().from(recoveryPayments).where(eq5(recoveryPayments.id, decisionId)).get();
+    if (!old) return null;
+    if (old.fingerprint !== fingerprint2) throw new CommerceOperationsConflict("This payment verification key was used with different details.");
+    return { decisionId, duplicate: true };
+  };
+  const previous = await replay();
+  if (previous) return previous;
+  const c = await db.query.recoveryCases.findFirst({ where: { id: v.caseId }, with: { order: { columns: { currency: true } } } }), amountMinor = c?.target.adjustmentMinor ?? 0;
+  if (!c || c.kind !== "exchange" || amountMinor <= 0) throw new CommerceOperationsConflict("This case does not need an upgrade payment.");
+  await verify(env, c.id, v.paymentId, amountMinor, c.order.currency, adapters);
+  try {
+    await db.insert(recoveryPayments).values({ id: decisionId, caseId: c.id, expectedVersion: v.expectedVersion, provider: "stripe", paymentId: v.paymentId, amountMinor, currency: c.order.currency, actor, reason: v.reason, fingerprint: fingerprint2, createdAt: /* @__PURE__ */ new Date() });
+  } catch (e) {
+    const old = await replay();
+    if (old) return old;
+    if (!/Recovery|UNIQUE constraint/.test(errorText(e))) throw e;
+    throw new CommerceOperationsConflict("The case or payment allocation changed. Refresh before continuing.");
+  }
+  return { decisionId };
+}
+async function checkExchangeCharge(env, caseId, adapters) {
+  const db = commerceDb(env), c = await db.query.recoveryCases.findFirst({ where: { id: caseId }, with: { order: { columns: { currency: true } }, payments: { orderBy: (_t, { sql: sql6 }) => sql6`rowid DESC`, limit: 1 } } });
+  if (!c || c.kind !== "exchange" || (c.target.adjustmentMinor ?? 0) <= 0) return;
+  const p = c.payments[0];
+  if (!p || p.redactedAt) throw new CommerceOperationsConflict("Verify the upgrade payment before shipping.");
+  await verify(env, c.id, p.paymentId, p.amountMinor, c.order.currency, adapters);
+}
+async function recordRecoveryPaymentEvent(env, paymentIntentId, eventId, kind, createdAt) {
+  const db = commerceDb(env), p = await db.select({ id: recoveryPayments.id }).from(recoveryPayments).where(eq5(recoveryPayments.paymentId, paymentIntentId)).get();
+  if (!p) return null;
+  await db.insert(recoveryPaymentEvents).values({ id: eventId, paymentId: p.id, kind, createdAt: new Date(createdAt * 1e3) }).onConflictDoNothing();
+  return { success: true, recoveryPayment: true };
+}
+
 export {
   PROVIDER_CHECK_MIN_ORDER_AGE_SECONDS,
   PROVIDER_CHECK_RETRY_MESSAGE,
@@ -1397,5 +1455,8 @@ export {
   findCart,
   claimCart,
   getOrCreateCart,
-  updateCartItems
+  updateCartItems,
+  verifyExchangeCharge,
+  checkExchangeCharge,
+  recordRecoveryPaymentEvent
 };

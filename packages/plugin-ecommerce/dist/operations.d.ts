@@ -2,6 +2,7 @@ import { TalismanEnv } from 'talisman-cms/client';
 import { StocktakeLine, ParcelItem, InspectedItem, ReturnedItem, RETURN_REFUND_STATUSES, returnRefundDecisions, REFUND_SOURCE_KINDS, RESTOCK_TARGET_TYPES, replenishmentPolicies, replenishmentDeliveries, SupplierSnapshot, PurchaseLine, RETURN_REASON_CODES, SUPPLIER_ISSUE_KINDS, SUPPLIER_ISSUE_STATUSES, RECOVERY_KINDS } from './schema.js';
 import * as drizzle_orm_sqlite_core from 'drizzle-orm/sqlite-core';
 export { d as decideReturnRequest, l as listReturnsQueue, r as readReturnRequestAdmin } from './return-requests-Ca2cC1Ih.js';
+import { P as PaymentProviderAdapter } from './payments-DiMqRHdo.js';
 import 'drizzle-orm';
 import './return-request-types-CaKc6AaH.js';
 
@@ -28,7 +29,7 @@ declare function listEmailRecovery(env: TalismanEnv, input?: unknown): Promise<{
         retryable: boolean;
         guidance: string;
         id: string;
-        kind: "shipment" | "order_confirmation" | "shipment_update" | "gift_card_claim" | "return_decision" | "return_received" | "return_refund";
+        kind: "shipment" | "order_confirmation" | "shipment_update" | "gift_card_claim" | "return_decision" | "return_received" | "return_refund" | "recovery_shipment" | "recovery_tracking" | "recovery_received";
         subjectId: string;
         status: "cancelled" | "pending" | "sent" | "failed";
         attempts: number;
@@ -77,9 +78,9 @@ type StockOverviewRow = {
 /** Filtering and pagination happen after effective quantities are computed, so low stock beyond
  * the first catalog page remains discoverable. Bound search treats SQL wildcard characters literally. */
 declare function readStockOverview(env: TalismanEnv, input?: unknown): Promise<{
+    filter: "all" | "unavailable" | "low";
     search: string;
     offset: number;
-    filter: "all" | "unavailable" | "low";
     view: "components" | "choices";
     threshold: number;
     rows: StockOverviewRow[];
@@ -1121,9 +1122,9 @@ declare function listSuppliers(env: TalismanEnv, input?: unknown): Promise<{
         contact: string;
         address: string;
     }[];
+    filter: "active" | "all";
     search: string;
     offset: number;
-    filter: "active" | "all";
 }>;
 declare function saveSupplier(env: TalismanEnv, input: unknown, actor: string): Promise<{
     supplierId: string;
@@ -1163,9 +1164,9 @@ declare function listPurchaseOrders(env: TalismanEnv, input?: unknown): Promise<
         outstanding: number;
         openIssues: number;
     }[];
+    filter: "draft" | "open" | "ordered" | "cancelled" | "all" | "completed";
     search: string;
     offset: number;
-    filter: "draft" | "open" | "ordered" | "cancelled" | "all" | "completed";
 }>;
 declare function readPurchaseOrder(env: TalismanEnv, input: unknown): Promise<{
     id: string;
@@ -1284,8 +1285,8 @@ declare function listSupplierIssues(env: TalismanEnv, input?: unknown): Promise<
         supplier: string;
         name: string;
     }[];
-    offset: number;
     filter: "open" | "resolved" | "all";
+    offset: number;
     purchaseOrderId?: string | undefined;
 }>;
 declare function readSupplierIssue(env: TalismanEnv, input: unknown): Promise<{
@@ -1325,7 +1326,7 @@ declare function recordRecoveryEvent(env: TalismanEnv, input: unknown, actor: st
 } | {
     eventId: string;
 }>;
-declare function shipRecoveryCase(env: TalismanEnv, input: unknown, actor: string): Promise<{
+declare function shipRecoveryCase(env: TalismanEnv, input: unknown, actor: string, adapters?: PaymentProviderAdapter[]): Promise<{
     shipmentId: string;
     duplicate: boolean;
 } | {
@@ -1340,15 +1341,23 @@ declare function listRecoveryCases(env: TalismanEnv, input?: unknown): Promise<{
         kind: (typeof RECOVERY_KINDS)[number];
         quantity: number;
         shipped: number;
+        awaitingInspection: number;
+        awaitingPaymentReview: number;
         name: string;
         status: "open" | "resolved";
     }[];
+    filter: "open" | "resolved" | "all";
     orderId: string;
     kind: "lost" | "damaged" | "exchange" | "all";
     offset: number;
-    filter: "open" | "resolved" | "all";
 }>;
 declare function readRecoveryCase(env: TalismanEnv, input: unknown): Promise<{
+    adjustment: {
+        amountMinor: number;
+        status: string;
+        paymentId: string;
+    };
+    awaitingPaymentReview: boolean;
     id: string;
     orderId: string;
     kind: "lost" | "damaged" | "exchange";
@@ -1402,12 +1411,39 @@ declare function readRecoveryCase(env: TalismanEnv, input: unknown): Promise<{
     shipments: {
         id: string;
         quantity: number;
+        returned: number;
+        receipts: {
+            id: string;
+            quantity: number;
+            remaining: number;
+            createdAt: string;
+            inspections: {
+                id: string;
+                quantity: number;
+                disposition: "damaged" | "sellable" | "quarantine";
+                restock: boolean;
+                createdAt: string;
+            }[];
+        }[];
         carrier: string | null;
         trackingNumber: string | null;
         createdAt: string;
     }[];
 }>;
 declare function readRecoveryOrder(env: TalismanEnv, input: unknown): Promise<{
+    currency: string;
+    lines: {
+        priceAtPurchase: number;
+        lineIndex: number;
+        quantity: number;
+        name: string;
+        sku: string | null;
+        shipped: number;
+        received: number;
+        remaining: number | null;
+        returnable: number;
+        restockMapped: boolean;
+    }[];
     canCreate: boolean;
     replacements: {
         id: string;
@@ -1428,17 +1464,6 @@ declare function readRecoveryOrder(env: TalismanEnv, input: unknown): Promise<{
     orderId: string;
     status: string;
     fulfillmentStatus: "unfulfilled" | "partially_fulfilled" | "fulfilled";
-    lines: {
-        lineIndex: number;
-        quantity: number;
-        name: string;
-        sku: string | null;
-        shipped: number;
-        received: number;
-        remaining: number | null;
-        returnable: number;
-        restockMapped: boolean;
-    }[];
     unrecorded: {
         id: string;
         createdAt: string;
@@ -1528,6 +1553,30 @@ declare function listExchangeChoices(env: TalismanEnv, input: unknown): Promise<
     orderId: string;
     lineIndex: number;
     offset: number;
+    allowPriceDifference: boolean;
 }>;
 
-export { type AttentionKind, CommerceOperationsConflict, type StockOverviewRow, createRecoveryCase, exportCommerceOperations, inspectOrderReturn, listEmailRecovery, listExchangeChoices, listPurchaseOrders, listRecoveryCases, listRefundFollowUp, listReplenishment, listStockLocations, listStocktakes, listSupplierIssues, listSuppliers, planReplenishmentDelivery, readCommerceAttention, readOperationsReport, readOrderWarehouse, readPurchaseOrder, readRecoveryCase, readRecoveryOrder, readRefundCase, readReplenishment, readStockHistory, readStockOverview, readStocktakeTargets, readSupplierIssue, receiveOrderReturn, recordParcelContents, recordPurchaseOrder, recordRecoveryEvent, recordRefundFollowUp, recordReplenishmentDelivery, recordStockMovement, recordStocktake, recordSupplierIssue, reportSupplierIssue, retryCommerceEmail, savePurchaseOrder, saveReplenishmentPolicy, saveSupplier, shipRecoveryCase };
+/** Receipt acknowledges physical goods only; it never promises a refund or restores stock. */
+declare function receiveReplacementReturn(env: TalismanEnv, input: unknown, actor: string): Promise<{
+    receiptId: string;
+    duplicate: boolean;
+} | {
+    receiptId: string;
+}>;
+/** Partial dispositions use the outgoing parcel's frozen recipe, independently of checkout stock. */
+declare function inspectReplacementReturn(env: TalismanEnv, input: unknown, actor: string): Promise<{
+    inspectionId: string;
+    duplicate: boolean;
+} | {
+    inspectionId: string;
+}>;
+
+/** Provider-verified extra tender. A staff assertion or unrelated payment is never sufficient. */
+declare function verifyExchangeCharge(env: TalismanEnv, input: unknown, actor: string, adapters?: PaymentProviderAdapter[]): Promise<{
+    decisionId: string;
+    duplicate: boolean;
+} | {
+    decisionId: string;
+}>;
+
+export { type AttentionKind, CommerceOperationsConflict, type StockOverviewRow, createRecoveryCase, exportCommerceOperations, inspectOrderReturn, inspectReplacementReturn, listEmailRecovery, listExchangeChoices, listPurchaseOrders, listRecoveryCases, listRefundFollowUp, listReplenishment, listStockLocations, listStocktakes, listSupplierIssues, listSuppliers, planReplenishmentDelivery, readCommerceAttention, readOperationsReport, readOrderWarehouse, readPurchaseOrder, readRecoveryCase, readRecoveryOrder, readRefundCase, readReplenishment, readStockHistory, readStockOverview, readStocktakeTargets, readSupplierIssue, receiveOrderReturn, receiveReplacementReturn, recordParcelContents, recordPurchaseOrder, recordRecoveryEvent, recordRefundFollowUp, recordReplenishmentDelivery, recordStockMovement, recordStocktake, recordSupplierIssue, reportSupplierIssue, retryCommerceEmail, savePurchaseOrder, saveReplenishmentPolicy, saveSupplier, shipRecoveryCase, verifyExchangeCharge };

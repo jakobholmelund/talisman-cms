@@ -117,7 +117,21 @@ interface CommerceEmailTemplates {
     giftCardClaim?: Template<GiftCardClaimEmail>;
     returnNotice?: Template<ReturnNoticeEmail>;
     returnRefund?: Template<ReturnRefundEmail>;
+    recoveryNotice?: Template<RecoveryNoticeEmail>;
 }
+interface RecoveryNoticeEmail {
+    store: CommerceEmailStore;
+    orderId: string;
+    kind: 'shipment' | 'tracking' | 'received';
+    exchange: boolean;
+    occurredAt: Date;
+    name: string;
+    sku: string | null;
+    quantity: number;
+    carrier: string | null;
+    trackingNumber: string | null;
+}
+declare function recoveryNoticeEmail(email: RecoveryNoticeEmail): CommerceEmailMessage;
 /** An amount in minor units: `1250` in `usd` reads `$12.50` and in `jpy` `¥1,250`; deductions read `-$12.50`. */
 declare function formatMoney(cents: number, currency: string): string;
 /** A date such as `26 September 2026`, in UTC. */
@@ -195,4 +209,4 @@ interface ReturnRefundEmail {
 }
 declare function returnRefundEmail(email: ReturnRefundEmail): CommerceEmailMessage;
 
-export { type CommerceEmailContent, type CommerceEmailMessage, type CommerceEmailSection, type CommerceEmailStore, type CommerceEmailTemplates, type GiftCardClaimEmail, type OrderConfirmationEmail, type OrderEmailAddress, type ReturnNoticeEmail, type ReturnRefundEmail, type ShipmentEmail, emailLink, formatAddress, formatDate, formatMoney, giftCardClaimEmail, orderConfirmationEmail, renderCommerceEmail, returnNoticeEmail, returnRefundEmail, shipmentEmail, shopperSignInEmail };
+export { type CommerceEmailContent, type CommerceEmailMessage, type CommerceEmailSection, type CommerceEmailStore, type CommerceEmailTemplates, type GiftCardClaimEmail, type OrderConfirmationEmail, type OrderEmailAddress, type RecoveryNoticeEmail, type ReturnNoticeEmail, type ReturnRefundEmail, type ShipmentEmail, emailLink, formatAddress, formatDate, formatMoney, giftCardClaimEmail, orderConfirmationEmail, recoveryNoticeEmail, renderCommerceEmail, returnNoticeEmail, returnRefundEmail, shipmentEmail, shopperSignInEmail };

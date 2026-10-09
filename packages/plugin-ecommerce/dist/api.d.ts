@@ -1,9 +1,9 @@
 import { C as CustomerReturns, R as ReturnRequestReceipt, a as ReturnDecisionReceipt } from './return-request-types-CaKc6AaH.js';
 import { R as ReturnOwner } from './return-requests-Ca2cC1Ih.js';
-import { a as CommerceApiOptions } from './commerce-context-o8Ob_RVh.js';
+import { a as CommerceApiOptions } from './commerce-context-B9gCdqRP.js';
 import { TalismanEnv } from 'talisman-cms/client';
 import { a as CommerceEmailResult } from './email-deliveries-CyzibTug.js';
-import { P as PaymentProviderAdapter } from './payments-C3gqo5tp.js';
+import { P as PaymentProviderAdapter } from './payments-DiMqRHdo.js';
 import './schema.js';
 import 'drizzle-orm';
 import 'drizzle-orm/sqlite-core';
@@ -338,10 +338,17 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 quantity: number;
                 name: string;
                 sku: string | null;
+                adjustment: {
+                    amountMinor: number;
+                    currency: string;
+                    status: string;
+                };
                 status: "open" | "resolved";
                 shipments: {
                     id: string;
                     quantity: number;
+                    returned: number;
+                    awaitingInspection: number;
                     shippedAt: string;
                     carrier: string | null;
                     trackingNumber: string | null;
@@ -1207,6 +1214,9 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             orderId: string;
             duplicate: boolean;
             status?: undefined;
+        } | {
+            success: boolean;
+            recoveryPayment: boolean;
         } | {
             success: boolean;
             event: string;

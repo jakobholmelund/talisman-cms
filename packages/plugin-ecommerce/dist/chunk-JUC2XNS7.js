@@ -25,6 +25,7 @@ import {
   readCustomerReturns,
   recordMissingTaxTransactions,
   recordProviderRefund,
+  recordRecoveryPaymentEvent,
   requireVariantChoice,
   resendPendingTaxReversals,
   resolveSelectedVariant,
@@ -35,19 +36,19 @@ import {
   updateCartItems,
   updateOrderStatus,
   withCountryCode
-} from "./chunk-NXQCYUOX.js";
+} from "./chunk-IK2LAKMW.js";
 import {
   INVENTORY_COLUMNS,
   fullRefundStatements
-} from "./chunk-PD7I5B62.js";
+} from "./chunk-MQQMY6EP.js";
 import {
   evaluateDiscountCode
-} from "./chunk-IT7W6TQQ.js";
+} from "./chunk-LVMYPANC.js";
 import {
   adminActorNames,
   deliverPendingCommerceEmails,
   describeOrderItems
-} from "./chunk-J7AA22HC.js";
+} from "./chunk-HYVPTDYO.js";
 import {
   RECONCILE_FAILURE_MESSAGES,
   RECONCILE_TABLES,
@@ -78,7 +79,7 @@ import {
   recordGiftCardPurchaseRefund,
   sessionLookupFailure,
   uncheckedSessionRefusal
-} from "./chunk-6OI6C5UV.js";
+} from "./chunk-2QJ6LJ5B.js";
 import {
   canonicalEmail,
   canonicalEmails,
@@ -87,21 +88,21 @@ import {
   hasCanonicalPurchase,
   referralReversalStatements,
   releaseReferralAwards
-} from "./chunk-GB3RDLKI.js";
+} from "./chunk-TX6OICXZ.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
 } from "./chunk-GNU6N22K.js";
 import {
   hasPurchaseHistory
-} from "./chunk-WPNOY6AW.js";
+} from "./chunk-JTBD4QC4.js";
 import {
   batchGroups,
   commerceDb,
   commitBatch,
   errorText,
   runStatements
-} from "./chunk-7BTUQQDZ.js";
+} from "./chunk-4PHEXUQV.js";
 import {
   carts,
   creditLedger,
@@ -114,7 +115,7 @@ import {
   orders,
   reconcileDecisions,
   taxSyncDecisions
-} from "./chunk-KLQ2VU7R.js";
+} from "./chunk-YT2QU5EG.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
@@ -128,7 +129,7 @@ async function readOrderTracking(ctx, orderId, sessionToken, customerId, orderAc
   if (!authorized || authorized.paymentProvider === "admin_test") return null;
   const order = await ctx.db.query.orders.findFirst({ where: { id: orderId }, columns: { id: true, items: true }, with: {
     fulfillments: { columns: { id: true, kind: true, correctsId: true, carrier: true, trackingNumber: true, createdAt: true }, orderBy: (_t, { sql: sql6 }) => sql6`rowid`, with: { contents: { columns: { items: true } } } },
-    recoveryCases: { columns: { id: true, kind: true, lineIndex: true, quantity: true, target: true, createdAt: true }, with: { shipments: { columns: { id: true, quantity: true, carrier: true, trackingNumber: true, createdAt: true }, orderBy: (_t, { sql: sql6 }) => sql6`rowid` }, events: { columns: { kind: true, status: true, shipmentId: true, carrier: true, trackingNumber: true }, orderBy: (_t, { sql: sql6 }) => sql6`rowid` } } },
+    recoveryCases: { columns: { id: true, kind: true, lineIndex: true, quantity: true, target: true, createdAt: true }, with: { payments: { columns: { amountMinor: true }, orderBy: (_t, { sql: sql6 }) => sql6`rowid DESC`, limit: 1, with: { events: { columns: { kind: true }, orderBy: (_t, { sql: sql6 }) => sql6`rowid` } } }, receipt: { with: { refundDecisions: { columns: { status: true, amountMinor: true }, orderBy: (_t, { sql: sql6 }) => sql6`rowid DESC`, limit: 1 } } }, shipments: { columns: { id: true, quantity: true, carrier: true, trackingNumber: true, createdAt: true }, with: { receipts: { columns: { quantity: true }, with: { inspections: { columns: { quantity: true, disposition: true, restock: true } } } } }, orderBy: (_t, { sql: sql6 }) => sql6`rowid` }, events: { columns: { kind: true, status: true, shipmentId: true, carrier: true, trackingNumber: true }, orderBy: (_t, { sql: sql6 }) => sql6`rowid` } } },
     returnReceipts: { columns: { id: true, items: true, createdAt: true }, with: { inspections: { columns: { items: true } } } }
   } });
   if (!order) return null;
@@ -162,10 +163,11 @@ async function readOrderTracking(ctx, orderId, sessionToken, customerId, orderAc
     quantity: c.quantity,
     name: c.target.name,
     sku: c.target.sku,
+    adjustment: { amountMinor: c.kind === "exchange" ? c.target.adjustmentMinor ?? 0 : 0, currency: authorized.currency, status: c.kind !== "exchange" || !c.target.adjustmentMinor ? "not_needed" : c.target.adjustmentMinor > 0 ? c.payments[0] && !c.payments[0].events.some((e) => ["refunded", "lost"].includes(e.kind)) && c.payments[0].events.filter((e) => ["disputed", "won"].includes(e.kind)).at(-1)?.kind !== "disputed" ? "paid" : "payment_needed" : c.receipt?.refundDecisions[0]?.status === "settled" ? "refunded" : "refund_needed" },
     status: c.events.at(-1)?.status ?? "open",
     shipments: c.shipments.map((s) => {
       const corrected = c.events.filter((e) => e.kind === "tracking" && e.shipmentId === s.id).at(-1);
-      return { id: s.id, quantity: s.quantity, shippedAt: s.createdAt.toISOString(), carrier: corrected ? corrected.carrier : s.carrier, trackingNumber: corrected ? corrected.trackingNumber : s.trackingNumber };
+      return { id: s.id, quantity: s.quantity, returned: s.receipts.reduce((n, r) => n + r.quantity, 0), awaitingInspection: s.receipts.reduce((n, r) => n + r.quantity - r.inspections.reduce((n2, i) => n2 + i.quantity, 0), 0), shippedAt: s.createdAt.toISOString(), carrier: corrected ? corrected.carrier : s.carrier, trackingNumber: corrected ? corrected.trackingNumber : s.trackingNumber };
     })
   })) };
 }
@@ -901,6 +903,8 @@ async function applyStripeEvent(ctx, event, stripeAdapter) {
   if (event.type === "charge.refunded") {
     const charge = event.data;
     if (typeof charge.payment_intent !== "string") return ignoredEvent(event);
+    const recovery = await recordRecoveryPaymentEvent(env, charge.payment_intent, event.id ?? `recovery-refund:${charge.id}:${charge.amount_refunded}`, "refunded", at3);
+    if (recovery) return recovery;
     const refund = {
       paymentIntentId: charge.payment_intent,
       amount: charge.amount,
@@ -929,6 +933,8 @@ async function applyStripeEvent(ctx, event, stripeAdapter) {
   if (event.type === "charge.dispute.created" || event.type === "charge.dispute.closed") {
     const dispute = parseStripeDispute(event.data, at3);
     if (!dispute) return ignoredEvent(event);
+    const recovery = await recordRecoveryPaymentEvent(env, dispute.paymentIntentId, event.id ?? `recovery-dispute:${dispute.id}:${event.type}`, event.type === "charge.dispute.created" ? "disputed" : dispute.status === "won" ? "won" : "lost", at3);
+    if (recovery) return recovery;
     const applied = await applyStripeDispute(env, dispute, { closed: event.type === "charge.dispute.closed", at: at3 });
     if (applied && "orderId" in applied && applied.status === "refunded") {
       await reverseRefundedOrderTax(env, paymentAdapters, applied.orderId);
