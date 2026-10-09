@@ -1,3 +1,4 @@
+import { recordRecoveryPaymentEvent } from './recovery-payments';
 import { eq } from 'drizzle-orm';
 import type { CommerceContext } from './commerce-context';
 import * as schema from './schema';
@@ -96,6 +97,7 @@ export async function applyStripeEvent(ctx: CommerceContext, event: ValidatedWeb
   if (event.type === 'charge.refunded') {
     const charge = event.data as any; // Stripe.Charge
     if (typeof charge.payment_intent !== 'string') return ignoredEvent(event);
+    const recovery=await recordRecoveryPaymentEvent(env,charge.payment_intent,event.id??`recovery-refund:${charge.id}:${charge.amount_refunded}`,'refunded',at);if(recovery)return recovery;
     const refund = { paymentIntentId: charge.payment_intent, amount: charge.amount,
       amountRefunded: charge.amount_refunded, currency: charge.currency };
     const giftPurchaseRefund = await recordGiftCardPurchaseRefund(env, refund);
@@ -120,6 +122,7 @@ export async function applyStripeEvent(ctx: CommerceContext, event: ValidatedWeb
   if (event.type === 'charge.dispute.created' || event.type === 'charge.dispute.closed') {
     const dispute = parseStripeDispute(event.data, at);
     if (!dispute) return ignoredEvent(event);
+    const recovery=await recordRecoveryPaymentEvent(env,dispute.paymentIntentId,event.id??`recovery-dispute:${dispute.id}:${event.type}`,event.type==='charge.dispute.created'?'disputed':dispute.status==='won'?'won':'lost',at);if(recovery)return recovery;
     const applied = await applyStripeDispute(env, dispute, { closed: event.type === 'charge.dispute.closed', at });
     // A lost dispute leaves its order 'refunded' without a provider refund, so its tax is reversed
     // here as after recordProviderRefund above; a failure is logged and reconcileCommerce retries it.

@@ -106,6 +106,24 @@ export interface CommerceEmailTemplates {
   giftCardClaim?: Template<GiftCardClaimEmail>;
   returnNotice?: Template<ReturnNoticeEmail>;
   returnRefund?: Template<ReturnRefundEmail>;
+  recoveryNotice?: Template<RecoveryNoticeEmail>;
+}
+
+export interface RecoveryNoticeEmail {
+  store: CommerceEmailStore; orderId: string; kind: 'shipment' | 'tracking' | 'received'; exchange: boolean;
+  occurredAt: Date; name: string; sku: string | null; quantity: number; carrier: string | null; trackingNumber: string | null;
+}
+export function recoveryNoticeEmail(email: RecoveryNoticeEmail): CommerceEmailMessage {
+  const { store, orderId, kind, exchange, occurredAt, name, sku, quantity, carrier, trackingNumber } = email;
+  const heading = kind === 'received' ? 'Your returned replacement was received'
+    : kind === 'tracking' ? 'Your replacement tracking was updated' : exchange ? 'Your exchange has shipped' : 'Your replacement has shipped';
+  return { subject: oneLine(`${heading} — ${store.name}`), ...renderCommerceEmail({ storeName: store.name, heading,
+    paragraphs: [`Order ${orderId} · ${formatDate(occurredAt)}`, kind === 'received'
+      ? 'We will inspect the returned goods separately. Receipt does not confirm a refund.'
+      : 'This parcel is additional to your original shipment.'],
+    sections: [{ title: kind === 'received' ? 'Received goods' : 'Parcel contents', rows: [{ label: `${name}${sku ? ` · ${sku}` : ''}`, value: `${quantity} units` }],
+      ...(kind === 'received' ? {} : { lines: [carrier || 'Carrier not provided', trackingNumber ? `Tracking: ${trackingNumber}` : 'Tracking number not provided'] }) }, ...storeSections(store)],
+    footer: [`Questions? Please ${contact(store)} and mention the order number.`] }) };
 }
 
 /** An amount in minor units: `1250` in `usd` reads `$12.50` and in `jpy` `¥1,250`; deductions read `-$12.50`. */

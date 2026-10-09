@@ -230,6 +230,21 @@ export class StripePaymentAdapter implements PaymentProviderAdapter {
     return disputes.data.some((dispute) => !settled.has(dispute.status)) ? 'open' : 'none';
   }
 
+  async getExchangePayment(paymentIntentId: string) {
+    try {
+      const intent = await this.stripe.paymentIntents.retrieve(paymentIntentId, { expand: ['latest_charge'] });
+      if (intent.livemode !== this.config.secretKey.startsWith('sk_live_')) return null;
+      const charge = typeof intent.latest_charge === 'object' ? intent.latest_charge : null;
+      const dispute = await this.getDisputeStatus(paymentIntentId);
+      return { caseId: intent.metadata?.recoveryCaseId ?? null, status: intent.status,
+        amountMinor: intent.amount_received, currency: intent.currency, refundedMinor: charge?.amount_refunded ?? 0,
+        disputed: dispute !== 'none' || !charge || !charge.paid || charge.amount !== intent.amount_received };
+    } catch (error: any) {
+      if (error?.code === 'resource_missing' || error?.statusCode === 404) return null;
+      throw error;
+    }
+  }
+
   async calculateTax(params: TaxCalculationParams): Promise<TaxCalculation> {
     const input: Stripe.Tax.CalculationCreateParams = {
       currency: params.currency,

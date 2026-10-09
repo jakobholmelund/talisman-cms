@@ -836,7 +836,7 @@ export const reconcileDecisions = sqliteTable('_ecommerce_reconcile_decisions', 
   check('reconcile_decision_release_returns', sql`${table.paymentReturned} IS NULL OR ${table.action} = 'release'`),
 ]);
 
-export const EMAIL_KINDS = ['order_confirmation', 'shipment', 'shipment_update', 'gift_card_claim', 'return_decision', 'return_received', 'return_refund'] as const;
+export const EMAIL_KINDS = ['order_confirmation', 'shipment', 'shipment_update', 'gift_card_claim', 'return_decision', 'return_received', 'return_refund', 'recovery_shipment', 'recovery_tracking', 'recovery_received'] as const;
 export const EMAIL_STATUSES = ['pending', 'sent', 'failed', 'cancelled'] as const;
 
 /**
@@ -1173,6 +1173,7 @@ export const RECOVERY_KINDS = ['lost', 'damaged', 'exchange'] as const;
 export const RECOVERY_STATUSES = ['open', 'resolved'] as const;
 export const RECOVERY_EVENT_KINDS = ['note', 'resolve', 'reopen', 'shipment', 'tracking'] as const;
 export type RecoveryTarget = { productId: string; variantId: string | null; name: string; sku: string | null; priceAtPurchase: number;
+  adjustmentMinor?: number;
   stockTargets: Array<{ type: typeof RESTOCK_TARGET_TYPES[number]; id: string; units: number }> };
 export type RecoveryStock = { targetType: typeof RESTOCK_TARGET_TYPES[number]; targetId: string; units: number; expectedQuantity: number; expectedUpdatedSeconds: number };
 /** One affected line, with an immutable replacement choice. Contact details remain on the order. */
@@ -1216,10 +1217,41 @@ export const recoveryEvents = sqliteTable('_ecommerce_recovery_events', {
   check('recovery_event_actor', filled(t.actor)), check('recovery_event_reason', trimmed(t.reason, 8)), check('recovery_event_reason_length', sql`length(${t.reason}) <= 500`),
   check('recovery_event_carrier_length', sql`${t.carrier} IS NULL OR length(${t.carrier}) <= 100`), check('recovery_event_tracking_length', sql`${t.trackingNumber} IS NULL OR length(${t.trackingNumber}) <= 150`)]);
 
+/** Replacement goods have a separate intake/inspection budget from checkout reservations. */
+export const recoveryReceipts = sqliteTable('_ecommerce_recovery_receipts', {
+  id:text('id').primaryKey(), shipmentId:text('shipment_id').notNull().references(()=>recoveryShipments.id),
+  quantity:integer('quantity').notNull(), actor:text('actor').notNull(), reason:text('reason').notNull(), fingerprint:text('fingerprint').notNull(),
+  createdAt:integer('created_at',{mode:'timestamp'}).notNull(), redactedAt:integer('redacted_at',{mode:'timestamp'}),
+},t=>[index('_ecommerce_recovery_receipt_shipment_idx').on(t.shipmentId),
+  check('recovery_receipt_quantity',sql`${t.quantity} BETWEEN 1 AND 1000000`),check('recovery_receipt_actor',filled(t.actor)),check('recovery_receipt_reason',trimmed(t.reason,8)),check('recovery_receipt_reason_length',sql`length(${t.reason})<=500`)]);
+export const RECOVERY_DISPOSITIONS=['sellable','quarantine','damaged'] as const;
+export const recoveryInspections = sqliteTable('_ecommerce_recovery_inspections', {
+  id:text('id').primaryKey(),receiptId:text('receipt_id').notNull().references(()=>recoveryReceipts.id),quantity:integer('quantity').notNull(),
+  disposition:text('disposition',{enum:RECOVERY_DISPOSITIONS}).notNull(),restock:integer('restock',{mode:'boolean'}).notNull(),
+  stock:text('stock',{mode:'json'}).$type<RecoveryStock[]>().notNull(),actor:text('actor').notNull(),reason:text('reason').notNull(),fingerprint:text('fingerprint').notNull(),
+  createdAt:integer('created_at',{mode:'timestamp'}).notNull(),redactedAt:integer('redacted_at',{mode:'timestamp'}),
+},t=>[index('_ecommerce_recovery_inspection_receipt_idx').on(t.receiptId),check('recovery_inspection_quantity',sql`${t.quantity} BETWEEN 1 AND 1000000`),
+  check('recovery_inspection_disposition',oneOf(t.disposition,RECOVERY_DISPOSITIONS)),check('recovery_inspection_restock',sql`${t.restock} IN (0,1) AND (${t.restock}=0 OR ${t.disposition}='sellable')`),
+  check('recovery_inspection_stock',sql`json_valid(${t.stock}) AND json_type(${t.stock})='array' AND json_array_length(${t.stock})<=50 AND (${t.restock}=1 OR json_array_length(${t.stock})=0)`),
+  check('recovery_inspection_actor',filled(t.actor)),check('recovery_inspection_reason',trimmed(t.reason,8)),check('recovery_inspection_reason_length',sql`length(${t.reason})<=500`)]);
+/** Verified upgrade payments stay separate from the original purchase's tender and refunds. */
+export const recoveryPayments = sqliteTable('_ecommerce_recovery_payments', {
+ id:text('id').primaryKey(),caseId:text('case_id').notNull().references(()=>recoveryCases.id),expectedVersion:text('expected_version').notNull(),
+ provider:text('provider').notNull(),paymentId:text('payment_id').notNull(),amountMinor:integer('amount_minor').notNull(),currency:text('currency').notNull(),
+ actor:text('actor').notNull(),reason:text('reason').notNull(),fingerprint:text('fingerprint').notNull(),createdAt:integer('created_at',{mode:'timestamp'}).notNull(),redactedAt:integer('redacted_at',{mode:'timestamp'}),
+},t=>[uniqueIndex('_ecommerce_recovery_payment_version_unique').on(t.caseId,t.expectedVersion),uniqueIndex('_ecommerce_recovery_payment_provider_unique').on(t.provider,t.paymentId),
+ check('recovery_payment_amount',sql`${t.amountMinor} BETWEEN 1 AND 1000000000`),check('recovery_payment_currency',sql`length(${t.currency})=3`),
+ check('recovery_payment_actor',filled(t.actor)),check('recovery_payment_reason',trimmed(t.reason,8)),check('recovery_payment_reason_length',sql`length(${t.reason})<=500`)]);
+export const RECOVERY_PAYMENT_EVENTS=['refunded','disputed','lost','won'] as const;
+export const recoveryPaymentEvents = sqliteTable('_ecommerce_recovery_payment_events', {
+ id:text('id').primaryKey(),paymentId:text('payment_id').notNull().references(()=>recoveryPayments.id),
+ kind:text('kind',{enum:RECOVERY_PAYMENT_EVENTS}).notNull(),createdAt:integer('created_at',{mode:'timestamp'}).notNull(),
+},t=>[index('_ecommerce_recovery_payment_event_payment_idx').on(t.paymentId),check('recovery_payment_event_kind',oneOf(t.kind,RECOVERY_PAYMENT_EVENTS))]);
+
 // --- Relations, for the relational query builder ---
 
 const tables = {
-  recoveryCases, recoveryShipments, recoveryEvents,
+  recoveryCases, recoveryShipments, recoveryEvents, recoveryReceipts, recoveryInspections, recoveryPayments, recoveryPaymentEvents,
   suppliers, supplierRevisions, purchaseOrders, purchaseOrderEvents, purchaseOrderLines, supplierIssues, supplierIssueEvents, returnRequestReasons,
   returnRefundDecisions, replenishmentPolicies, replenishmentDeliveries, replenishmentDeliveryEvents,
   returnRequests, returnRequestEvents, returnRequestReceipts, parcelContents, returnReceipts, returnStock, returnInspections, inspectionStock, stocktakes, stockMovements, carts, orders, payments, providerRefunds, products, variants, productVariants, productVariantValues, stocks, components,
@@ -1239,12 +1271,16 @@ const tables = {
  * gives a site's own code the same `db.query`. `test/relations.test.mjs` checks that no key is missed.
  */
 export const relations = defineRelations(tables, (r) => ({
-  recoveryCases: { order: r.one.orders({ from: r.recoveryCases.orderId, to: r.orders.id, optional: false }),
+  recoveryReceipts: { shipment:r.one.recoveryShipments({from:r.recoveryReceipts.shipmentId,to:r.recoveryShipments.id,optional:false}),inspections:r.many.recoveryInspections() },
+  recoveryInspections: { receipt:r.one.recoveryReceipts({from:r.recoveryInspections.receiptId,to:r.recoveryReceipts.id,optional:false}) },
+  recoveryPayments: { case:r.one.recoveryCases({from:r.recoveryPayments.caseId,to:r.recoveryCases.id,optional:false}),events:r.many.recoveryPaymentEvents() },
+  recoveryPaymentEvents: { payment:r.one.recoveryPayments({from:r.recoveryPaymentEvents.paymentId,to:r.recoveryPayments.id,optional:false}) },
+  recoveryCases: { payments:r.many.recoveryPayments(), order: r.one.orders({ from: r.recoveryCases.orderId, to: r.orders.id, optional: false }),
     fulfillment: r.one.fulfillments({ from: r.recoveryCases.fulfillmentId, to: r.fulfillments.id }),
     sourceShipment: r.one.recoveryShipments({ from: r.recoveryCases.sourceShipmentId, to: r.recoveryShipments.id, alias: 'recovery_source' }),
     receipt: r.one.returnReceipts({ from: r.recoveryCases.receiptId, to: r.returnReceipts.id }), events: r.many.recoveryEvents(), shipments: r.many.recoveryShipments({ alias: 'recovery_dispatch' }) },
   recoveryShipments: { case: r.one.recoveryCases({ from: r.recoveryShipments.caseId, to: r.recoveryCases.id, optional: false, alias: 'recovery_dispatch' }),
-    problems: r.many.recoveryCases({ alias: 'recovery_source' }), events: r.many.recoveryEvents() },
+    receipts:r.many.recoveryReceipts(), problems: r.many.recoveryCases({ alias: 'recovery_source' }), events: r.many.recoveryEvents() },
   recoveryEvents: { case: r.one.recoveryCases({ from: r.recoveryEvents.caseId, to: r.recoveryCases.id, optional: false }),
     shipment: r.one.recoveryShipments({ from: r.recoveryEvents.shipmentId, to: r.recoveryShipments.id }) },
   suppliers: { revisions: r.many.supplierRevisions(), purchaseOrders: r.many.purchaseOrders() },

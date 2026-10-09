@@ -15,3 +15,8 @@ INSERT INTO _ecommerce_return_refund_decisions(id,receipt_id,expected_version,st
 VALUES ('recovery-no-refund','recovery-return','recovery-return','not_needed',0,'[]','rehearsal','Same-price exchange agreed instead of refund','local-fixture',1);
 
 UPDATE _ecommerce_orders SET guest_access_token_hash='07760d19c26e59909e906a814d318603e386d945b6fb47b3223b30baa7ec4b1f' WHERE id='ord_55555555-5555-4555-8555-555555555555';
+
+INSERT INTO _ecommerce_products(id,name,slug,base_price,inventory_quantity,is_physical,status,created_at,updated_at)
+VALUES ('recovery-upgrade','Recovery upgrade item','recovery-upgrade',1500,12,1,'active',1,1),('recovery-cheap','Recovery cheaper item','recovery-cheap',800,12,1,'active',1,1);
+-- A synthetic confirmed refund source for the cheaper-exchange allocation rehearsal.
+INSERT INTO _ecommerce_provider_refunds(id,order_id,provider,amount_cents,created_at) VALUES('recovery-cheap-refund','ord_55555555-5555-4555-8555-555555555555','stripe',200,1);

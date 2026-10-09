@@ -16,3 +16,6 @@ export { readOperationsReport } from './operations-report';
 export { listSupplierIssues, readSupplierIssue, reportSupplierIssue, recordSupplierIssue } from './supplier-issues';
 
 export { createRecoveryCase, recordRecoveryEvent, shipRecoveryCase, listRecoveryCases, readRecoveryCase, readRecoveryOrder, listExchangeChoices } from './recoveries';
+
+export { receiveReplacementReturn, inspectReplacementReturn } from './replacement-returns';
+export { verifyExchangeCharge } from './recovery-payments';

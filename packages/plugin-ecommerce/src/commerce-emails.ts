@@ -1,3 +1,4 @@
+import { recoveryComposer } from './recovery-emails';
 import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb, type CommerceDb } from './db';
@@ -146,6 +147,7 @@ const composeReturnRefund: CommerceEmailComposer = async (env,subjectId,setup) =
 };
 
 const COMPOSERS: Record<CommerceEmailKind, CommerceEmailComposer> = {
+  recovery_shipment:recoveryComposer('shipment'), recovery_tracking:recoveryComposer('tracking'), recovery_received:recoveryComposer('received'),
   order_confirmation: composeOrderConfirmation,
   shipment: shipmentComposer(false),
   shipment_update: shipmentComposer(true),

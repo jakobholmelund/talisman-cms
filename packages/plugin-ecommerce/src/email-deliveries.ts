@@ -37,6 +37,7 @@ const KIND_HEADERS: Record<CommerceEmailKind, string> = {
   shipment: 'order-shipment',
   shipment_update: 'order-shipment-update',
   gift_card_claim: 'gift-card-claim',
+  recovery_shipment:'replacement-shipment', recovery_tracking:'replacement-tracking', recovery_received:'replacement-return-received',
   return_refund: 'return-refund', return_decision: 'return-decision', return_received: 'return-received',
 };
 
@@ -45,6 +46,7 @@ const KIND_LABELS: Record<CommerceEmailKind, string> = {
   shipment: 'Shipment email',
   shipment_update: 'Shipment update email',
   gift_card_claim: 'Gift card claim email',
+  recovery_shipment:'Replacement shipment email', recovery_tracking:'Replacement tracking email', recovery_received:'Replacement return email',
   return_refund: 'Return refund email', return_decision: 'Return decision email', return_received: 'Return receipt email',
 };
 

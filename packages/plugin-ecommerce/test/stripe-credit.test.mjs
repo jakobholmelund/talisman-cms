@@ -131,3 +131,10 @@ test('Stripe refund status is read from the payment intent\'s latest charge', as
   }
   assert.ok(calls.every(([id, params]) => id === 'pi_test' && params.expand.includes('latest_charge')));
 });
+
+test('Stripe exchange verification reads captured value, case metadata, refunds, disputes and mode without secrets',async()=>{
+ const a=new StripePaymentAdapter({secretKey:'sk_test_fake'});let refunded=0,disputed=false,livemode=false;const reads=[];
+ a.stripe={paymentIntents:{retrieve:async(id,options)=>{reads.push([id,options]);return {metadata:{recoveryCaseId:'exchange-case'},status:'succeeded',amount_received:500,currency:'usd',livemode,latest_charge:{paid:true,amount:500,amount_refunded:refunded}};}},disputes:{list:async()=>({data:disputed?[{status:'needs_response'}]:[]})}};
+ let p=await a.getExchangePayment('pi_extra');assert.equal(p.caseId,'exchange-case');assert.equal(p.amountMinor,500);assert.deepEqual(reads[0][1],{expand:['latest_charge']});assert.equal(p.disputed,false);
+ refunded=100;assert.equal((await a.getExchangePayment('pi_extra')).refundedMinor,100);disputed=true;assert.equal((await a.getExchangePayment('pi_extra')).disputed,true);livemode=true;assert.equal(await a.getExchangePayment('pi_extra'),null);
+});

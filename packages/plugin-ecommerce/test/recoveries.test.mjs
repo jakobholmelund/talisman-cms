@@ -145,3 +145,105 @@ test('exchanged variant values use their own shared-component recipe and exact a
 test('shipment mapping refuses duplicate or missing pools and follow-up versions reject competing resolutions',async()=>{
  const {env,s}=fixture({parts:true}),c=await open(env),input=dispatch(c);await assert.rejects(shipRecoveryCase(env,{...input,stock:[input.stock[0],input.stock[0]]},'staff'),/Reload/);await assert.rejects(shipRecoveryCase(env,{...input,stock:[]},'staff'),/Reload/);const results=await Promise.allSettled([recordRecoveryEvent(env,follow(c,{kind:'resolve'}),'staff'),recordRecoveryEvent(env,follow(c,{kind:'resolve'}),'staff')]);assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal(n(s,'_ecommerce_recovery_shipments'),0);assert.equal(n(s,'_ecommerce_stock_movements'),0);
 });
+
+const {receiveReplacementReturn,inspectReplacementReturn,verifyExchangeCharge}=await import('../dist/operations.js');
+const {deliverPendingCommerceEmails}=await import('../dist/api.js');
+const inspectReplacement=(c,receiptId,extra={})=>({receiptId,quantity:1,disposition:'sellable',restock:true,stock:c.stock.map(t=>({targetType:t.type,targetId:t.id,expectedQuantity:t.quantity,expectedUpdatedAt:t.updatedAt})),requestKey:key(),reason,...extra});
+async function shipped(env,opts={}){let c=await open(env,issue(opts));await shipRecoveryCase(env,dispatch(c),'staff');return readRecoveryCase(env,{caseId:c.id});}
+test('replacement intake has its own parcel cap, stable receipt and inspection obligation after resolution',async()=>{
+ const {s,env}=fixture();let c=await shipped(env);await recordRecoveryEvent(env,follow(c,{kind:'resolve'}),'staff');
+ const input={shipmentId:c.shipments[0].id,quantity:2,reason,requestKey:key()};const r=await receiveReplacementReturn(env,input,'staff');assert.equal((await receiveReplacementReturn(env,input,'staff')).duplicate,true);
+ await assert.rejects(receiveReplacementReturn(env,{...input,requestKey:key(),quantity:1},'staff'),/changed/);assert.equal(stock(s),13);assert.equal(n(s,'_ecommerce_return_receipts'),0);
+ const q=await listRecoveryCases(env);assert.equal(q.total,1);assert.equal(q.rows[0].awaitingInspection,1);assert.equal((await readCommerceAttention(env)).counts.parcel_recovery,1);
+ c=await readRecoveryCase(env,{caseId:c.id});const decision=inspectReplacement(c,r.receiptId,{quantity:1,disposition:'damaged',restock:false,stock:[]});await inspectReplacementReturn(env,decision,'staff');assert.equal((await inspectReplacementReturn(env,decision,'staff')).duplicate,true);assert.equal(stock(s),13);
+ c=await readRecoveryCase(env,{caseId:c.id});await inspectReplacementReturn(env,inspectReplacement(c,r.receiptId),'staff');assert.equal(stock(s),14);assert.equal((await listRecoveryCases(env)).total,0);assert.equal(n(s,'_ecommerce_return_stock'),0);
+ await assert.rejects(inspectReplacementReturn(env,inspectReplacement(c,r.receiptId),'staff'),/changed/);
+});
+test('replacement restock uses frozen shared components and fully rolls back stale pools',async()=>{
+ const {s,env}=fixture({parts:true});let c=await shipped(env);const r=await receiveReplacementReturn(env,{shipmentId:c.shipments[0].id,quantity:2,reason,requestKey:key()},'staff');
+ c=await readRecoveryCase(env,{caseId:c.id});const input=inspectReplacement(c,r.receiptId);s.exec("UPDATE _ecommerce_components SET quantity=quantity+1,updated_at=updated_at+1 WHERE id='part-b'");
+ await assert.rejects(inspectReplacementReturn(env,input,'staff'),/changed/);assert.equal(n(s,'_ecommerce_recovery_inspections'),0);assert.equal(s.prepare("SELECT quantity FROM _ecommerce_components WHERE id='part-a'").get().quantity,16);
+ c=await readRecoveryCase(env,{caseId:c.id});await inspectReplacementReturn(env,inspectReplacement(c,r.receiptId,{quantity:2}),'staff');assert.equal(s.prepare("SELECT quantity FROM _ecommerce_components WHERE id='part-a'").get().quantity,20);
+ assert.equal(s.prepare("SELECT quantity FROM _ecommerce_components WHERE id='part-b'").get().quantity,11);
+ assert.ok(s.prepare("SELECT reason FROM _ecommerce_stock_movements WHERE delta>0").all().every(r=>r.reason.startsWith('Replacement inspection rci_')));
+ assert.throws(()=>s.exec("UPDATE _ecommerce_recovery_inspections SET quantity=1"),/immutable/);
+});
+test('competing replacement returns and inspection decisions have one precise quantity winner',async()=>{
+ const {s,env}=fixture();let c=await shipped(env,{quantity:1});const input={shipmentId:c.shipments[0].id,quantity:1,reason,requestKey:key()};
+ const intake=await Promise.allSettled([receiveReplacementReturn(env,input,'staff'),receiveReplacementReturn(env,{...input,requestKey:key()},'staff')]);assert.equal(intake.filter(r=>r.status==='fulfilled').length,1);
+ const receiptId=intake.find(r=>r.status==='fulfilled').value.receiptId;c=await readRecoveryCase(env,{caseId:c.id});const d=inspectReplacement(c,receiptId);
+ const decisions=await Promise.allSettled([inspectReplacementReturn(env,d,'staff'),inspectReplacementReturn(env,{...d,requestKey:key()},'staff')]);assert.equal(decisions.filter(r=>r.status==='fulfilled').length,1);assert.equal(stock(s),15);
+});
+const verifiedAdapter=(caseId,extra={})=>[{providerId:'stripe',getExchangePayment:async()=>({caseId,status:'succeeded',amountMinor:500,currency:'usd',refundedMinor:0,disputed:false,...extra})}];
+const paymentInput=c=>({caseId:c.id,expectedVersion:c.version,paymentId:'pi_exchange_upgrade',requestKey:key(),reason});
+async function variableCase(env,productId='expensive'){
+ const receiptId=await returned(env,1,'sellable');if(productId!=='cheap')await noRefund(env,receiptId);
+ return open(env,exchange(receiptId,{productId,allowPriceDifference:true}));
+}
+test('upgrade exchange requires exact provider-verified tender and keeps original financial ledgers intact',async()=>{
+ const {s,env}=fixture();let c=await variableCase(env);assert.equal(c.adjustment.amountMinor,500);assert.equal(c.adjustment.status,'payment_needed');
+ await assert.rejects(shipRecoveryCase(env,dispatch(c),'staff',verifiedAdapter(c.id)),/Verify/);const input=paymentInput(c),adapters=verifiedAdapter(c.id);
+ for(const wrong of [{amountMinor:499},{currency:'eur'},{caseId:'another-case'},{refundedMinor:1},{disputed:true},{status:'processing'}])await assert.rejects(verifyExchangeCharge(env,input,'staff',verifiedAdapter(c.id,wrong)),/does not confirm/);
+ await verifyExchangeCharge(env,input,'staff',adapters);assert.equal((await verifyExchangeCharge(env,input,'staff',[])).duplicate,true);assert.equal(n(s,'_ecommerce_recovery_payments'),1);
+ c=await readRecoveryCase(env,{caseId:c.id});assert.equal(c.adjustment.status,'paid');await shipRecoveryCase(env,dispatch(c),'staff',adapters);assert.equal(stock(s,'expensive'),19);assert.equal(s.prepare("SELECT total_amount FROM _ecommerce_orders WHERE id='order'").get().total_amount,4000);assert.equal(n(s,'_ecommerce_payments'),0);
+});
+test('upgrade rechecks refunded/disputed payments before dispatch and signed event holds cover commit races',async()=>{
+ const {s,env}=fixture();let c=await variableCase(env);await verifyExchangeCharge(env,paymentInput(c),'staff',verifiedAdapter(c.id));c=await readRecoveryCase(env,{caseId:c.id});
+ await assert.rejects(shipRecoveryCase(env,dispatch(c),'staff',verifiedAdapter(c.id,{refundedMinor:500})),/does not confirm/);assert.equal(stock(s,'expensive'),20);
+ const api=bindCommerceApi({env,paymentAdapters:[{providerId:'stripe',validateWebhook:async()=>({id:'evt_exchange_dispute',type:'charge.dispute.created',created:2,data:{id:'dp_extra',payment_intent:'pi_exchange_upgrade',amount:500,currency:'usd',status:'needs_response'}})}]});
+ assert.equal((await api.webhooks.handleStripe('body','signature')).recoveryPayment,true);
+ await assert.rejects(shipRecoveryCase(env,dispatch(c),'staff',verifiedAdapter(c.id)),/changed/);assert.equal(stock(s,'expensive'),20);assert.equal((await readRecoveryCase(env,{caseId:c.id})).adjustment.status,'payment_needed');assert.equal(s.prepare("SELECT status FROM _ecommerce_orders WHERE id='order'").get().status,'paid');
+});
+test('cheaper exchange cannot dispatch until its dedicated receipt has the exact confirmed refund allocation',async()=>{
+ const {s,env}=fixture();s.exec("INSERT INTO _ecommerce_products(id,name,slug,base_price,inventory_quantity,is_physical,status,created_at,updated_at) VALUES('cheap','Cheaper choice','cheap',700,20,1,'active',1,1)");
+ let c=await variableCase(env,'cheap');assert.equal(c.adjustment.amountMinor,-300);await assert.rejects(shipRecoveryCase(env,dispatch(c),'staff'),/changed/);
+ let rc=await readRefundCaseForTest(env,{receiptId:c.sourceId});await assert.rejects(recordRefundFollowUp(env,{receiptId:c.sourceId,expectedVersion:rc.version,status:'needed',amountMinor:301,allocations:[],reason,requestKey:key()},'staff'),/changed/);
+ s.exec("INSERT INTO _ecommerce_provider_refunds(id,order_id,provider,amount_cents,created_at) VALUES('refund-extra','order','stripe',300,2)");
+ s.exec("UPDATE _ecommerce_orders SET status='partially_refunded' WHERE id='order'");
+ await recordRefundFollowUp(env,{receiptId:c.sourceId,expectedVersion:rc.version,status:'settled',amountMinor:300,allocations:[{kind:'provider',sourceId:'refund-extra',amountMinor:300}],reason,requestKey:key()},'staff');
+ c=await readRecoveryCase(env,{caseId:c.id});assert.equal(c.adjustment.status,'refunded');await shipRecoveryCase(env,dispatch(c),'staff');assert.equal(stock(s,'cheap'),19);
+ await assert.rejects(recordRefundFollowUp(env,{receiptId:c.sourceId,expectedVersion:(await readRefundCaseForTest(env,{receiptId:c.sourceId})).version,status:'not_needed',amountMinor:0,reason,requestKey:key()},'staff'),/changed/);
+});
+const {readRefundCase:readRefundCaseForTest}=await import('../dist/operations.js');
+test('replacement notices queue once with stock, compose current tracking and keep staff notes out',async()=>{
+ const {s,env}=fixture();const messages=[];Object.assign(env,{EMAIL:{send:async m=>{messages.push(m);return {messageId:'local'};}},TALISMAN_EMAIL_FROM:'noreply@example.test',TALISMAN_PUBLIC_ORIGIN:'https://example.test'});
+ let c=await shipped(env,{quantity:1});const shipId=c.shipments[0].id;assert.equal(s.prepare("SELECT count(*) n FROM _ecommerce_email_deliveries WHERE kind='recovery_shipment'").get().n,1);
+ await recordRecoveryEvent(env,follow(c,{kind:'tracking',shipmentId:shipId,carrier:'New carrier',trackingNumber:'CURRENT-TRACK'}),'staff');c=await readRecoveryCase(env,{caseId:c.id});
+ await recordRecoveryEvent(env,follow(c,{kind:'tracking',shipmentId:shipId,carrier:'Latest carrier',trackingNumber:'LATEST-TRACK'}),'staff');
+ await receiveReplacementReturn(env,{shipmentId:shipId,quantity:1,reason:'Private inspection and customer conversation',requestKey:key()},'staff');
+ await deliverPendingCommerceEmails({env},{limit:50});assert.equal(messages.length,3);const text=JSON.stringify(messages);assert.match(text,/LATEST-TRACK/);assert.doesNotMatch(text,/CURRENT-TRACK|Private inspection|Warehouse checked|stockTargets|fingerprint/);assert.match(text,/Receipt does not confirm a refund/i);
+ assert.equal(s.prepare("SELECT count(*) n FROM _ecommerce_email_deliveries WHERE status='cancelled'").get().n,1);
+});
+test('pending replacement inspections block erasure and resolved private notes redact without altering stock audit',async()=>{
+ const {s,env}=fixture();s.exec("INSERT INTO _ecommerce_customer_accounts(id,email,email_normalized,created_at,updated_at) VALUES('owner','buyer@example.test','buyer@example.test',1,1); UPDATE _ecommerce_orders SET user_id='owner' WHERE id='order'");
+ let c=await shipped(env,{quantity:1});await recordRecoveryEvent(env,follow(c,{kind:'resolve'}),'staff');const r=await receiveReplacementReturn(env,{shipmentId:c.shipments[0].id,quantity:1,reason:'Private support conversation held here',requestKey:key()},'staff');
+ await assert.rejects(manageShopperData(env,'owner',{accountId:'owner',action:'anonymize',reason}),/Resolve/);
+ assert.throws(()=>s.exec("INSERT INTO _ecommerce_shopper_audits(id,account_id,action,actor,reason,created_at) VALUES('blocked','owner','anonymize','owner','Privacy request verified',2)"),/Recovery/);
+ c=await readRecoveryCase(env,{caseId:c.id});await inspectReplacementReturn(env,inspectReplacement(c,r.receiptId),'staff');
+ const data=await manageShopperData(env,'owner',{accountId:'owner',action:'export',reason});assert.doesNotMatch(JSON.stringify(data.orders[0].operations.recoveryCases),/Private support|stockTargets|fingerprint|paymentId/);
+ await manageShopperData(env,'owner',{accountId:'owner',action:'anonymize',reason});assert.equal(s.prepare('SELECT reason FROM _ecommerce_recovery_receipts').get().reason,'[redacted]');assert.equal(s.prepare('SELECT reason FROM _ecommerce_recovery_inspections').get().reason,'[redacted]');assert.equal(stock(s),15);
+});
+test('replacement email failure keeps dispatch committed and retry sends once with corrected tracking',async()=>{
+ const {s,env}=fixture();let tries=0;const messages=[];Object.assign(env,{EMAIL:{send:async m=>{tries++;if(tries===1)throw Object.assign(new Error('temporary'),{code:'E_INTERNAL_SERVER_ERROR'});messages.push(m);return {messageId:'local'};}},TALISMAN_EMAIL_FROM:'noreply@example.test',TALISMAN_PUBLIC_ORIGIN:'https://example.test'});
+ let c=await shipped(env,{quantity:1});await deliverPendingCommerceEmails({env});assert.equal(stock(s),14);assert.equal(n(s,'_ecommerce_recovery_shipments'),1);
+ await recordRecoveryEvent(env,follow(c,{kind:'tracking',shipmentId:c.shipments[0].id,carrier:'Updated',trackingNumber:'RETRY-CURRENT'}),'staff');await deliverPendingCommerceEmails({env},{now:Math.floor(Date.now()/1000)+601});assert.equal(messages.length,2);assert.ok(messages.every(m=>JSON.stringify(m).includes('RETRY-CURRENT')));
+ await deliverPendingCommerceEmails({env},{now:Math.floor(Date.now()/1000)+1201});assert.equal(messages.length,2);
+});
+
+
+test('a later upgrade refund requires review after resolution and never changes the original payment',async()=>{
+ const {s,env}=fixture();let c=await variableCase(env);await verifyExchangeCharge(env,paymentInput(c),'staff',verifiedAdapter(c.id));c=await readRecoveryCase(env,{caseId:c.id});await shipRecoveryCase(env,dispatch(c),'staff',verifiedAdapter(c.id));c=await readRecoveryCase(env,{caseId:c.id});await recordRecoveryEvent(env,follow(c,{kind:'resolve'}),'staff');
+ const api=bindCommerceApi({env,paymentAdapters:[{providerId:'stripe',validateWebhook:async()=>({id:'evt_extra_refund',type:'charge.refunded',created:2,data:{id:'ch_extra',payment_intent:'pi_exchange_upgrade',amount:500,amount_refunded:500,currency:'usd'}})}]});assert.equal((await api.webhooks.handleStripe('body','signature')).recoveryPayment,true);assert.equal((await listRecoveryCases(env)).rows[0].awaitingPaymentReview,1);assert.equal(s.prepare("SELECT total_amount FROM _ecommerce_orders WHERE id='order'").get().total_amount,4000);
+ c=await readRecoveryCase(env,{caseId:c.id});await recordRecoveryEvent(env,follow(c,{kind:'resolve',reason:'Additional payment refund reviewed with the buyer'}),'staff');assert.equal((await listRecoveryCases(env)).total,0);
+});
+test('an upgrade payment already funding an original purchase cannot be reused as extra tender',async()=>{
+ const {s,env}=fixture();const c=await variableCase(env);s.exec("UPDATE _ecommerce_orders SET payment_intent_id='pi_exchange_upgrade' WHERE id='order'");await assert.rejects(verifyExchangeCharge(env,paymentInput(c),'staff',verifiedAdapter(c.id)),/changed/);assert.equal(n(s,'_ecommerce_recovery_payments'),0);
+});
+
+test('provider financial events after shopper erasure preserve the audit without reopening redacted history',async()=>{
+ const {s,env}=fixture();s.exec("INSERT INTO _ecommerce_customer_accounts(id,email,email_normalized,created_at,updated_at) VALUES('owner','buyer@example.test','buyer@example.test',1,1); UPDATE _ecommerce_orders SET user_id='owner' WHERE id='order'");
+ let c=await variableCase(env);await verifyExchangeCharge(env,paymentInput(c),'staff',verifiedAdapter(c.id));c=await readRecoveryCase(env,{caseId:c.id});await recordRecoveryEvent(env,follow(c,{kind:'resolve'}),'staff');
+ await manageShopperData(env,'staff',{accountId:'owner',action:'anonymize',reason});const before=n(s,'_ecommerce_recovery_events');
+ const api=bindCommerceApi({env,paymentAdapters:[{providerId:'stripe',validateWebhook:async()=>({id:'evt_erased_extra_refund',type:'charge.refunded',created:2,data:{id:'ch_extra',payment_intent:'pi_exchange_upgrade',amount:500,amount_refunded:500,currency:'usd'}})}]});
+ assert.equal((await api.webhooks.handleStripe('body','signature')).recoveryPayment,true);assert.equal((await api.webhooks.handleStripe('body','signature')).recoveryPayment,true);assert.equal(n(s,'_ecommerce_recovery_payment_events'),1);assert.equal(n(s,'_ecommerce_recovery_events'),before);assert.equal((await listRecoveryCases(env)).total,0);assert.equal(s.prepare('SELECT reason FROM _ecommerce_recovery_payments').get().reason,'[redacted]');
+});
