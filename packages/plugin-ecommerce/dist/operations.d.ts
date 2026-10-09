@@ -1,9 +1,9 @@
 import { TalismanEnv } from 'talisman-cms/client';
-import { StocktakeLine, ParcelItem, InspectedItem, ReturnedItem, RETURN_REFUND_STATUSES, returnRefundDecisions, REFUND_SOURCE_KINDS, RESTOCK_TARGET_TYPES, replenishmentPolicies, replenishmentDeliveries } from './schema.js';
+import { StocktakeLine, ParcelItem, InspectedItem, ReturnedItem, RETURN_REFUND_STATUSES, returnRefundDecisions, REFUND_SOURCE_KINDS, RESTOCK_TARGET_TYPES, replenishmentPolicies, replenishmentDeliveries, SupplierSnapshot, PurchaseLine, RETURN_REASON_CODES } from './schema.js';
 import * as drizzle_orm_sqlite_core from 'drizzle-orm/sqlite-core';
-export { d as decideReturnRequest, l as listReturnsQueue, r as readReturnRequestAdmin } from './return-requests-CqFKKpcO.js';
+export { d as decideReturnRequest, l as listReturnsQueue, r as readReturnRequestAdmin } from './return-requests-Ca2cC1Ih.js';
 import 'drizzle-orm';
-import './return-request-types-BRQL27cB.js';
+import './return-request-types-CaKc6AaH.js';
 
 type AttentionKind = 'payment_review' | 'older_payments' | 'tax_review' | 'email' | 'gift_hold' | 'shipment' | 'dispute' | 'return_request' | 'inspection' | 'refund' | 'incoming';
 /** A read-only snapshot. Exact counts include every matching record; each category shows its ten
@@ -28,7 +28,7 @@ declare function listEmailRecovery(env: TalismanEnv, input?: unknown): Promise<{
         retryable: boolean;
         guidance: string;
         id: string;
-        kind: "shipment" | "order_confirmation" | "shipment_update" | "gift_card_claim" | "return_decision" | "return_received";
+        kind: "shipment" | "order_confirmation" | "shipment_update" | "gift_card_claim" | "return_decision" | "return_received" | "return_refund";
         subjectId: string;
         status: "cancelled" | "pending" | "sent" | "failed";
         attempts: number;
@@ -410,7 +410,7 @@ declare const STOCK_COLUMNS: {
                     name: string;
                     tableName: "_ecommerce_products";
                     dataType: "string enum";
-                    data: "draft" | "active" | "archived";
+                    data: "active" | "draft" | "archived";
                     driverParam: string;
                     notNull: true;
                     hasDefault: true;
@@ -765,12 +765,12 @@ declare function receiveOrderReturn(env: TalismanEnv, input: unknown, actor: str
     receiptId: string;
     orderId: string;
     restocked: {
-        id: string;
         orderId: string;
-        receiptId: string;
+        id: string;
         targetType: "product" | "variant" | "stock" | "component";
         targetId: string;
         quantity: number;
+        receiptId: string;
         reservationType: "component" | "inventory";
         reservationId: string;
     }[];
@@ -813,12 +813,12 @@ declare function readOrderWarehouse(env: TalismanEnv, input: unknown): Promise<{
     parcels: {
         actorName: string;
         createdAt: string;
-        id: string;
-        items: ParcelItem[];
         orderId: string;
+        id: string;
         actor: string;
         reason: string;
         fingerprint: string;
+        items: ParcelItem[];
         fulfillmentId: string;
         source: "shipment" | "backfill";
     }[];
@@ -832,16 +832,16 @@ declare function readOrderWarehouse(env: TalismanEnv, input: unknown): Promise<{
         inspections: {
             actorName: string;
             createdAt: string;
-            id: string;
-            items: InspectedItem[];
             orderId: string;
+            id: string;
             actor: string;
             reason: string;
             fingerprint: string;
+            items: InspectedItem[];
             receiptId: string;
             stock: {
-                id: string;
                 orderId: string;
+                id: string;
                 targetType: "product" | "variant" | "stock" | "component";
                 targetId: string;
                 quantity: number;
@@ -850,19 +850,19 @@ declare function readOrderWarehouse(env: TalismanEnv, input: unknown): Promise<{
                 inspectionId: string;
             }[];
         }[];
-        id: string;
-        items: ReturnedItem[];
         orderId: string;
+        id: string;
         actor: string;
         reason: string;
         fingerprint: string;
+        items: ReturnedItem[];
         stock: {
-            id: string;
             orderId: string;
-            receiptId: string;
+            id: string;
             targetType: "product" | "variant" | "stock" | "component";
             targetId: string;
             quantity: number;
+            receiptId: string;
             reservationType: "component" | "inventory";
             reservationId: string;
         }[];
@@ -925,8 +925,8 @@ declare function inspectOrderReturn(env: TalismanEnv, input: unknown, actor: str
     inspectionId: string;
     orderId: string;
     restocked: {
-        id: string;
         orderId: string;
+        id: string;
         targetType: "product" | "variant" | "stock" | "component";
         targetId: string;
         quantity: number;
@@ -1111,4 +1111,143 @@ declare function recordReplenishmentDelivery(env: TalismanEnv, input: unknown, a
     duplicate?: boolean;
 }>;
 
-export { type AttentionKind, CommerceOperationsConflict, type StockOverviewRow, exportCommerceOperations, inspectOrderReturn, listEmailRecovery, listRefundFollowUp, listReplenishment, listStockLocations, listStocktakes, planReplenishmentDelivery, readCommerceAttention, readOrderWarehouse, readRefundCase, readReplenishment, readStockHistory, readStockOverview, readStocktakeTargets, receiveOrderReturn, recordParcelContents, recordRefundFollowUp, recordReplenishmentDelivery, recordStockMovement, recordStocktake, retryCommerceEmail, saveReplenishmentPolicy };
+declare function listSuppliers(env: TalismanEnv, input?: unknown): Promise<{
+    total: number;
+    rows: {
+        active: boolean;
+        id: string;
+        version: string;
+        name: string;
+        contact: string;
+        address: string;
+    }[];
+    search: string;
+    offset: number;
+    filter: "active" | "all";
+}>;
+declare function saveSupplier(env: TalismanEnv, input: unknown, actor: string): Promise<{
+    supplierId: string;
+    revisionId: string;
+    duplicate: boolean;
+} | {
+    supplierId: string;
+    revisionId: string;
+}>;
+declare function savePurchaseOrder(env: TalismanEnv, input: unknown, actor: string): Promise<{
+    purchaseOrderId: string;
+    eventId: string;
+    duplicate: boolean;
+} | {
+    purchaseOrderId: string;
+    eventId: string;
+}>;
+declare function recordPurchaseOrder(env: TalismanEnv, input: unknown, actor: string): Promise<{
+    purchaseOrderId: string;
+    eventId: string;
+    duplicate: boolean;
+} | {
+    purchaseOrderId: string;
+    eventId: string;
+}>;
+declare function listPurchaseOrders(env: TalismanEnv, input?: unknown): Promise<{
+    total: number;
+    rows: {
+        createdAt: string;
+        id: string;
+        supplierId: string;
+        version: string;
+        status: "draft" | "ordered" | "cancelled";
+        reference: string;
+        expectedDate: string;
+        supplier: string;
+        outstanding: number;
+    }[];
+    search: string;
+    offset: number;
+    filter: "draft" | "ordered" | "cancelled" | "all" | "open" | "completed";
+}>;
+declare function readPurchaseOrder(env: TalismanEnv, input: unknown): Promise<{
+    id: string;
+    supplierId: string;
+    currentSupplier: {
+        active: boolean;
+        version: string;
+        name: string;
+        contact: string;
+        address: string;
+    } | null;
+    version: string;
+    status: "draft" | "ordered" | "cancelled";
+    reference: string;
+    expectedDate: string;
+    supplier: SupplierSnapshot;
+    lines: PurchaseLine[];
+    deliveries: {
+        lineIndex: number;
+        deliveryId: string;
+        version: string;
+        received: number;
+        remaining: number;
+        cancelled: boolean;
+        location: {
+            type: "product" | "variant" | "stock" | "component";
+            id: string;
+            name: string;
+            sku: string | null;
+            quantity: number;
+            updatedAt: string;
+        } | null;
+    }[];
+    history: {
+        id: string;
+        status: "draft" | "ordered" | "cancelled";
+        reference: string;
+        expectedDate: string;
+        lines: PurchaseLine[];
+        actorName: string;
+        reason: string;
+        createdAt: string;
+    }[];
+    historyTruncated: boolean;
+}>;
+
+/** UTC cohorts are deliberately separate from today's backlog. No shopper text or identity is returned. */
+declare function readOperationsReport(env: TalismanEnv, input?: unknown): Promise<{
+    startAt: string;
+    endBefore: string;
+    asOf: string;
+    reasons: {
+        code: (typeof RETURN_REASON_CODES)[number];
+        requests: number;
+    }[];
+    conditions: {
+        condition: string;
+        units: number;
+        receipts: number;
+    }[];
+    resolutions: {
+        averageHours: number;
+        status: "settled" | "not_needed";
+        returns: number;
+        averageSeconds: number;
+    }[];
+    firstShipment: {
+        orders: number;
+        averageHours: number | null;
+    };
+    overdueDeliveries: {
+        deliveries: number;
+        units: number;
+        oldestDate: string | null;
+    };
+    backlog: {
+        kind: "shipping" | "returns" | "refund";
+        count: number;
+        oldestAt: string | null;
+        oldestHours: number | null;
+    }[];
+    start: string;
+    end: string;
+}>;
+
+export { type AttentionKind, CommerceOperationsConflict, type StockOverviewRow, exportCommerceOperations, inspectOrderReturn, listEmailRecovery, listPurchaseOrders, listRefundFollowUp, listReplenishment, listStockLocations, listStocktakes, listSuppliers, planReplenishmentDelivery, readCommerceAttention, readOperationsReport, readOrderWarehouse, readPurchaseOrder, readRefundCase, readReplenishment, readStockHistory, readStockOverview, readStocktakeTargets, receiveOrderReturn, recordParcelContents, recordPurchaseOrder, recordRefundFollowUp, recordReplenishmentDelivery, recordStockMovement, recordStocktake, retryCommerceEmail, savePurchaseOrder, saveReplenishmentPolicy, saveSupplier };

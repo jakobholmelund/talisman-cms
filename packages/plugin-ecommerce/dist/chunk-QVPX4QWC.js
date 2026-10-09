@@ -196,6 +196,17 @@ function returnNoticeEmail(email) {
     footer: [`Questions about your return? Please ${contact(store)} and mention the order number.`]
   }) };
 }
+function returnRefundEmail(email) {
+  const { store, orderId, occurredAt, currency, amountMinor, tenders } = email;
+  return { subject: oneLine(`Your return refund is recorded \u2014 ${store.name}`), ...renderCommerceEmail({
+    storeName: store.name,
+    heading: "Your return refund is recorded",
+    paragraphs: [`Order ${orderId} \xB7 ${formatDate(occurredAt)}`, `A refund of ${formatMoney2(amountMinor, currency)} has been recorded for your received return. Your payment provider may take time to show the amount in your account.`],
+    ...store.origin ? { action: { label: "View your order", url: `${store.origin}/checkout/success?order=${encodeURIComponent(orderId)}` } } : {},
+    sections: [{ title: "Recorded refund", rows: tenders.map((t) => ({ label: t.label, value: formatMoney2(t.amountMinor, currency) })) }, ...storeSections(store)],
+    footer: [`Questions about your refund? Please ${contact(store)} and mention the order number.`]
+  }) };
+}
 
 export {
   shopperSignInEmail,
@@ -207,5 +218,6 @@ export {
   orderConfirmationEmail,
   shipmentEmail,
   giftCardClaimEmail,
-  returnNoticeEmail
+  returnNoticeEmail,
+  returnRefundEmail
 };

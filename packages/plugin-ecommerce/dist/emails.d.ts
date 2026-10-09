@@ -116,6 +116,7 @@ interface CommerceEmailTemplates {
     shipment?: Template<ShipmentEmail>;
     giftCardClaim?: Template<GiftCardClaimEmail>;
     returnNotice?: Template<ReturnNoticeEmail>;
+    returnRefund?: Template<ReturnRefundEmail>;
 }
 /** An amount in minor units: `1250` in `usd` reads `$12.50` and in `jpy` `¥1,250`; deductions read `-$12.50`. */
 declare function formatMoney(cents: number, currency: string): string;
@@ -180,5 +181,18 @@ interface ReturnNoticeEmail {
     }>;
 }
 declare function returnNoticeEmail(email: ReturnNoticeEmail): CommerceEmailMessage;
+/** Only confirmed allocated refunds; no internal notes or ledger identifiers. */
+interface ReturnRefundEmail {
+    store: CommerceEmailStore;
+    orderId: string;
+    occurredAt: Date;
+    currency: string;
+    amountMinor: number;
+    tenders: Array<{
+        label: string;
+        amountMinor: number;
+    }>;
+}
+declare function returnRefundEmail(email: ReturnRefundEmail): CommerceEmailMessage;
 
-export { type CommerceEmailContent, type CommerceEmailMessage, type CommerceEmailSection, type CommerceEmailStore, type CommerceEmailTemplates, type GiftCardClaimEmail, type OrderConfirmationEmail, type OrderEmailAddress, type ReturnNoticeEmail, type ShipmentEmail, emailLink, formatAddress, formatDate, formatMoney, giftCardClaimEmail, orderConfirmationEmail, renderCommerceEmail, returnNoticeEmail, shipmentEmail, shopperSignInEmail };
+export { type CommerceEmailContent, type CommerceEmailMessage, type CommerceEmailSection, type CommerceEmailStore, type CommerceEmailTemplates, type GiftCardClaimEmail, type OrderConfirmationEmail, type OrderEmailAddress, type ReturnNoticeEmail, type ReturnRefundEmail, type ShipmentEmail, emailLink, formatAddress, formatDate, formatMoney, giftCardClaimEmail, orderConfirmationEmail, renderCommerceEmail, returnNoticeEmail, returnRefundEmail, shipmentEmail, shopperSignInEmail };

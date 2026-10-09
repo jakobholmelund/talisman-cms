@@ -1,4 +1,4 @@
-import { returnRequests, returnRequestEvents, ParcelItem, returnRequestReceipts } from './schema.js';
+import { returnRequests, REFUND_SOURCE_KINDS, RETURN_REASON_CODES, returnRequestEvents, ParcelItem, returnRequestReceipts } from './schema.js';
 
 type RequestRow = typeof returnRequests.$inferSelect;
 type EventRow = typeof returnRequestEvents.$inferSelect;
@@ -8,6 +8,18 @@ type Status = EventRow['status'];
 interface CustomerReturns {
     orderId: RequestRow['orderId'];
     unknownParcelContents: boolean;
+    refunds: Array<{
+        receiptId: string;
+        receivedAt: string;
+        status: 'review' | 'needed' | 'not_needed' | 'settled';
+        amountMinor: number;
+        currency: string;
+        updatedAt: string;
+        tenders: Array<{
+            kind: typeof REFUND_SOURCE_KINDS[number];
+            amountMinor: number;
+        }>;
+    }>;
     lines: Array<{
         lineIndex: number;
         name: string;
@@ -15,6 +27,7 @@ interface CustomerReturns {
         available: number;
     }>;
     requests: Array<Pick<RequestRow, 'id' | 'reason'> & {
+        reasonCode: typeof RETURN_REASON_CODES[number];
         status: Status;
         version: string;
         createdAt: string;

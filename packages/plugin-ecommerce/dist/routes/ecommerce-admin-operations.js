@@ -1,26 +1,33 @@
 import {
   readBoundedJson
-} from "../chunk-RPRVGONJ.js";
+} from "../chunk-D44QXYZ6.js";
 import {
   OperationsExportLimit,
   exportCommerceOperations,
+  listPurchaseOrders,
   listRefundFollowUp,
   listReplenishment,
+  listSuppliers,
   planReplenishmentDelivery,
   readCommerceAttention,
+  readOperationsReport,
+  readPurchaseOrder,
   readRefundCase,
   readReplenishment,
   readStockOverview,
+  recordPurchaseOrder,
   recordRefundFollowUp,
   recordReplenishmentDelivery,
-  saveReplenishmentPolicy
-} from "../chunk-4M4YC56X.js";
+  savePurchaseOrder,
+  saveReplenishmentPolicy,
+  saveSupplier
+} from "../chunk-JNWGJT2X.js";
 import {
   decideReturnRequest,
   listReturnsQueue,
   readReturnRequestAdmin
-} from "../chunk-UR52F5YS.js";
-import "../chunk-BFCTU77S.js";
+} from "../chunk-RIONC7RV.js";
+import "../chunk-POZUPQDU.js";
 import "../chunk-BGDJXEM5.js";
 import {
   CommerceOperationsConflict,
@@ -36,17 +43,17 @@ import {
   recordStockMovement,
   recordStocktake,
   retryCommerceEmail
-} from "../chunk-RLJNYAC6.js";
+} from "../chunk-7V3IKGLW.js";
 import {
   ShopperError
-} from "../chunk-5CEWEWY2.js";
-import "../chunk-L6PZD3R6.js";
+} from "../chunk-KRCC4OBZ.js";
+import "../chunk-7YQJMR2T.js";
 import "../chunk-GNU6N22K.js";
-import "../chunk-DIRLX3FV.js";
-import "../chunk-WUDMFQXC.js";
-import "../chunk-OX54ZSQZ.js";
+import "../chunk-YGPEQZYU.js";
+import "../chunk-5VVOAOAK.js";
+import "../chunk-KPJJ2U3F.js";
 import "../chunk-NQUBOBQT.js";
-import "../chunk-E6QRZBC6.js";
+import "../chunk-QVPX4QWC.js";
 import "../chunk-2UYSCNNW.js";
 
 // src/routes/ecommerce-admin-operations.ts
@@ -66,6 +73,9 @@ var ALL = async ({ request }) => {
     const runtimeEnv = env;
     if (request.method === "GET") {
       const { view, ...params } = Object.fromEntries(url.searchParams);
+      if (view === "report") return Response.json(await readOperationsReport(runtimeEnv, params), { headers });
+      if (view === "suppliers") return Response.json(await listSuppliers(runtimeEnv, params), { headers });
+      if (view === "purchaseOrders") return Response.json(await listPurchaseOrders(runtimeEnv, params), { headers });
       if (view === "attention") return Response.json(await readCommerceAttention(runtimeEnv), { headers });
       if (view === "emails") return Response.json(await listEmailRecovery(runtimeEnv, params), { headers });
       if (view === "stockLocations") return Response.json(await listStockLocations(runtimeEnv, params), { headers });
@@ -88,12 +98,13 @@ var ALL = async ({ request }) => {
       const result = await exportCommerceOperations(runtimeEnv, body.data);
       return new Response(result.csv, { headers: { ...headers, "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${result.filename}"`, "X-Content-Type-Options": "nosniff", "X-Export-Rows": String(result.rows) } });
     }
+    if (body?.action === "purchaseOrderRead") return Response.json(await readPurchaseOrder(runtimeEnv, body.data), { headers });
     if (body?.action === "refundRead") return Response.json(await readRefundCase(runtimeEnv, body.data), { headers });
     if (body?.action === "replenishmentRead") return Response.json(await readReplenishment(runtimeEnv, body.data), { headers });
     if (body?.action === "returnRequestRead") return Response.json(await readReturnRequestAdmin(runtimeEnv, body.data), { headers });
     if (body?.action === "stocktakeRead") return Response.json(await readStocktakeTargets(runtimeEnv, body.data), { headers });
     if (body?.action === "warehouseRead") return Response.json(await readOrderWarehouse(runtimeEnv, body.data), { headers });
-    const actions = { refundDecision: recordRefundFollowUp, replenishmentPolicy: saveReplenishmentPolicy, replenishmentPlan: planReplenishmentDelivery, replenishmentReceive: recordReplenishmentDelivery, retryEmail: retryCommerceEmail, parcelContents: recordParcelContents, receiveReturn: receiveOrderReturn, stockMovement: recordStockMovement, inspectReturn: inspectOrderReturn, stocktake: recordStocktake, returnDecision: decideReturnRequest };
+    const actions = { supplierSave: saveSupplier, purchaseOrderSave: savePurchaseOrder, purchaseOrderAction: recordPurchaseOrder, refundDecision: recordRefundFollowUp, replenishmentPolicy: saveReplenishmentPolicy, replenishmentPlan: planReplenishmentDelivery, replenishmentReceive: recordReplenishmentDelivery, retryEmail: retryCommerceEmail, parcelContents: recordParcelContents, receiveReturn: receiveOrderReturn, stockMovement: recordStockMovement, inspectReturn: inspectOrderReturn, stocktake: recordStocktake, returnDecision: decideReturnRequest };
     const action = body?.action;
     if (!Object.hasOwn(actions, action)) return Response.json({ error: "Invalid operations action" }, { status: 400, headers });
     return Response.json({ result: await actions[action](runtimeEnv, body.data, actor) }, { headers });

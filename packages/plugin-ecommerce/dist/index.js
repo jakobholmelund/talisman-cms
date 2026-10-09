@@ -10,31 +10,31 @@ import {
   bindCommerceApi,
   reconcileCommerce,
   shippingOptionsFor
-} from "./chunk-7AB4ZVXG.js";
+} from "./chunk-5DE3NGJU.js";
 import {
   TaxCalculationError
-} from "./chunk-UR52F5YS.js";
-import "./chunk-BFCTU77S.js";
-import "./chunk-UWIRME3U.js";
+} from "./chunk-RIONC7RV.js";
+import "./chunk-POZUPQDU.js";
+import "./chunk-OH67LHUT.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
 import {
   deliverPendingCommerceEmails
-} from "./chunk-RLJNYAC6.js";
+} from "./chunk-7V3IKGLW.js";
 import {
   COUNTRY_CODES,
   StoreSettingsError,
   isCountryCode,
   readStoreCurrency,
   readStoreSettings
-} from "./chunk-5CEWEWY2.js";
-import "./chunk-L6PZD3R6.js";
+} from "./chunk-KRCC4OBZ.js";
+import "./chunk-7YQJMR2T.js";
 import "./chunk-GNU6N22K.js";
-import "./chunk-DIRLX3FV.js";
+import "./chunk-YGPEQZYU.js";
 import {
   commerceDb
-} from "./chunk-WUDMFQXC.js";
+} from "./chunk-5VVOAOAK.js";
 import {
   carts,
   categories,
@@ -65,6 +65,9 @@ import {
   productVariants,
   products,
   providerRefunds,
+  purchaseOrderEvents,
+  purchaseOrderLines,
+  purchaseOrders,
   reconcileDecisions,
   referralCodes,
   referralSettings,
@@ -77,6 +80,7 @@ import {
   returnReceipts,
   returnRefundDecisions,
   returnRequestEvents,
+  returnRequestReasons,
   returnRequestReceipts,
   returnRequests,
   returnStock,
@@ -84,12 +88,14 @@ import {
   stockMovements,
   stocks,
   stocktakes,
+  supplierRevisions,
+  suppliers,
   tags,
   variantComponents,
   variants
-} from "./chunk-OX54ZSQZ.js";
+} from "./chunk-KPJJ2U3F.js";
 import "./chunk-NQUBOBQT.js";
-import "./chunk-E6QRZBC6.js";
+import "./chunk-QVPX4QWC.js";
 import {
   SUPPORTED_CURRENCIES,
   currencyMinorUnits,
@@ -260,6 +266,8 @@ var ecommercePlugin = (config) => {
     { key: "returns", path: "commerce-returns", component: "Returns", label: "Returns", description: "Review customer return requests and pending inspections." },
     { key: "refunds", path: "commerce-refunds", component: "RefundFollowUp", label: "Refund follow-up", description: "Resolve received returns against confirmed refund records." },
     { key: "replenishment", path: "commerce-replenishment", component: "Replenishment", label: "Replenishment", description: "Set stock targets and track expected supplier deliveries." },
+    { key: "purchasing", path: "commerce-purchasing", component: "PurchaseOrders", label: "Purchase orders", description: "Manage suppliers, purchase stock and receive partial deliveries." },
+    { key: "report", path: "commerce-report", component: "OperationsReport", label: "Operations reporting", description: "Track shipping turnaround, return reasons and outstanding deliveries." },
     { key: "exports", path: "commerce-exports", component: "OperationsExports", label: "Operations exports", description: "Download filtered order, return and stock records." },
     { key: "orders", path: "commerce-orders", component: "Orders", label: "Orders & fulfillment", description: "Review paid orders and record shipments." },
     { key: "promotions", path: "commerce-promotions", component: "Promotions", label: "Promotions & referrals", description: "Create discounts and manage referral rewards." },
@@ -848,6 +856,54 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
             "reason"
           ]),
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "giftCardClaims", idColumn: "id" }
+        });
+        collections.push({
+          name: "Suppliers",
+          slug: "_ecommerce_suppliers",
+          readOnly: true,
+          adminSection: "commerce",
+          fields: nativeFields(suppliers, ["id", "createdAt"]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "suppliers", idColumn: "id" }
+        });
+        collections.push({
+          name: "Supplier History",
+          slug: "_ecommerce_supplier_revisions",
+          readOnly: true,
+          adminSection: "commerce",
+          fields: nativeFields(supplierRevisions, ["id", "supplierId", "expectedVersion", "name", "contact", "address", "active", "actor", "reason", "fingerprint", "createdAt"]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "supplierRevisions", idColumn: "id" }
+        });
+        collections.push({
+          name: "Purchase Orders",
+          slug: "_ecommerce_purchase_orders",
+          readOnly: true,
+          adminSection: "commerce",
+          fields: nativeFields(purchaseOrders, ["id", "supplierId", "createdAt"]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "purchaseOrders", idColumn: "id" }
+        });
+        collections.push({
+          name: "Purchase History",
+          slug: "_ecommerce_purchase_order_events",
+          readOnly: true,
+          adminSection: "commerce",
+          fields: nativeFields(purchaseOrderEvents, ["id", "purchaseOrderId", "expectedVersion", "status", "reference", "expectedDate", { name: "lines", type: "array" }, { name: "supplier", type: "group" }, "actor", "reason", "fingerprint", "createdAt"]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "purchaseOrderEvents", idColumn: "id" }
+        });
+        collections.push({
+          name: "Purchase Lines",
+          slug: "_ecommerce_purchase_order_lines",
+          readOnly: true,
+          adminSection: "commerce",
+          fields: nativeFields(purchaseOrderLines, ["id", "purchaseOrderId", "lineIndex", "deliveryId"]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "purchaseOrderLines", idColumn: "id" }
+        });
+        collections.push({
+          name: "Return Categories",
+          slug: "_ecommerce_return_request_reasons",
+          readOnly: true,
+          adminSection: "commerce",
+          fields: nativeFields(returnRequestReasons, ["requestId", "code"]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "returnRequestReasons", idColumn: "requestId" }
         });
         collections.push({
           name: "Return Refund Decisions",

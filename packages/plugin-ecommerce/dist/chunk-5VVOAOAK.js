@@ -1,6 +1,6 @@
 import {
   relations
-} from "./chunk-OX54ZSQZ.js";
+} from "./chunk-KPJJ2U3F.js";
 
 // src/db.ts
 import { createDbClient } from "talisman-cms/client";

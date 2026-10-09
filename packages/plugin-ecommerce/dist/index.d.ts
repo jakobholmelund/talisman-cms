@@ -6,13 +6,13 @@ export { CommerceEmailTemplates } from './emails.js';
 export { StripePaymentAdapter } from './adapters/stripe.js';
 export { AdminTestPaymentAdapter } from './adapters/admin-test.js';
 export { SUPPORTED_CURRENCIES, currencyMinorUnits, formatMoney, fromMinorUnits, isSupportedCurrency, minimumChargeAmount, toMinorUnits } from './money.js';
-import './return-request-types-BRQL27cB.js';
+import './return-request-types-CaKc6AaH.js';
 import './schema.js';
 import 'drizzle-orm';
 import 'drizzle-orm/sqlite-core';
-import './return-requests-CqFKKpcO.js';
+import './return-requests-Ca2cC1Ih.js';
 import 'talisman-cms/client';
-import './commerce-context-Dop6MULh.js';
+import './commerce-context-QdRsYJjD.js';
 import 'drizzle-orm/d1';
 import './email-deliveries-CyzibTug.js';
 import 'talisman-cms/email';
@@ -138,7 +138,7 @@ interface EcommercePluginConfig {
      * such as `extensions/orders`, or an absolute path on the site, such as `/orders`. The integration
      * refuses anything that is not a path on the site, such as a full URL, at config time.
      */
-    adminPages?: Partial<Record<'orders' | 'promotions' | 'giftCards' | 'testCheckout' | 'attention' | 'emails' | 'stock' | 'returns' | 'refunds' | 'replenishment' | 'exports', string>>;
+    adminPages?: Partial<Record<'orders' | 'promotions' | 'giftCards' | 'testCheckout' | 'attention' | 'emails' | 'stock' | 'returns' | 'refunds' | 'replenishment' | 'purchasing' | 'report' | 'exports', string>>;
     /**
      * Adds the admin-only Test checkout screen and `/admin/api/ecommerce/test-checkout`, which place
      * orders through the simulated `admin_test` payment provider. When false, neither is injected and

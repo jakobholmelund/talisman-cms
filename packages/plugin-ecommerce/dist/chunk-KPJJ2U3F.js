@@ -749,7 +749,7 @@ var reconcileDecisions = sqliteTable("_ecommerce_reconcile_decisions", {
   check("reconcile_decision_names_one_subject", sql`(${table.orderId} IS NULL) <> (${table.purchaseId} IS NULL)`),
   check("reconcile_decision_release_returns", sql`${table.paymentReturned} IS NULL OR ${table.action} = 'release'`)
 ]);
-var EMAIL_KINDS = ["order_confirmation", "shipment", "shipment_update", "gift_card_claim", "return_decision", "return_received"];
+var EMAIL_KINDS = ["order_confirmation", "shipment", "shipment_update", "gift_card_claim", "return_decision", "return_received", "return_refund"];
 var EMAIL_STATUSES = ["pending", "sent", "failed", "cancelled"];
 var emailDeliveries = sqliteTable("_ecommerce_email_deliveries", {
   id: text("id").primaryKey(),
@@ -1092,7 +1092,84 @@ var replenishmentDeliveryEvents = sqliteTable("_ecommerce_replenishment_delivery
   check("replenishment_event_actor", filled(t.actor)),
   check("replenishment_event_reason", trimmed(t.reason, 8))
 ]);
+var RETURN_REASON_CODES = ["size_fit", "damaged", "wrong_item", "changed_mind", "other", "unspecified"];
+var returnRequestReasons = sqliteTable("_ecommerce_return_request_reasons", {
+  requestId: text("request_id").primaryKey().references(() => returnRequests.id),
+  code: text("code", { enum: RETURN_REASON_CODES }).notNull()
+}, (t) => [check("return_reason_code", oneOf(t.code, RETURN_REASON_CODES))]);
+var suppliers = sqliteTable("_ecommerce_suppliers", {
+  id: text("id").primaryKey(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+});
+var supplierRevisions = sqliteTable("_ecommerce_supplier_revisions", {
+  id: text("id").primaryKey(),
+  supplierId: text("supplier_id").notNull().references(() => suppliers.id),
+  expectedVersion: text("expected_version"),
+  name: text("name").notNull(),
+  contact: text("contact").notNull(),
+  address: text("address").notNull(),
+  active: integer("active", { mode: "boolean" }).notNull(),
+  actor: text("actor").notNull(),
+  reason: text("reason").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+}, (t) => [
+  index("_ecommerce_supplier_revision_supplier_idx").on(t.supplierId),
+  check("supplier_name", trimmed(t.name, 1)),
+  check("supplier_name_length", sql`length(${t.name}) <= 200`),
+  check("supplier_contact", sql`length(${t.contact}) <= 500`),
+  check("supplier_address", sql`length(${t.address}) <= 1000`),
+  check("supplier_active", flag(t.active)),
+  check("supplier_actor", filled(t.actor)),
+  check("supplier_reason", trimmed(t.reason, 8))
+]);
+var PURCHASE_ORDER_STATUSES = ["draft", "ordered", "cancelled"];
+var purchaseOrders = sqliteTable("_ecommerce_purchase_orders", {
+  id: text("id").primaryKey(),
+  supplierId: text("supplier_id").notNull().references(() => suppliers.id),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+}, (t) => [index("_ecommerce_purchase_order_supplier_idx").on(t.supplierId)]);
+var purchaseOrderEvents = sqliteTable("_ecommerce_purchase_order_events", {
+  id: text("id").primaryKey(),
+  purchaseOrderId: text("purchase_order_id").notNull().references(() => purchaseOrders.id),
+  expectedVersion: text("expected_version"),
+  status: text("status", { enum: PURCHASE_ORDER_STATUSES }).notNull(),
+  reference: text("reference").notNull(),
+  expectedDate: text("expected_date").notNull(),
+  lines: text("lines", { mode: "json" }).$type().notNull(),
+  supplier: text("supplier", { mode: "json" }).$type().notNull(),
+  actor: text("actor").notNull(),
+  reason: text("reason").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+}, (t) => [
+  index("_ecommerce_purchase_order_event_order_idx").on(t.purchaseOrderId),
+  check("purchase_order_status", oneOf(t.status, PURCHASE_ORDER_STATUSES)),
+  check("purchase_order_reference", trimmed(t.reference, 1)),
+  check("purchase_order_reference_length", sql`length(${t.reference}) <= 200`),
+  check("purchase_order_date", sql`length(${t.expectedDate})=10 AND date(${t.expectedDate}, '+0 days') IS NOT NULL AND date(${t.expectedDate}, '+0 days')=${t.expectedDate}`),
+  check("purchase_order_lines", sql`json_valid(${t.lines}) AND json_type(${t.lines})='array' AND json_array_length(${t.lines}) BETWEEN 1 AND 20`),
+  check("purchase_order_supplier", sql`json_valid(${t.supplier}) AND json_type(${t.supplier})='object'`),
+  check("purchase_order_actor", filled(t.actor)),
+  check("purchase_order_reason", trimmed(t.reason, 8))
+]);
+var purchaseOrderLines = sqliteTable("_ecommerce_purchase_order_lines", {
+  id: text("id").primaryKey(),
+  purchaseOrderId: text("purchase_order_id").notNull().references(() => purchaseOrders.id),
+  lineIndex: integer("line_index").notNull(),
+  deliveryId: text("delivery_id").notNull().references(() => replenishmentDeliveries.id)
+}, (t) => [
+  uniqueIndex("_ecommerce_purchase_order_line_unique").on(t.purchaseOrderId, t.lineIndex),
+  uniqueIndex("_ecommerce_purchase_order_delivery_unique").on(t.deliveryId),
+  check("purchase_order_line_index", sql`${t.lineIndex} BETWEEN 0 AND 19`)
+]);
 var tables = {
+  suppliers,
+  supplierRevisions,
+  purchaseOrders,
+  purchaseOrderEvents,
+  purchaseOrderLines,
+  returnRequestReasons,
   returnRefundDecisions,
   replenishmentPolicies,
   replenishmentDeliveries,
@@ -1157,9 +1234,18 @@ var tables = {
   cmsUsers
 };
 var relations = defineRelations(tables, (r) => ({
+  suppliers: { revisions: r.many.supplierRevisions(), purchaseOrders: r.many.purchaseOrders() },
+  supplierRevisions: { supplier: r.one.suppliers({ from: r.supplierRevisions.supplierId, to: r.suppliers.id, optional: false }) },
+  purchaseOrders: { supplier: r.one.suppliers({ from: r.purchaseOrders.supplierId, to: r.suppliers.id, optional: false }), events: r.many.purchaseOrderEvents(), lines: r.many.purchaseOrderLines() },
+  purchaseOrderEvents: { purchaseOrder: r.one.purchaseOrders({ from: r.purchaseOrderEvents.purchaseOrderId, to: r.purchaseOrders.id, optional: false }) },
+  purchaseOrderLines: { purchaseOrder: r.one.purchaseOrders({ from: r.purchaseOrderLines.purchaseOrderId, to: r.purchaseOrders.id, optional: false }), delivery: r.one.replenishmentDeliveries({ from: r.purchaseOrderLines.deliveryId, to: r.replenishmentDeliveries.id, optional: false }) },
+  returnRequestReasons: { request: r.one.returnRequests({ from: r.returnRequestReasons.requestId, to: r.returnRequests.id, optional: false }) },
   returnRefundDecisions: { receipt: r.one.returnReceipts({ from: r.returnRefundDecisions.receiptId, to: r.returnReceipts.id, optional: false }) },
   stockMovements: { deliveries: r.many.replenishmentDeliveryEvents() },
-  replenishmentDeliveries: { events: r.many.replenishmentDeliveryEvents() },
+  replenishmentDeliveries: {
+    purchaseLine: r.one.purchaseOrderLines({ from: r.replenishmentDeliveries.id, to: r.purchaseOrderLines.deliveryId }),
+    events: r.many.replenishmentDeliveryEvents()
+  },
   replenishmentDeliveryEvents: {
     delivery: r.one.replenishmentDeliveries({ from: r.replenishmentDeliveryEvents.deliveryId, to: r.replenishmentDeliveries.id, optional: false }),
     movement: r.one.stockMovements({ from: r.replenishmentDeliveryEvents.movementId, to: r.stockMovements.id })
@@ -1308,7 +1394,12 @@ var relations = defineRelations(tables, (r) => ({
     order: r.one.orders({ from: r.parcelContents.orderId, to: r.orders.id, optional: false }),
     fulfillment: r.one.fulfillments({ from: r.parcelContents.fulfillmentId, to: r.fulfillments.id, optional: false })
   },
-  returnRequests: { order: r.one.orders({ from: r.returnRequests.orderId, to: r.orders.id, optional: false }), events: r.many.returnRequestEvents(), receipts: r.many.returnRequestReceipts() },
+  returnRequests: {
+    reasonCategory: r.one.returnRequestReasons({ from: r.returnRequests.id, to: r.returnRequestReasons.requestId }),
+    order: r.one.orders({ from: r.returnRequests.orderId, to: r.orders.id, optional: false }),
+    events: r.many.returnRequestEvents(),
+    receipts: r.many.returnRequestReceipts()
+  },
   returnRequestEvents: { request: r.one.returnRequests({ from: r.returnRequestEvents.requestId, to: r.returnRequests.id, optional: false }) },
   returnRequestReceipts: { request: r.one.returnRequests({ from: r.returnRequestReceipts.requestId, to: r.returnRequests.id, optional: false }), receipt: r.one.returnReceipts({ from: r.returnRequestReceipts.receiptId, to: r.returnReceipts.id, optional: false }) },
   returnReceipts: { refundDecisions: r.many.returnRefundDecisions(), requestLinks: r.many.returnRequestReceipts(), order: r.one.orders({ from: r.returnReceipts.orderId, to: r.orders.id, optional: false }), stock: r.many.returnStock(), inspections: r.many.returnInspections() },
@@ -1526,5 +1617,13 @@ export {
   replenishmentDeliveries,
   REPLENISHMENT_EVENT_KINDS,
   replenishmentDeliveryEvents,
+  RETURN_REASON_CODES,
+  returnRequestReasons,
+  suppliers,
+  supplierRevisions,
+  PURCHASE_ORDER_STATUSES,
+  purchaseOrders,
+  purchaseOrderEvents,
+  purchaseOrderLines,
   relations
 };

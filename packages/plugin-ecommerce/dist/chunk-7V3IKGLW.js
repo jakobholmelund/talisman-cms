@@ -11,14 +11,14 @@ import {
   sendCommerceEmailNow,
   unclaimedAt,
   waitingEmailsResult
-} from "./chunk-5CEWEWY2.js";
+} from "./chunk-KRCC4OBZ.js";
 import {
   batchGroups,
   chunked,
   commerceDb,
   commitBatch,
   errorText
-} from "./chunk-WUDMFQXC.js";
+} from "./chunk-5VVOAOAK.js";
 import {
   creditLedger,
   emailDeliveries,
@@ -35,15 +35,16 @@ import {
   returnStock,
   stockMovements,
   stocktakes
-} from "./chunk-OX54ZSQZ.js";
+} from "./chunk-KPJJ2U3F.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
 import {
   orderConfirmationEmail,
   returnNoticeEmail,
+  returnRefundEmail,
   shipmentEmail
-} from "./chunk-E6QRZBC6.js";
+} from "./chunk-QVPX4QWC.js";
 
 // src/warehouse.ts
 import { eq as eq2, sql as sql2 } from "drizzle-orm";
@@ -142,6 +143,7 @@ var recoverableEmailSubject = sql`(
     SELECT 1 FROM _ecommerce_orders o WHERE o.id = _ecommerce_email_deliveries.subject_id
       AND COALESCE(o.payment_provider, 'stripe') <> 'admin_test'
       AND o.status IN ('paid', 'fulfilled', 'partially_refunded', 'disputed')))
+  OR (_ecommerce_email_deliveries.kind='return_refund' AND EXISTS(SELECT 1 FROM _ecommerce_return_refund_decisions d JOIN _ecommerce_return_receipts r ON r.id=d.receipt_id JOIN _ecommerce_orders o ON o.id=r.order_id WHERE d.id=_ecommerce_email_deliveries.subject_id AND d.status='settled' AND d.redacted_at IS NULL AND COALESCE(o.payment_provider,'stripe')<>'admin_test' AND o.customer_email IS NOT NULL AND NOT EXISTS(SELECT 1 FROM _ecommerce_shopper_audits a WHERE a.account_id=o.user_id AND a.action='anonymize')))
   OR (_ecommerce_email_deliveries.kind='return_received' AND EXISTS(SELECT 1 FROM _ecommerce_return_receipts r JOIN _ecommerce_orders o ON o.id=r.order_id WHERE r.id=_ecommerce_email_deliveries.subject_id AND COALESCE(o.payment_provider,'stripe')<>'admin_test' AND o.customer_email IS NOT NULL))
   OR (_ecommerce_email_deliveries.kind='return_decision' AND EXISTS(SELECT 1 FROM _ecommerce_return_request_events e JOIN _ecommerce_return_requests r ON r.id=e.request_id JOIN _ecommerce_orders o ON o.id=r.order_id WHERE e.id=_ecommerce_email_deliveries.subject_id AND e.actor_kind='staff' AND e.redacted_at IS NULL AND r.redacted_at IS NULL AND e.rowid=(SELECT rowid FROM _ecommerce_return_request_events WHERE request_id=r.id ORDER BY rowid DESC LIMIT 1) AND COALESCE(o.payment_provider,'stripe')<>'admin_test' AND o.customer_email IS NOT NULL))
   OR (_ecommerce_email_deliveries.kind IN ('shipment', 'shipment_update') AND EXISTS (
@@ -625,9 +627,10 @@ async function loadOrderActivity(env, orderIds) {
     confirmations: groups.map((ids) => db.select().from(emailDeliveries).where(and2(inArray2(emailDeliveries.subjectId, ids), eq3(emailDeliveries.kind, "order_confirmation"))))
   });
   const { notices } = await batchGroups(db, { notices: chunked(parcels.map((row) => row.id)).map((ids) => db.select().from(emailDeliveries).where(and2(inArray2(emailDeliveries.subjectId, ids), inArray2(emailDeliveries.kind, ["shipment", "shipment_update"])))) });
-  const { returnNotices } = await batchGroups(db, { returnNotices: chunked([...returns.map((r) => r.id), ...requests.flatMap((r) => r.events.map((e) => e.id))]).map((ids) => db.select().from(emailDeliveries).where(and2(inArray2(emailDeliveries.subjectId, ids), inArray2(emailDeliveries.kind, ["return_decision", "return_received"])))) });
+  const { returnNotices } = await batchGroups(db, { returnNotices: chunked([...returns.map((r) => r.id), ...refundCases.flatMap((r) => r.refundDecisions.map((d) => d.id)), ...requests.flatMap((r) => r.events.map((e) => e.id))]).map((ids) => db.select().from(emailDeliveries).where(and2(inArray2(emailDeliveries.subjectId, ids), inArray2(emailDeliveries.kind, ["return_decision", "return_received", "return_refund"])))) });
   const names = await adminActorNames(env, [...stock, ...parcels].map((row) => row.adminActor).concat([...contents, ...returns, ...inspections, ...refundCases.flatMap((r) => r.refundDecisions)].map((row) => row.actor)));
   const parcelOrders = new Map([...parcels, ...returns].map((row) => [row.id, row.orderId]));
+  for (const r of refundCases) for (const d of r.refundDecisions) parcelOrders.set(d.id, r.orderId);
   for (const r of requests) for (const e of r.events) parcelOrders.set(e.id, r.orderId);
   const activity = /* @__PURE__ */ new Map();
   function add(orderId, event) {
@@ -810,11 +813,25 @@ function returnComposer(received) {
     return { to, message: await applyEmailTemplate(setup, "returnNotice", email, returnNoticeEmail(email)) };
   };
 }
+var composeReturnRefund = async (env, subjectId, setup) => {
+  const db = commerceDb(env), decision = await db.query.returnRefundDecisions.findFirst({ where: { id: subjectId }, with: { receipt: { with: { order: true } } } });
+  if (!decision || decision.status !== "settled" || decision.redactedAt || decision.receipt.order.paymentProvider === "admin_test") return { cancel: "not_due" };
+  const order = decision.receipt.order;
+  const erased = await db.get(sql3`SELECT count(*) AS n FROM _ecommerce_shopper_audits WHERE account_id=${order.userId} AND action='anonymize'`);
+  if (erased?.n) return { cancel: "not_due" };
+  const to = bareEmailAddress(order.customerEmail);
+  if (!to) return { cancel: "not_due" };
+  const labels = { provider: "Original payment method", gift_card: "Gift card", store_credit: "Store credit" }, sums = /* @__PURE__ */ new Map();
+  for (const a of decision.allocations) sums.set(a.kind, (sums.get(a.kind) ?? 0) + a.amountMinor);
+  const email = { store: setup.store, orderId: order.id, occurredAt: decision.createdAt, currency: order.currency, amountMinor: decision.amountMinor, tenders: [...sums].map(([kind, amountMinor]) => ({ label: labels[kind], amountMinor })) };
+  return { to, message: await applyEmailTemplate(setup, "returnRefund", email, returnRefundEmail(email)) };
+};
 var COMPOSERS = {
   order_confirmation: composeOrderConfirmation,
   shipment: shipmentComposer(false),
   shipment_update: shipmentComposer(true),
   gift_card_claim: composeGiftCardClaimEmail,
+  return_refund: composeReturnRefund,
   return_decision: returnComposer(false),
   return_received: returnComposer(true)
 };

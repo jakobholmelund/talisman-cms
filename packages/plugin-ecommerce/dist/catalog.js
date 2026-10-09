@@ -1,9 +1,9 @@
 import {
   commerceDb
-} from "./chunk-WUDMFQXC.js";
+} from "./chunk-5VVOAOAK.js";
 import {
   PRODUCT_STATUSES
-} from "./chunk-OX54ZSQZ.js";
+} from "./chunk-KPJJ2U3F.js";
 
 // src/catalog.ts
 import { z } from "zod";

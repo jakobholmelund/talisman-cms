@@ -1,5 +1,5 @@
-import { C as CustomerReturns } from './return-request-types-BRQL27cB.js';
-import { C as CommerceContext } from './commerce-context-Dop6MULh.js';
+import { C as CustomerReturns } from './return-request-types-CaKc6AaH.js';
+import { C as CommerceContext } from './commerce-context-QdRsYJjD.js';
 import './schema.js';
 import 'drizzle-orm';
 import 'drizzle-orm/sqlite-core';
@@ -193,6 +193,7 @@ declare function submitCustomerReturn(data: {
     orderId: string;
     requestKey: string;
     reason: string;
+    reasonCode?: 'size_fit' | 'damaged' | 'wrong_item' | 'changed_mind' | 'other' | 'unspecified';
     items: Array<{
         lineIndex: number;
         quantity: number;

@@ -1,7 +1,7 @@
 import {
   INVENTORY_COLUMNS,
   fullRefundStatements
-} from "./chunk-BFCTU77S.js";
+} from "./chunk-POZUPQDU.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
@@ -11,7 +11,7 @@ import {
   deliverCommerceEmail,
   describeOrderItems,
   fulfillCommerceOrder
-} from "./chunk-RLJNYAC6.js";
+} from "./chunk-7V3IKGLW.js";
 import {
   ReconcileFailure,
   ShopperError,
@@ -26,24 +26,25 @@ import {
   readStoreSettings,
   reconcileFailure,
   uncheckedSessionRefusal
-} from "./chunk-5CEWEWY2.js";
+} from "./chunk-KRCC4OBZ.js";
 import {
   canonicalEmail,
   canonicalEmails,
   canonicalPurchase,
   getReferralPolicy,
   referralReversalStatements
-} from "./chunk-L6PZD3R6.js";
+} from "./chunk-7YQJMR2T.js";
 import {
   PURCHASED_ORDER_STATUSES,
   claimInterval
-} from "./chunk-DIRLX3FV.js";
+} from "./chunk-YGPEQZYU.js";
 import {
   commerceDb,
   commitBatch,
   errorText
-} from "./chunk-WUDMFQXC.js";
+} from "./chunk-5VVOAOAK.js";
 import {
+  RETURN_REASON_CODES,
   carts,
   componentReservations,
   customerAccounts,
@@ -53,10 +54,11 @@ import {
   orders,
   referralCodes,
   returnRequestEvents,
+  returnRequestReasons,
   returnRequests,
   taxReversals,
   taxSyncDecisions
-} from "./chunk-OX54ZSQZ.js";
+} from "./chunk-KPJJ2U3F.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
@@ -837,7 +839,7 @@ import { z as z3 } from "zod";
 var id = z3.string().trim().min(1).max(128);
 var key = id.min(8);
 var items = z3.array(z3.object({ lineIndex: z3.number().int().min(0).max(199), quantity: z3.number().int().min(1).max(1e6) }).strict()).min(1).max(50).refine((rows) => new Set(rows.map((r) => r.lineIndex)).size === rows.length, "Choose each line once");
-var createSchema = z3.object({ orderId: id, requestKey: key, reason: z3.string().trim().min(8).max(1e3), items }).strict();
+var createSchema = z3.object({ orderId: id, requestKey: key, reason: z3.string().trim().min(8).max(1e3), reasonCode: z3.enum(RETURN_REASON_CODES).default("unspecified"), items }).strict();
 var decisionSchema = z3.object({
   requestId: id,
   requestKey: key,
@@ -856,13 +858,14 @@ async function owned(ctx, orderId, owner) {
 }
 async function requestsForOrder(env, orderId) {
   return commerceDb(env).query.returnRequests.findMany({ where: { orderId }, orderBy: { createdAt: "asc" }, with: {
+    reasonCategory: true,
     events: { orderBy: (_t, { sql: sql4 }) => sql4`rowid` },
     receipts: { with: { receipt: { columns: { items: true, createdAt: true } } } }
   } });
 }
 async function readCustomerReturns(ctx, orderId, owner = {}) {
   if (!await owned(ctx, orderId, owner)) return null;
-  const order = await ctx.db.query.orders.findFirst({ where: { id: orderId }, with: { parcelContents: true, fulfillments: { columns: { id: true, kind: true } }, returnReceipts: { columns: { items: true } } } });
+  const order = await ctx.db.query.orders.findFirst({ where: { id: orderId }, with: { parcelContents: true, fulfillments: { columns: { id: true, kind: true } }, returnReceipts: { with: { refundDecisions: { orderBy: (_t, { sql: sql4 }) => sql4`rowid DESC`, limit: 1 } } } } });
   if (!order) return null;
   const requests = await requestsForOrder(ctx.env, orderId), described = await describeOrderItems(ctx.env, order.items);
   const unknown = order.fulfillments.some((f) => f.kind === "shipment" && !order.parcelContents.some((p) => p.fulfillmentId === f.id));
@@ -874,8 +877,13 @@ async function readCustomerReturns(ctx, orderId, owner = {}) {
     const held = requests.filter((r) => ["pending", "approved"].includes(statusOf(r.events))).reduce((n, r) => n + Math.max(0, (r.items.find((i) => i.lineIndex === lineIndex)?.quantity ?? 0) - receiptQuantity(r, lineIndex)), 0);
     return { lineIndex, name: [l.productName || "Ordered item", l.variantLabel].filter(Boolean).join(" / "), sku: l.sku, available: confirmed && !unknown ? Math.max(0, shipped - received - held) : 0 };
   });
-  return { orderId, unknownParcelContents: unknown, lines, requests: requests.map((r) => ({
+  return { orderId, unknownParcelContents: unknown, lines, refunds: order.returnReceipts.map((r) => {
+    const d = r.refundDecisions[0], sums = /* @__PURE__ */ new Map();
+    if (d?.status === "settled") for (const a of d.allocations) sums.set(a.kind, (sums.get(a.kind) ?? 0) + a.amountMinor);
+    return { receiptId: r.id, receivedAt: r.createdAt.toISOString(), status: d?.status ?? "review", amountMinor: d?.amountMinor ?? 0, currency: order.currency, updatedAt: (d?.createdAt ?? r.createdAt).toISOString(), tenders: [...sums].map(([kind, amountMinor]) => ({ kind, amountMinor })) };
+  }), requests: requests.map((r) => ({
     id: r.id,
+    reasonCode: r.reasonCategory?.code ?? "unspecified",
     status: statusOf(r.events),
     version: r.events.at(-1)?.id ?? r.id,
     reason: r.reason,
@@ -899,7 +907,7 @@ async function createCustomerReturn(ctx, input, owner = {}) {
   const previous = await replay();
   if (previous) return previous;
   try {
-    await ctx.db.insert(returnRequests).values({ id: requestId, orderId: v.orderId, items: values.items, reason: v.reason, fingerprint: hash, createdAt: /* @__PURE__ */ new Date() });
+    await ctx.db.batch([ctx.db.insert(returnRequests).values({ id: requestId, orderId: v.orderId, items: values.items, reason: v.reason, fingerprint: hash, createdAt: /* @__PURE__ */ new Date() }), ctx.db.insert(returnRequestReasons).values({ requestId, code: v.reasonCode })]);
   } catch (error) {
     const previous2 = await replay();
     if (previous2) return previous2;

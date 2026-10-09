@@ -1,5 +1,5 @@
 import { TalismanEnv } from 'talisman-cms/client';
-import { ParcelItem } from './schema.js';
+import { ParcelItem, ReturnedItem } from './schema.js';
 import 'drizzle-orm';
 import 'drizzle-orm/sqlite-core';
 
@@ -70,13 +70,26 @@ declare function manageShopperData(env: TalismanEnv, actor: string, input: unkno
             id: string;
             returnRequests: {
                 id: string;
-                items: ParcelItem[];
                 createdAt: Date;
                 reason: string;
+                items: ParcelItem[];
                 events: {
                     createdAt: Date;
-                    status: "closed" | "pending" | "approved" | "declined" | "cancelled";
+                    status: "cancelled" | "closed" | "pending" | "approved" | "declined";
                     customerMessage: string;
+                }[];
+                reasonCategory: {
+                    code: "size_fit" | "damaged" | "wrong_item" | "changed_mind" | "other" | "unspecified";
+                } | null;
+            }[];
+            returnReceipts: {
+                id: string;
+                createdAt: Date;
+                items: ReturnedItem[];
+                refundDecisions: {
+                    createdAt: Date;
+                    status: "needed" | "not_needed" | "settled";
+                    amountMinor: number;
                 }[];
             }[];
             providerRefunds: {
@@ -85,9 +98,9 @@ declare function manageShopperData(env: TalismanEnv, actor: string, input: unkno
             }[];
             fulfillments: {
                 createdAt: Date;
+                kind: "correction" | "shipment" | "reopen" | "complete";
                 carrier: string | null;
                 trackingNumber: string | null;
-                kind: "shipment" | "correction" | "reopen" | "complete";
             }[];
             giftCardRefunds: {
                 createdAt: Date;
@@ -111,7 +124,7 @@ declare function manageShopperData(env: TalismanEnv, actor: string, input: unkno
     giftCardPurchases: {
         id: string;
         amountCents: number;
-        status: "paid" | "partially_refunded" | "refunded" | "pending" | "cancelled" | "review";
+        status: "paid" | "partially_refunded" | "refunded" | "cancelled" | "pending" | "review";
         currency: string;
         providerRefundedCents: number;
         createdAt: Date;
