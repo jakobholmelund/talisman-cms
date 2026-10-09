@@ -8,6 +8,7 @@ export async function readOrderTracking(ctx: CommerceContext, orderId: string, s
   if (!authorized || authorized.paymentProvider === 'admin_test') return null;
   const order = await ctx.db.query.orders.findFirst({ where: { id: orderId }, columns: { id: true, items: true }, with: {
     fulfillments: { columns: { id: true, kind: true, correctsId: true, carrier: true, trackingNumber: true, createdAt: true }, orderBy: (_t, { sql }) => sql`rowid`, with: { contents: { columns: { items: true } } } },
+    recoveryCases: { columns: { id:true,kind:true,lineIndex:true,quantity:true,target:true,createdAt:true }, with: { shipments: { columns: { id:true,quantity:true,carrier:true,trackingNumber:true,createdAt:true }, orderBy: (_t,{sql})=>sql`rowid` }, events: { columns: { kind:true,status:true,shipmentId:true,carrier:true,trackingNumber:true }, orderBy: (_t,{sql})=>sql`rowid` } } },
     returnReceipts: { columns: { id: true, items: true, createdAt: true }, with: { inspections: { columns: { items: true } } } },
   } });
   if (!order) return null;
@@ -31,6 +32,7 @@ export async function readOrderTracking(ctx: CommerceContext, orderId: string, s
   return { orderId, lines: descriptions.map((line, lineIndex) => {
     const shipped = parcels.reduce((n, p) => n + (p.items?.find(i => i.lineIndex === lineIndex)?.quantity ?? 0), 0);
     return { ...label(lineIndex), ordered: line.quantity, shipped, remaining: unknown ? null : Math.max(0, line.quantity - shipped), received: received(lineIndex) };
-  }), parcels, returns };
+  }), parcels, returns, recoveries: order.recoveryCases.map(c=>({id:c.id,kind:c.kind,quantity:c.quantity,name:c.target.name,sku:c.target.sku,status:c.events.at(-1)?.status??'open',
+    shipments:c.shipments.map(s=>{const corrected=c.events.filter(e=>e.kind==='tracking'&&e.shipmentId===s.id).at(-1);return {id:s.id,quantity:s.quantity,shippedAt:s.createdAt.toISOString(),carrier:corrected?corrected.carrier:s.carrier,trackingNumber:corrected?corrected.trackingNumber:s.trackingNumber};})})) };
 }
 export type CustomerOrderTracking = NonNullable<Awaited<ReturnType<typeof readOrderTracking>>>;

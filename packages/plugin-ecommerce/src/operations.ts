@@ -14,3 +14,5 @@ export { listSuppliers, saveSupplier, listPurchaseOrders, readPurchaseOrder, sav
 export { readOperationsReport } from './operations-report';
 
 export { listSupplierIssues, readSupplierIssue, reportSupplierIssue, recordSupplierIssue } from './supplier-issues';
+
+export { createRecoveryCase, recordRecoveryEvent, shipRecoveryCase, listRecoveryCases, readRecoveryCase, readRecoveryOrder, listExchangeChoices } from './recoveries';

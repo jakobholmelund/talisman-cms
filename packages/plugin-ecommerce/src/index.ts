@@ -38,7 +38,7 @@ export interface EcommercePluginConfig {
    * such as `extensions/orders`, or an absolute path on the site, such as `/orders`. The integration
    * refuses anything that is not a path on the site, such as a full URL, at config time.
    */
-  adminPages?: Partial<Record<'orders' | 'promotions' | 'giftCards' | 'testCheckout' | 'attention' | 'emails' | 'stock' | 'returns' | 'refunds' | 'replenishment' | 'purchasing' | 'report' | 'exports', string>>;
+  adminPages?: Partial<Record<'orders' | 'promotions' | 'giftCards' | 'testCheckout' | 'attention' | 'emails' | 'stock' | 'returns' | 'refunds' | 'replenishment' | 'purchasing' | 'report' | 'exports' | 'recoveries', string>>;
   /**
    * Adds the admin-only Test checkout screen and `/admin/api/ecommerce/test-checkout`, which place
    * orders through the simulated `admin_test` payment provider. When false, neither is injected and
@@ -218,6 +218,7 @@ export const ecommercePlugin = (
     { key: 'emails', path: 'commerce-emails', component: 'EmailRecovery', label: 'Email recovery', description: 'Review failed notices and request an audited retry.' },
     { key: 'stock', path: 'commerce-stock', component: 'StockOverview', label: 'Stock overview', description: 'Find unavailable choices and low shared component stock.' },
     { key: 'returns', path: 'commerce-returns', component: 'Returns', label: 'Returns', description: 'Review customer return requests and pending inspections.' },
+    { key: 'recoveries', path: 'commerce-recoveries', component: 'Recoveries', label: 'Parcels & exchanges', description: 'Resolve lost or damaged parcels, send replacements and arrange equal-price exchanges.' },
     { key: 'refunds', path: 'commerce-refunds', component: 'RefundFollowUp', label: 'Refund follow-up', description: 'Resolve received returns against confirmed refund records.' },
     { key: 'replenishment', path: 'commerce-replenishment', component: 'Replenishment', label: 'Replenishment', description: 'Set stock targets and track expected supplier deliveries.' },
     { key: 'purchasing', path: 'commerce-purchasing', component: 'PurchaseOrders', label: 'Purchase orders', description: 'Manage suppliers, purchase stock and receive partial deliveries.' },
@@ -775,6 +776,15 @@ export const ecommercePlugin = (
           fields: nativeFields(schema.purchaseOrderLines, ['id', 'purchaseOrderId', 'lineIndex', 'deliveryId']),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'purchaseOrderLines', idColumn: 'id' }
         });
+        collections.push({ name: 'Parcel and Exchange Cases', slug: '_ecommerce_recovery_cases', readOnly: true, adminSection: 'commerce',
+          fields: nativeFields(schema.recoveryCases, ['id', 'orderId', 'kind', 'fulfillmentId', 'sourceShipmentId', 'receiptId', 'lineIndex', 'quantity', 'target', 'actor', 'reason', 'fingerprint', 'createdAt', 'redactedAt']),
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'recoveryCases', idColumn: 'id' } });
+        collections.push({ name: 'Replacement Shipments', slug: '_ecommerce_recovery_shipments', readOnly: true, adminSection: 'commerce',
+          fields: nativeFields(schema.recoveryShipments, ['id', 'caseId', 'expectedVersion', 'quantity', 'stock', 'carrier', 'trackingNumber', 'actor', 'reason', 'fingerprint', 'createdAt', 'redactedAt']),
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'recoveryShipments', idColumn: 'id' } });
+        collections.push({ name: 'Parcel and Exchange History', slug: '_ecommerce_recovery_events', readOnly: true, adminSection: 'commerce',
+          fields: nativeFields(schema.recoveryEvents, ['id', 'caseId', 'expectedVersion', 'kind', 'status', 'shipmentId', 'carrier', 'trackingNumber', 'actor', 'reason', 'fingerprint', 'createdAt', 'redactedAt']),
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'recoveryEvents', idColumn: 'id' } });
         collections.push({
           name: 'Supplier Delivery Issues', slug: '_ecommerce_supplier_issues', readOnly: true, adminSection: 'commerce',
           fields: nativeFields(schema.supplierIssues, ['id', 'purchaseLineId', 'kind', 'quantity', 'expectedPurchaseVersion', 'expectedDeliveryVersion', 'actor', 'reason', 'fingerprint', 'createdAt']),

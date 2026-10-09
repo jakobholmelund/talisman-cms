@@ -1,10 +1,11 @@
+import { openRecoveryCase } from './recoveries';
 import { openSupplierIssue } from './supplier-issues';
 import { effectiveDeliveryDate } from './replenishment';
 import { sql } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb } from './db';
 
-export type AttentionKind = 'payment_review' | 'older_payments' | 'tax_review' | 'email' | 'gift_hold' | 'shipment' | 'dispute' | 'return_request' | 'inspection' | 'refund' | 'incoming' | 'supplier_issue';
+export type AttentionKind = 'payment_review' | 'older_payments' | 'tax_review' | 'email' | 'gift_hold' | 'shipment' | 'dispute' | 'return_request' | 'inspection' | 'refund' | 'incoming' | 'supplier_issue' | 'parcel_recovery';
 type AttentionRow = { kind: AttentionKind; id: string; subject: string; createdAt: number; detail: string | null };
 
 /** A read-only snapshot. Exact counts include every matching record; each category shows its ten
@@ -51,7 +52,7 @@ export async function readCommerceAttention(env: TalismanEnv, now = Math.floor(D
     UNION ALL SELECT 'refund',r.id,'Return refund',r.created_at,r.order_id FROM _ecommerce_return_receipts r JOIN _ecommerce_orders o ON o.id=r.order_id WHERE COALESCE(o.payment_provider,'stripe')<>'admin_test' AND NOT EXISTS(SELECT 1 FROM _ecommerce_shopper_audits a WHERE a.account_id=o.user_id AND a.action='anonymize') AND COALESCE((SELECT status FROM _ecommerce_return_refund_decisions d WHERE d.receipt_id=r.id ORDER BY rowid DESC LIMIT 1),'review') IN ('review','needed')
     UNION ALL SELECT 'incoming',d.id,'Overdue delivery',d.created_at,d.supplier FROM _ecommerce_replenishment_deliveries d WHERE ${effectiveDeliveryDate} < date(${now},'unixepoch') AND NOT EXISTS(SELECT 1 FROM _ecommerce_replenishment_delivery_events e WHERE e.delivery_id=d.id AND e.kind='cancelled') AND d.quantity>COALESCE((SELECT sum(m.delta) FROM _ecommerce_replenishment_delivery_events e JOIN _ecommerce_stock_movements m ON m.id=e.movement_id WHERE e.delivery_id=d.id),0)
     UNION ALL SELECT 'supplier_issue',i.id,'Supplier delivery issue',i.created_at,i.kind||' · '||i.quantity||' units' FROM _ecommerce_supplier_issues i WHERE ${openSupplierIssue}
-  ), attention AS (SELECT * FROM attention_a UNION ALL SELECT * FROM attention_b UNION ALL SELECT * FROM return_events)`;
+  ), recovery_work AS (SELECT 'parcel_recovery' AS kind,c.id,'Parcel or exchange' AS subject,c.created_at AS createdAt,c.kind||' · '||c.quantity||' units' AS detail FROM _ecommerce_recovery_cases c WHERE ${openRecoveryCase}), attention AS (SELECT * FROM attention_a UNION ALL SELECT * FROM attention_b UNION ALL SELECT * FROM return_events UNION ALL SELECT * FROM recovery_work)`;
   const [counts, rows] = await db.batch([
     db.all<{ kind: AttentionKind; count: number }>(sql`${queue} SELECT kind, count(*) AS count FROM attention GROUP BY kind`),
     db.all<AttentionRow>(sql`${queue}, ranked AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY kind ORDER BY createdAt, id) AS rank FROM attention)

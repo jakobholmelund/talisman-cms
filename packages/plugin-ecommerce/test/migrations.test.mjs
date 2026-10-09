@@ -23,6 +23,18 @@ const tables = [pluginSchema, coreSchema, authSchema].flatMap((module) => Object
 
 /** The commerce triggers, with the table each one is on. */
 const TRIGGERS = [
+  '_ecommerce_recovery_case_guard ON _ecommerce_recovery_cases',
+  '_ecommerce_recovery_event_guard ON _ecommerce_recovery_events',
+  '_ecommerce_recovery_shipment_guard ON _ecommerce_recovery_shipments',
+  '_ecommerce_recovery_shipment_apply ON _ecommerce_recovery_shipments',
+  '_ecommerce_recovery_refund_guard ON _ecommerce_return_refund_decisions',
+  '_ecommerce_recovery_erasure_guard ON _ecommerce_shopper_audits',
+  '_ecommerce_recovery_cases_immutable_update ON _ecommerce_recovery_cases',
+  '_ecommerce_recovery_cases_immutable_delete ON _ecommerce_recovery_cases',
+  '_ecommerce_recovery_shipments_immutable_update ON _ecommerce_recovery_shipments',
+  '_ecommerce_recovery_shipments_immutable_delete ON _ecommerce_recovery_shipments',
+  '_ecommerce_recovery_events_immutable_update ON _ecommerce_recovery_events',
+  '_ecommerce_recovery_events_immutable_delete ON _ecommerce_recovery_events',
   '_ecommerce_supplier_issues_immutable_update ON _ecommerce_supplier_issues',
   '_ecommerce_supplier_issues_immutable_delete ON _ecommerce_supplier_issues',
   '_ecommerce_supplier_issue_events_immutable_update ON _ecommerce_supplier_issue_events',

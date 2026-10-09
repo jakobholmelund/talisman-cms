@@ -19,6 +19,16 @@ export function renderOrderTracking(root: HTMLElement, data: CustomerOrderTracki
     if (parcel.items === null) add(article, 'p', 'Item quantities for this earlier parcel are unavailable.');
     else { const list = add(article, 'ul', ''); for (const item of parcel.items) add(list, 'li', `${item.quantity} × ${item.name}${item.sku ? ` · ${item.sku}` : ''}`); }
   }
+  if (data.recoveries?.length) {
+    add(fragment, 'h3', 'Replacements and exchanges');
+    for (const c of data.recoveries) {
+      const article=add(fragment,'article','');add(article,'h4',`${c.kind==='exchange'?'Exchange':c.kind==='lost'?'Lost parcel replacement':'Damaged parcel replacement'} · ${c.status==='open'?'In progress':'Resolved'}`);
+      add(article,'p',`${c.quantity} × ${c.name}${c.sku?` · ${c.sku}`:''}`);
+      if(!c.shipments.length)add(article,'p','No replacement shipment has been recorded yet.');
+      for(const s of c.shipments){add(article,'p',`${s.quantity} units shipped ${new Date(s.shippedAt).toLocaleDateString()} · ${[s.carrier,s.trackingNumber?`Tracking: ${s.trackingNumber}`:'Tracking number not provided'].filter(Boolean).join(' · ')}`);}
+    }
+    add(fragment,'p','Replacement parcels are additional shipments. Original purchase totals and parcel quantities stay as recorded.');
+  }
   add(fragment, 'h3', 'Received returns');
   if (!data.returns.length) add(fragment, 'p', 'No returned items have been received yet.');
   for (const receipt of data.returns) {

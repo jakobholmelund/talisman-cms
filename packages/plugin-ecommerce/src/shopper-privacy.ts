@@ -25,6 +25,7 @@ export async function manageShopperData(env: TalismanEnv, actor: string, input: 
   // The same guard is evaluated inside the write batch to cover a checkout racing this request.
   const available = and(eq(schema.customerAccounts.id, account.id), isNull(schema.customerAccounts.anonymizedAt));
   const noObligations = sql`credit_balance = 0
+    AND NOT EXISTS(SELECT 1 FROM _ecommerce_recovery_cases c JOIN _ecommerce_orders o ON o.id=c.order_id WHERE o.user_id=${account.id} AND COALESCE((SELECT status FROM _ecommerce_recovery_events WHERE case_id=c.id ORDER BY rowid DESC LIMIT 1),'open')='open')
     AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders o WHERE o.user_id = ${account.id}
       AND (o.status IN ('pending','disputed') OR (o.status IN ('paid','partially_refunded') AND o.fulfillment_status <> 'fulfilled'
         AND (o.shipping_address IS NOT NULL OR EXISTS (SELECT 1 FROM json_each(o.items) i JOIN _ecommerce_products p ON p.id = json_extract(i.value, '$.productId') WHERE p.is_physical = 1)))))
@@ -61,6 +62,7 @@ export async function manageShopperData(env: TalismanEnv, actor: string, input: 
       columns: { id: true }, with: {
         returnRequests: { columns: { id:true,items:true,reason:true,createdAt:true }, with: { reasonCategory: { columns: { code:true } }, events: { columns: { status:true,customerMessage:true,createdAt:true } } } },
         returnReceipts: { columns: { id:true,items:true,createdAt:true }, with: { refundDecisions: { columns: { status:true,amountMinor:true,createdAt:true } } } },
+        recoveryCases: { columns: { id:true,kind:true,lineIndex:true,quantity:true,createdAt:true }, with: { shipments: { columns: { quantity:true,carrier:true,trackingNumber:true,createdAt:true } }, events: { columns: { kind:true,status:true,carrier:true,trackingNumber:true,createdAt:true } } } },
         providerRefunds: { columns: { amountCents: true, createdAt: true } },
         giftCardRefunds: { columns: { amountCents: true, createdAt: true } },
         fulfillments: { columns: { kind: true, carrier: true, trackingNumber: true, createdAt: true } },
@@ -97,6 +99,9 @@ export async function manageShopperData(env: TalismanEnv, actor: string, input: 
   if (values.action === 'anonymize') {
     const anonymousEmail = `${account.id}@anonymized.invalid`;
     statements.push(
+      db.update(schema.recoveryCases).set({reason:'[redacted]',redactedAt:now}).where(and(isNull(schema.recoveryCases.redactedAt),inArray(schema.recoveryCases.orderId,db.select({id:schema.orders.id}).from(schema.orders).where(eq(schema.orders.userId,account.id))),recorded)),
+      db.update(schema.recoveryEvents).set({reason:'[redacted]',redactedAt:now}).where(and(isNull(schema.recoveryEvents.redactedAt),inArray(schema.recoveryEvents.caseId,db.select({id:schema.recoveryCases.id}).from(schema.recoveryCases).where(inArray(schema.recoveryCases.orderId,db.select({id:schema.orders.id}).from(schema.orders).where(eq(schema.orders.userId,account.id))))),recorded)),
+      db.update(schema.recoveryShipments).set({reason:'[redacted]',redactedAt:now}).where(and(isNull(schema.recoveryShipments.redactedAt),inArray(schema.recoveryShipments.caseId,db.select({id:schema.recoveryCases.id}).from(schema.recoveryCases).where(inArray(schema.recoveryCases.orderId,db.select({id:schema.orders.id}).from(schema.orders).where(eq(schema.orders.userId,account.id))))),recorded)),
       db.update(schema.returnRefundDecisions).set({reason:'[redacted]',redactedAt:now}).where(and(isNull(schema.returnRefundDecisions.redactedAt),inArray(schema.returnRefundDecisions.receiptId,db.select({id:schema.returnReceipts.id}).from(schema.returnReceipts).where(inArray(schema.returnReceipts.orderId,db.select({id:schema.orders.id}).from(schema.orders).where(eq(schema.orders.userId,account.id))))),recorded)),
       db.update(schema.returnRequests).set({reason:'[redacted]',redactedAt:now}).where(and(isNull(schema.returnRequests.redactedAt),inArray(schema.returnRequests.orderId,db.select({id:schema.orders.id}).from(schema.orders).where(eq(schema.orders.userId,account.id))),recorded)),
       db.update(schema.returnRequestEvents).set({reason:'[redacted]',customerMessage:'',redactedAt:now}).where(and(isNull(schema.returnRequestEvents.redactedAt),inArray(schema.returnRequestEvents.requestId,db.select({id:schema.returnRequests.id}).from(schema.returnRequests).where(inArray(schema.returnRequests.orderId,db.select({id:schema.orders.id}).from(schema.orders).where(eq(schema.orders.userId,account.id))))),recorded)),

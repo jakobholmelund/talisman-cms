@@ -27,6 +27,7 @@
 // the exit code; they are printed as GAP.
 
 import { chromium } from 'playwright-core';
+import { commerceRecoveryFlow } from './commerce-recovery-flow.mjs';
 import { commercePurchasingFlow } from './commerce-purchasing-flow.mjs';
 import { commerceAftercareFlow } from './commerce-aftercare-flow.mjs';
 import { returnsFlow } from './returns-flow.mjs';
@@ -511,6 +512,7 @@ const steps = {
   'promotions-workflow': ctx => promotionsFlow(ctx, { fail, expectVisible, expectHidden, expectValue, expectNoAlert, waitUntil }),
 
   'commerce-warehouse': ctx => warehouseFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
+  'commerce-recoveries': ctx => commerceRecoveryFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'commerce-purchasing': ctx => commercePurchasingFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'commerce-aftercare': ctx => commerceAftercareFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'commerce-returns': ctx => returnsFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
