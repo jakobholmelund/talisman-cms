@@ -27,6 +27,7 @@
 // the exit code; they are printed as GAP.
 
 import { chromium } from 'playwright-core';
+import { returnsFlow } from './returns-flow.mjs';
 import { warehouseLifecycleFlow } from './warehouse-lifecycle-flow.mjs';
 import { warehouseFlow } from './warehouse-flow.mjs';
 import { ordersFlow } from './orders-flow.mjs';
@@ -508,6 +509,7 @@ const steps = {
   'promotions-workflow': ctx => promotionsFlow(ctx, { fail, expectVisible, expectHidden, expectValue, expectNoAlert, waitUntil }),
 
   'commerce-warehouse': ctx => warehouseFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
+  'commerce-returns': ctx => returnsFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'warehouse-lifecycle': ctx => warehouseLifecycleFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'commerce-daily': ctx => commerceDailyFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'commerce-operations': ctx => commerceOpsFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
@@ -2266,6 +2268,7 @@ const steps = {
 // Runner
 
 async function runStep(ctx, name) {
+  if(name==='commerce-returns'&&!process.env.TALISMAN_E2E_RETURNS_ORDER_ID) return {name,status:'skip',ms:0,message:'requires a disposable paid order via TALISMAN_E2E_RETURNS_ORDER_ID; see e2e/returns-flow.mjs'};
   const startedAt = Date.now();
   let status = 'pass';
   let message = '';
