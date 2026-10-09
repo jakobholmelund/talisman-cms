@@ -23,6 +23,17 @@ const tables = [pluginSchema, coreSchema, authSchema].flatMap((module) => Object
 
 /** The commerce triggers, with the table each one is on. */
 const TRIGGERS = [
+  '_ecommerce_return_requests_immutable_delete ON _ecommerce_return_requests',
+  '_ecommerce_return_request_events_immutable_delete ON _ecommerce_return_request_events',
+  '_ecommerce_return_request_receipts_immutable_delete ON _ecommerce_return_request_receipts',
+  '_ecommerce_return_request_receipts_immutable_update ON _ecommerce_return_request_receipts',
+  '_ecommerce_return_requests_immutable_update ON _ecommerce_return_requests',
+  '_ecommerce_return_request_events_immutable_update ON _ecommerce_return_request_events',
+  '_ecommerce_return_request_quantities_guard ON _ecommerce_return_requests',
+  '_ecommerce_return_request_decision_guard ON _ecommerce_return_request_events',
+  '_ecommerce_return_request_approval_guard ON _ecommerce_return_request_events',
+  '_ecommerce_return_request_receipt_guard ON _ecommerce_return_request_receipts',
+
   '_ecommerce_return_inspections_immutable_update ON _ecommerce_return_inspections',
   '_ecommerce_return_inspections_immutable_delete ON _ecommerce_return_inspections',
   '_ecommerce_inspection_stock_immutable_update ON _ecommerce_inspection_stock',

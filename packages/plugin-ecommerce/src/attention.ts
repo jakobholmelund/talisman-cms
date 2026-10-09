@@ -2,14 +2,14 @@ import { sql } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb } from './db';
 
-export type AttentionKind = 'payment_review' | 'older_payments' | 'tax_review' | 'email' | 'gift_hold' | 'shipment' | 'dispute';
+export type AttentionKind = 'payment_review' | 'older_payments' | 'tax_review' | 'email' | 'gift_hold' | 'shipment' | 'dispute' | 'return_request' | 'inspection';
 type AttentionRow = { kind: AttentionKind; id: string; subject: string; createdAt: number; detail: string | null };
 
 /** A read-only snapshot. Exact counts include every matching record; each category shows its ten
  * oldest records. No buyer addresses, provider credentials or gift card codes leave this query. */
 export async function readCommerceAttention(env: TalismanEnv, now = Math.floor(Date.now() / 1000)) {
   const db = commerceDb(env);
-  const queue = sql`WITH attention AS (
+  const queue = sql`WITH attention_a AS (
     SELECT 'payment_review' AS kind, id, 'Order' AS subject, reconcile_review_at AS createdAt, reconcile_last_error AS detail
       FROM _ecommerce_orders WHERE status = 'pending' AND reconcile_review_at IS NOT NULL
         AND COALESCE(payment_provider, 'stripe') <> 'admin_test'
@@ -22,7 +22,8 @@ export async function readCommerceAttention(env: TalismanEnv, now = Math.floor(D
       FROM _ecommerce_gift_card_purchases WHERE status = 'pending' AND reconcile_review_at IS NULL AND created_at <= ${now - 86400}
     UNION ALL SELECT 'tax_review', id, 'Order tax', tax_sync_review_at, tax_sync_last_error
       FROM _ecommerce_orders WHERE tax_sync_review_at IS NOT NULL AND COALESCE(payment_provider, 'stripe') <> 'admin_test'
-    UNION ALL SELECT 'tax_review', r.id, 'Tax reversal', r.tax_sync_review_at, r.tax_sync_last_error
+  ), attention_b AS (
+    SELECT 'tax_review' AS kind, r.id AS id, 'Tax reversal' AS subject, r.tax_sync_review_at AS createdAt, r.tax_sync_last_error AS detail
       FROM _ecommerce_tax_reversals r JOIN _ecommerce_orders o ON o.id = r.order_id
       WHERE r.tax_sync_review_at IS NOT NULL AND COALESCE(o.payment_provider, 'stripe') <> 'admin_test'
     UNION ALL SELECT 'email', e.id, e.kind, e.created_at, e.last_error FROM _ecommerce_email_deliveries e
@@ -38,7 +39,11 @@ export async function readCommerceAttention(env: TalismanEnv, now = Math.floor(D
     UNION ALL SELECT 'dispute', d.id, 'Payment dispute', d.created_at, d.status FROM _ecommerce_disputes d
       WHERE d.closed_at IS NULL AND (d.gift_card_purchase_id IS NOT NULL OR EXISTS (SELECT 1 FROM _ecommerce_orders o
         WHERE o.id = d.order_id AND COALESCE(o.payment_provider, 'stripe') <> 'admin_test'))
-  )`;
+  ), return_events AS (
+    SELECT 'return_request' AS kind,r.id,'Return request' AS subject,r.created_at AS createdAt,r.order_id AS detail FROM _ecommerce_return_requests r JOIN _ecommerce_orders o ON o.id=r.order_id WHERE COALESCE(o.payment_provider,'stripe')<>'admin_test' AND NOT EXISTS(SELECT 1 FROM _ecommerce_return_request_events e WHERE e.request_id=r.id)
+    UNION ALL SELECT 'inspection',r.id,'Received return',r.created_at,r.order_id FROM _ecommerce_return_receipts r JOIN _ecommerce_orders o ON o.id=r.order_id WHERE COALESCE(o.payment_provider,'stripe')<>'admin_test'
+      AND (SELECT COALESCE(sum(json_extract(value,'$.quantity')),0) FROM json_each(r.items) WHERE json_extract(value,'$.condition')='inspection')>COALESCE((SELECT sum(json_extract(i.value,'$.quantity')) FROM _ecommerce_return_inspections d,json_each(d.items) i WHERE d.receipt_id=r.id),0)
+  ), attention AS (SELECT * FROM attention_a UNION ALL SELECT * FROM attention_b UNION ALL SELECT * FROM return_events)`;
   const [counts, rows] = await db.batch([
     db.all<{ kind: AttentionKind; count: number }>(sql`${queue} SELECT kind, count(*) AS count FROM attention GROUP BY kind`),
     db.all<AttentionRow>(sql`${queue}, ranked AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY kind ORDER BY createdAt, id) AS rank FROM attention)

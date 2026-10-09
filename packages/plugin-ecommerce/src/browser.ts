@@ -1,3 +1,5 @@
+import type { CustomerReturns } from './return-requests';
+export type { CustomerReturns } from './return-requests';
 import type { CustomerOrderTracking } from './order-tracking';
 export type { CustomerOrderTracking } from './order-tracking';
 export const CART_UPDATED_EVENT = 'talisman:cart-updated';
@@ -33,7 +35,7 @@ async function commerceRequest<T>(path: string, method: 'GET' | 'POST' | 'DELETE
     body: body === undefined ? undefined : JSON.stringify(body)
   });
   const result = await response.json() as T & { error?: string };
-  if (!response.ok) throw new Error(result.error || 'Commerce request failed');
+  if (!response.ok) throw Object.assign(new Error(result.error || 'Commerce request failed'), {status:response.status});
   return result;
 }
 
@@ -206,3 +208,7 @@ export function installTalismanEcommerceBrowserHelpers(target: Window = window) 
 
   return target.TalismanEcommerce;
 }
+
+export function getCustomerReturns(orderId:string) { return commerceRequest<CustomerReturns>(`/api/ecommerce/returns?order=${encodeURIComponent(orderId)}`, 'GET'); }
+export function submitCustomerReturn(data:{orderId:string;requestKey:string;reason:string;items:Array<{lineIndex:number;quantity:number}>}) { return commerceRequest<{requestId:string}>('/api/ecommerce/returns','POST',{action:'request',data}); }
+export function cancelReturnRequest(data:{orderId:string;requestId:string;requestKey:string;expectedVersion:string}) { return commerceRequest<{eventId:string}>('/api/ecommerce/returns','POST',{action:'cancel',data}); }

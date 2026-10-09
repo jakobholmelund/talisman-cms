@@ -36,6 +36,8 @@ test('commerce tools link relative to the admin path and pass adminPages overrid
     'extensions/commerce-attention',
     'extensions/commerce-emails',
     'extensions/commerce-stock',
+    'extensions/commerce-returns',
+    'extensions/commerce-exports',
     'extensions/commerce-orders',
     'extensions/commerce-promotions',
     'extensions/commerce-gift-cards'
@@ -43,7 +45,7 @@ test('commerce tools link relative to the admin path and pass adminPages overrid
   const custom = ecommercePlugin({ adminPages: { attention: 'extensions/daily', emails: '/email-help', stock: 'extensions/inventory' } });
   assert.deepEqual(custom.adminLinks.slice(0, 3).map(link => link.href), ['extensions/daily', '/email-help', 'extensions/inventory']);
   assert.deepEqual(defaults.adminUi?.map(page => [page.path, page.section]), [
-    ['commerce-attention', 'commerce'], ['commerce-emails', 'commerce'], ['commerce-stock', 'commerce'],
+    ['commerce-attention', 'commerce'], ['commerce-emails', 'commerce'], ['commerce-stock', 'commerce'], ['commerce-returns', 'commerce'], ['commerce-exports', 'commerce'],
     ['commerce-orders', 'commerce'], ['commerce-promotions', 'commerce'],
     ['commerce-gift-cards', 'commerce']
   ]);
@@ -58,6 +60,8 @@ test('commerce tools link relative to the admin path and pass adminPages overrid
     ['commerce', 'Needs attention', 'extensions/commerce-attention'],
     ['commerce', 'Email recovery', 'extensions/commerce-emails'],
     ['commerce', 'Stock overview', 'extensions/commerce-stock'],
+    ['commerce', 'Returns', 'extensions/commerce-returns'],
+    ['commerce', 'Operations exports', 'extensions/commerce-exports'],
     ['commerce', 'Orders & fulfillment', '/orders'],
     ['commerce', 'Promotions & referrals', 'extensions/promotions'],
     ['commerce', 'Gift cards', 'https://external.example/cards'],

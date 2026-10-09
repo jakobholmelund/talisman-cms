@@ -1,4 +1,5 @@
 ---
+import CustomerReturns from '@talisman-cms/plugin-ecommerce/components/CustomerReturns.astro';
 import OrderTracking from '@talisman-cms/plugin-ecommerce/components/OrderTracking.astro';
 import Layout from '../../layouts/Layout.astro';
 import { env as cfEnv } from 'cloudflare:workers';
@@ -56,7 +57,7 @@ const orderSummary = await getOrderSummary(cfEnv as any, orderId, Astro.cookies)
         </>
       )}
 
-      {orderSummary && orderSummary.order.paymentProvider !== 'admin_test' && <OrderTracking orderId={orderSummary.order.id} />}
+      {orderSummary && orderSummary.order.paymentProvider !== 'admin_test' && <><OrderTracking orderId={orderSummary.order.id} /><CustomerReturns orderId={orderSummary.order.id} /></>}
       <div class="mt-8 flex flex-wrap gap-3">
         <a href="/shop" class="inline-flex h-11 items-center justify-center rounded-full bg-brand-600 px-6 text-sm font-medium text-white transition-colors hover:bg-brand-700">
           Back to shop

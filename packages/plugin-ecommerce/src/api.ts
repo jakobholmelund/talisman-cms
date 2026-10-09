@@ -1,3 +1,4 @@
+import { readCustomerReturns, createCustomerReturn, cancelCustomerReturn, type ReturnOwner } from './return-requests';
 import { readOrderTracking } from './order-tracking';
 import { commerceContext, type CommerceApiOptions } from './commerce-context';
 import { checkCartItems, claimCart, findCart, getOrCreateCart, quoteCart, updateCartItems, type CartItemInput } from './basket';
@@ -59,6 +60,11 @@ export function bindCommerceApi(options: CommerceApiOptions) {
       updateStatus: (id: string, status: string, fulfillment?: FulfillmentDetails) => updateOrderStatus(ctx, id, status, fulfillment),
       finalizePayment: (id: string, options: PaymentConfirmation) => finalizeOrderPayment(ctx, { orderId: id, ...options }),
       cancel: (id: string, options: CancelOptions = {}) => cancelOrder(ctx, id, options),
+    },
+    returns: {
+      read: (id:string, owner:ReturnOwner={}) => readCustomerReturns(ctx,id,owner),
+      request: (input:unknown, owner:ReturnOwner={}) => createCustomerReturn(ctx,input,owner),
+      cancel: (input:unknown, owner:ReturnOwner={}) => cancelCustomerReturn(ctx,input,owner),
     },
     webhooks: {
       handleStripe: (payload: string, signature: string, secret?: string) => handleStripeWebhook(ctx, payload, signature, secret),

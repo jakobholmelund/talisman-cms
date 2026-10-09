@@ -1,0 +1,32 @@
+---
+interface Props { orderId:string; }
+const {orderId}=Astro.props;
+---
+<section class="talisman-customer-returns" data-customer-returns data-order-id={orderId} aria-label="Return requests">
+  <h2>Return requests</h2>
+  <p>Request a return for received items. Wait for staff approval and return instructions before sending goods. Receiving goods and any refund are handled separately.</p>
+  <p data-return-status role="status" aria-live="polite">Loading return requests…</p>
+  <div data-return-history></div>
+  <form data-return-form aria-label="Request a return" hidden>
+    <div data-return-lines></div>
+    <label>Reason for your return<textarea name="reason" minlength="8" maxlength="1000" required></textarea></label>
+    <button type="submit">Submit return request</button>
+    <button type="button" data-discard-return>Discard request draft</button>
+  </form>
+  <button type="button" data-recover-return hidden>Recover same request</button>
+  <button type="button" data-refresh-returns>Refresh return requests</button>
+</section>
+<script>
+  import {mountCustomerReturns} from './customer-returns-view';
+  for(const root of document.querySelectorAll<HTMLElement>('[data-customer-returns]')) mountCustomerReturns(root);
+</script>
+<style is:global>
+  .talisman-customer-returns{margin:2rem 0;max-width:48rem;overflow-wrap:anywhere}
+  .talisman-customer-returns h2{font-size:1.5rem;margin:1rem 0}
+  .talisman-customer-returns article{border-top:1px solid #aaa5;padding:1rem 0}
+  .talisman-customer-returns label{display:flex;flex-direction:column;gap:.5rem;margin:1rem 0}
+  .talisman-customer-returns input,.talisman-customer-returns textarea{font:inherit;padding:.5rem;border:1px solid #aaa;border-radius:.3rem;color:inherit;background:transparent;min-width:0;max-width:100%}
+  .talisman-customer-returns input{width:6rem}.talisman-customer-returns textarea{width:100%;min-height:6rem}
+  .talisman-customer-returns button{font:inherit;padding:.6rem .8rem;border:1px solid currentColor;border-radius:.5rem;margin:.25rem .25rem .25rem 0;background:transparent;cursor:pointer}
+  .talisman-customer-returns button:disabled{opacity:.6;cursor:wait}
+</style>

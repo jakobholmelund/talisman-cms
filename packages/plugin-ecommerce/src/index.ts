@@ -38,7 +38,7 @@ export interface EcommercePluginConfig {
    * such as `extensions/orders`, or an absolute path on the site, such as `/orders`. The integration
    * refuses anything that is not a path on the site, such as a full URL, at config time.
    */
-  adminPages?: Partial<Record<'orders' | 'promotions' | 'giftCards' | 'testCheckout' | 'attention' | 'emails' | 'stock', string>>;
+  adminPages?: Partial<Record<'orders' | 'promotions' | 'giftCards' | 'testCheckout' | 'attention' | 'emails' | 'stock' | 'returns' | 'exports', string>>;
   /**
    * Adds the admin-only Test checkout screen and `/admin/api/ecommerce/test-checkout`, which place
    * orders through the simulated `admin_test` payment provider. When false, neither is injected and
@@ -217,6 +217,8 @@ export const ecommercePlugin = (
     { key: 'attention', path: 'commerce-attention', component: 'Attention', label: 'Needs attention', description: 'Find payment reviews, email failures, held cards, and orders waiting to ship.' },
     { key: 'emails', path: 'commerce-emails', component: 'EmailRecovery', label: 'Email recovery', description: 'Review failed notices and request an audited retry.' },
     { key: 'stock', path: 'commerce-stock', component: 'StockOverview', label: 'Stock overview', description: 'Find unavailable choices and low shared component stock.' },
+    { key: 'returns', path: 'commerce-returns', component: 'Returns', label: 'Returns', description: 'Review customer return requests and pending inspections.' },
+    { key: 'exports', path: 'commerce-exports', component: 'OperationsExports', label: 'Operations exports', description: 'Download filtered order, return and stock records.' },
     { key: 'orders', path: 'commerce-orders', component: 'Orders', label: 'Orders & fulfillment', description: 'Review paid orders and record shipments.' },
     { key: 'promotions', path: 'commerce-promotions', component: 'Promotions', label: 'Promotions & referrals', description: 'Create discounts and manage referral rewards.' },
     { key: 'giftCards', path: 'commerce-gift-cards', component: 'GiftCards', label: 'Gift cards', description: 'Issue cards, check balances, and manage refunds.' },
@@ -866,6 +868,9 @@ export const ecommercePlugin = (
         collections.push({ name: 'Return Receipts', slug: '_ecommerce_return_receipts', adminSection: 'commerce', readOnly: true,
           fields: nativeFields(schema.returnReceipts, ['id', 'orderId', 'actor', 'reason', 'createdAt']),
           nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: 'returnReceipts', idColumn: 'id' } });
+        collections.push({ name: 'Return Requests', slug: '_ecommerce_return_requests', adminSection: 'commerce', readOnly: true, fields: nativeFields(schema.returnRequests, ['id','orderId','reason','createdAt']), nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: 'returnRequests', idColumn: 'id' } });
+        collections.push({ name: 'Return Request Decisions', slug: '_ecommerce_return_request_events', adminSection: 'commerce', readOnly: true, fields: nativeFields(schema.returnRequestEvents, ['id','requestId','status','actorKind','actor','reason','customerMessage','createdAt']), nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: 'returnRequestEvents', idColumn: 'id' } });
+        collections.push({ name: 'Return Request Receipts', slug: '_ecommerce_return_request_receipts', adminSection: 'commerce', readOnly: true, fields: nativeFields(schema.returnRequestReceipts, ['receiptId','requestId']), nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: 'returnRequestReceipts', idColumn: 'receiptId' } });
         collections.push({ name: 'Return Stock', slug: '_ecommerce_return_stock', adminSection: 'commerce', readOnly: true,
           fields: nativeFields(schema.returnStock, ['id', 'orderId', 'receiptId', 'reservationType', 'reservationId', 'targetType', 'targetId', 'quantity']),
           nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: 'returnStock', idColumn: 'id' } });
@@ -906,6 +911,7 @@ export const ecommercePlugin = (
       };
     },
     endpoints: [
+      { path: '/ecommerce/returns', entrypoint: resolveRouteEntrypoint('ecommerce-returns'), public: true },
       { path: '/ecommerce/operations', entrypoint: adminOperationsEndpointPath },
       {
         path: '/ecommerce/account',

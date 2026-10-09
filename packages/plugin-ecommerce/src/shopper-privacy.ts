@@ -28,6 +28,10 @@ export async function manageShopperData(env: TalismanEnv, actor: string, input: 
     AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders o WHERE o.user_id = ${account.id}
       AND (o.status IN ('pending','disputed') OR (o.status IN ('paid','partially_refunded') AND o.fulfillment_status <> 'fulfilled'
         AND (o.shipping_address IS NOT NULL OR EXISTS (SELECT 1 FROM json_each(o.items) i JOIN _ecommerce_products p ON p.id = json_extract(i.value, '$.productId') WHERE p.is_physical = 1)))))
+    AND NOT EXISTS (SELECT 1 FROM _ecommerce_return_requests r JOIN _ecommerce_orders o ON o.id=r.order_id WHERE o.user_id=${account.id}
+      AND COALESCE((SELECT status FROM _ecommerce_return_request_events e WHERE e.request_id=r.id ORDER BY rowid DESC LIMIT 1),'pending') IN ('pending','approved'))
+    AND NOT EXISTS (SELECT 1 FROM _ecommerce_return_receipts r JOIN _ecommerce_orders o ON o.id=r.order_id,json_each(r.items) i WHERE o.user_id=${account.id} AND json_extract(i.value,'$.condition')='inspection'
+      AND json_extract(i.value,'$.quantity')>COALESCE((SELECT sum(json_extract(j.value,'$.quantity')) FROM _ecommerce_return_inspections d,json_each(d.items) j WHERE d.receipt_id=r.id AND json_extract(j.value,'$.lineIndex')=json_extract(i.value,'$.lineIndex')),0))
     AND NOT EXISTS (SELECT 1 FROM _ecommerce_referrals r WHERE (r.referrer_account_id = ${account.id} OR r.referred_account_id = ${account.id})
       AND r.status = 'approved' AND NOT EXISTS (SELECT 1 FROM _ecommerce_credit_ledger l WHERE l.order_id = r.order_id
         AND l.account_id = ${account.id} AND l.kind IN ('welcome_award','referral_award')))
@@ -54,6 +58,7 @@ export async function manageShopperData(env: TalismanEnv, actor: string, input: 
     const orderIds = orders.map(order => order.id);
     const details = orderIds.length ? await db.query.orders.findMany({ where: { userId: account.id },
       columns: { id: true }, with: {
+        returnRequests: { columns: { id:true,items:true,reason:true,createdAt:true }, with: { events: { columns: { status:true,customerMessage:true,createdAt:true } } } },
         providerRefunds: { columns: { amountCents: true, createdAt: true } },
         giftCardRefunds: { columns: { amountCents: true, createdAt: true } },
         fulfillments: { columns: { kind: true, carrier: true, trackingNumber: true, createdAt: true } },
@@ -90,6 +95,8 @@ export async function manageShopperData(env: TalismanEnv, actor: string, input: 
   if (values.action === 'anonymize') {
     const anonymousEmail = `${account.id}@anonymized.invalid`;
     statements.push(
+      db.update(schema.returnRequests).set({reason:'[redacted]',redactedAt:now}).where(and(isNull(schema.returnRequests.redactedAt),inArray(schema.returnRequests.orderId,db.select({id:schema.orders.id}).from(schema.orders).where(eq(schema.orders.userId,account.id))),recorded)),
+      db.update(schema.returnRequestEvents).set({reason:'[redacted]',customerMessage:'',redactedAt:now}).where(and(isNull(schema.returnRequestEvents.redactedAt),inArray(schema.returnRequestEvents.requestId,db.select({id:schema.returnRequests.id}).from(schema.returnRequests).where(inArray(schema.returnRequests.orderId,db.select({id:schema.orders.id}).from(schema.orders).where(eq(schema.orders.userId,account.id))))),recorded)),
       db.update(schema.orders).set({ customerEmail: null, shippingAddress: null, billingAddress: null })
         .where(and(eq(schema.orders.userId, account.id), recorded)),
       db.update(schema.discountRedemptions).set({ emailNormalized: anonymousEmail }).where(and(eq(schema.discountRedemptions.accountId, account.id), recorded)),
@@ -103,6 +110,6 @@ export async function manageShopperData(env: TalismanEnv, actor: string, input: 
   }
   await commitBatch(db, statements);
   if (!await db.select({ id: schema.shopperAudits.id }).from(schema.shopperAudits).where(eq(schema.shopperAudits.id, auditId)).get())
-    throw new ShopperPrivacyError('Resolve open payments, deliveries, gift cards and credit awards before anonymizing this shopper');
+    throw new ShopperPrivacyError('Resolve open payments, deliveries, gift cards, open returns and credit awards before anonymizing this shopper');
   return { accountId: account.id, action: values.action, accountingRetained: true };
 }

@@ -7,7 +7,7 @@ import { hashOrderAccess } from './cookies';
 import { describeOrderItems } from './order-items';
 import { STOCK_COLUMNS } from './inventory';
 import { CommerceOperationsConflict } from './email-recovery';
-import { orders, fulfillments, parcelContents, returnReceipts, returnStock, returnInspections, inspectionStock, stocktakes, stockMovements } from './schema';
+import { orders, fulfillments, parcelContents, returnReceipts, returnStock, returnRequestReceipts, returnInspections, inspectionStock, stocktakes, stockMovements } from './schema';
 
 const id = z.string().trim().min(1).max(128);
 const reason = z.string().trim().min(8).max(500);
@@ -19,7 +19,7 @@ const stockVersion = z.string().min(20).max(40).refine(s => /^(?:\d{4}|[+-]\d{6}
 export const parcelItemsSchema = z.array(z.object({ lineIndex: z.number().int().min(0).max(199), quantity }).strict()).min(1).max(200)
   .refine(items => new Set(items.map(item => item.lineIndex)).size === items.length, 'Choose each order line once');
 const contentsSchema = z.object({ orderId: id, fulfillmentId: id, items: parcelItemsSchema, reason, requestKey: id.min(8) }).strict();
-const intakeSchema = z.object({ orderId: id, reason, requestKey: id.min(8), items: z.array(z.object({
+const intakeSchema = z.object({ orderId: id, returnRequestId: id.optional(), reason, requestKey: id.min(8), items: z.array(z.object({
   lineIndex: z.number().int().min(0).max(199), quantity, condition: z.enum(['sellable', 'damaged', 'inspection']), restock: z.boolean(),
 }).strict().refine(item => !item.restock || item.condition === 'sellable', 'Only sellable goods can be restocked')).min(1).max(200)
   .refine(items => new Set(items.map(item => item.lineIndex)).size === items.length, 'Choose each order line once') }).strict();
@@ -70,6 +70,7 @@ export async function receiveOrderReturn(env: TalismanEnv, input: unknown, actor
     await db.batch([
       db.insert(returnReceipts).values({ id: receiptId, orderId: values.orderId, items: values.items, actor, reason: values.reason, fingerprint, createdAt: new Date() }),
       ...restocked.map(row => db.insert(returnStock).values(row)),
+      ...(values.returnRequestId ? [db.insert(returnRequestReceipts).values({ receiptId, requestId: values.returnRequestId })] : []),
     ]);
   } catch (cause) {
     const previous = await replay(); if (previous) return previous;

@@ -126,6 +126,7 @@ export const orders = sqliteTable('_ecommerce_orders', {
   index('_ecommerce_orders_discount_cleanup_idx').on(table.updatedAt).where(sql`${table.discountCleanupPending} = 1`),
   index('_ecommerce_orders_customer_email_idx').on(sql`lower(${table.customerEmail})`),
   // Checkout reconciliation reads pending orders by age.
+  index('_ecommerce_orders_created_idx').on(table.createdAt),
   index('_ecommerce_orders_pending_idx').on(table.createdAt).where(sql`${table.status} = 'pending'`),
   // The admin orders queue: real orders that can still ship, and real orders past checkout.
   index('_ecommerce_orders_awaiting_idx').on(table.createdAt, table.id)
@@ -289,6 +290,7 @@ export const componentReservations = sqliteTable('_ecommerce_component_reservati
   releasedAt: integer('released_at', { mode: 'timestamp' })
 }, (table) => [
   uniqueIndex('component_reservation_unique').on(table.orderId, table.componentId),
+  index('_ecommerce_component_reservations_released_idx').on(table.releasedAt),
   index('_ecommerce_component_reservations_target_idx').on(table.componentId),
   check('component_reservation_quantity_positive', money(table.quantity, 'positive'))
 ]);
@@ -305,6 +307,7 @@ export const inventoryReservations = sqliteTable('_ecommerce_inventory_reservati
   releasedAt: integer('released_at', { mode: 'timestamp' })
 }, (table) => [
   uniqueIndex('inventory_reservation_unique').on(table.orderId, table.targetType, table.targetId),
+  index('_ecommerce_inventory_reservations_released_idx').on(table.releasedAt),
   index('_ecommerce_inventory_reservations_target_idx').on(table.targetType, table.targetId),
   check('inventory_reservation_target_type', oneOf(table.targetType, RESERVATION_TARGET_TYPES)),
   check('inventory_reservation_quantity_positive', money(table.quantity, 'positive'))
@@ -793,6 +796,7 @@ export const restocks = sqliteTable('_ecommerce_restocks', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [
   uniqueIndex('_ecommerce_restocks_reservation_unique').on(table.reservationType, table.reservationId),
+  index('_ecommerce_restocks_created_idx').on(table.createdAt),
   index('_ecommerce_restocks_order_idx').on(table.orderId, table.createdAt),
   index('_ecommerce_restocks_target_idx').on(table.targetType, table.targetId, table.createdAt),
   check('restock_reservation_type', oneOf(table.reservationType, RESTOCK_RESERVATION_TYPES)),
@@ -961,9 +965,36 @@ export const returnReceipts = sqliteTable('_ecommerce_return_receipts', {
   items: text('items', { mode: 'json' }).$type<ReturnedItem[]>().notNull(),
   actor: text('actor').notNull(), reason: text('reason').notNull(), fingerprint: text('fingerprint').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
-}, t => [index('_ecommerce_return_receipts_order_idx').on(t.orderId, t.createdAt),
+}, t => [index('_ecommerce_return_receipts_created_idx').on(t.createdAt), index('_ecommerce_return_receipts_order_idx').on(t.orderId, t.createdAt),
   check('return_items_array', sql`json_valid(${t.items}) AND json_type(${t.items}) = 'array' AND json_array_length(${t.items}) > 0`),
   check('return_actor', filled(t.actor)), check('return_reason', trimmed(t.reason, 8))]);
+/** A customer's requested quantities. Only an audited privacy redaction may replace its text. */
+export const RETURN_REQUEST_STATUSES = ['pending', 'approved', 'declined', 'cancelled', 'closed'] as const;
+export const RETURN_REQUEST_ACTORS = ['staff', 'customer'] as const;
+export const returnRequests = sqliteTable('_ecommerce_return_requests', {
+  id: text('id').primaryKey(), orderId: text('order_id').notNull().references(() => orders.id),
+  items: text('items', { mode: 'json' }).$type<ParcelItem[]>().notNull(),
+  reason: text('reason').notNull(), fingerprint: text('fingerprint').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(), redactedAt: integer('redacted_at', { mode: 'timestamp' }),
+}, t => [index('_ecommerce_return_requests_order_idx').on(t.orderId), index('_ecommerce_return_requests_created_idx').on(t.createdAt),
+  check('return_request_items', sql`json_valid(${t.items}) AND json_type(${t.items}) = 'array' AND json_array_length(${t.items}) BETWEEN 1 AND 50`),
+  check('return_request_reason', trimmed(t.reason, 8))]);
+/** Decisions append to the request; the last written event supplies its status and version. */
+export const returnRequestEvents = sqliteTable('_ecommerce_return_request_events', {
+  id: text('id').primaryKey(), requestId: text('request_id').notNull().references(() => returnRequests.id),
+  status: text('status', { enum: RETURN_REQUEST_STATUSES }).notNull(), expectedVersion: text('expected_version').notNull(),
+  actorKind: text('actor_kind', { enum: RETURN_REQUEST_ACTORS }).notNull(), actor: text('actor').notNull(),
+  reason: text('reason').notNull(), customerMessage: text('customer_message').notNull(), fingerprint: text('fingerprint').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(), redactedAt: integer('redacted_at', { mode: 'timestamp' }),
+}, t => [index('_ecommerce_return_request_events_request_idx').on(t.requestId),
+  check('return_request_event_status', oneOf(t.status, RETURN_REQUEST_STATUSES)), check('return_request_event_actor_kind', oneOf(t.actorKind, RETURN_REQUEST_ACTORS)),
+  check('return_request_event_actor', filled(t.actor)), check('return_request_event_reason', trimmed(t.reason, 8))]);
+/** An intake can be linked to one approved request, in the same atomic intake transaction. */
+export const returnRequestReceipts = sqliteTable('_ecommerce_return_request_receipts', {
+  receiptId: text('receipt_id').primaryKey().references(() => returnReceipts.id),
+  requestId: text('request_id').notNull().references(() => returnRequests.id),
+}, t => [index('_ecommerce_return_request_receipts_request_idx').on(t.requestId)]);
+
 /** Stock returned by an intake receipt, bounded by the original checkout reservation. */
 export const returnStock = sqliteTable('_ecommerce_return_stock', {
   id: text('id').primaryKey(), receiptId: text('receipt_id').notNull().references(() => returnReceipts.id),
@@ -986,7 +1017,7 @@ export const returnInspections = sqliteTable('_ecommerce_return_inspections', {
   items: text('items', { mode: 'json' }).$type<InspectedItem[]>().notNull(),
   actor: text('actor').notNull(), reason: text('reason').notNull(), fingerprint: text('fingerprint').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
-}, t => [index('_ecommerce_return_inspections_receipt_idx').on(t.receiptId), index('_ecommerce_return_inspections_order_idx').on(t.orderId),
+}, t => [index('_ecommerce_return_inspections_created_idx').on(t.createdAt), index('_ecommerce_return_inspections_receipt_idx').on(t.receiptId), index('_ecommerce_return_inspections_order_idx').on(t.orderId),
   check('inspection_items_array', sql`json_valid(${t.items}) AND json_type(${t.items}) = 'array' AND json_array_length(${t.items}) > 0`),
   check('inspection_actor', filled(t.actor)), check('inspection_reason', trimmed(t.reason, 8))]);
 /** Restored stock from inspected goods shares the same reservation budget as immediate intake. */
@@ -1017,7 +1048,7 @@ export const stockMovements = sqliteTable('_ecommerce_stock_movements', {
   expectedUpdatedAt: integer('expected_updated_at', { mode: 'timestamp' }).notNull(),
   actor: text('actor').notNull(), reason: text('reason').notNull(), fingerprint: text('fingerprint').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
-}, t => [index('_ecommerce_stock_movements_target_idx').on(t.targetType, t.targetId, t.createdAt),
+}, t => [index('_ecommerce_stock_movements_created_idx').on(t.createdAt), index('_ecommerce_stock_movements_target_idx').on(t.targetType, t.targetId, t.createdAt),
   check('stock_movement_target', oneOf(t.targetType, RESTOCK_TARGET_TYPES)), check('stock_movement_kind', oneOf(t.kind, STOCK_MOVEMENT_KINDS)),
   check('stock_movement_delta', sql`${t.delta} <> 0 AND (${t.kind} <> 'receipt' OR ${t.delta} > 0)`),
   check('stock_movement_before', money(t.beforeQuantity, 'nonnegative')), check('stock_movement_after', money(t.afterQuantity, 'nonnegative')),
@@ -1027,7 +1058,7 @@ export const stockMovements = sqliteTable('_ecommerce_stock_movements', {
 // --- Relations, for the relational query builder ---
 
 const tables = {
-  parcelContents, returnReceipts, returnStock, returnInspections, inspectionStock, stocktakes, stockMovements, carts, orders, payments, providerRefunds, products, variants, productVariants, productVariantValues, stocks, components,
+  returnRequests, returnRequestEvents, returnRequestReceipts, parcelContents, returnReceipts, returnStock, returnInspections, inspectionStock, stocktakes, stockMovements, carts, orders, payments, providerRefunds, products, variants, productVariants, productVariantValues, stocks, components,
   variantComponents, componentReservations, inventoryReservations, categories, productCategories, tags, productTags,
   customers, customerAccounts, customerSessions, signInTokens, rateLimits, fulfillments, referralCodes, referrals,
   creditLedger, referralSettings, discountCodes, discountCodeCreations, discountRedemptions, giftCardPurchases, giftCards, giftCardLedger,
@@ -1059,7 +1090,7 @@ export const relations = defineRelations(tables, (r) => ({
     componentReservations: r.many.componentReservations(),
     inventoryReservations: r.many.inventoryReservations(),
     fulfillments: r.many.fulfillments(),
-    parcelContents: r.many.parcelContents(), returnReceipts: r.many.returnReceipts(), returnStock: r.many.returnStock(), returnInspections: r.many.returnInspections(), inspectionStock: r.many.inspectionStock(),
+    returnRequests: r.many.returnRequests(), parcelContents: r.many.parcelContents(), returnReceipts: r.many.returnReceipts(), returnStock: r.many.returnStock(), returnInspections: r.many.returnInspections(), inspectionStock: r.many.inspectionStock(),
     referral: r.one.referrals({ from: r.orders.id, to: r.referrals.orderId }),
     creditLedger: r.many.creditLedger(),
     discountRedemption: r.one.discountRedemptions({ from: r.orders.id, to: r.discountRedemptions.orderId }),
@@ -1175,7 +1206,10 @@ export const relations = defineRelations(tables, (r) => ({
   },
   parcelContents: { order: r.one.orders({ from: r.parcelContents.orderId, to: r.orders.id, optional: false }),
     fulfillment: r.one.fulfillments({ from: r.parcelContents.fulfillmentId, to: r.fulfillments.id, optional: false }) },
-  returnReceipts: { order: r.one.orders({ from: r.returnReceipts.orderId, to: r.orders.id, optional: false }), stock: r.many.returnStock(), inspections: r.many.returnInspections() },
+  returnRequests: { order: r.one.orders({ from: r.returnRequests.orderId, to: r.orders.id, optional: false }), events: r.many.returnRequestEvents(), receipts: r.many.returnRequestReceipts() },
+  returnRequestEvents: { request: r.one.returnRequests({ from: r.returnRequestEvents.requestId, to: r.returnRequests.id, optional: false }) },
+  returnRequestReceipts: { request: r.one.returnRequests({ from: r.returnRequestReceipts.requestId, to: r.returnRequests.id, optional: false }), receipt: r.one.returnReceipts({ from: r.returnRequestReceipts.receiptId, to: r.returnReceipts.id, optional: false }) },
+  returnReceipts: { requestLinks: r.many.returnRequestReceipts(), order: r.one.orders({ from: r.returnReceipts.orderId, to: r.orders.id, optional: false }), stock: r.many.returnStock(), inspections: r.many.returnInspections() },
   returnInspections: { receipt: r.one.returnReceipts({ from: r.returnInspections.receiptId, to: r.returnReceipts.id, optional: false }),
     order: r.one.orders({ from: r.returnInspections.orderId, to: r.orders.id, optional: false }), stock: r.many.inspectionStock() },
   inspectionStock: { inspection: r.one.returnInspections({ from: r.inspectionStock.inspectionId, to: r.returnInspections.id, optional: false }),
