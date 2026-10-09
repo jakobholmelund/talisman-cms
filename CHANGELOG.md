@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Purchase orders** adds versioned supplier records, editable multi-pool drafts, atomic confirmation into expected supply, printable supplier snapshots, partial receipts, revised delivery dates and cancellation that preserves received stock.
+- Private order pages now show return refund progress and tender totals. Confirmed settlement queues one retryable buyer notice; planned amounts stay explicitly unconfirmed. Customers can categorise return requests without exposing their written explanations in reporting.
+- **Operations reporting** shows UTC return reasons/conditions, first-shipment and refund-follow-up turnaround with sample counts, plus separate current backlogs and overdue revised supplier deliveries.
+- Two additive purchasing/refund-update migrations add history and guards and extend email kinds while retaining populated recovery references. No new bindings are needed; release and checkout remain on hold.
+- The release schema checker captures complete CLI output even when a large schema export exits before buffered output flushes.
+
 - Staff return approvals, declines and closure queue buyer instructions atomically; return intake queues a dated receipt notice. The existing scheduled sender, delivery status and audited recovery tools handle them. Outdated decision notices are suppressed; internal audit notes stay private.
 - **Refund follow-up** keeps each received return visible until a staff decision. Staff plan refunds, record why none is needed, or allocate confirmed provider/gift-card/store-credit ledger amounts without issuing money or reusing a refund across cases. Open follow-up blocks shopper erasure; resolved audit text supports audited redaction.
 - **Replenishment** records minimum/target policies for physical stock pools, subtracts expected deliveries from suggestions, and receives partial deliveries through atomic stock receipts. Cancellation releases outstanding supply; version guards and same-request recovery protect stock counts. Overdue deliveries appear in Needs attention.
