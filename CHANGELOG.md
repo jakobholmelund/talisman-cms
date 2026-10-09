@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Parcels & exchanges** records lost/damaged original or replacement parcels, guarded partial replacement shipments, tracking corrections and immutable staff follow-up. Original parcel quantities and purchase totals stay intact.
+- Same-price exchanges link inspected returned units to an active equal-price physical catalog choice, require a recorded no-refund outcome and deduct the chosen stock only when shipped. Open cases appear in Needs attention and current operations reporting.
+- Owner-only tracking shows replacement and exchange parcels without staff notes or stock recipes. Open recovery obligations block shopper erasure; resolved notes redact through the audited privacy path. Two additive migrations add the case, shipment and event records and their guards. Release and checkout remain on hold.
+
 - Purchase orders now record short, damaged and incorrect supplier deliveries with guarded quantities, stable recovery receipts, staff follow-up and immutable resolution/reopening history. Rejected goods never increase sellable stock.
 - Open supplier issues remain visible on completed or cancelled purchases, in Needs attention and in the current reporting backlog. Resolving an issue leaves stock receipts and expected supply unchanged.
 - Two additive supplier-issue migrations add the report/history tables and guards; no new bindings are needed. Release and checkout remain on hold.
