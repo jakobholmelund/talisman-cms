@@ -991,6 +991,66 @@ function stripeWithRefunds(DB, calls = []) {
   }] });
 }
 
+test('promotion creation keys recover the original code without restoring its spent balance or later edits', async () => {
+  const { sqlite, DB } = database();
+  const requestKey = crypto.randomUUID();
+  const input = { ...discountInput('', 'credit', 1000), requestKey };
+  const first = await createDiscountCode({ DB }, input, 'admin');
+  assert.match(first.code, /^GC-[A-F0-9]{24}$/);
+  assert.equal((await createDiscountCode({ DB }, { ...input, requestKey: requestKey.toUpperCase() }, 'admin')).code, first.code);
+  sqlite.prepare('UPDATE _ecommerce_discount_codes SET remaining_cents = 400, active = 0, description = ? WHERE code = ?').run('Later edit', first.code);
+  const replay = await createDiscountCode({ DB }, input, 'admin');
+  assert.equal(replay.code, first.code);
+  assert.equal(replay.remainingCents, 400);
+  assert.equal(replay.active, false);
+  assert.equal(replay.description, 'Later edit');
+  for (const change of [{ value: 2000 }, { description: 'Different' }, { type: 'amount', code: 'OTHER' }]) {
+    await assert.rejects(createDiscountCode({ DB }, { ...input, ...change }, 'admin'), /different promotion details/);
+  }
+  await assert.rejects(createDiscountCode({ DB }, input, 'another-admin'), /another administrator/);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM _ecommerce_discount_codes').get().n, 1);
+  const record = sqlite.prepare('SELECT * FROM _ecommerce_discount_code_creations').get();
+  assert.match(record.id, /^[a-f0-9]{64}$/);
+  assert.ok(!JSON.stringify(record).includes(requestKey));
+  assert.throws(() => sqlite.prepare('UPDATE _ecommerce_discount_code_creations SET actor = ?').run('another-admin'), /append-only/);
+  assert.throws(() => sqlite.exec('DELETE FROM _ecommerce_discount_code_creations'), /append-only/);
+  sqlite.close();
+});
+
+test('concurrent promotion creation retries commit one code and one request; independent creations stay separate', async () => {
+  const { sqlite, DB } = database();
+  const input = { ...discountInput('', 'credit', 1000), requestKey: crypto.randomUUID() };
+  const answers = await Promise.all([createDiscountCode({ DB }, input, 'admin'), createDiscountCode({ DB }, input, 'admin')]);
+  assert.equal(answers[0].code, answers[1].code);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM _ecommerce_discount_codes').get().n, 1);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM _ecommerce_discount_code_creations').get().n, 1);
+  const another = await createDiscountCode({ DB }, { ...input, requestKey: crypto.randomUUID() }, 'admin');
+  assert.notEqual(another.code, answers[0].code);
+  const unkeyed = await createDiscountCode({ DB }, discountInput('', 'credit', 1000));
+  assert.notEqual(unkeyed.code, answers[0].code);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM _ecommerce_discount_code_creations').get().n, 2);
+  sqlite.close();
+});
+
+test('keyed named promotions replay original requests; failed creation leaves no request record', async () => {
+  const { sqlite, DB } = database();
+  for (const type of ['amount', 'percent']) {
+    const input = { ...discountInput(`RETRY-${type}`, type, 1000), requestKey: crypto.randomUUID() };
+    const first = await createDiscountCode({ DB }, input, 'admin');
+    assert.equal((await createDiscountCode({ DB }, input, 'admin')).code, first.code);
+    await assert.rejects(createDiscountCode({ DB }, { ...input, requestKey: crypto.randomUUID() }, 'admin'));
+  }
+  await assert.rejects(createDiscountCode({ DB }, { ...discountInput('INVALID', 'amount', -1), requestKey: crypto.randomUUID() }, 'admin'));
+  await assert.rejects(createDiscountCode({ DB }, { ...discountInput('INVALID', 'amount', 100), requestKey: 'not-a-key' }, 'admin'));
+  await assert.rejects(createDiscountCode({ DB }, { ...discountInput('INVALID', 'amount', 100), requestKey: crypto.randomUUID() }));
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM _ecommerce_discount_code_creations').get().n, 2);
+  // Force failure of the second statement, proving the newly inserted voucher rolls back too.
+  sqlite.exec("CREATE TRIGGER fail_creation BEFORE INSERT ON _ecommerce_discount_code_creations BEGIN SELECT RAISE(ABORT, 'injected failure'); END");
+  await assert.rejects(createDiscountCode({ DB }, { ...discountInput('', 'credit', 1000), requestKey: crypto.randomUUID() }, 'admin'));
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM _ecommerce_discount_codes').get().n, 2);
+  sqlite.close();
+});
+
 test('credit voucher balance is reserved, released, confirmed, and restored on full refund', async () => {
   const { sqlite, DB } = database();
   seed(sqlite, 10);

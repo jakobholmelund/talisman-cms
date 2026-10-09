@@ -134,6 +134,10 @@ The admin tools and background jobs a store needs to run orders every day. The i
 
 **Issue:** #TBD-commerce-fulfillment-status
 
+### Promotion creation and draft recovery
+
+**Status:** done on `main` before the 0.1 publish. Keyed creation and its immutable request record commit atomically, so lost responses and concurrent retries recover one code without resetting spent credit or later edits. The Promotions screen protects independent referral/code drafts, guards duplicate submissions and code switches, and separates confirmed saves from failed refreshes. Two additive 9 October migrations add the request table and guards; deployment remains on hold. The `promotions-workflow` browser regression exercises real local saves and interrupted answers with referrals off.
+
 ### Orders queue: every order awaiting shipment, with names and labelled amounts
 
 **Status:** done on `main` before the 0.1 publish. The Orders screen reads a server-side queue of every paid or partially refunded real order awaiting shipment, oldest first, with a server count, cursor pages of 50 and search by exact order ID or email, sent in the request body. Rows show product names, variant labels and SKUs, the labelled amounts with shipping, tax and refunds, the payment and fulfillment status, and each shipment with its corrections; shopper order reads return `fulfillmentStatus`. Included in the ecommerce baseline and commerce triggers. Follow-ups: show the currency next to the amounts of the read-only Orders collection; list the gift card value and store credit that a full refund returned; show administrators by name rather than user id; let `GET` refuse email searches, which the `POST` list action keeps out of URLs; and accept the order ids that `orders.create` generates, which the shipment form refuses.

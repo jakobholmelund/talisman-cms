@@ -25,7 +25,7 @@ export const ALL: APIRoute = async ({ request }) => {
       result = await setReferralCodeActive(runtimeEnv, body.code,
         (body.data as { active?: unknown } | null)?.active as boolean);
     }
-    else if (body.action === 'createCode') result = await createDiscountCode(runtimeEnv, body.data);
+    else if (body.action === 'createCode') result = await createDiscountCode(runtimeEnv, body.data, String(authorization.user?.id ?? ''));
     else if (body.action === 'updateCode' && typeof body.code === 'string') {
       result = await updateDiscountCode(runtimeEnv, body.code, body.data);
     } else return Response.json({ error: 'Invalid promotion action' }, { status: 400, headers });

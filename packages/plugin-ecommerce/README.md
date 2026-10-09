@@ -544,6 +544,11 @@ The order records `subtotal_amount` (items), `discount_amount` (code), `credit_a
 
 ## Discount codes and credit vouchers
 
+The Promotions screen retains failed code/referral drafts, guards double submissions, warns before discarding drafts or leaving, and offers **Retry loading promotions**. A confirmed save remains a success when the list refresh fails; refresh the list before making another change. Successful code saves clear the creation form without clearing a referral draft, and referral saves preserve a code draft.
+
+`createCode` accepts an optional UUID `data.requestKey`. Keep it in page memory and retry the **same details under the same administrator** after a lost response; the result is the same code with its current state, even after a later edit or credit use. The exported `createDiscountCode(env, input, actor)` helper requires a nonempty actor with a key. The immutable `_ecommerce_discount_code_creations` record stores only a hashed key, payload fingerprint, code, actor and time. Code creation and its record commit together; concurrent losers roll back their generated vouchers. Reusing a key with changed details or another actor is refused. Legacy unkeyed callers retain their separate-creation behavior. Cancelling a retry keeps the draft editable but loses its recovery key and does not undo a code already created: inspect existing codes before starting another creation. Apply both `discount_code_creations` and `discount_code_creation_guards` migrations before deploying the matching Worker.
+
+
 The protected `GET` and `POST /admin/api/ecommerce/promotions` endpoint provides validated administration of referral settings and discount codes. The CMS screen is at `/admin/extensions/commerce-promotions`. Administrators can create codes, edit descriptions, dates, use limits, and active status, and pause shopper referral links. Financial terms, product scope, and code type are fixed at creation; pause an old code and create a new one to change those terms. Commerce collections for policies, codes, redemptions, and the credit ledger are read-only audit views.
 
 - **Amount:** a fixed amount off each eligible order, in the store currency.

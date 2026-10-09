@@ -567,6 +567,14 @@ export const ecommercePlugin = (
         });
 
         collections.push({
+          name: 'Discount Code Creations', slug: '_ecommerce_discount_code_creations',
+          description: 'Original creation requests used to recover interrupted promotion saves.',
+          adminSection: 'commerce', readOnly: true,
+          fields: nativeFields(schema.discountCodeCreations, ['id', 'code', 'actor', 'createdAt']),
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'discountCodeCreations', idColumn: 'id' }
+        });
+
+        collections.push({
           name: 'Discount Redemptions', slug: '_ecommerce_discount_redemptions',
           description: 'Reserved and confirmed code uses for payment reconciliation.',
           adminSection: 'commerce', readOnly: true,

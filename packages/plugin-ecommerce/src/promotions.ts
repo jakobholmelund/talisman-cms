@@ -1,8 +1,8 @@
 import { and, count, eq, inArray } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
-import { commerceDb } from './db';
+import { commerceDb, commitBatch } from './db';
 import { z } from 'zod';
-import { customerAccounts, discountCodes, discountRedemptions, referralCodes, referralSettings } from './schema';
+import { customerAccounts, discountCodes, discountCodeCreations, discountRedemptions, referralCodes, referralSettings } from './schema';
 import { getReferralPolicy, referralTermsError } from './referrals';
 import { hasPurchaseHistory } from './accounts';
 import { GiftCardRefusal } from './gift-cards';
@@ -192,19 +192,59 @@ export async function saveReferralSettings(env: TalismanEnv, input: unknown) {
   return getReferralPolicy(env);
 }
 
-export async function createDiscountCode(env: TalismanEnv, input: unknown) {
+const creationKeySchema = z.string().uuid().transform(value => value.toLowerCase());
+const creationActorSchema = z.string().trim().min(1).max(128);
+async function creationHash(value: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** Optional requestKey + actor make a creation recoverable without repeating its financial effects. */
+export async function createDiscountCode(env: TalismanEnv, input: unknown, actor?: string) {
   const raw = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-  const generatedCode = raw.type === 'credit'
-    ? `GC-${Array.from(crypto.getRandomValues(new Uint8Array(12)),
-      byte => byte.toString(16).padStart(2, '0')).join('').toUpperCase()}` : raw.code;
-  const values = discountCodeSchema.parse({ ...raw, code: generatedCode });
-  const now = new Date();
+  const { requestKey: rawKey, ...fields } = raw;
+  const requestKey = rawKey === undefined ? null : creationKeySchema.parse(rawKey);
+  // Credit codes are always server-generated; their supplied code is intentionally ignored.
+  const values = discountCodeSchema.parse({ ...fields, code: raw.type === 'credit' ? `GC-${'0'.repeat(24)}` : raw.code });
   const db = commerceDb(env);
-  await db.insert(discountCodes).values({ ...values,
+  const creation = requestKey ? {
+    id: await creationHash(`promotion-create:${requestKey}`),
+    actor: creationActorSchema.parse(actor),
+    fingerprint: await creationHash(JSON.stringify({ ...values, code: values.type === 'credit' ? null : values.code })),
+  } : null;
+  async function recover() {
+    if (!creation) return null;
+    const previous = await db.select().from(discountCodeCreations).where(eq(discountCodeCreations.id, creation.id)).get();
+    if (!previous) return null;
+    if (previous.actor !== creation.actor || previous.fingerprint !== creation.fingerprint) {
+      throw new Error('This creation retry belongs to different promotion details or another administrator');
+    }
+    const code = await db.select().from(discountCodes).where(eq(discountCodes.code, previous.code)).get();
+    if (!code) throw new Error('The created promotion is unavailable; review the existing codes');
+    return code;
+  }
+  const previous = await recover();
+  if (previous) return previous;
+  if (values.type === 'credit') {
+    values.code = `GC-${Array.from(crypto.getRandomValues(new Uint8Array(12)),
+      byte => byte.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+  }
+  const now = new Date();
+  const insert = db.insert(discountCodes).values({ ...values,
     remainingCents: values.type === 'credit' ? values.value : null,
     startsAt: values.startsAt ? new Date(values.startsAt * 1000) : null,
     expiresAt: values.expiresAt ? new Date(values.expiresAt * 1000) : null,
     createdAt: now, updatedAt: now });
+  try {
+    if (creation) await commitBatch(db, [insert,
+      db.insert(discountCodeCreations).values({ ...creation, code: values.code, createdAt: now })]);
+    else await insert;
+  } catch (cause) {
+    // A concurrent winner may have committed after the read. The losing batch rolls back its code.
+    const winner = await recover();
+    if (winner) return winner;
+    throw cause;
+  }
   return db.select().from(discountCodes).where(eq(discountCodes.code, values.code)).get();
 }
 
