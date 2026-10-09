@@ -85,6 +85,11 @@ export async function getReferralPolicy(env: TalismanEnv): Promise<ReferralPolic
   const db = commerceDb(env);
   const saved = await db.select().from(referralSettings)
     .where(eq(referralSettings.id, 'default')).get();
+  return referralPolicyFromSaved(env, saved);
+}
+
+/** Build the policy and its admin revision from the same saved row. */
+export function referralPolicyFromSaved(env: TalismanEnv, saved: typeof referralSettings.$inferSelect | undefined): ReferralPolicy {
   if (!saved) return referralPolicy(env);
   return withTerms({ switchedOn: saved.enabled, source: 'saved', rewardCents: saved.rewardCents,
     minOrderCents: saved.minOrderCents, attributionDays: saved.attributionDays, ...referralLimits(env) });

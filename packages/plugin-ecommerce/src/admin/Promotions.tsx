@@ -8,9 +8,10 @@ type Code = {
   code: string; description: string | null; type: CodeType; value: number; remainingCents: number | null;
   maxDiscountCents: number | null; minOrderCents: number; eligibleProductIds: string[];
   maxUses: number | null; maxUsesPerCustomer: number | null; firstOrderOnly: boolean;
-  startsAt: string | null; expiresAt: string | null; active: boolean;
+  updatedAt: string; startsAt: string | null; expiresAt: string | null; active: boolean;
 };
 type PromotionsData = {
+  referralRevision: number | null;
   referral: { enabled: boolean; switchedOn: boolean; termsError: string | null; source: 'saved' | 'settings';
     rewardCents: number; minOrderCents: number; attributionDays: number;
     holdDays: number; maxPerPeriod: number; periodDays: number };
@@ -36,6 +37,9 @@ const localDate = (value: string | null) => value
 
 export default function Promotions() {
   const [data, setData] = useState<PromotionsData | null>(null);
+  const [referralSnapshot, setReferralSnapshot] = useState<Pick<PromotionsData, 'referral' | 'referralRevision'> | null>(null);
+  const [conflict, setConflict] = useState<'code' | 'referral' | null>(null);
+  const referralSaved = useRef(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -93,7 +97,11 @@ export default function Promotions() {
     try {
       const result = await adminRequest<PromotionsData>('promotions');
       if (request !== latest.current) return false;
-      setData(result); failedRead.current = false; setReadFailed(false);
+      setData(result);
+      const adoptReferral = referralSaved.current;
+      setReferralSnapshot(previous => !previous || adoptReferral ? { referral: result.referral, referralRevision: result.referralRevision } : previous);
+      if (referralSaved.current) { referralSaved.current = false; setReferralVersion(value => value + 1); }
+      failedRead.current = false; setReadFailed(false);
       return true;
     } catch (cause) {
       if (request === latest.current) {
@@ -109,7 +117,7 @@ export default function Promotions() {
     activePage.current = true; void reload();
     return () => { activePage.current = false; ++latest.current; };
   }, []);
-  async function act(task: () => Promise<string>) {
+  async function act(task: () => Promise<string>, formKind?: 'code' | 'referral') {
     if (cannotWrite()) return;
     writing.current = true; setBusy(true); show('');
     try {
@@ -118,6 +126,7 @@ export default function Promotions() {
       const refreshed = await reload();
       if (activePage.current) show(refreshed ? outcome : `${outcome} The promotion list could not refresh. Retry loading before making another change.`, !refreshed);
     } catch (cause) {
+      if (activePage.current && formKind && (cause as { status?: number })?.status === 409) setConflict(formKind);
       if (activePage.current) show(`${errorText(cause)}${pendingCreation.current ? ' Creation has not been confirmed. Retry the same creation to recover its code.' : ''}`, true);
     } finally {
       writing.current = false;
@@ -126,18 +135,20 @@ export default function Promotions() {
   }
   async function saveReferral(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (cannotChange() || !event.currentTarget.reportValidity()) return;
+    if (cannotChange() || conflict === 'referral' || !event.currentTarget.reportValidity()) return;
     const values = new FormData(event.currentTarget);
     await act(async () => {
       const response = await adminRequest<{ result: PromotionsData['referral'] }>('promotions', { action: 'saveReferral', data: {
-        enabled: values.has('enabled'), rewardCents: formAmount(values.get('reward'), currency),
+        expectedVersion: referralSnapshot?.referralRevision, enabled: values.has('enabled'), rewardCents: formAmount(values.get('reward'), currency),
         minOrderCents: formAmount(values.get('minimum'), currency), attributionDays: Number(values.get('days')) } });
       if (activePage.current) {
         setData(previous => previous ? { ...previous, referral: response.result } : previous);
+        referralSaved.current = true;
+        setReferralSnapshot(previous => previous ? { ...previous, referral: response.result } : previous);
         draftDirty.current.referral = false; setReferralDirty(false); setReferralVersion(value => value + 1);
       }
       return 'Referral settings saved.';
-    });
+    }, 'referral');
   }
   async function toggleReferral(code: string, active: boolean) {
     if (cannotChange()) return;
@@ -150,6 +161,7 @@ export default function Promotions() {
     if (cannotChange()) return;
     if (draftDirty.current.code && !window.confirm('Discard the unsaved code changes?')) return;
     draftDirty.current.code = false; setCodeDirty(false);
+    setConflict(previous => previous === 'code' ? null : previous);
     setEditing(code); setType(code?.type || 'amount'); setCodeVersion(value => value + 1);
     if (code) window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -163,7 +175,7 @@ export default function Promotions() {
 
   async function saveCode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (cannotWrite() || (!pendingCreation.current && !event.currentTarget.reportValidity())) return;
+    if (cannotWrite() || conflict === 'code' || (!pendingCreation.current && !event.currentTarget.reportValidity())) return;
     const values = new FormData(event.currentTarget);
     const code = editing?.code || String(values.get('code') || '').trim().toUpperCase();
     const input = {
@@ -185,7 +197,7 @@ export default function Promotions() {
     await act(async () => {
       const result = await adminRequest<{ result?: { code?: string } }>('promotions', {
         action: updating ? 'updateCode' : 'createCode', code: editing?.code,
-        data: updating ? input : pendingCreation.current });
+        data: updating ? { ...input, expectedVersion: Math.floor(Date.parse(editing!.updatedAt) / 1000) } : pendingCreation.current });
       if (!result.result?.code) throw new Error('The save response did not include its code');
       if (activePage.current) {
         pendingCreation.current = null; setCreationPending(false);
@@ -193,9 +205,27 @@ export default function Promotions() {
         setEditing(null); setType('amount'); setCodeVersion(value => value + 1);
       }
       return `${result.result.code} saved.`;
-    });
+    }, 'code');
   }
 
+  async function loadLatest() {
+    if (cannotWrite() || !conflict) return;
+    if (!window.confirm('Discard this form’s unsaved changes and load the latest saved version?')) return;
+    loading.current = true; setReading(true);
+    const result = await adminRequest<PromotionsData>('promotions').catch(cause => { show(errorText(cause), true); return null; })
+      .finally(() => { loading.current = false; if (activePage.current) setReading(false); });
+    if (!result || !activePage.current) return;
+    setData(result);
+    if (conflict === 'referral') {
+      setReferralSnapshot({ referral: result.referral, referralRevision: result.referralRevision });
+      draftDirty.current.referral = false; setReferralDirty(false); setReferralVersion(value => value + 1);
+    } else {
+      const code = result.codes.find(code => code.code === editing?.code) ?? null;
+      draftDirty.current.code = false; setCodeDirty(false); setEditing(code); setType(code?.type || 'amount'); setCodeVersion(value => value + 1);
+    }
+    setConflict(null); show('Latest saved version loaded.');
+  }
+  const referral = referralSnapshot?.referral ?? data?.referral;
   const codes = data?.codes || [];
   const visible = codes.filter(code => `${code.code} ${code.description || ''} ${code.type}`.toLowerCase().includes(search.trim().toLowerCase()));
   const fixed = Boolean(editing);
@@ -205,18 +235,19 @@ export default function Promotions() {
     <div ref={feedback} tabIndex={-1}><Feedback message={message} error={error} /></div>
     {(reading || busy) && <p role="status">{busy ? 'Saving promotion changes…' : 'Loading promotions…'}</p>}
     {readFailed && <button type="button" aria-disabled={busy || reading} onClick={() => { if (!writing.current && !loading.current) void reload().then(ok => { if (ok && activePage.current) show('Promotions loaded.'); }); }}>Retry loading promotions</button>}
-    {data && <>
+    {conflict && <p role="alert">Another save changed this {conflict === 'code' ? 'code' : 'referral policy'}. Your draft is kept. <button type="button" aria-disabled={blocked} onClick={() => void loadLatest()}>Load latest {conflict === 'code' ? 'code' : 'referral settings'}</button></p>}
+    {data && referral && <>
       <Panel title="Referral program" label="Referral program">
-        <p className="ecom-admin__muted">Referrals are off until they are enabled here, or by the <code>TALISMAN_COMMERCE_REFERRALS_ENABLED</code> Worker setting while nothing is saved. {data.referral.source === 'settings' ? 'Nothing is saved yet, so the Worker settings apply.' : 'The saved settings apply.'} The reward can be at most half the minimum first order.</p>
-        {data.referral.termsError && <Feedback message={`New referrals are paused. ${data.referral.termsError}.`} error />}
+        <p className="ecom-admin__muted">Referrals are off until they are enabled here, or by the <code>TALISMAN_COMMERCE_REFERRALS_ENABLED</code> Worker setting while nothing is saved. {referral.source === 'settings' ? 'Nothing is saved yet, so the Worker settings apply.' : 'The saved settings apply.'} The reward can be at most half the minimum first order.</p>
+        {referral.termsError && <Feedback message={`New referrals are paused. ${referral.termsError}.`} error />}
         <form ref={referralForm} key={referralVersion} onChange={() => changed('referral')} onSubmit={event => void saveReferral(event)}>
           <fieldset className="ecom-admin__fields" disabled={busy || reading || creationPending}>
-          <label className="ecom-admin__check"><input type="checkbox" name="enabled" defaultChecked={data.referral.switchedOn} /> Enable new referral awards</label>
-          <div className="ecom-admin__grid"><Field label={`Reward per shopper (${currencyCode})`}><input name="reward" type="number" {...amountInput(currency, limits.reward)} defaultValue={fromMinorUnits(data.referral.rewardCents, currency)} required /></Field><Field label={`Minimum first order (${currencyCode})`}><input name="minimum" type="number" {...amountInput(currency, limits.referralMinimum)} defaultValue={fromMinorUnits(data.referral.minOrderCents, currency)} required /></Field><Field label="Referral window (days)"><input name="days" type="number" min="1" max="90" step="1" defaultValue={data.referral.attributionDays} required /></Field></div>
+          <label className="ecom-admin__check"><input type="checkbox" name="enabled" defaultChecked={referral.switchedOn} /> Enable new referral awards</label>
+          <div className="ecom-admin__grid"><Field label={`Reward per shopper (${currencyCode})`}><input name="reward" type="number" {...amountInput(currency, limits.reward)} defaultValue={fromMinorUnits(referral.rewardCents, currency)} required /></Field><Field label={`Minimum first order (${currencyCode})`}><input name="minimum" type="number" {...amountInput(currency, limits.referralMinimum)} defaultValue={fromMinorUnits(referral.minOrderCents, currency)} required /></Field><Field label="Referral window (days)"><input name="days" type="number" min="1" max="90" step="1" defaultValue={referral.attributionDays} required /></Field></div>
           </fieldset>
-          <div className="ecom-admin__actions"><button type="submit" aria-disabled={blocked || creationPending}>Save referral settings</button></div>
+          <div className="ecom-admin__actions"><button type="submit" aria-disabled={blocked || creationPending || conflict === 'referral'}>Save referral settings</button></div>
         </form>
-        <p className="ecom-admin__muted">Awards stay pending for {data.referral.holdDays} days after payment and are then released by the scheduled job, unless the order was refunded below the minimum or disputed. Each shopper can refer at most {data.referral.maxPerPeriod} new shoppers in {data.referral.periodDays} days. These limits are Worker settings.</p>
+        <p className="ecom-admin__muted">Awards stay pending for {referral.holdDays} days after payment and are then released by the scheduled job, unless the order was refunded below the minimum or disputed. Each shopper can refer at most {referral.maxPerPeriod} new shoppers in {referral.periodDays} days. These limits are Worker settings.</p>
         <h3>Shopper links</h3>
         {data.referralLinks.length ? data.referralLinks.map(link => <div className="ecom-admin__row" key={link.code}><span><strong>{link.code}</strong><small>{link.email} · {link.active ? 'Active' : 'Paused'}</small></span><button className="ecom-admin__secondary" type="button" aria-disabled={blocked || creationPending} onClick={() => void toggleReferral(link.code, !link.active)}>{link.active ? 'Pause' : 'Resume'}</button></div>) : <p className="ecom-admin__muted">No shopper links yet.</p>}
       </Panel>
@@ -240,7 +271,7 @@ export default function Promotions() {
           </div>
           <div className="ecom-admin__actions"><label className="ecom-admin__check"><input name="firstOrderOnly" type="checkbox" defaultChecked={editing?.firstOrderOnly || false} disabled={fixed} /> First purchase only</label><label className="ecom-admin__check"><input name="active" type="checkbox" defaultChecked={editing?.active ?? true} /> Active</label></div>
           </fieldset>
-          <div className="ecom-admin__actions"><button type="submit" aria-disabled={blocked}>{editing ? 'Save code' : creationPending ? 'Retry creation' : 'Create code'}</button>{creationPending ? <button type="button" className="ecom-admin__secondary" aria-disabled={busy || reading} onClick={cancelCreation}>Cancel creation retry</button> : (editing || codeDirty) && <button type="button" className="ecom-admin__secondary" aria-disabled={blocked} onClick={() => chooseCode(null)}>{editing ? 'Cancel edit' : 'Discard code draft'}</button>}</div>
+          <div className="ecom-admin__actions"><button type="submit" aria-disabled={blocked || conflict === 'code'}>{editing ? 'Save code' : creationPending ? 'Retry creation' : 'Create code'}</button>{creationPending ? <button type="button" className="ecom-admin__secondary" aria-disabled={busy || reading} onClick={cancelCreation}>Cancel creation retry</button> : (editing || codeDirty) && <button type="button" className="ecom-admin__secondary" aria-disabled={blocked} onClick={() => chooseCode(null)}>{editing ? 'Cancel edit' : 'Discard code draft'}</button>}</div>
         </form>
       </Panel>
       <Panel title="Existing codes" label="Existing codes">

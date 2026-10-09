@@ -117,7 +117,7 @@ test('adminRequest reads without a body and posts JSON with one, with the CMS se
 test('adminRequest throws the answer\'s error text, or "Request failed" without a body', async () => {
   const sdk = await loadSdk('/cms');
   stubFetch(() => json({ error: 'Order not found' }, 404));
-  await assert.rejects(sdk.adminRequest('ecommerce/orders-admin', { body: { action: 'restock' } }), { message: 'Order not found' });
+  await assert.rejects(sdk.adminRequest('ecommerce/orders-admin', { body: { action: 'restock' } }), { message: 'Order not found', status: 404 });
   stubFetch(() => json({ ok: false }, 500));
   await assert.rejects(sdk.adminRequest('ecommerce/orders-admin'), { message: 'Request failed' });
   stubFetch(() => new Response(null, { status: 502 }));
@@ -143,4 +143,12 @@ test('readAdminSetting comes from the admin\'s own helper', async () => {
   const sdk = await loadSdk('/admin');
   const { readAdminSetting } = await import(entryLabelsUrl);
   assert.equal(sdk.readAdminSetting, readAdminSetting);
+});
+
+test('adminRequest exposes conflicts for draft recovery without replacing the error text', async () => {
+  const sdk = await loadSdk('/admin');
+  stubFetch(() => json({ error: 'Changed by another administrator' }, 409));
+  await assert.rejects(sdk.adminRequest('ecommerce/promotions', { body: {} }), {
+    message: 'Changed by another administrator', status: 409,
+  });
 });

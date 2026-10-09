@@ -1,9 +1,9 @@
-import { and, count, eq, inArray } from 'drizzle-orm';
+import { and, count, eq, inArray, sql } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb, commitBatch } from './db';
 import { z } from 'zod';
 import { customerAccounts, discountCodes, discountCodeCreations, discountRedemptions, referralCodes, referralSettings } from './schema';
-import { getReferralPolicy, referralTermsError } from './referrals';
+import { referralPolicyFromSaved, referralTermsError } from './referrals';
 import { hasPurchaseHistory } from './accounts';
 import { GiftCardRefusal } from './gift-cards';
 import { readStoreSettings } from './store-settings';
@@ -168,7 +168,9 @@ export async function getPromotionsAdmin(env: TalismanEnv) {
   const referralLinks = await db.select({ code: referralCodes.code,
     active: referralCodes.active, email: customerAccounts.email })
     .from(referralCodes).innerJoin(customerAccounts, eq(referralCodes.accountId, customerAccounts.id));
-  return { referral: await getReferralPolicy(env), referralLinks, codes, usage };
+  const saved = await db.select().from(referralSettings).where(eq(referralSettings.id, 'default')).get();
+  return { referral: referralPolicyFromSaved(env, saved), referralRevision: saved ? Math.floor(saved.updatedAt.getTime() / 1000) : null,
+    referralLinks, codes, usage };
 }
 
 export async function setReferralCodeActive(env: TalismanEnv, code: string, active: boolean) {
@@ -182,14 +184,37 @@ export async function setReferralCodeActive(env: TalismanEnv, code: string, acti
   return { code, active };
 }
 
+/** A stale administrative form must be reloaded before it can replace a newer save. */
+export class PromotionConflictError extends Error {
+  override readonly name = 'PromotionConflictError';
+  constructor() { super('These settings changed since you loaded them. Load the latest version before saving.'); }
+}
+
+function versionedInput(input: unknown) {
+  const raw = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const { expectedVersion, ...fields } = raw;
+  if (expectedVersion !== undefined) z.number().int().nonnegative().nullable().parse(expectedVersion);
+  return { fields, expectedVersion: expectedVersion as number | null | undefined };
+}
+
 export async function saveReferralSettings(env: TalismanEnv, input: unknown) {
-  const parsed = referralSettingsSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues.map((issue) => issue.message).join('; '));
+  const { fields, expectedVersion } = versionedInput(input);
+  const parsed = referralSettingsSchema.safeParse(fields);
+  if (!parsed.success) throw new Error(parsed.error.issues.map(issue => issue.message).join('; '));
   const values = parsed.data;
   const db = commerceDb(env);
-  await db.insert(referralSettings).values({ id: 'default', ...values, updatedAt: new Date() })
-    .onConflictDoUpdate({ target: referralSettings.id, set: { ...values, updatedAt: new Date() } });
-  return getReferralPolicy(env);
+  const now = Math.floor(Date.now() / 1000);
+  const changed = expectedVersion === null
+    ? await db.insert(referralSettings).values({ id: 'default', ...values, updatedAt: new Date(now * 1000) })
+        .onConflictDoNothing().returning()
+    : expectedVersion !== undefined
+      ? await db.update(referralSettings).set({ ...values, updatedAt: sql`MAX(${referralSettings.updatedAt} + 1, ${now})` })
+          .where(and(eq(referralSettings.id, 'default'), eq(referralSettings.updatedAt, new Date(expectedVersion * 1000)))).returning()
+      : await db.insert(referralSettings).values({ id: 'default', ...values, updatedAt: new Date(now * 1000) })
+          .onConflictDoUpdate({ target: referralSettings.id,
+            set: { ...values, updatedAt: sql`MAX(${referralSettings.updatedAt} + 1, ${now})` } }).returning();
+  if (!changed.length) throw new PromotionConflictError();
+  return referralPolicyFromSaved(env, changed[0]);
 }
 
 const creationKeySchema = z.string().uuid().transform(value => value.toLowerCase());
@@ -249,7 +274,8 @@ export async function createDiscountCode(env: TalismanEnv, input: unknown, actor
 }
 
 export async function updateDiscountCode(env: TalismanEnv, code: string, input: unknown) {
-  const values = discountCodeSchema.parse({ ...(input as object), code });
+  const { fields, expectedVersion } = versionedInput(input);
+  const values = discountCodeSchema.parse({ ...fields, code });
   const db = commerceDb(env);
   const current = await db.select().from(discountCodes).where(eq(discountCodes.code, values.code)).get();
   if (!current) throw new Error('Discount code not found');
@@ -261,14 +287,16 @@ export async function updateDiscountCode(env: TalismanEnv, code: string, input: 
       JSON.stringify(current.eligibleProductIds) !== JSON.stringify(values.eligibleProductIds)) {
     throw new Error('Financial terms are fixed when a code is created; create a new code for new terms');
   }
-  await db.update(discountCodes).set({
+  const changed = await db.update(discountCodes).set({
     description: values.description, type: values.type, value: values.value,
     maxDiscountCents: values.maxDiscountCents, minOrderCents: values.minOrderCents,
     eligibleProductIds: values.eligibleProductIds, maxUses: values.maxUses,
     maxUsesPerCustomer: values.maxUsesPerCustomer, firstOrderOnly: values.firstOrderOnly,
     startsAt: values.startsAt ? new Date(values.startsAt * 1000) : null,
     expiresAt: values.expiresAt ? new Date(values.expiresAt * 1000) : null,
-    active: values.active, updatedAt: new Date()
-  }).where(eq(discountCodes.code, values.code));
-  return db.select().from(discountCodes).where(eq(discountCodes.code, values.code)).get();
+    active: values.active, updatedAt: sql`MAX(${discountCodes.updatedAt} + 1, ${Math.floor(Date.now() / 1000)})`
+  }).where(and(eq(discountCodes.code, values.code), expectedVersion === undefined ? undefined
+    : expectedVersion === null ? sql`0` : eq(discountCodes.updatedAt, new Date(expectedVersion * 1000)))).returning();
+  if (!changed.length) throw new PromotionConflictError();
+  return changed[0];
 }

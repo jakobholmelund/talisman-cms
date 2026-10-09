@@ -47,7 +47,8 @@ export interface AdminRequestInit {
 /**
  * A JSON request to an admin API route with the CMS session. `adminRequest('ecommerce/orders', { body })`
  * posts the body as JSON to `adminApiUrl('ecommerce/orders')` and returns the parsed answer. A response
- * that is not ok throws an Error with the answer's `error` text, or "Request failed" without one. An
+ * that is not ok throws an Error with the answer's `error` text, or "Request failed" without one. The
+ * error carries the HTTP `status` so a plugin can distinguish a conflict. An
  * answer without a JSON body, such as a gateway's error page, is read as null.
  */
 export async function adminRequest<T>(path: string, init: AdminRequestInit = {}): Promise<T> {
@@ -61,7 +62,7 @@ export async function adminRequest<T>(path: string, init: AdminRequestInit = {})
   });
   const result = (await response.json().catch(() => null)) as (T & { error?: unknown }) | null;
   if (!response.ok) {
-    throw new Error(typeof result?.error === 'string' && result.error ? result.error : 'Request failed');
+    throw Object.assign(new Error(typeof result?.error === 'string' && result.error ? result.error : 'Request failed'), { status: response.status });
   }
   return result as T;
 }

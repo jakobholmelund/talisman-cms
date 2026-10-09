@@ -1624,3 +1624,42 @@ test('shipping is charged with a discount, store credit and a gift card, and the
     .balance_cents, 3500);
   sqlite.close();
 });
+
+
+test('promotion versions reject stale saves even within the same second and keep legacy saves compatible', async () => {
+  const { sqlite, DB } = database();
+  const input = discountInput('VERSIONED', 'amount', 500);
+  const created = await createDiscountCode({ DB }, input);
+  const version = Math.floor(created.updatedAt.getTime() / 1000);
+  const saved = await updateDiscountCode({ DB }, created.code, { ...input, description: 'First save', expectedVersion: version });
+  assert.ok(saved.updatedAt.getTime() > created.updatedAt.getTime());
+  await assert.rejects(updateDiscountCode({ DB }, created.code, { ...input, description: 'Stale save', expectedVersion: version }), { name: 'PromotionConflictError' });
+  assert.equal((await getPromotionsAdmin({ DB })).codes[0].description, 'First save');
+  await updateDiscountCode({ DB }, created.code, { ...input, description: 'Legacy save' });
+  await assert.rejects(updateDiscountCode({ DB }, created.code, { ...input, expectedVersion: Math.floor(saved.updatedAt.getTime() / 1000) }), { name: 'PromotionConflictError' });
+  await assert.rejects(updateDiscountCode({ DB }, created.code, { ...input, expectedVersion: 'bad' }));
+  const current = (await getPromotionsAdmin({ DB })).codes[0];
+  const concurrent = await Promise.allSettled(['Administrator A', 'Administrator B'].map(description =>
+    updateDiscountCode({ DB }, created.code, { ...input, description, expectedVersion: current.updatedAt.getTime() / 1000 })));
+  assert.equal(concurrent.filter(result => result.status === 'fulfilled').length, 1);
+  assert.equal(concurrent.filter(result => result.status === 'rejected' && result.reason.name === 'PromotionConflictError').length, 1);
+  sqlite.close();
+});
+
+test('referral versions protect first creation and successive policy saves', async () => {
+  const { sqlite, DB } = database();
+  const policy = { enabled: false, rewardCents: 700, minOrderCents: 10000, attributionDays: 14 };
+  assert.equal((await getPromotionsAdmin({ DB })).referralRevision, null);
+  const concurrent = await Promise.allSettled([700, 800].map(rewardCents => saveReferralSettings({ DB }, { ...policy, rewardCents, expectedVersion: null })));
+  assert.equal(concurrent.filter(result => result.status === 'fulfilled').length, 1);
+  assert.equal(concurrent.filter(result => result.status === 'rejected' && result.reason.name === 'PromotionConflictError').length, 1);
+  await assert.rejects(saveReferralSettings({ DB }, { ...policy, rewardCents: 800, expectedVersion: null }), { name: 'PromotionConflictError' });
+  const first = await getPromotionsAdmin({ DB });
+  await saveReferralSettings({ DB }, { ...policy, rewardCents: 900, expectedVersion: first.referralRevision });
+  const second = await getPromotionsAdmin({ DB });
+  assert.ok(second.referralRevision > first.referralRevision);
+  assert.equal(second.referral.rewardCents, 900);
+  await assert.rejects(saveReferralSettings({ DB }, { ...policy, expectedVersion: first.referralRevision }), { name: 'PromotionConflictError' });
+  assert.equal((await getPromotionsAdmin({ DB })).referral.rewardCents, 900);
+  sqlite.close();
+});

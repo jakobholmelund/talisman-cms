@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
-import { createDiscountCode, getPromotionsAdmin, saveReferralSettings,
+import { PromotionConflictError, createDiscountCode, getPromotionsAdmin, saveReferralSettings,
   setReferralCodeActive, updateDiscountCode } from '../promotions';
 
 export const ALL: APIRoute = async ({ request }) => {
@@ -32,6 +32,6 @@ export const ALL: APIRoute = async ({ request }) => {
     return Response.json({ result }, { headers });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : 'Promotion could not be saved' },
-      { status: 400, headers });
+      { status: error instanceof PromotionConflictError ? 409 : 400, headers });
   }
 };
