@@ -153,12 +153,16 @@ function readCommerceFlowSlugs() {
 
 /** buildDefaultValues from the admin source: the values the collection form starts a new record with. */
 function loadFormDefaults() {
-  const sourceFile = parseAdminSource(pageBuilderPath);
-  const names = ['isRelationshipFieldType', 'createDefaultValueForField', 'buildDefaultValues'];
-  const declarations = sourceFile.statements
-    .filter((statement) => ts.isFunctionDeclaration(statement) && names.includes(statement.name?.text));
-  assert.equal(declarations.length, names.length, `${pageBuilderPath.pathname} no longer declares ${names.join(', ')}`);
-  const source = declarations.map((declaration) => declaration.getText(sourceFile).replace(/^export\s+/, '')).join('\n');
+  const source = [
+    [new URL('lib/relationship-fields.ts', coreUi), ['isRelationshipFieldType']],
+    [pageBuilderPath, ['createDefaultValueForField', 'buildDefaultValues']],
+  ].flatMap(([path, names]) => {
+    const sourceFile = parseAdminSource(path);
+    const declarations = sourceFile.statements
+      .filter((statement) => ts.isFunctionDeclaration(statement) && names.includes(statement.name?.text));
+    assert.equal(declarations.length, names.length, `${path.pathname} no longer declares ${names.join(', ')}`);
+    return declarations.map((declaration) => declaration.getText(sourceFile).replace(/^export\s+/, ''));
+  }).join('\n');
   const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } });
   return new Function(`${outputText}\nreturn buildDefaultValues;`)();
 }

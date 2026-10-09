@@ -18,6 +18,13 @@ declare module 'virtual:talisman-cms/ecommerce-emails' {
 
 // The admin code imports core UI modules (talisman-cms/ui/*), which read these core virtual modules.
 // The types mirror packages/talisman-cms/src/virtual-modules.d.ts.
+declare module 'virtual:talisman-cms/navigation' {
+  import type { CollectionConfig } from 'talisman-cms';
+  export const adminPath: string;
+  export const collections: Array<Pick<CollectionConfig, 'name' | 'slug' | 'description' | 'adminSection' | 'readOnly' | 'access'>>;
+  export const adminLinks: { section: string; label: string; description: string; href: string }[];
+}
+
 declare module 'virtual:talisman-cms/config' {
   import type { CollectionConfig, GlobalConfig } from 'talisman-cms';
   export const adminPath: string;
