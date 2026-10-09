@@ -171,6 +171,94 @@ function assertNoKeyMaterial(error) {
 
 // --- Key rotation -----------------------------------------------------------------------------
 
+test('an admin issuance replay recovers the same private code and never adds stored value twice', async () => {
+  const { sqlite, DB } = database();
+  const env = giftEnv(DB);
+  const input = { amountCents: 2500, reason: 'Service goodwill card', requestKey: crypto.randomUUID() };
+  const issued = await issueAdminGiftCard(env, 'admin-1', input);
+  assert.deepEqual(await issueAdminGiftCard(env, 'admin-1', { ...input, requestKey: input.requestKey.toUpperCase() }), issued);
+  assert.equal(rows(sqlite, 'SELECT id FROM _ecommerce_gift_cards').length, 1);
+  assert.deepEqual(ledgerOf(sqlite, issued.id), [{ kind: 'issue', amount_cents: 2500 }]);
+  assert.equal(ledgerBalance(sqlite, issued.id), 2500);
+  assert.notEqual(issued.id, `gift_${input.requestKey}`);
+  assert.match(issued.id, /^gift_[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  await setGiftCardActive(env, issued.id, false);
+  await setGiftCardActive(env, issued.id, true);
+  assert.deepEqual(await issueAdminGiftCard(env, 'admin-1', input), issued);
+  assert.ok(!JSON.stringify(await getGiftCardsAdmin(env)).includes(input.requestKey));
+  for (const changed of [{ amountCents: 3000 }, { reason: 'Different reason for card' }, { replacesPurchaseId: `gp_${crypto.randomUUID()}` }]) {
+    await assert.rejects(issueAdminGiftCard(env, 'admin-1', { ...input, ...changed }), /already used/);
+  }
+  await assert.rejects(issueAdminGiftCard(env, 'admin-2', input), /already used/);
+  await assert.rejects(issueAdminGiftCard(env, 'admin-1', { ...input, requestKey: 'not-a-uuid' }));
+  // The listing's public ID is not an issuance key and cannot recover its private code.
+  await assert.rejects(issueAdminGiftCard(env, 'admin-1', { ...input, requestKey: issued.id }));
+  const rotated = giftEnv(DB, KEY_B, KEY_A);
+  await reencryptGiftCardCodes(rotated);
+  assert.deepEqual(await issueAdminGiftCard(giftEnv(DB, KEY_B), 'admin-1', input), issued);
+  sqlite.close();
+});
+
+test('unkeyed issuance keeps creating independent cards, while the admin route accepts replay keys', async (t) => {
+  t.after(() => { delete globalThis.cmsUser; delete globalThis.workerEnv; });
+  const { sqlite, DB } = database();
+  const env = giftEnv(DB);
+  const data = { amountCents: 2500, reason: 'Original caller without a key' };
+  const first = await issueAdminGiftCard(env, 'admin-1', data);
+  const second = await issueAdminGiftCard(env, 'admin-1', data);
+  assert.notEqual(first.id, second.id);
+  const body = { action: 'issue', data: { ...data, requestKey: crypto.randomUUID() } };
+  const admin = { id: 'admin-1', role: 'admin' };
+  assert.equal((await callAdmin(env, undefined, { body })).status, 401);
+  assert.equal((await callAdmin(env, { id: 'editor-1', role: 'editor' }, { body })).status, 403);
+  assert.equal((await callAdmin(env, admin, { body, origin: 'https://other.test' })).status, 403);
+  const issued = await callAdmin(env, admin, { body });
+  assert.equal(issued.status, 200);
+  assert.deepEqual(await callAdmin(env, admin, { body }), issued);
+  assert.equal(rows(sqlite, 'SELECT id FROM _ecommerce_gift_cards').length, 3);
+  sqlite.close();
+});
+
+test('a competing issuance with the same key commits one card and one issue ledger entry', async () => {
+  const { sqlite, DB } = database();
+  const env = giftEnv(DB);
+  const input = { amountCents: 2500, reason: 'Concurrent goodwill card', requestKey: crypto.randomUUID() };
+  let winner;
+  DB.beforeNextBatch = async () => { winner = await issueAdminGiftCard(env, 'admin-1', input); };
+  const second = await issueAdminGiftCard(env, 'admin-1', input);
+  assert.deepEqual(second, winner);
+  assert.deepEqual(ledgerOf(sqlite, second.id), [{ kind: 'issue', amount_cents: 2500 }]);
+  assert.equal(rows(sqlite, 'SELECT id FROM _ecommerce_gift_cards').length, 1);
+  // A race with a changed amount refuses the losing payload without changing the winner.
+  const another = { ...input, requestKey: crypto.randomUUID() };
+  DB.beforeNextBatch = () => issueAdminGiftCard(env, 'admin-1', another);
+  await assert.rejects(issueAdminGiftCard(env, 'admin-1', { ...another, amountCents: 5000 }), /already used/);
+  assert.deepEqual(rows(sqlite, 'SELECT balance_cents FROM _ecommerce_gift_cards').map(row => row.balance_cents), [2500, 2500]);
+  sqlite.close();
+});
+
+test('a replacement replay never repeats the value transfer or voids a later replacement', async () => {
+  const { sqlite, DB } = database();
+  const env = giftEnv(DB);
+  const purchase = await buyGiftCard(sqlite, env, 10000, 'pi_replay_replace');
+  const input = { amountCents: 10000, reason: 'Replacement for a lost card', replacesPurchaseId: purchase.id, requestKey: crypto.randomUUID() };
+  let original;
+  let later;
+  // The replay is prepared first, then another invocation wins and staff later replaces its card.
+  DB.beforeNextBatch = async () => {
+    original = await issueAdminGiftCard(env, 'admin-1', input);
+    later = await issueAdminGiftCard(env, 'admin-1', { ...input, reason: 'A later replacement card', requestKey: crypto.randomUUID() });
+  };
+  const recovered = await issueAdminGiftCard(env, 'admin-1', input);
+  assert.deepEqual(recovered, original);
+  assert.deepEqual(await issueAdminGiftCard(env, 'admin-1', input), original);
+  assert.deepEqual(cardRow(sqlite, later.id), { status: 'active', balance_cents: 10000, held_for_review: 0 });
+  assert.equal(ledgerBalance(sqlite, original.id), 0);
+  assert.equal(rows(sqlite, 'SELECT id FROM _ecommerce_gift_cards').length, 3);
+  assert.equal(rows(sqlite, "SELECT id FROM _ecommerce_gift_card_ledger WHERE kind = 'issue'").length, 3);
+  sqlite.close();
+});
+
 test('a code encrypted before a key rotation still decrypts after it, and new codes use the new key', async () => {
   const { sqlite, DB } = database();
   const before = await buyGiftCard(sqlite, giftEnv(DB, KEY_A), 5000, 'pi_rotation_before');

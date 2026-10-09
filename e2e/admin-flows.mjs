@@ -20,11 +20,15 @@
 //   --headed                                              show the browser, slowed down a little
 //   --help
 //
+// The gift-card workflow needs a fresh throwaway TALISMAN_COMMERCE_GIFT_CARD_KEY (64 hex characters)
+// in the local playground bindings. CI creates it alongside the temporary auth secrets.
+//
 // Steps listed in KNOWN_GAPS are reported with status "fail" and knownGap: true and do not affect
 // the exit code; they are printed as GAP.
 
 import { chromium } from 'playwright-core';
 import { ordersFlow } from './orders-flow.mjs';
+import { giftCardFlow } from './gift-card-flow.mjs';
 import { deflateSync } from 'node:zlib';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -493,6 +497,8 @@ const steps = {
     await expectVisible(page.getByRole('button', { name: 'Sign in', exact: true }), 'hybrid editor sign-out');
     return 'local editor signs into hybrid mode, saves twice, cannot delete/publish/archive, and signs out of the CMS';
   },
+
+  'gift-card-workflow': ctx => giftCardFlow(ctx, { fail, expectVisible, expectHidden, expectValue, expectNoAlert, waitUntil }),
 
   'orders-workflow': ctx => ordersFlow(ctx, { fail, expectVisible, expectHidden, expectValue, expectNoAlert, waitUntil }),
 

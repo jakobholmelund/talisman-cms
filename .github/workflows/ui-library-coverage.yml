@@ -60,7 +60,7 @@ jobs:
           set -euo pipefail
           trap 'pnpm --filter playground exec astro preview stop || true; rm -f playground/.dev.vars playground/dist/server/.dev.vars' EXIT
           TOKEN="$(openssl rand -hex 32)"
-          printf 'TALISMAN_AUTH_SECRET=%s\nTALISMAN_AUTH_SETUP_TOKEN=%s\n' "$(openssl rand -hex 32)" "$TOKEN" > playground/.dev.vars
+          printf 'TALISMAN_AUTH_SECRET=%s\nTALISMAN_AUTH_SETUP_TOKEN=%s\nTALISMAN_COMMERCE_GIFT_CARD_KEY=%s\n' "$(openssl rand -hex 32)" "$TOKEN" "$(openssl rand -hex 32)" > playground/.dev.vars
           pnpm --filter playground build
           pnpm --filter talisman-cms db:migrate:local
           pnpm --filter talisman-cms db:seed:ecommerce:local
