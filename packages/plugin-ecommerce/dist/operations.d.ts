@@ -1,11 +1,11 @@
 import { TalismanEnv } from 'talisman-cms/client';
-import { StocktakeLine, ParcelItem, InspectedItem, ReturnedItem } from './schema.js';
+import { StocktakeLine, ParcelItem, InspectedItem, ReturnedItem, RETURN_REFUND_STATUSES, returnRefundDecisions, REFUND_SOURCE_KINDS, RESTOCK_TARGET_TYPES, replenishmentPolicies, replenishmentDeliveries } from './schema.js';
 import * as drizzle_orm_sqlite_core from 'drizzle-orm/sqlite-core';
 export { d as decideReturnRequest, l as listReturnsQueue, r as readReturnRequestAdmin } from './return-requests-CqFKKpcO.js';
 import 'drizzle-orm';
 import './return-request-types-BRQL27cB.js';
 
-type AttentionKind = 'payment_review' | 'older_payments' | 'tax_review' | 'email' | 'gift_hold' | 'shipment' | 'dispute' | 'return_request' | 'inspection';
+type AttentionKind = 'payment_review' | 'older_payments' | 'tax_review' | 'email' | 'gift_hold' | 'shipment' | 'dispute' | 'return_request' | 'inspection' | 'refund' | 'incoming';
 /** A read-only snapshot. Exact counts include every matching record; each category shows its ten
  * oldest records. No buyer addresses, provider credentials or gift card codes leave this query. */
 declare function readCommerceAttention(env: TalismanEnv, now?: number): Promise<{
@@ -28,9 +28,9 @@ declare function listEmailRecovery(env: TalismanEnv, input?: unknown): Promise<{
         retryable: boolean;
         guidance: string;
         id: string;
-        kind: "shipment" | "order_confirmation" | "shipment_update" | "gift_card_claim";
+        kind: "shipment" | "order_confirmation" | "shipment_update" | "gift_card_claim" | "return_decision" | "return_received";
         subjectId: string;
-        status: "pending" | "cancelled" | "sent" | "failed";
+        status: "cancelled" | "pending" | "sent" | "failed";
         attempts: number;
         lastError: string | null;
         nextAttemptAt: Date;
@@ -59,7 +59,7 @@ declare function retryCommerceEmail(env: TalismanEnv, input: unknown, actor: str
     emailId: string;
     requestedAt: Date;
     delivery: {
-        status: "pending" | "cancelled" | "sent" | "failed";
+        status: "cancelled" | "pending" | "sent" | "failed";
         attempts: number;
         lastError: string | null;
     } | undefined;
@@ -768,11 +768,11 @@ declare function receiveOrderReturn(env: TalismanEnv, input: unknown, actor: str
         id: string;
         orderId: string;
         receiptId: string;
-        reservationType: "component" | "inventory";
-        reservationId: string;
         targetType: "product" | "variant" | "stock" | "component";
         targetId: string;
         quantity: number;
+        reservationType: "component" | "inventory";
+        reservationId: string;
     }[];
     duplicate: boolean;
 } | {
@@ -816,9 +816,9 @@ declare function readOrderWarehouse(env: TalismanEnv, input: unknown): Promise<{
         id: string;
         items: ParcelItem[];
         orderId: string;
+        actor: string;
         reason: string;
         fingerprint: string;
-        actor: string;
         fulfillmentId: string;
         source: "shipment" | "backfill";
     }[];
@@ -835,36 +835,36 @@ declare function readOrderWarehouse(env: TalismanEnv, input: unknown): Promise<{
             id: string;
             items: InspectedItem[];
             orderId: string;
+            actor: string;
             reason: string;
             fingerprint: string;
-            actor: string;
             receiptId: string;
             stock: {
                 id: string;
                 orderId: string;
-                reservationType: "component" | "inventory";
-                reservationId: string;
                 targetType: "product" | "variant" | "stock" | "component";
                 targetId: string;
                 quantity: number;
+                reservationType: "component" | "inventory";
+                reservationId: string;
                 inspectionId: string;
             }[];
         }[];
         id: string;
         items: ReturnedItem[];
         orderId: string;
+        actor: string;
         reason: string;
         fingerprint: string;
-        actor: string;
         stock: {
             id: string;
             orderId: string;
             receiptId: string;
-            reservationType: "component" | "inventory";
-            reservationId: string;
             targetType: "product" | "variant" | "stock" | "component";
             targetId: string;
             quantity: number;
+            reservationType: "component" | "inventory";
+            reservationId: string;
         }[];
     }[];
     shippingAddress: {
@@ -927,11 +927,11 @@ declare function inspectOrderReturn(env: TalismanEnv, input: unknown, actor: str
     restocked: {
         id: string;
         orderId: string;
-        reservationType: "component" | "inventory";
-        reservationId: string;
         targetType: "product" | "variant" | "stock" | "component";
         targetId: string;
         quantity: number;
+        reservationType: "component" | "inventory";
+        reservationId: string;
         inspectionId: string;
     }[];
     duplicate: boolean;
@@ -1000,4 +1000,115 @@ declare function exportCommerceOperations(env: TalismanEnv, input: unknown): Pro
     csv: string;
 }>;
 
-export { type AttentionKind, CommerceOperationsConflict, type StockOverviewRow, exportCommerceOperations, inspectOrderReturn, listEmailRecovery, listStockLocations, listStocktakes, readCommerceAttention, readOrderWarehouse, readStockHistory, readStockOverview, readStocktakeTargets, receiveOrderReturn, recordParcelContents, recordStockMovement, recordStocktake, retryCommerceEmail };
+type RefundStatus = typeof RETURN_REFUND_STATUSES[number] | 'review' | 'unavailable';
+type RefundQueue = {
+    offset: number;
+    total: number;
+    filter: string;
+    orderId: string;
+    rows: Array<{
+        id: string;
+        orderId: string;
+        status: RefundStatus;
+        amountMinor: number;
+        currency: string;
+        createdAt: string;
+    }>;
+};
+type Decision = typeof returnRefundDecisions.$inferSelect;
+type RefundCase = {
+    receiptId: string;
+    orderId: string;
+    currency: string;
+    version: string;
+    status: RefundStatus;
+    amountMinor: number;
+    items: Array<{
+        name: string;
+        quantity: number;
+    }>;
+    history: Array<Pick<Decision, 'id' | 'status' | 'amountMinor' | 'allocations' | 'reason' | 'actor'> & {
+        actorName: string;
+        createdAt: string;
+    }>;
+    sources: Array<{
+        kind: typeof REFUND_SOURCE_KINDS[number];
+        id: string;
+        amountMinor: number;
+        availableMinor: number;
+        createdAt: string | null;
+    }>;
+};
+declare function listRefundFollowUp(env: TalismanEnv, input?: unknown): Promise<RefundQueue>;
+declare function readRefundCase(env: TalismanEnv, input: unknown): Promise<RefundCase>;
+declare function recordRefundFollowUp(env: TalismanEnv, input: unknown, actor: string): Promise<{
+    decisionId: string;
+    duplicate?: boolean;
+}>;
+
+type Policy = typeof replenishmentPolicies.$inferSelect;
+type Delivery = typeof replenishmentDeliveries.$inferSelect;
+type ReplenishmentLocation = {
+    type: typeof RESTOCK_TARGET_TYPES[number];
+    id: string;
+    name: string;
+    sku: string | null;
+    quantity: number;
+    updatedAt: string;
+    minimumQuantity: number | null;
+    targetQuantity: number | null;
+    enabled: boolean;
+    incoming: number;
+    suggested: number;
+    policyVersion: string | null;
+};
+type ReplenishmentQueue = {
+    offset: number;
+    total: number;
+    search: string;
+    filter: string;
+    rows: ReplenishmentLocation[];
+};
+type ReplenishmentDetail = {
+    targetType: ReplenishmentLocation['type'];
+    targetId: string;
+    location: ReplenishmentLocation | null;
+    deliveryOffset: number;
+    deliveryTotal: number;
+    policies: Array<Omit<Policy, 'fingerprint' | 'createdAt'> & {
+        createdAt: string;
+        actorName: string;
+    }>;
+    deliveries: Array<Omit<Delivery, 'fingerprint' | 'createdAt'> & {
+        createdAt: string;
+        actorName: string;
+        received: number;
+        remaining: number;
+        cancelled: boolean;
+        version: string;
+        events: Array<{
+            id: string;
+            kind: 'received' | 'cancelled';
+            quantity: number;
+            actorName: string;
+            reason: string;
+            createdAt: string;
+        }>;
+    }>;
+};
+declare function listReplenishment(env: TalismanEnv, input?: unknown): Promise<ReplenishmentQueue>;
+declare function readReplenishment(env: TalismanEnv, input: unknown): Promise<ReplenishmentDetail>;
+declare function saveReplenishmentPolicy(env: TalismanEnv, input: unknown, actor: string): Promise<{
+    policyId: string;
+    duplicate?: boolean;
+}>;
+declare function planReplenishmentDelivery(env: TalismanEnv, input: unknown, actor: string): Promise<{
+    deliveryId: string;
+    duplicate?: boolean;
+}>;
+declare function recordReplenishmentDelivery(env: TalismanEnv, input: unknown, actor: string): Promise<{
+    eventId: string;
+    duplicate?: boolean;
+}>;
+
+export { type AttentionKind, CommerceOperationsConflict, type StockOverviewRow, exportCommerceOperations, inspectOrderReturn, listEmailRecovery, listRefundFollowUp, listReplenishment, listStockLocations, listStocktakes, planReplenishmentDelivery, readCommerceAttention, readOrderWarehouse, readRefundCase, readReplenishment, readStockHistory, readStockOverview, readStocktakeTargets, receiveOrderReturn, recordParcelContents, recordRefundFollowUp, recordReplenishmentDelivery, recordStockMovement, recordStocktake, retryCommerceEmail, saveReplenishmentPolicy };

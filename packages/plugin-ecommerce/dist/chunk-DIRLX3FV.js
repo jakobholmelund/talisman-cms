@@ -1,7 +1,7 @@
 import {
   commerceDb,
   commitBatch
-} from "./chunk-BYV5FZJC.js";
+} from "./chunk-WUDMFQXC.js";
 import {
   carts,
   creditLedger,
@@ -15,11 +15,13 @@ import {
   rateLimits,
   referralCodes,
   referrals,
+  returnReceipts,
+  returnRefundDecisions,
   returnRequestEvents,
   returnRequests,
   shopperAudits,
   signInTokens
-} from "./chunk-2AZBK7KL.js";
+} from "./chunk-OX54ZSQZ.js";
 
 // src/shopper-privacy.ts
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
@@ -44,6 +46,7 @@ async function manageShopperData(env, actor, input) {
     AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders o WHERE o.user_id = ${account.id}
       AND (o.status IN ('pending','disputed') OR (o.status IN ('paid','partially_refunded') AND o.fulfillment_status <> 'fulfilled'
         AND (o.shipping_address IS NOT NULL OR EXISTS (SELECT 1 FROM json_each(o.items) i JOIN _ecommerce_products p ON p.id = json_extract(i.value, '$.productId') WHERE p.is_physical = 1)))))
+    AND NOT EXISTS (SELECT 1 FROM _ecommerce_return_receipts r JOIN _ecommerce_orders o ON o.id=r.order_id WHERE o.user_id=${account.id} AND COALESCE((SELECT status FROM _ecommerce_return_refund_decisions d WHERE d.receipt_id=r.id ORDER BY rowid DESC LIMIT 1),'review') IN ('review','needed'))
     AND NOT EXISTS (SELECT 1 FROM _ecommerce_return_requests r JOIN _ecommerce_orders o ON o.id=r.order_id WHERE o.user_id=${account.id}
       AND COALESCE((SELECT status FROM _ecommerce_return_request_events e WHERE e.request_id=r.id ORDER BY rowid DESC LIMIT 1),'pending') IN ('pending','approved'))
     AND NOT EXISTS (SELECT 1 FROM _ecommerce_return_receipts r JOIN _ecommerce_orders o ON o.id=r.order_id,json_each(r.items) i WHERE o.user_id=${account.id} AND json_extract(i.value,'$.condition')='inspection'
@@ -140,6 +143,7 @@ async function manageShopperData(env, actor, input) {
   if (values.action === "anonymize") {
     const anonymousEmail = `${account.id}@anonymized.invalid`;
     statements.push(
+      db.update(returnRefundDecisions).set({ reason: "[redacted]", redactedAt: now }).where(and(isNull(returnRefundDecisions.redactedAt), inArray(returnRefundDecisions.receiptId, db.select({ id: returnReceipts.id }).from(returnReceipts).where(inArray(returnReceipts.orderId, db.select({ id: orders.id }).from(orders).where(eq(orders.userId, account.id))))), recorded)),
       db.update(returnRequests).set({ reason: "[redacted]", redactedAt: now }).where(and(isNull(returnRequests.redactedAt), inArray(returnRequests.orderId, db.select({ id: orders.id }).from(orders).where(eq(orders.userId, account.id))), recorded)),
       db.update(returnRequestEvents).set({ reason: "[redacted]", customerMessage: "", redactedAt: now }).where(and(isNull(returnRequestEvents.redactedAt), inArray(returnRequestEvents.requestId, db.select({ id: returnRequests.id }).from(returnRequests).where(inArray(returnRequests.orderId, db.select({ id: orders.id }).from(orders).where(eq(orders.userId, account.id))))), recorded)),
       db.update(orders).set({ customerEmail: null, shippingAddress: null, billingAddress: null }).where(and(eq(orders.userId, account.id), recorded)),

@@ -10,31 +10,31 @@ import {
   bindCommerceApi,
   reconcileCommerce,
   shippingOptionsFor
-} from "./chunk-O5RHJP2A.js";
+} from "./chunk-7AB4ZVXG.js";
 import {
   TaxCalculationError
-} from "./chunk-LI6QAID4.js";
-import "./chunk-ESZ7JTG3.js";
-import "./chunk-TA4INXDU.js";
+} from "./chunk-UR52F5YS.js";
+import "./chunk-BFCTU77S.js";
+import "./chunk-UWIRME3U.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
 import {
   deliverPendingCommerceEmails
-} from "./chunk-HLQKP5C5.js";
+} from "./chunk-RLJNYAC6.js";
 import {
   COUNTRY_CODES,
   StoreSettingsError,
   isCountryCode,
   readStoreCurrency,
   readStoreSettings
-} from "./chunk-DNAK25NY.js";
-import "./chunk-GEPQUKSP.js";
+} from "./chunk-5CEWEWY2.js";
+import "./chunk-L6PZD3R6.js";
 import "./chunk-GNU6N22K.js";
-import "./chunk-SALHYN5M.js";
+import "./chunk-DIRLX3FV.js";
 import {
   commerceDb
-} from "./chunk-BYV5FZJC.js";
+} from "./chunk-WUDMFQXC.js";
 import {
   carts,
   categories,
@@ -69,9 +69,13 @@ import {
   referralCodes,
   referralSettings,
   referrals,
+  replenishmentDeliveries,
+  replenishmentDeliveryEvents,
+  replenishmentPolicies,
   restocks,
   returnInspections,
   returnReceipts,
+  returnRefundDecisions,
   returnRequestEvents,
   returnRequestReceipts,
   returnRequests,
@@ -83,9 +87,9 @@ import {
   tags,
   variantComponents,
   variants
-} from "./chunk-2AZBK7KL.js";
+} from "./chunk-OX54ZSQZ.js";
 import "./chunk-NQUBOBQT.js";
-import "./chunk-SPRRFCF5.js";
+import "./chunk-E6QRZBC6.js";
 import {
   SUPPORTED_CURRENCIES,
   currencyMinorUnits,
@@ -254,6 +258,8 @@ var ecommercePlugin = (config) => {
     { key: "emails", path: "commerce-emails", component: "EmailRecovery", label: "Email recovery", description: "Review failed notices and request an audited retry." },
     { key: "stock", path: "commerce-stock", component: "StockOverview", label: "Stock overview", description: "Find unavailable choices and low shared component stock." },
     { key: "returns", path: "commerce-returns", component: "Returns", label: "Returns", description: "Review customer return requests and pending inspections." },
+    { key: "refunds", path: "commerce-refunds", component: "RefundFollowUp", label: "Refund follow-up", description: "Resolve received returns against confirmed refund records." },
+    { key: "replenishment", path: "commerce-replenishment", component: "Replenishment", label: "Replenishment", description: "Set stock targets and track expected supplier deliveries." },
     { key: "exports", path: "commerce-exports", component: "OperationsExports", label: "Operations exports", description: "Download filtered order, return and stock records." },
     { key: "orders", path: "commerce-orders", component: "Orders", label: "Orders & fulfillment", description: "Review paid orders and record shipments." },
     { key: "promotions", path: "commerce-promotions", component: "Promotions", label: "Promotions & referrals", description: "Create discounts and manage referral rewards." },
@@ -842,6 +848,38 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
             "reason"
           ]),
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "giftCardClaims", idColumn: "id" }
+        });
+        collections.push({
+          name: "Return Refund Decisions",
+          slug: "_ecommerce_return_refund_decisions",
+          readOnly: true,
+          adminSection: "commerce",
+          fields: nativeFields(returnRefundDecisions, ["id", "receiptId", "expectedVersion", "status", "amountMinor", { name: "allocations", type: "array", label: "Confirmed refund allocations" }, "actor", "reason", "fingerprint", "createdAt", "redactedAt"]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "returnRefundDecisions", idColumn: "id" }
+        });
+        collections.push({
+          name: "Replenishment Policies",
+          slug: "_ecommerce_replenishment_policies",
+          readOnly: true,
+          adminSection: "commerce",
+          fields: nativeFields(replenishmentPolicies, ["id", "targetType", "targetId", "minimumQuantity", "targetQuantity", "enabled", "expectedVersion", "actor", "reason", "fingerprint", "createdAt"]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "replenishmentPolicies", idColumn: "id" }
+        });
+        collections.push({
+          name: "Expected Deliveries",
+          slug: "_ecommerce_replenishment_deliveries",
+          readOnly: true,
+          adminSection: "commerce",
+          fields: nativeFields(replenishmentDeliveries, ["id", "targetType", "targetId", "quantity", "supplier", "reference", "expectedDate", "actor", "reason", "fingerprint", "createdAt"]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "replenishmentDeliveries", idColumn: "id" }
+        });
+        collections.push({
+          name: "Delivery Receipts",
+          slug: "_ecommerce_replenishment_delivery_events",
+          readOnly: true,
+          adminSection: "commerce",
+          fields: nativeFields(replenishmentDeliveryEvents, ["id", "deliveryId", "kind", "movementId", "expectedVersion", "actor", "reason", "fingerprint", "createdAt"]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "replenishmentDeliveryEvents", idColumn: "id" }
         });
         collections.push({
           name: "Order Emails",

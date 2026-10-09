@@ -11,14 +11,14 @@ import {
   sendCommerceEmailNow,
   unclaimedAt,
   waitingEmailsResult
-} from "./chunk-DNAK25NY.js";
+} from "./chunk-5CEWEWY2.js";
 import {
   batchGroups,
   chunked,
   commerceDb,
   commitBatch,
   errorText
-} from "./chunk-BYV5FZJC.js";
+} from "./chunk-WUDMFQXC.js";
 import {
   creditLedger,
   emailDeliveries,
@@ -35,14 +35,15 @@ import {
   returnStock,
   stockMovements,
   stocktakes
-} from "./chunk-2AZBK7KL.js";
+} from "./chunk-OX54ZSQZ.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
 import {
   orderConfirmationEmail,
+  returnNoticeEmail,
   shipmentEmail
-} from "./chunk-SPRRFCF5.js";
+} from "./chunk-E6QRZBC6.js";
 
 // src/warehouse.ts
 import { eq as eq2, sql as sql2 } from "drizzle-orm";
@@ -141,6 +142,8 @@ var recoverableEmailSubject = sql`(
     SELECT 1 FROM _ecommerce_orders o WHERE o.id = _ecommerce_email_deliveries.subject_id
       AND COALESCE(o.payment_provider, 'stripe') <> 'admin_test'
       AND o.status IN ('paid', 'fulfilled', 'partially_refunded', 'disputed')))
+  OR (_ecommerce_email_deliveries.kind='return_received' AND EXISTS(SELECT 1 FROM _ecommerce_return_receipts r JOIN _ecommerce_orders o ON o.id=r.order_id WHERE r.id=_ecommerce_email_deliveries.subject_id AND COALESCE(o.payment_provider,'stripe')<>'admin_test' AND o.customer_email IS NOT NULL))
+  OR (_ecommerce_email_deliveries.kind='return_decision' AND EXISTS(SELECT 1 FROM _ecommerce_return_request_events e JOIN _ecommerce_return_requests r ON r.id=e.request_id JOIN _ecommerce_orders o ON o.id=r.order_id WHERE e.id=_ecommerce_email_deliveries.subject_id AND e.actor_kind='staff' AND e.redacted_at IS NULL AND r.redacted_at IS NULL AND e.rowid=(SELECT rowid FROM _ecommerce_return_request_events WHERE request_id=r.id ORDER BY rowid DESC LIMIT 1) AND COALESCE(o.payment_provider,'stripe')<>'admin_test' AND o.customer_email IS NOT NULL))
   OR (_ecommerce_email_deliveries.kind IN ('shipment', 'shipment_update') AND EXISTS (
     SELECT 1 FROM _ecommerce_fulfillments f JOIN _ecommerce_orders o ON o.id = f.order_id
       WHERE f.id = _ecommerce_email_deliveries.subject_id AND COALESCE(o.payment_provider, 'stripe') <> 'admin_test'
@@ -332,7 +335,8 @@ async function receiveOrderReturn(env, input, actor) {
     await db.batch([
       db.insert(returnReceipts).values({ id: receiptId, orderId: values.orderId, items: values.items, actor, reason: values.reason, fingerprint, createdAt: /* @__PURE__ */ new Date() }),
       ...restocked.map((row) => db.insert(returnStock).values(row)),
-      ...values.returnRequestId ? [db.insert(returnRequestReceipts).values({ receiptId, requestId: values.returnRequestId })] : []
+      ...values.returnRequestId ? [db.insert(returnRequestReceipts).values({ receiptId, requestId: values.returnRequestId })] : [],
+      db.run(commerceEmailStatement("return_received", receiptId, Math.floor(Date.now() / 1e3)))
     ]);
   } catch (cause) {
     const previous2 = await replay();
@@ -608,7 +612,9 @@ import { and as and2, eq as eq3, inArray as inArray2 } from "drizzle-orm";
 async function loadOrderActivity(env, orderIds) {
   const db = commerceDb(env);
   const groups = chunked(orderIds);
-  const { stock, gift, credit, parcels, confirmations, contents, returns, inspections } = await batchGroups(db, {
+  const { stock, gift, credit, parcels, confirmations, contents, returns, inspections, requests, refundCases } = await batchGroups(db, {
+    requests: groups.map((ids) => db.query.returnRequests.findMany({ where: { orderId: { in: ids } }, columns: { id: true, orderId: true }, with: { events: { columns: { id: true } } } })),
+    refundCases: groups.map((ids) => db.query.returnReceipts.findMany({ where: { orderId: { in: ids } }, columns: { id: true, orderId: true }, with: { refundDecisions: true } })),
     inspections: groups.map((ids) => db.select().from(returnInspections).where(inArray2(returnInspections.orderId, ids))),
     contents: groups.map((ids) => db.select().from(parcelContents).where(inArray2(parcelContents.orderId, ids))),
     returns: groups.map((ids) => db.select().from(returnReceipts).where(inArray2(returnReceipts.orderId, ids))),
@@ -619,8 +625,10 @@ async function loadOrderActivity(env, orderIds) {
     confirmations: groups.map((ids) => db.select().from(emailDeliveries).where(and2(inArray2(emailDeliveries.subjectId, ids), eq3(emailDeliveries.kind, "order_confirmation"))))
   });
   const { notices } = await batchGroups(db, { notices: chunked(parcels.map((row) => row.id)).map((ids) => db.select().from(emailDeliveries).where(and2(inArray2(emailDeliveries.subjectId, ids), inArray2(emailDeliveries.kind, ["shipment", "shipment_update"])))) });
-  const names = await adminActorNames(env, [...stock, ...parcels].map((row) => row.adminActor).concat([...contents, ...returns, ...inspections].map((row) => row.actor)));
-  const parcelOrders = new Map(parcels.map((row) => [row.id, row.orderId]));
+  const { returnNotices } = await batchGroups(db, { returnNotices: chunked([...returns.map((r) => r.id), ...requests.flatMap((r) => r.events.map((e) => e.id))]).map((ids) => db.select().from(emailDeliveries).where(and2(inArray2(emailDeliveries.subjectId, ids), inArray2(emailDeliveries.kind, ["return_decision", "return_received"])))) });
+  const names = await adminActorNames(env, [...stock, ...parcels].map((row) => row.adminActor).concat([...contents, ...returns, ...inspections, ...refundCases.flatMap((r) => r.refundDecisions)].map((row) => row.actor)));
+  const parcelOrders = new Map([...parcels, ...returns].map((row) => [row.id, row.orderId]));
+  for (const r of requests) for (const e of r.events) parcelOrders.set(e.id, r.orderId);
   const activity = /* @__PURE__ */ new Map();
   function add(orderId, event) {
     activity.set(orderId, [...activity.get(orderId) ?? [], event]);
@@ -635,6 +643,7 @@ async function loadOrderActivity(env, orderIds) {
     amountCents: null,
     email: null
   });
+  for (const r of refundCases) for (const d of r.refundDecisions) add(r.orderId, { ...base(d.id, "return_refund_decision", d.createdAt, `${d.status}: ${d.reason}`), actor: d.actor, actorName: names.get(d.actor) ?? d.actor, amountCents: d.amountMinor });
   for (const row of contents) add(row.orderId, { ...base(row.id, "parcel_contents", row.createdAt, `${row.items.reduce((n, i) => n + i.quantity, 0)} units in parcel ${row.fulfillmentId}: ${row.reason}`), actor: row.actor, actorName: names.get(row.actor) ?? row.actor });
   for (const row of inspections) add(row.orderId, { ...base(row.id, "return_inspection", row.createdAt, `${row.items.reduce((n, i) => n + i.quantity, 0)} units inspected: ${row.reason}`), actor: row.actor, actorName: names.get(row.actor) ?? row.actor });
   for (const row of returns) add(row.orderId, { ...base(row.id, "return_intake", row.createdAt, `${row.items.reduce((n, i) => n + i.quantity, 0)} units received: ${row.reason}`), actor: row.actor, actorName: names.get(row.actor) ?? row.actor });
@@ -652,7 +661,7 @@ async function loadOrderActivity(env, orderIds) {
   ), actor: row.adminActor, actorName: names.get(row.adminActor) ?? row.adminActor });
   for (const row of gift) if (row.orderId) add(row.orderId, { ...base(row.id, "gift_card_refund", row.createdAt, `Returned to gift card ${row.cardId}`), amountCents: row.amountCents });
   for (const row of credit) add(row.orderId, { ...base(row.id, "store_credit_refund", row.createdAt, "Returned to shopper store credit"), amountCents: row.amountCents });
-  for (const row of [...confirmations, ...notices]) {
+  for (const row of [...confirmations, ...notices, ...returnNotices]) {
     const orderId = row.kind === "order_confirmation" ? row.subjectId : parcelOrders.get(row.subjectId);
     if (orderId) add(orderId, {
       ...base(row.id, "email", row.createdAt, row.kind.replaceAll("_", " ")),
@@ -778,11 +787,36 @@ function shipmentComposer(update) {
     return { to, message: await applyEmailTemplate(setup, "shipment", email, shipmentEmail(email)) };
   };
 }
+function returnComposer(received) {
+  return async (env, subjectId, setup) => {
+    const db = commerceDb(env);
+    const event = received ? null : await db.query.returnRequestEvents.findFirst({ where: { id: subjectId }, with: { request: { with: { order: true, events: { orderBy: (_t, { sql: sql5 }) => sql5`rowid` } } } } });
+    const receipt = received ? await db.query.returnReceipts.findFirst({ where: { id: subjectId }, with: { order: true } }) : null;
+    const order = receipt?.order ?? event?.request.order;
+    if (!order || order.paymentProvider === "admin_test") return { cancel: "not_found" };
+    if (event && (event.actorKind !== "staff" || event.redactedAt || event.request.redactedAt || event.request.events.at(-1)?.id !== event.id || !["approved", "declined", "closed"].includes(event.status))) return { cancel: "not_due" };
+    const to = bareEmailAddress(order.customerEmail);
+    if (!to) return { fail: "invalid_recipient" };
+    const lines = receipt?.items ?? event.request.items;
+    const described = await describeOrderItems(env, lines.map((i) => ({ ...order.items[i.lineIndex], quantity: i.quantity })));
+    const email = {
+      store: setup.store,
+      orderId: order.id,
+      occurredAt: (receipt ?? event).createdAt,
+      status: receipt ? "received" : event.status,
+      message: receipt ? "We have received the items listed below. Receipt of goods does not confirm a refund. We will review your return separately." : event.customerMessage,
+      items: described.map((i) => ({ name: [i.productName || "Ordered item", i.variantLabel].filter(Boolean).join(" / "), quantity: i.quantity }))
+    };
+    return { to, message: await applyEmailTemplate(setup, "returnNotice", email, returnNoticeEmail(email)) };
+  };
+}
 var COMPOSERS = {
   order_confirmation: composeOrderConfirmation,
   shipment: shipmentComposer(false),
   shipment_update: shipmentComposer(true),
-  gift_card_claim: composeGiftCardClaimEmail
+  gift_card_claim: composeGiftCardClaimEmail,
+  return_decision: returnComposer(false),
+  return_received: returnComposer(true)
 };
 function deliverCommerceEmail(env, kind, subjectId) {
   return sendCommerceEmailNow(env, kind, subjectId, COMPOSERS[kind]);

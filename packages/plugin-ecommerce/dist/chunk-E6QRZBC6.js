@@ -184,6 +184,18 @@ function giftCardClaimEmail({ store, purchase, claim }) {
     })
   };
 }
+function returnNoticeEmail(email) {
+  const { store, orderId, occurredAt, status, message, items } = email;
+  const heading = status === "received" ? "Your returned goods were received" : `Your return request is ${status}`;
+  return { subject: oneLine(`${heading} \u2014 ${store.name}`), ...renderCommerceEmail({
+    storeName: store.name,
+    heading,
+    paragraphs: [`Order ${orderId} \xB7 ${formatDate(occurredAt)}`, message],
+    ...store.origin ? { action: { label: "View your order", url: `${store.origin}/checkout/success?order=${encodeURIComponent(orderId)}` } } : {},
+    sections: [{ title: status === "received" ? "Received items" : "Requested items", rows: items.map((i) => ({ label: i.name, value: String(i.quantity) })) }, ...storeSections(store)],
+    footer: [`Questions about your return? Please ${contact(store)} and mention the order number.`]
+  }) };
+}
 
 export {
   shopperSignInEmail,
@@ -194,5 +206,6 @@ export {
   renderCommerceEmail,
   orderConfirmationEmail,
   shipmentEmail,
-  giftCardClaimEmail
+  giftCardClaimEmail,
+  returnNoticeEmail
 };

@@ -6,9 +6,10 @@ import {
   giftCardClaimEmail,
   orderConfirmationEmail,
   renderCommerceEmail,
+  returnNoticeEmail,
   shipmentEmail,
   shopperSignInEmail
-} from "./chunk-SPRRFCF5.js";
+} from "./chunk-E6QRZBC6.js";
 import "./chunk-2UYSCNNW.js";
 export {
   emailLink,
@@ -18,6 +19,7 @@ export {
   giftCardClaimEmail,
   orderConfirmationEmail,
   renderCommerceEmail,
+  returnNoticeEmail,
   shipmentEmail,
   shopperSignInEmail
 };

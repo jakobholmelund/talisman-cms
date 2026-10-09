@@ -2,9 +2,9 @@ import {
   VariantChangeError,
   runVariantChange,
   variantChangeSchema
-} from "../chunk-TZ7UCQK7.js";
-import "../chunk-BYV5FZJC.js";
-import "../chunk-2AZBK7KL.js";
+} from "../chunk-4FTXWVFV.js";
+import "../chunk-WUDMFQXC.js";
+import "../chunk-OX54ZSQZ.js";
 
 // src/routes/ecommerce-admin-variants.ts
 import { authorizeCmsRequest } from "talisman-cms/auth/guard";

@@ -1,7 +1,7 @@
 import {
   INVENTORY_COLUMNS,
   fullRefundStatements
-} from "./chunk-ESZ7JTG3.js";
+} from "./chunk-BFCTU77S.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
@@ -11,7 +11,7 @@ import {
   deliverCommerceEmail,
   describeOrderItems,
   fulfillCommerceOrder
-} from "./chunk-HLQKP5C5.js";
+} from "./chunk-RLJNYAC6.js";
 import {
   ReconcileFailure,
   ShopperError,
@@ -26,23 +26,23 @@ import {
   readStoreSettings,
   reconcileFailure,
   uncheckedSessionRefusal
-} from "./chunk-DNAK25NY.js";
+} from "./chunk-5CEWEWY2.js";
 import {
   canonicalEmail,
   canonicalEmails,
   canonicalPurchase,
   getReferralPolicy,
   referralReversalStatements
-} from "./chunk-GEPQUKSP.js";
+} from "./chunk-L6PZD3R6.js";
 import {
   PURCHASED_ORDER_STATUSES,
   claimInterval
-} from "./chunk-SALHYN5M.js";
+} from "./chunk-DIRLX3FV.js";
 import {
   commerceDb,
   commitBatch,
   errorText
-} from "./chunk-BYV5FZJC.js";
+} from "./chunk-WUDMFQXC.js";
 import {
   carts,
   componentReservations,
@@ -56,7 +56,7 @@ import {
   returnRequests,
   taxReversals,
   taxSyncDecisions
-} from "./chunk-2AZBK7KL.js";
+} from "./chunk-OX54ZSQZ.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
@@ -919,7 +919,7 @@ async function appendDecision(env, v, actor, actorKind) {
   const previous = await replay();
   if (previous) return previous;
   try {
-    await db.insert(returnRequestEvents).values({ id: eventId, requestId: v.requestId, status: v.status, expectedVersion: v.expectedVersion, actor, actorKind, reason: v.reason, customerMessage: v.customerMessage, fingerprint: hash, createdAt: /* @__PURE__ */ new Date() });
+    await db.batch([db.insert(returnRequestEvents).values({ id: eventId, requestId: v.requestId, status: v.status, expectedVersion: v.expectedVersion, actor, actorKind, reason: v.reason, customerMessage: v.customerMessage, fingerprint: hash, createdAt: /* @__PURE__ */ new Date() }), ...actorKind === "staff" ? [db.run(commerceEmailStatement("return_decision", eventId, Math.floor(Date.now() / 1e3)))] : []]);
   } catch (error) {
     const previous2 = await replay();
     if (previous2) return previous2;

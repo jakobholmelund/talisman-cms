@@ -1,7 +1,7 @@
 import {
   getReferralPolicy,
   referralReversalStatements
-} from "./chunk-GEPQUKSP.js";
+} from "./chunk-L6PZD3R6.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
@@ -9,7 +9,7 @@ import {
 import {
   commerceDb,
   commitBatch
-} from "./chunk-BYV5FZJC.js";
+} from "./chunk-WUDMFQXC.js";
 import {
   creditLedger,
   discountRedemptions,
@@ -23,11 +23,11 @@ import {
   giftCards,
   orders,
   payments
-} from "./chunk-2AZBK7KL.js";
+} from "./chunk-OX54ZSQZ.js";
 import {
   emailLink,
   giftCardClaimEmail
-} from "./chunk-SPRRFCF5.js";
+} from "./chunk-E6QRZBC6.js";
 import {
   SUPPORTED_CURRENCIES,
   isSupportedCurrency,
@@ -639,13 +639,17 @@ var KIND_HEADERS = {
   order_confirmation: "order-confirmation",
   shipment: "order-shipment",
   shipment_update: "order-shipment-update",
-  gift_card_claim: "gift-card-claim"
+  gift_card_claim: "gift-card-claim",
+  return_decision: "return-decision",
+  return_received: "return-received"
 };
 var KIND_LABELS = {
   order_confirmation: "Order confirmation email",
   shipment: "Shipment email",
   shipment_update: "Shipment update email",
-  gift_card_claim: "Gift card claim email"
+  gift_card_claim: "Gift card claim email",
+  return_decision: "Return decision email",
+  return_received: "Return receipt email"
 };
 var CONFIGURATION_ERRORS = /* @__PURE__ */ new Set(["not_configured", "sender_rejected", "invalid_message"]);
 var nowSeconds = () => Math.floor(Date.now() / 1e3);

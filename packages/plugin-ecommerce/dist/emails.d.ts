@@ -115,6 +115,7 @@ interface CommerceEmailTemplates {
     orderConfirmation?: Template<OrderConfirmationEmail>;
     shipment?: Template<ShipmentEmail>;
     giftCardClaim?: Template<GiftCardClaimEmail>;
+    returnNotice?: Template<ReturnNoticeEmail>;
 }
 /** An amount in minor units: `1250` in `usd` reads `$12.50` and in `jpy` `¥1,250`; deductions read `-$12.50`. */
 declare function formatMoney(cents: number, currency: string): string;
@@ -166,5 +167,18 @@ declare function orderConfirmationEmail({ store, order }: OrderConfirmationEmail
 declare function shipmentEmail({ store, order, shipment, update }: ShipmentEmail): CommerceEmailMessage;
 /** The default gift card email: a one-time link to the code, never the code itself. */
 declare function giftCardClaimEmail({ store, purchase, claim }: GiftCardClaimEmail): CommerceEmailMessage;
+/** Buyer-visible return facts. Internal reasons, actors and stock recipes are excluded. */
+interface ReturnNoticeEmail {
+    store: CommerceEmailStore;
+    orderId: string;
+    occurredAt: Date;
+    status: 'approved' | 'declined' | 'closed' | 'received';
+    message: string;
+    items: Array<{
+        name: string;
+        quantity: number;
+    }>;
+}
+declare function returnNoticeEmail(email: ReturnNoticeEmail): CommerceEmailMessage;
 
-export { type CommerceEmailContent, type CommerceEmailMessage, type CommerceEmailSection, type CommerceEmailStore, type CommerceEmailTemplates, type GiftCardClaimEmail, type OrderConfirmationEmail, type OrderEmailAddress, type ShipmentEmail, emailLink, formatAddress, formatDate, formatMoney, giftCardClaimEmail, orderConfirmationEmail, renderCommerceEmail, shipmentEmail, shopperSignInEmail };
+export { type CommerceEmailContent, type CommerceEmailMessage, type CommerceEmailSection, type CommerceEmailStore, type CommerceEmailTemplates, type GiftCardClaimEmail, type OrderConfirmationEmail, type OrderEmailAddress, type ReturnNoticeEmail, type ShipmentEmail, emailLink, formatAddress, formatDate, formatMoney, giftCardClaimEmail, orderConfirmationEmail, renderCommerceEmail, returnNoticeEmail, shipmentEmail, shopperSignInEmail };
