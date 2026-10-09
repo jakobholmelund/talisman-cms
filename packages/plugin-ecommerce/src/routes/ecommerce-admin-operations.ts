@@ -5,7 +5,7 @@ import { OperationsExportLimit } from '../operations-export';
 import { readBoundedJson } from '../request-body';
 import { ShopperError } from '../shopper-errors';
 import { z, ZodError } from 'zod';
-import { CommerceOperationsConflict, decideReturnRequest, readReturnRequestAdmin, listReturnsQueue, exportCommerceOperations, readOrderWarehouse, recordParcelContents, receiveOrderReturn, listStockLocations, readStockHistory, recordStockMovement, inspectOrderReturn, recordStocktake, listStocktakes, readStocktakeTargets, listEmailRecovery, readCommerceAttention, readStockOverview, retryCommerceEmail } from '../operations';
+import { listRefundFollowUp, readRefundCase, recordRefundFollowUp, listReplenishment, readReplenishment, saveReplenishmentPolicy, planReplenishmentDelivery, recordReplenishmentDelivery, CommerceOperationsConflict, decideReturnRequest, readReturnRequestAdmin, listReturnsQueue, exportCommerceOperations, readOrderWarehouse, recordParcelContents, receiveOrderReturn, listStockLocations, readStockHistory, recordStockMovement, inspectOrderReturn, recordStocktake, listStocktakes, readStocktakeTargets, listEmailRecovery, readCommerceAttention, readStockOverview, retryCommerceEmail } from '../operations';
 
 export const ALL: APIRoute = async ({ request }) => {
   const authorization = await authorizeCmsRequest(request, 'admin');
@@ -24,6 +24,8 @@ export const ALL: APIRoute = async ({ request }) => {
       if (view === 'attention') return Response.json(await readCommerceAttention(runtimeEnv), { headers });
       if (view === 'emails') return Response.json(await listEmailRecovery(runtimeEnv, params), { headers });
       if (view === 'stockLocations') return Response.json(await listStockLocations(runtimeEnv, params), { headers });
+      if (view === 'refunds') return Response.json(await listRefundFollowUp(runtimeEnv, params), { headers });
+      if (view === 'replenishment') return Response.json(await listReplenishment(runtimeEnv, params), { headers });
       if (view === 'returns') return Response.json(await listReturnsQueue(runtimeEnv, params), { headers });
       if (view === 'stocktakes') return Response.json(await listStocktakes(runtimeEnv, params), { headers });
       if (view === 'stockHistory') return Response.json(await readStockHistory(runtimeEnv, params), { headers });
@@ -34,10 +36,12 @@ export const ALL: APIRoute = async ({ request }) => {
     try { body = z.object({action:z.string().optional(),data:z.unknown().optional()}).strict().parse(await readBoundedJson(request)); } catch { return Response.json({ error: 'Invalid request' }, { status: 400, headers }); }
     const actor = String(authorization.user?.id ?? '');
     if (body?.action === 'export') { const result = await exportCommerceOperations(runtimeEnv, body.data); return new Response(result.csv, { headers: { ...headers, 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${result.filename}"`, 'X-Content-Type-Options': 'nosniff', 'X-Export-Rows': String(result.rows) } }); }
+    if (body?.action === 'refundRead') return Response.json(await readRefundCase(runtimeEnv, body.data), { headers });
+    if (body?.action === 'replenishmentRead') return Response.json(await readReplenishment(runtimeEnv, body.data), { headers });
     if (body?.action === 'returnRequestRead') return Response.json(await readReturnRequestAdmin(runtimeEnv, body.data), { headers });
     if (body?.action === 'stocktakeRead') return Response.json(await readStocktakeTargets(runtimeEnv, body.data), { headers });
     if (body?.action === 'warehouseRead') return Response.json(await readOrderWarehouse(runtimeEnv, body.data), { headers });
-    const actions = { retryEmail: retryCommerceEmail, parcelContents: recordParcelContents, receiveReturn: receiveOrderReturn, stockMovement: recordStockMovement, inspectReturn: inspectOrderReturn, stocktake: recordStocktake, returnDecision: decideReturnRequest };
+    const actions = { refundDecision: recordRefundFollowUp, replenishmentPolicy: saveReplenishmentPolicy, replenishmentPlan: planReplenishmentDelivery, replenishmentReceive: recordReplenishmentDelivery, retryEmail: retryCommerceEmail, parcelContents: recordParcelContents, receiveReturn: receiveOrderReturn, stockMovement: recordStockMovement, inspectReturn: inspectOrderReturn, stocktake: recordStocktake, returnDecision: decideReturnRequest };
     const action = body?.action as keyof typeof actions;
     if (!Object.hasOwn(actions, action)) return Response.json({ error: 'Invalid operations action' }, { status: 400, headers });
     return Response.json({ result: await actions[action](runtimeEnv, body.data, actor) }, { headers });

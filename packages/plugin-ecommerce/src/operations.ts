@@ -6,3 +6,6 @@ export { readOrderWarehouse, recordParcelContents, receiveOrderReturn, listStock
 
 export { decideReturnRequest, readReturnRequestAdmin, listReturnsQueue } from './return-requests';
 export { exportCommerceOperations } from './operations-export';
+
+export { listRefundFollowUp, readRefundCase, recordRefundFollowUp } from './refund-follow-up';
+export { listReplenishment, readReplenishment, saveReplenishmentPolicy, planReplenishmentDelivery, recordReplenishmentDelivery } from './replenishment';

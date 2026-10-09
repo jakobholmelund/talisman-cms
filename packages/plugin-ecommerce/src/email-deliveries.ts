@@ -4,7 +4,7 @@ import { commerceDb, type CommerceDb } from './db';
 import { isEmailDeliveryError, parseAddress, resolveEmailProvider, sendEmail, type EmailProvider } from 'talisman-cms/email';
 import { readSetting } from 'talisman-cms/env';
 import { emailLink, type CommerceEmailMessage, type CommerceEmailStore, type CommerceEmailTemplates } from './emails';
-import { emailDeliveries } from './schema';
+import { emailDeliveries, EMAIL_KINDS } from './schema';
 
 /**
  * Order confirmations, shipment notices and gift card claim emails go through `_ecommerce_email_deliveries`.
@@ -15,7 +15,7 @@ import { emailDeliveries } from './schema';
  * fails the payment, shipment or webhook that asked for it. Rows, results and logs carry ids and error
  * codes only, never an address.
  */
-export type CommerceEmailKind = 'order_confirmation' | 'shipment' | 'shipment_update' | 'gift_card_claim';
+export type CommerceEmailKind = typeof EMAIL_KINDS[number];
 
 /** Sends per email before it is given up; the waits between them add up to about two days. */
 export const COMMERCE_EMAIL_MAX_ATTEMPTS = 10;
@@ -37,6 +37,7 @@ const KIND_HEADERS: Record<CommerceEmailKind, string> = {
   shipment: 'order-shipment',
   shipment_update: 'order-shipment-update',
   gift_card_claim: 'gift-card-claim',
+  return_decision: 'return-decision', return_received: 'return-received',
 };
 
 const KIND_LABELS: Record<CommerceEmailKind, string> = {
@@ -44,6 +45,7 @@ const KIND_LABELS: Record<CommerceEmailKind, string> = {
   shipment: 'Shipment email',
   shipment_update: 'Shipment update email',
   gift_card_claim: 'Gift card claim email',
+  return_decision: 'Return decision email', return_received: 'Return receipt email',
 };
 
 /** Failures an operator has to fix: every email fails the same way until they do. */

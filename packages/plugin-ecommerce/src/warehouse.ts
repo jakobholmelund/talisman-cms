@@ -1,3 +1,4 @@
+import { commerceEmailStatement } from './email-deliveries';
 import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { TalismanEnv } from 'talisman-cms/client';
@@ -71,6 +72,7 @@ export async function receiveOrderReturn(env: TalismanEnv, input: unknown, actor
       db.insert(returnReceipts).values({ id: receiptId, orderId: values.orderId, items: values.items, actor, reason: values.reason, fingerprint, createdAt: new Date() }),
       ...restocked.map(row => db.insert(returnStock).values(row)),
       ...(values.returnRequestId ? [db.insert(returnRequestReceipts).values({ receiptId, requestId: values.returnRequestId })] : []),
+      db.run(commerceEmailStatement('return_received', receiptId, Math.floor(Date.now()/1000))),
     ]);
   } catch (cause) {
     const previous = await replay(); if (previous) return previous;

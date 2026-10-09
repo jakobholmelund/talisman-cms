@@ -1,0 +1,36 @@
+import React,{useEffect,useRef,useState} from 'react';
+import type {listRefundFollowUp,readRefundCase} from '@talisman-cms/plugin-ecommerce/operations';
+import {CommerceAdmin,Panel,Field,money,amountInput,formAmount} from './common';
+import {useOperationsRead,OperationsReadStatus,OperationsPagination,dateTime} from './operations-common';
+import {useAftercareRead} from './aftercare-read';
+import {useWarehouseWrite} from './warehouse-write';
+type Queue=Awaited<ReturnType<typeof listRefundFollowUp>>;type Case=Awaited<ReturnType<typeof readRefundCase>>;
+const queue=(v:unknown):v is Queue=>!!v&&Array.isArray((v as Queue).rows)&&Number.isFinite((v as Queue).total);
+const detail=(v:unknown):v is Case=>!!v&&typeof (v as Case).version==='string'&&Array.isArray((v as Case).sources)&&Array.isArray((v as Case).history);
+function RefundDetail({receiptId,refresh,dirtyChanged}:{receiptId:string;refresh:()=>Promise<unknown>;dirtyChanged:(v:boolean)=>void}){
+ const read=useAftercareRead('refundRead',{receiptId},detail),write=useWarehouseWrite(async()=>{await read.load();await refresh();}),form=useRef<HTMLFormElement>(null),[status,setStatus]=useState('needed');
+ useEffect(()=>{dirtyChanged(write.dirty||!!write.pending);return()=>dirtyChanged(false);},[write.dirty,write.pending]);
+ useEffect(()=>{if(read.data&&!read.unavailable.current)write.loaded();},[read.data]);
+ const r=read.data,locked=write.busy||!!write.pending||read.loading||!!read.error||write.needsReload;
+ const reset=()=>{form.current?.reset();setStatus('needed');write.setDirty(false);};
+ return <section onChange={()=>write.setDirty(true)}>{write.feedback}<OperationsReadStatus loading={read.loading} error={read.error} reload={()=>void read.load()}/>{r&&<>
+ <p>Order {r.orderId} · {r.status} · Planned refund {money(r.amountMinor,r.currency)}</p><ul>{r.items.map((i,n)=><li key={n}>{i.quantity} × {i.name}</li>)}</ul>
+ <details><summary>Refund decision history</summary><ul>{r.history.map(d=><li key={d.id}>{dateTime(d.createdAt)} · {d.actorName} · {d.status} · {money(d.amountMinor,r.currency)} · {d.reason}{d.allocations.map(a=><p key={`${a.kind}:${a.sourceId}`}>{a.kind.replaceAll('_',' ')} · {a.sourceId} · {money(a.amountMinor,r.currency)}</p>)}</li>)}</ul></details>
+ <h3>Confirmed refunds for this order</h3><p>Only refunds already recorded by the payment provider or tender ledger can be allocated. Allocating them resolves follow-up and does not move money.</p>
+ {!r.sources.length?<p>No confirmed refunds yet.</p>:<ul>{r.sources.map(s=><li key={`${s.kind}:${s.id}`}>{s.kind.replaceAll('_',' ')} · {s.id} · {money(s.amountMinor,r.currency)} recorded · {money(s.availableMinor,r.currency)} unallocated</li>)}</ul>}
+ {r.status==='unavailable'&&<p>Shopper data was erased. This return is retained as read-only history.</p>}
+ {r.status!=='settled'&&r.status!=='unavailable'&&<form ref={form} aria-label="Return refund decision" onSubmit={e=>{e.preventDefault();if(write.blocked()||read.unavailable.current)return;const f=new FormData(e.currentTarget);const allocations=status==='settled'?r.sources.map((s,n)=>({kind:s.kind,sourceId:s.id,amountMinor:formAmount(f.get(`allocation-${n}`),r.currency)})).filter(a=>a.amountMinor>0):[];const amountMinor=status==='not_needed'?0:status==='settled'?allocations.reduce((n,a)=>n+a.amountMinor,0):formAmount(f.get('amount'),r.currency);void write.send({path:'operations',body:{action:'refundDecision',data:{receiptId,expectedVersion:r.version,requestKey:crypto.randomUUID(),status,amountMinor,allocations,reason:String(f.get('reason')).trim()}},receipt:'decisionId',success:'Return refund decision recorded.'},reset);}}>
+ <Field label="Refund decision"><select aria-label="Refund decision" value={status} disabled={locked} onChange={e=>setStatus(e.target.value)}><option value="needed">Refund needed</option><option value="not_needed">No refund needed</option><option value="settled">Allocate confirmed refunds and resolve</option></select></Field>
+ {status==='needed'&&<Field label="Planned refund amount"><input name="amount" type="number" required defaultValue={r.amountMinor?String(amountInput(r.currency,{min:r.amountMinor}).min):''} {...amountInput(r.currency,{min:1})} disabled={locked}/></Field>}
+ {status==='settled'&&<fieldset disabled={locked}><legend>Amounts from confirmed refunds</legend>{r.sources.map((s,n)=><Field key={`${s.kind}:${s.id}`} label={`Allocate ${s.kind.replaceAll('_',' ')} ${s.id}`}><input name={`allocation-${n}`} type="number" defaultValue="0" {...amountInput(r.currency,{min:0,max:s.availableMinor})}/></Field>)}<p>The sum of these allocations becomes this return’s settled amount.</p></fieldset>}
+ <Field label="Internal reason"><input name="reason" required minLength={8} maxLength={500} disabled={locked}/></Field><button disabled={locked}>Record refund decision</button></form>}
+ {write.dirty&&!write.pending&&<button disabled={write.busy} onClick={reset}>Discard refund draft</button>}
+ </>}</section>;
+}
+export default function RefundFollowUp(){
+ const [filters,setFilters]=useState({filter:'active',orderId:'',offset:'0'}),[selected,setSelected]=useState(''),[dirty,setDirty]=useState(false);const read=useOperationsRead<Queue>(new URLSearchParams({view:'refunds',...filters}).toString(),queue);
+ return <CommerceAdmin current="refunds"><p>Every received return stays here until staff decide whether a refund is needed. Card refunds are issued through the payment provider; this screen records follow-up against confirmed refunds.</p>
+ <Panel title="Find return refunds" label="Find return refunds"><form onSubmit={e=>{e.preventDefault();if(dirty)return;const f=new FormData(e.currentTarget);setSelected('');setFilters({filter:String(f.get('filter')),orderId:String(f.get('orderId')).trim(),offset:'0'});}}><Field label="Refund queue"><select name="filter" aria-label="Refund queue" disabled={dirty}><option value="active">Review and refund needed</option><option value="review">Needs review</option><option value="needed">Refund needed</option><option value="resolved">Resolved</option><option value="all">All</option></select></Field><Field label="Exact order ID"><input name="orderId" maxLength={128} disabled={dirty}/></Field><button disabled={dirty||read.loading}>Find refunds</button></form></Panel>
+ <OperationsReadStatus loading={read.loading} error={read.error} reload={()=>void read.load()}/>{read.data&&<Panel title="Return refund queue" label="Return refund queue">{!read.data.rows.length?<p>No returns match these filters.</p>:<ul>{read.data.rows.map(r=><li key={r.id}>{dateTime(r.createdAt)} · Order {r.orderId} · {r.status} · {money(r.amountMinor,r.currency)} <button disabled={dirty} onClick={()=>setSelected(r.id)}>Review refund · {r.id}</button></li>)}</ul>}<OperationsPagination offset={read.data.offset} total={read.data.total} loading={read.loading||dirty} change={offset=>{setSelected('');setFilters(v=>({...v,offset:String(offset)}));}}/></Panel>}
+ {selected&&<Panel title="Return refund details" label="Return refund details"><RefundDetail key={selected} receiptId={selected} refresh={read.load} dirtyChanged={setDirty}/></Panel>}</CommerceAdmin>;
+}

@@ -16,6 +16,8 @@ const groups: Array<{ kind: AttentionKind; title: string; tool: string; label: s
   { kind: 'shipment', title: 'Awaiting shipment', tool: 'orders', label: 'Open fulfillment queue', help: 'Paid orders with a shipping address that still need fulfillment.' },
   { kind: 'return_request', title: 'Return requests', tool: 'returns', label: 'Review return requests', help: 'Customer requests awaiting a staff decision and return instructions.' },
   { kind: 'inspection', title: 'Pending inspections', tool: 'returns', label: 'Inspect received returns', help: 'Received goods awaiting a recorded inspection decision.' },
+  { kind: 'refund', title: 'Return refund follow-up', tool: 'refunds', label: 'Review return refunds', help: 'Received goods awaiting a refund decision or confirmed refund allocation.' },
+  { kind: 'incoming', title: 'Overdue incoming stock', tool: 'replenishment', label: 'Review expected deliveries', help: 'Expected deliveries past their due date with units still outstanding.' },
   { kind: 'dispute', title: 'Open payment disputes', tool: 'orders', label: 'Open orders', help: 'Provider disputes still awaiting an outcome. Gift card disputes are managed in Gift cards.' },
 ];
 export default function Attention() {

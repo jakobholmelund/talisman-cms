@@ -104,6 +104,7 @@ export interface CommerceEmailTemplates {
   orderConfirmation?: Template<OrderConfirmationEmail>;
   shipment?: Template<ShipmentEmail>;
   giftCardClaim?: Template<GiftCardClaimEmail>;
+  returnNotice?: Template<ReturnNoticeEmail>;
 }
 
 /** An amount in minor units: `1250` in `usd` reads `$12.50` and in `jpy` `¥1,250`; deductions read `-$12.50`. */
@@ -314,4 +315,20 @@ export function giftCardClaimEmail({ store, purchase, claim }: GiftCardClaimEmai
       footer: [`If the link has expired or was already used, please ${contact(store)} and ask for a new one.`],
     }),
   };
+}
+
+/** Buyer-visible return facts. Internal reasons, actors and stock recipes are excluded. */
+export interface ReturnNoticeEmail {
+  store: CommerceEmailStore; orderId: string; occurredAt: Date;
+  status: 'approved' | 'declined' | 'closed' | 'received'; message: string;
+  items: Array<{ name: string; quantity: number }>;
+}
+export function returnNoticeEmail(email: ReturnNoticeEmail): CommerceEmailMessage {
+  const {store, orderId, occurredAt, status, message, items}=email;
+  const heading = status === 'received' ? 'Your returned goods were received' : `Your return request is ${status}`;
+  return { subject: oneLine(`${heading} — ${store.name}`), ...renderCommerceEmail({storeName:store.name,heading,
+    paragraphs:[`Order ${orderId} · ${formatDate(occurredAt)}`,message],
+    ...(store.origin ? {action:{label:'View your order',url:`${store.origin}/checkout/success?order=${encodeURIComponent(orderId)}`}} : {}),
+    sections:[{title:status==='received'?'Received items':'Requested items',rows:items.map(i=>({label:i.name,value:String(i.quantity)}))},...storeSections(store)],
+    footer:[`Questions about your return? Please ${contact(store)} and mention the order number.`] }) };
 }

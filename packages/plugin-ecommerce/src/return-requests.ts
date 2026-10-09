@@ -1,3 +1,4 @@
+import { commerceEmailStatement } from './email-deliveries';
 import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { TalismanEnv } from 'talisman-cms/client';
@@ -68,7 +69,7 @@ async function appendDecision(env:TalismanEnv,v:z.output<typeof decisionSchema>|
   const db=commerceDb(env),eventId=`rme_${await hashOrderAccess(`${v.requestId}:${v.requestKey}`)}`,hash=await fingerprint(v,`${actorKind}:${actor}`);
   const replay=async()=>{const e=await db.select().from(returnRequestEvents).where(eq(returnRequestEvents.id,eventId)).get();if(!e)return null;if(e.fingerprint!==hash)throw new CommerceOperationsConflict('This decision key was used with different details.');return {eventId,requestId:e.requestId,duplicate:true};};
   const previous=await replay();if(previous)return previous;
-  try{await db.insert(returnRequestEvents).values({id:eventId,requestId:v.requestId,status:v.status,expectedVersion:v.expectedVersion,actor,actorKind,reason:v.reason,customerMessage:v.customerMessage,fingerprint:hash,createdAt:new Date()});}
+  try{await db.batch([db.insert(returnRequestEvents).values({id:eventId,requestId:v.requestId,status:v.status,expectedVersion:v.expectedVersion,actor,actorKind,reason:v.reason,customerMessage:v.customerMessage,fingerprint:hash,createdAt:new Date()}), ...(actorKind==='staff' ? [db.run(commerceEmailStatement('return_decision',eventId,Math.floor(Date.now()/1000)))] : [])]);}
   catch(error){const previous=await replay();if(previous)return previous;if(!/Return request decision is stale or unavailable|Requested goods were already received/.test(errorText(error)))throw error;throw new CommerceOperationsConflict('This return request changed or cannot take that decision. Refresh before continuing.');}
   return {eventId,requestId:v.requestId};
 }

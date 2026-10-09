@@ -25,7 +25,7 @@ export interface EcommercePluginConfig {
    * @default 'products'
    */
   productsCollectionSlug?: string;
-  
+
   /**
    * Whether to inject the standard `_ecommerce_orders`, `_ecommerce_carts`, and `_ecommerce_categories` collections into the CMS UI.
    * If false, these tables will still be created in the DB and available via Local API, but hidden from the Admin Panel.
@@ -38,7 +38,7 @@ export interface EcommercePluginConfig {
    * such as `extensions/orders`, or an absolute path on the site, such as `/orders`. The integration
    * refuses anything that is not a path on the site, such as a full URL, at config time.
    */
-  adminPages?: Partial<Record<'orders' | 'promotions' | 'giftCards' | 'testCheckout' | 'attention' | 'emails' | 'stock' | 'returns' | 'exports', string>>;
+  adminPages?: Partial<Record<'orders' | 'promotions' | 'giftCards' | 'testCheckout' | 'attention' | 'emails' | 'stock' | 'returns' | 'refunds' | 'replenishment' | 'exports', string>>;
   /**
    * Adds the admin-only Test checkout screen and `/admin/api/ecommerce/test-checkout`, which place
    * orders through the simulated `admin_test` payment provider. When false, neither is injected and
@@ -218,6 +218,8 @@ export const ecommercePlugin = (
     { key: 'emails', path: 'commerce-emails', component: 'EmailRecovery', label: 'Email recovery', description: 'Review failed notices and request an audited retry.' },
     { key: 'stock', path: 'commerce-stock', component: 'StockOverview', label: 'Stock overview', description: 'Find unavailable choices and low shared component stock.' },
     { key: 'returns', path: 'commerce-returns', component: 'Returns', label: 'Returns', description: 'Review customer return requests and pending inspections.' },
+    { key: 'refunds', path: 'commerce-refunds', component: 'RefundFollowUp', label: 'Refund follow-up', description: 'Resolve received returns against confirmed refund records.' },
+    { key: 'replenishment', path: 'commerce-replenishment', component: 'Replenishment', label: 'Replenishment', description: 'Set stock targets and track expected supplier deliveries.' },
     { key: 'exports', path: 'commerce-exports', component: 'OperationsExports', label: 'Operations exports', description: 'Download filtered order, return and stock records.' },
     { key: 'orders', path: 'commerce-orders', component: 'Orders', label: 'Orders & fulfillment', description: 'Review paid orders and record shipments.' },
     { key: 'promotions', path: 'commerce-promotions', component: 'Promotions', label: 'Promotions & referrals', description: 'Create discounts and manage referral rewards.' },
@@ -295,7 +297,7 @@ export const ecommercePlugin = (
       if (existingProductsCollection && !existingProductsCollection.adminSection) {
         existingProductsCollection.adminSection = 'commerce';
       }
-      
+
       if (!hasProductsCollection) {
         const productFields = nativeFields(schema.products, [
           'id', 'name', 'slug', { name: 'sku', label: 'SKU' }, { name: 'description', type: 'textarea' },
@@ -747,6 +749,30 @@ export const ecommercePlugin = (
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardClaims', idColumn: 'id' }
         });
         collections.push({
+          name: 'Return Refund Decisions', slug: '_ecommerce_return_refund_decisions',
+          readOnly: true, adminSection: 'commerce',
+          fields: nativeFields(schema.returnRefundDecisions, ['id', 'receiptId', 'expectedVersion', 'status', 'amountMinor', { name: 'allocations', type: 'array', label: 'Confirmed refund allocations' }, 'actor', 'reason', 'fingerprint', 'createdAt', 'redactedAt']),
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'returnRefundDecisions', idColumn: 'id' }
+        });
+        collections.push({
+          name: 'Replenishment Policies', slug: '_ecommerce_replenishment_policies',
+          readOnly: true, adminSection: 'commerce',
+          fields: nativeFields(schema.replenishmentPolicies, ['id', 'targetType', 'targetId', 'minimumQuantity', 'targetQuantity', 'enabled', 'expectedVersion', 'actor', 'reason', 'fingerprint', 'createdAt']),
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'replenishmentPolicies', idColumn: 'id' }
+        });
+        collections.push({
+          name: 'Expected Deliveries', slug: '_ecommerce_replenishment_deliveries',
+          readOnly: true, adminSection: 'commerce',
+          fields: nativeFields(schema.replenishmentDeliveries, ['id', 'targetType', 'targetId', 'quantity', 'supplier', 'reference', 'expectedDate', 'actor', 'reason', 'fingerprint', 'createdAt']),
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'replenishmentDeliveries', idColumn: 'id' }
+        });
+        collections.push({
+          name: 'Delivery Receipts', slug: '_ecommerce_replenishment_delivery_events',
+          readOnly: true, adminSection: 'commerce',
+          fields: nativeFields(schema.replenishmentDeliveryEvents, ['id', 'deliveryId', 'kind', 'movementId', 'expectedVersion', 'actor', 'reason', 'fingerprint', 'createdAt']),
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'replenishmentDeliveryEvents', idColumn: 'id' }
+        });
+        collections.push({
           name: 'Order Emails', slug: '_ecommerce_email_deliveries',
           description: 'Order confirmations, shipment notices and gift card claim emails, with their delivery status and last error code.',
           adminSection: 'commerce', readOnly: true,
@@ -829,7 +855,7 @@ export const ecommercePlugin = (
           { name: 'shippingAddress', type: 'group', fields: addressFields },
           { name: 'billingAddress', type: 'group', fields: addressFields },
         ]);
-        
+
         collections.push({
           name: 'Orders',
           slug: '_ecommerce_orders',

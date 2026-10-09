@@ -836,7 +836,7 @@ export const reconcileDecisions = sqliteTable('_ecommerce_reconcile_decisions', 
   check('reconcile_decision_release_returns', sql`${table.paymentReturned} IS NULL OR ${table.action} = 'release'`),
 ]);
 
-export const EMAIL_KINDS = ['order_confirmation', 'shipment', 'shipment_update', 'gift_card_claim'] as const;
+export const EMAIL_KINDS = ['order_confirmation', 'shipment', 'shipment_update', 'gift_card_claim', 'return_decision', 'return_received'] as const;
 export const EMAIL_STATUSES = ['pending', 'sent', 'failed', 'cancelled'] as const;
 
 /**
@@ -1055,9 +1055,57 @@ export const stockMovements = sqliteTable('_ecommerce_stock_movements', {
   check('stock_movement_balance', sql`${t.afterQuantity} = ${t.beforeQuantity} + ${t.delta}`),
   check('stock_movement_actor', filled(t.actor)), check('stock_movement_reason', trimmed(t.reason, 8))]);
 
+
+export const RETURN_REFUND_STATUSES = ['needed', 'not_needed', 'settled'] as const;
+export const REFUND_SOURCE_KINDS = ['provider', 'gift_card', 'store_credit'] as const;
+export type RefundAllocation = { kind: typeof REFUND_SOURCE_KINDS[number]; sourceId: string; amountMinor: number };
+/** Staff follow-up only. Allocations point to existing money ledgers; this table never refunds money. */
+export const returnRefundDecisions = sqliteTable('_ecommerce_return_refund_decisions', {
+  id: text('id').primaryKey(), receiptId: text('receipt_id').notNull().references(() => returnReceipts.id),
+  expectedVersion: text('expected_version').notNull(), status: text('status', { enum: RETURN_REFUND_STATUSES }).notNull(),
+  amountMinor: integer('amount_minor').notNull(), allocations: text('allocations', { mode: 'json' }).$type<RefundAllocation[]>().notNull(),
+  actor: text('actor').notNull(), reason: text('reason').notNull(), fingerprint: text('fingerprint').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(), redactedAt: integer('redacted_at', { mode: 'timestamp' }),
+}, t => [index('_ecommerce_return_refunds_receipt_idx').on(t.receiptId),
+  check('return_refund_status', oneOf(t.status, RETURN_REFUND_STATUSES)),
+  check('return_refund_amount', sql`${t.amountMinor} BETWEEN 0 AND 9007199254740991 AND ((${t.status} = 'not_needed' AND ${t.amountMinor} = 0) OR (${t.status} <> 'not_needed' AND ${t.amountMinor} > 0))`),
+  check('return_refund_allocations', sql`json_valid(${t.allocations}) AND json_type(${t.allocations}) = 'array' AND json_array_length(${t.allocations}) <= 20 AND (${t.status} = 'settled' OR json_array_length(${t.allocations}) = 0)`),
+  check('return_refund_actor', filled(t.actor)), check('return_refund_reason', trimmed(t.reason, 8))]);
+
+export const replenishmentPolicies = sqliteTable('_ecommerce_replenishment_policies', {
+  id: text('id').primaryKey(), targetType: text('target_type', { enum: RESTOCK_TARGET_TYPES }).notNull(), targetId: text('target_id').notNull(),
+  minimumQuantity: integer('minimum_quantity').notNull(), targetQuantity: integer('target_quantity').notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull(), expectedVersion: text('expected_version'),
+  actor: text('actor').notNull(), reason: text('reason').notNull(), fingerprint: text('fingerprint').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, t => [index('_ecommerce_replenishment_policy_target_idx').on(t.targetType, t.targetId),
+  check('replenishment_policy_target', oneOf(t.targetType, RESTOCK_TARGET_TYPES)), check('replenishment_policy_enabled', flag(t.enabled)),
+  check('replenishment_policy_quantities', sql`${t.minimumQuantity} BETWEEN 0 AND 1000000 AND ${t.targetQuantity} BETWEEN ${t.minimumQuantity} AND 1000000`),
+  check('replenishment_policy_actor', filled(t.actor)), check('replenishment_policy_reason', trimmed(t.reason, 8))]);
+export const replenishmentDeliveries = sqliteTable('_ecommerce_replenishment_deliveries', {
+  id: text('id').primaryKey(), targetType: text('target_type', { enum: RESTOCK_TARGET_TYPES }).notNull(), targetId: text('target_id').notNull(),
+  quantity: integer('quantity').notNull(), supplier: text('supplier').notNull(), reference: text('reference').notNull(), expectedDate: text('expected_date').notNull(),
+  actor: text('actor').notNull(), reason: text('reason').notNull(), fingerprint: text('fingerprint').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, t => [index('_ecommerce_replenishment_delivery_target_idx').on(t.targetType, t.targetId), index('_ecommerce_replenishment_delivery_date_idx').on(t.expectedDate),
+  check('replenishment_delivery_target', oneOf(t.targetType, RESTOCK_TARGET_TYPES)), check('replenishment_delivery_quantity', sql`${t.quantity} BETWEEN 1 AND 1000000`),
+  check('replenishment_delivery_date', sql`length(${t.expectedDate}) = 10 AND date(${t.expectedDate}, '+0 days') IS NOT NULL AND date(${t.expectedDate}, '+0 days') = ${t.expectedDate}`),
+  check('replenishment_delivery_supplier', filled(t.supplier)), check('replenishment_delivery_actor', filled(t.actor)), check('replenishment_delivery_reason', trimmed(t.reason, 8))]);
+export const REPLENISHMENT_EVENT_KINDS = ['received', 'cancelled'] as const;
+export const replenishmentDeliveryEvents = sqliteTable('_ecommerce_replenishment_delivery_events', {
+  id: text('id').primaryKey(), deliveryId: text('delivery_id').notNull().references(() => replenishmentDeliveries.id),
+  kind: text('kind', { enum: REPLENISHMENT_EVENT_KINDS }).notNull(), movementId: text('movement_id').references(() => stockMovements.id),
+  expectedVersion: text('expected_version').notNull(), actor: text('actor').notNull(), reason: text('reason').notNull(), fingerprint: text('fingerprint').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, t => [index('_ecommerce_replenishment_event_delivery_idx').on(t.deliveryId), uniqueIndex('_ecommerce_replenishment_event_movement_unique').on(t.movementId),
+  check('replenishment_event_kind', oneOf(t.kind, REPLENISHMENT_EVENT_KINDS)),
+  check('replenishment_event_movement', sql`(${t.kind} = 'received') = (${t.movementId} IS NOT NULL)`),
+  check('replenishment_event_actor', filled(t.actor)), check('replenishment_event_reason', trimmed(t.reason, 8))]);
+
 // --- Relations, for the relational query builder ---
 
 const tables = {
+  returnRefundDecisions, replenishmentPolicies, replenishmentDeliveries, replenishmentDeliveryEvents,
   returnRequests, returnRequestEvents, returnRequestReceipts, parcelContents, returnReceipts, returnStock, returnInspections, inspectionStock, stocktakes, stockMovements, carts, orders, payments, providerRefunds, products, variants, productVariants, productVariantValues, stocks, components,
   variantComponents, componentReservations, inventoryReservations, categories, productCategories, tags, productTags,
   customers, customerAccounts, customerSessions, signInTokens, rateLimits, fulfillments, referralCodes, referrals,
@@ -1075,6 +1123,13 @@ const tables = {
  * gives a site's own code the same `db.query`. `test/relations.test.mjs` checks that no key is missed.
  */
 export const relations = defineRelations(tables, (r) => ({
+  returnRefundDecisions: { receipt: r.one.returnReceipts({ from: r.returnRefundDecisions.receiptId, to: r.returnReceipts.id, optional: false }) },
+  stockMovements: { deliveries: r.many.replenishmentDeliveryEvents() },
+  replenishmentDeliveries: { events: r.many.replenishmentDeliveryEvents() },
+  replenishmentDeliveryEvents: {
+    delivery: r.one.replenishmentDeliveries({ from: r.replenishmentDeliveryEvents.deliveryId, to: r.replenishmentDeliveries.id, optional: false }),
+    movement: r.one.stockMovements({ from: r.replenishmentDeliveryEvents.movementId, to: r.stockMovements.id }),
+  },
   carts: {
     /** The order a checkout placed from the cart; a cart is checked out once. */
     order: r.one.orders({ from: r.carts.id, to: r.orders.cartId }),
@@ -1209,7 +1264,7 @@ export const relations = defineRelations(tables, (r) => ({
   returnRequests: { order: r.one.orders({ from: r.returnRequests.orderId, to: r.orders.id, optional: false }), events: r.many.returnRequestEvents(), receipts: r.many.returnRequestReceipts() },
   returnRequestEvents: { request: r.one.returnRequests({ from: r.returnRequestEvents.requestId, to: r.returnRequests.id, optional: false }) },
   returnRequestReceipts: { request: r.one.returnRequests({ from: r.returnRequestReceipts.requestId, to: r.returnRequests.id, optional: false }), receipt: r.one.returnReceipts({ from: r.returnRequestReceipts.receiptId, to: r.returnReceipts.id, optional: false }) },
-  returnReceipts: { requestLinks: r.many.returnRequestReceipts(), order: r.one.orders({ from: r.returnReceipts.orderId, to: r.orders.id, optional: false }), stock: r.many.returnStock(), inspections: r.many.returnInspections() },
+  returnReceipts: { refundDecisions: r.many.returnRefundDecisions(), requestLinks: r.many.returnRequestReceipts(), order: r.one.orders({ from: r.returnReceipts.orderId, to: r.orders.id, optional: false }), stock: r.many.returnStock(), inspections: r.many.returnInspections() },
   returnInspections: { receipt: r.one.returnReceipts({ from: r.returnInspections.receiptId, to: r.returnReceipts.id, optional: false }),
     order: r.one.orders({ from: r.returnInspections.orderId, to: r.orders.id, optional: false }), stock: r.many.inspectionStock() },
   inspectionStock: { inspection: r.one.returnInspections({ from: r.inspectionStock.inspectionId, to: r.returnInspections.id, optional: false }),

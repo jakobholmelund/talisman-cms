@@ -28,6 +28,7 @@ export async function manageShopperData(env: TalismanEnv, actor: string, input: 
     AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders o WHERE o.user_id = ${account.id}
       AND (o.status IN ('pending','disputed') OR (o.status IN ('paid','partially_refunded') AND o.fulfillment_status <> 'fulfilled'
         AND (o.shipping_address IS NOT NULL OR EXISTS (SELECT 1 FROM json_each(o.items) i JOIN _ecommerce_products p ON p.id = json_extract(i.value, '$.productId') WHERE p.is_physical = 1)))))
+    AND NOT EXISTS (SELECT 1 FROM _ecommerce_return_receipts r JOIN _ecommerce_orders o ON o.id=r.order_id WHERE o.user_id=${account.id} AND COALESCE((SELECT status FROM _ecommerce_return_refund_decisions d WHERE d.receipt_id=r.id ORDER BY rowid DESC LIMIT 1),'review') IN ('review','needed'))
     AND NOT EXISTS (SELECT 1 FROM _ecommerce_return_requests r JOIN _ecommerce_orders o ON o.id=r.order_id WHERE o.user_id=${account.id}
       AND COALESCE((SELECT status FROM _ecommerce_return_request_events e WHERE e.request_id=r.id ORDER BY rowid DESC LIMIT 1),'pending') IN ('pending','approved'))
     AND NOT EXISTS (SELECT 1 FROM _ecommerce_return_receipts r JOIN _ecommerce_orders o ON o.id=r.order_id,json_each(r.items) i WHERE o.user_id=${account.id} AND json_extract(i.value,'$.condition')='inspection'
@@ -95,6 +96,7 @@ export async function manageShopperData(env: TalismanEnv, actor: string, input: 
   if (values.action === 'anonymize') {
     const anonymousEmail = `${account.id}@anonymized.invalid`;
     statements.push(
+      db.update(schema.returnRefundDecisions).set({reason:'[redacted]',redactedAt:now}).where(and(isNull(schema.returnRefundDecisions.redactedAt),inArray(schema.returnRefundDecisions.receiptId,db.select({id:schema.returnReceipts.id}).from(schema.returnReceipts).where(inArray(schema.returnReceipts.orderId,db.select({id:schema.orders.id}).from(schema.orders).where(eq(schema.orders.userId,account.id))))),recorded)),
       db.update(schema.returnRequests).set({reason:'[redacted]',redactedAt:now}).where(and(isNull(schema.returnRequests.redactedAt),inArray(schema.returnRequests.orderId,db.select({id:schema.orders.id}).from(schema.orders).where(eq(schema.orders.userId,account.id))),recorded)),
       db.update(schema.returnRequestEvents).set({reason:'[redacted]',customerMessage:'',redactedAt:now}).where(and(isNull(schema.returnRequestEvents.redactedAt),inArray(schema.returnRequestEvents.requestId,db.select({id:schema.returnRequests.id}).from(schema.returnRequests).where(inArray(schema.returnRequests.orderId,db.select({id:schema.orders.id}).from(schema.orders).where(eq(schema.orders.userId,account.id))))),recorded)),
       db.update(schema.orders).set({ customerEmail: null, shippingAddress: null, billingAddress: null })

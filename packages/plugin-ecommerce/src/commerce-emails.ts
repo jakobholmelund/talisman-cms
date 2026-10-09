@@ -1,13 +1,13 @@
 import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb, type CommerceDb } from './db';
-import { orderConfirmationEmail, shipmentEmail, type OrderConfirmationEmail } from './emails';
+import { orderConfirmationEmail, shipmentEmail, returnNoticeEmail, type ReturnNoticeEmail, type OrderConfirmationEmail } from './emails';
 import { COMMERCE_EMAIL_LEASE_SECONDS, COMMERCE_EMAIL_MAX_AGE_SECONDS, applyEmailTemplate, bareEmailAddress,
   commerceEmailSetup, missingEmailSettings, runCommerceEmailDelivery, sendCommerceEmailNow, unclaimedAt, waitingEmailsResult,
   type CommerceEmailComposer, type CommerceEmailKind, type CommerceEmailResult } from './email-deliveries';
 import { composeGiftCardClaimEmail } from './gift-cards';
 import { describeOrderItems, orderAmountColumns, orderAmounts } from './order-items';
-import { emailDeliveries, fulfillments, orders } from './schema';
+import { emailDeliveries, fulfillments, orders, returnRequestEvents, returnReceipts } from './schema';
 
 /** A time in Unix seconds as the schema's timestamp columns take it. */
 const at = (seconds: number) => new Date(seconds * 1000);
@@ -112,11 +112,32 @@ function shipmentComposer(update: boolean): CommerceEmailComposer {
   };
 }
 
+
+function returnComposer(received: boolean): CommerceEmailComposer {
+  return async (env, subjectId, setup) => {
+    const db=commerceDb(env);
+    const event = received ? null : await db.query.returnRequestEvents.findFirst({where:{id:subjectId},with:{request:{with:{order:true,events:{orderBy:(_t,{sql})=>sql`rowid`}}}}});
+    const receipt = received ? await db.query.returnReceipts.findFirst({where:{id:subjectId},with:{order:true}}) : null;
+    const order = receipt?.order ?? event?.request.order;
+    if(!order || order.paymentProvider==='admin_test')return {cancel:'not_found'};
+    if(event && (event.actorKind!=='staff' || event.redactedAt || event.request.redactedAt || event.request.events.at(-1)?.id!==event.id || !['approved','declined','closed'].includes(event.status)))return {cancel:'not_due'};
+    const to=bareEmailAddress(order.customerEmail);if(!to)return {fail:'invalid_recipient'};
+    const lines=receipt?.items ?? event!.request.items;
+    const described=await describeOrderItems(env,lines.map(i=>({...order.items[i.lineIndex],quantity:i.quantity})));
+    const email:ReturnNoticeEmail={store:setup.store,orderId:order.id,occurredAt:(receipt??event)!.createdAt,
+      status:receipt?'received':event!.status as ReturnNoticeEmail['status'],
+      message:receipt?'We have received the items listed below. Receipt of goods does not confirm a refund. We will review your return separately.':event!.customerMessage,
+      items:described.map(i=>({name:[i.productName||'Ordered item',i.variantLabel].filter(Boolean).join(' / '),quantity:i.quantity}))};
+    return {to,message:await applyEmailTemplate(setup,'returnNotice',email,returnNoticeEmail(email))};
+  };
+}
+
 const COMPOSERS: Record<CommerceEmailKind, CommerceEmailComposer> = {
   order_confirmation: composeOrderConfirmation,
   shipment: shipmentComposer(false),
   shipment_update: shipmentComposer(true),
   gift_card_claim: composeGiftCardClaimEmail,
+  return_decision: returnComposer(false), return_received: returnComposer(true),
 };
 
 /** Sends the email of this kind and subject now if it is due; see sendCommerceEmailNow. Never throws. */
