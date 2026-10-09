@@ -1,5 +1,5 @@
 import { TalismanEnv } from 'talisman-cms/client';
-import { ParcelItem, ReturnedItem } from './schema.js';
+import { StocktakeLine, ParcelItem, InspectedItem, ReturnedItem } from './schema.js';
 import * as drizzle_orm_sqlite_core from 'drizzle-orm/sqlite-core';
 import 'drizzle-orm';
 
@@ -75,9 +75,9 @@ type StockOverviewRow = {
 /** Filtering and pagination happen after effective quantities are computed, so low stock beyond
  * the first catalog page remains discoverable. Bound search treats SQL wildcard characters literally. */
 declare function readStockOverview(env: TalismanEnv, input?: unknown): Promise<{
-    filter: "all" | "unavailable" | "low";
     search: string;
     offset: number;
+    filter: "all" | "unavailable" | "low";
     view: "components" | "choices";
     threshold: number;
     rows: StockOverviewRow[];
@@ -763,8 +763,8 @@ declare function receiveOrderReturn(env: TalismanEnv, input: unknown, actor: str
     receiptId: string;
     orderId: string;
     restocked: {
-        id: string;
         orderId: string;
+        id: string;
         receiptId: string;
         reservationType: "component" | "inventory";
         reservationId: string;
@@ -777,8 +777,8 @@ declare function receiveOrderReturn(env: TalismanEnv, input: unknown, actor: str
     receiptId: string;
     orderId: string;
     restocked: {
-        id: string;
         receiptId: string;
+        id: string;
         orderId: string;
         reservationType: "component" | "inventory";
         reservationId: string;
@@ -811,9 +811,9 @@ declare function readOrderWarehouse(env: TalismanEnv, input: unknown): Promise<{
     parcels: {
         actorName: string;
         createdAt: string;
+        orderId: string;
         id: string;
         items: ParcelItem[];
-        orderId: string;
         fulfillmentId: string;
         source: "shipment" | "backfill";
         actor: string;
@@ -823,15 +823,40 @@ declare function readOrderWarehouse(env: TalismanEnv, input: unknown): Promise<{
     returns: {
         actorName: string;
         createdAt: string;
+        inspectionPending: {
+            lineIndex: number;
+            quantity: number;
+        }[];
+        inspections: {
+            actorName: string;
+            createdAt: string;
+            orderId: string;
+            id: string;
+            items: InspectedItem[];
+            actor: string;
+            reason: string;
+            fingerprint: string;
+            receiptId: string;
+            stock: {
+                orderId: string;
+                id: string;
+                reservationType: "component" | "inventory";
+                reservationId: string;
+                targetType: "product" | "variant" | "stock" | "component";
+                targetId: string;
+                quantity: number;
+                inspectionId: string;
+            }[];
+        }[];
+        orderId: string;
         id: string;
         items: ReturnedItem[];
-        orderId: string;
         actor: string;
         reason: string;
         fingerprint: string;
         stock: {
-            id: string;
             orderId: string;
+            id: string;
             receiptId: string;
             reservationType: "component" | "inventory";
             reservationId: string;
@@ -893,5 +918,77 @@ declare function readStockHistory(env: TalismanEnv, input: unknown): Promise<{
     targetId: string;
     offset: number;
 }>;
+/** Resolve received goods without changing the intake quantity or the payment refund. */
+declare function inspectOrderReturn(env: TalismanEnv, input: unknown, actor: string): Promise<{
+    inspectionId: string;
+    orderId: string;
+    restocked: {
+        orderId: string;
+        id: string;
+        reservationType: "component" | "inventory";
+        reservationId: string;
+        targetType: "product" | "variant" | "stock" | "component";
+        targetId: string;
+        quantity: number;
+        inspectionId: string;
+    }[];
+    duplicate: boolean;
+} | {
+    inspectionId: string;
+    orderId: string;
+    restocked: {
+        inspectionId: string;
+        id: string;
+        orderId: string;
+        reservationType: "component" | "inventory";
+        reservationId: string;
+        targetType: "product" | "variant" | "stock" | "component";
+        targetId: string;
+        quantity: number;
+    }[];
+}>;
+/** An atomic count receipt, with exact versions checked even for unchanged lines. */
+declare function recordStocktake(env: TalismanEnv, input: unknown, actor: string): Promise<{
+    stocktakeId: string;
+    lines: StocktakeLine[];
+    duplicate: boolean;
+} | {
+    stocktakeId: string;
+    lines: {
+        expectedUpdatedSeconds: number;
+        name: string;
+        sku: string | null;
+        targetType: "product" | "variant" | "stock" | "component";
+        targetId: string;
+        expectedUpdatedAt: string;
+        expectedQuantity: number;
+        countedQuantity: number;
+    }[];
+}>;
+declare function listStocktakes(env: TalismanEnv, input?: unknown): Promise<{
+    total: number;
+    rows: {
+        actorName: string;
+        createdAt: string;
+        id: string;
+        lines: StocktakeLine[];
+        actor: string;
+        reason: string;
+        fingerprint: string;
+    }[];
+    offset: number;
+}>;
+/** Reload the selected count sheet in one bounded, typed snapshot; no guessed catalog totals. */
+declare function readStocktakeTargets(env: TalismanEnv, input: unknown): Promise<{
+    rows: {
+        updatedAt: string;
+        type: keyof typeof STOCK_COLUMNS;
+        id: string;
+        name: string;
+        sku: string | null;
+        quantity: number;
+        updated: number;
+    }[];
+}>;
 
-export { type AttentionKind, CommerceOperationsConflict, type StockOverviewRow, listEmailRecovery, listStockLocations, readCommerceAttention, readOrderWarehouse, readStockHistory, readStockOverview, receiveOrderReturn, recordParcelContents, recordStockMovement, retryCommerceEmail };
+export { type AttentionKind, CommerceOperationsConflict, type StockOverviewRow, inspectOrderReturn, listEmailRecovery, listStockLocations, listStocktakes, readCommerceAttention, readOrderWarehouse, readStockHistory, readStockOverview, readStocktakeTargets, receiveOrderReturn, recordParcelContents, recordStockMovement, recordStocktake, retryCommerceEmail };

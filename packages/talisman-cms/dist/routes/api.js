@@ -28,7 +28,7 @@ import {
   isDatabaseError,
   syncCollectionDefinitions,
   userActor
-} from "../chunk-HEG7DNCN.js";
+} from "../chunk-U2KE5JVE.js";
 import {
   canAccessCollection
 } from "../chunk-7VUPBVR5.js";

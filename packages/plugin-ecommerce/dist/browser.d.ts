@@ -1,3 +1,48 @@
+import { C as CommerceContext } from './commerce-context-WlCnckbA.js';
+import 'talisman-cms/client';
+import 'drizzle-orm/d1';
+import './schema.js';
+import 'drizzle-orm';
+import 'drizzle-orm/sqlite-core';
+import './payments-C3gqo5tp.js';
+
+/** The same owner/guest credentials as order status, with a deliberately shopper-only projection. */
+declare function readOrderTracking(ctx: CommerceContext, orderId: string, sessionToken?: string, customerId?: string, orderAccessToken?: string): Promise<{
+    orderId: string;
+    lines: {
+        ordered: number;
+        shipped: number;
+        remaining: number | null;
+        received: number;
+        lineIndex: number;
+        name: string;
+        sku: string | null;
+    }[];
+    parcels: {
+        id: string;
+        shippedAt: string;
+        carrier: string | null;
+        trackingNumber: string | null;
+        items: {
+            quantity: number;
+            lineIndex: number;
+            name: string;
+            sku: string | null;
+        }[] | null;
+    }[];
+    returns: {
+        receivedAt: string;
+        items: {
+            quantity: number;
+            awaitingInspection: number;
+            lineIndex: number;
+            name: string;
+            sku: string | null;
+        }[];
+    }[];
+} | null>;
+type CustomerOrderTracking = NonNullable<Awaited<ReturnType<typeof readOrderTracking>>>;
+
 declare const CART_UPDATED_EVENT = "talisman:cart-updated";
 interface CartUpdatedDetail {
     itemCount: number;
@@ -117,6 +162,8 @@ declare function startAdminTestCheckout(input?: {
 declare function getOrderStatus(orderId: string): Promise<{
     orderId: string;
     status: string;
+    fulfillmentStatus: string;
+    tracking: CustomerOrderTracking | null;
     paymentUnderReview: boolean;
     paymentProvider: string | null;
     accountCreatedByOrder: boolean;
@@ -141,4 +188,4 @@ declare function cancelCheckout(orderId: string): Promise<{
 }>;
 declare function installTalismanEcommerceBrowserHelpers(target?: Window): TalismanEcommerceBrowserHelpers;
 
-export { CART_UPDATED_EVENT, type CartUpdatedDetail, type CustomerAccountSummary, type TalismanEcommerceBrowserHelpers, activateNewCustomerAccount, cancelCheckout, chooseCustomerBasket, claimGiftCardCode, dispatchCartUpdated, getCustomerAccount, getOrderStatus, installTalismanEcommerceBrowserHelpers, previewCustomerSignIn, readCustomerSignInToken, readGiftCardClaimToken, requestCustomerEmailSignIn, signOutCustomerAccount, startAdminTestCheckout, startCheckout, verifyCustomerEmailSignIn };
+export { CART_UPDATED_EVENT, type CartUpdatedDetail, type CustomerAccountSummary, type CustomerOrderTracking, type TalismanEcommerceBrowserHelpers, activateNewCustomerAccount, cancelCheckout, chooseCustomerBasket, claimGiftCardCode, dispatchCartUpdated, getCustomerAccount, getOrderStatus, installTalismanEcommerceBrowserHelpers, previewCustomerSignIn, readCustomerSignInToken, readGiftCardClaimToken, requestCustomerEmailSignIn, signOutCustomerAccount, startAdminTestCheckout, startCheckout, verifyCustomerEmailSignIn };

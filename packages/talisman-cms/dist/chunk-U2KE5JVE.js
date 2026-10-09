@@ -1017,6 +1017,14 @@ async function prepareWrite(input) {
       }
     }
   }
+  if (nativeTable && columns === "configured") {
+    for (const field of activeFields.filter((field2) => field2.readOnly)) {
+      if (!Object.hasOwn(data, field.name)) continue;
+      const expected = operation === "create" ? field.defaultValue : input.stored?.[field.name];
+      if (JSON.stringify(data[field.name]) !== JSON.stringify(expected)) invalid("Managed outside this editor; use its dedicated workflow", [field.name]);
+      if (operation === "update") delete data[field.name];
+    }
+  }
   data = await runHooks(input.hooks, "beforeValidate", { ...hookArgs, data }, hookOptions);
   const schema = buildZodSchemaForCollection({ ...config, fields: activeFields });
   const parsed = (nativeTable && operation === "update" ? schema.partial() : schema).safeParse(data);

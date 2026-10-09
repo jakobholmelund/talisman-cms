@@ -1,6 +1,11 @@
+import { a as CommerceApiOptions } from './commerce-context-WlCnckbA.js';
 import { TalismanEnv } from 'talisman-cms/client';
-import { P as PaymentProviderAdapter } from './payments-C3gqo5tp.js';
 import { a as CommerceEmailResult } from './email-deliveries-CyzibTug.js';
+import { P as PaymentProviderAdapter } from './payments-C3gqo5tp.js';
+import 'drizzle-orm/d1';
+import './schema.js';
+import 'drizzle-orm';
+import 'drizzle-orm/sqlite-core';
 import 'talisman-cms/email';
 import './emails.js';
 
@@ -31,11 +36,6 @@ type ReconcileResult = {
     /** Set on the one result of the attempt that parked the row for review. */
     parked?: true;
 };
-
-interface CommerceApiOptions {
-    env: TalismanEnv;
-    paymentAdapters?: PaymentProviderAdapter[];
-}
 
 type RequiredComponent = {
     id: string;
@@ -296,6 +296,41 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
         } | undefined>;
     };
     orders: {
+        /** Shopper-safe parcel contents and return progress, after the same ownership check as order status. */
+        tracking: (id: string, sessionToken?: string, customerId?: string, orderAccessToken?: string) => Promise<{
+            orderId: string;
+            lines: {
+                ordered: number;
+                shipped: number;
+                remaining: number | null;
+                received: number;
+                lineIndex: number;
+                name: string;
+                sku: string | null;
+            }[];
+            parcels: {
+                id: string;
+                shippedAt: string;
+                carrier: string | null;
+                trackingNumber: string | null;
+                items: {
+                    quantity: number;
+                    lineIndex: number;
+                    name: string;
+                    sku: string | null;
+                }[] | null;
+            }[];
+            returns: {
+                receivedAt: string;
+                items: {
+                    quantity: number;
+                    awaitingInspection: number;
+                    lineIndex: number;
+                    name: string;
+                    sku: string | null;
+                }[];
+            }[];
+        } | null>;
         resumeFromCart: (cartId: string, options?: {
             limitProviderChecks?: boolean;
         }) => Promise<{
@@ -1171,4 +1206,4 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
     };
 };
 
-export { CART_MAX_LINES, CART_MAX_LINE_QUANTITY, type CartItemInput, type CommerceApiOptions, type CommercePurgeOptions, PARKED_CHECKOUT_MESSAGE, PROVIDER_CHECK_RETRY_MESSAGE, ProviderCheckLimitedError, ReconcileFailure, type ReconcileFailureCode, type ReconcileResult, ShopperError, TaxCalculationError, WebhookMismatchError, WebhookRetryLaterError, WebhookSignatureError, aggregateComponentDemand, attachGiftPurchaseSession, bindCommerceApi, deliverPendingCommerceEmails, listTaxSyncReview, purgeStaleCommerceData, reconcileCommerce, recoverTaxSync };
+export { CART_MAX_LINES, CART_MAX_LINE_QUANTITY, type CartItemInput, CommerceApiOptions, type CommercePurgeOptions, PARKED_CHECKOUT_MESSAGE, PROVIDER_CHECK_RETRY_MESSAGE, ProviderCheckLimitedError, ReconcileFailure, type ReconcileFailureCode, type ReconcileResult, ShopperError, TaxCalculationError, WebhookMismatchError, WebhookRetryLaterError, WebhookSignatureError, aggregateComponentDemand, attachGiftPurchaseSession, bindCommerceApi, deliverPendingCommerceEmails, listTaxSyncReview, purgeStaleCommerceData, reconcileCommerce, recoverTaxSync };

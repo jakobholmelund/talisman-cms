@@ -5,7 +5,7 @@ import {
   orderAmounts,
   parcelContentsValue,
   parcelItemsSchema
-} from "./chunk-T4BAYRSK.js";
+} from "./chunk-OZACQY4G.js";
 import {
   COMMERCE_EMAIL_LEASE_SECONDS,
   COMMERCE_EMAIL_MAX_AGE_SECONDS,
@@ -19,13 +19,13 @@ import {
   sendCommerceEmailNow,
   unclaimedAt,
   waitingEmailsResult
-} from "./chunk-XEY7CW6W.js";
+} from "./chunk-IUC5ZIOJ.js";
 import {
   batchGroups,
   chunked,
   commerceDb,
   errorText
-} from "./chunk-NF2MUGI7.js";
+} from "./chunk-4WYWYY7J.js";
 import {
   creditLedger,
   emailDeliveries,
@@ -34,8 +34,9 @@ import {
   orders,
   parcelContents,
   restocks,
+  returnInspections,
   returnReceipts
-} from "./chunk-X3JP4EB3.js";
+} from "./chunk-OMZRKOH6.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
@@ -49,7 +50,8 @@ import { and, eq, inArray } from "drizzle-orm";
 async function loadOrderActivity(env, orderIds) {
   const db = commerceDb(env);
   const groups = chunked(orderIds);
-  const { stock, gift, credit, parcels, confirmations, contents, returns } = await batchGroups(db, {
+  const { stock, gift, credit, parcels, confirmations, contents, returns, inspections } = await batchGroups(db, {
+    inspections: groups.map((ids) => db.select().from(returnInspections).where(inArray(returnInspections.orderId, ids))),
     contents: groups.map((ids) => db.select().from(parcelContents).where(inArray(parcelContents.orderId, ids))),
     returns: groups.map((ids) => db.select().from(returnReceipts).where(inArray(returnReceipts.orderId, ids))),
     stock: groups.map((ids) => db.select().from(restocks).where(inArray(restocks.orderId, ids))),
@@ -59,7 +61,7 @@ async function loadOrderActivity(env, orderIds) {
     confirmations: groups.map((ids) => db.select().from(emailDeliveries).where(and(inArray(emailDeliveries.subjectId, ids), eq(emailDeliveries.kind, "order_confirmation"))))
   });
   const { notices } = await batchGroups(db, { notices: chunked(parcels.map((row) => row.id)).map((ids) => db.select().from(emailDeliveries).where(and(inArray(emailDeliveries.subjectId, ids), inArray(emailDeliveries.kind, ["shipment", "shipment_update"])))) });
-  const names = await adminActorNames(env, [...stock, ...parcels].map((row) => row.adminActor).concat([...contents, ...returns].map((row) => row.actor)));
+  const names = await adminActorNames(env, [...stock, ...parcels].map((row) => row.adminActor).concat([...contents, ...returns, ...inspections].map((row) => row.actor)));
   const parcelOrders = new Map(parcels.map((row) => [row.id, row.orderId]));
   const activity = /* @__PURE__ */ new Map();
   function add(orderId, event) {
@@ -76,6 +78,7 @@ async function loadOrderActivity(env, orderIds) {
     email: null
   });
   for (const row of contents) add(row.orderId, { ...base(row.id, "parcel_contents", row.createdAt, `${row.items.reduce((n, i) => n + i.quantity, 0)} units in parcel ${row.fulfillmentId}: ${row.reason}`), actor: row.actor, actorName: names.get(row.actor) ?? row.actor });
+  for (const row of inspections) add(row.orderId, { ...base(row.id, "return_inspection", row.createdAt, `${row.items.reduce((n, i) => n + i.quantity, 0)} units inspected: ${row.reason}`), actor: row.actor, actorName: names.get(row.actor) ?? row.actor });
   for (const row of returns) add(row.orderId, { ...base(row.id, "return_intake", row.createdAt, `${row.items.reduce((n, i) => n + i.quantity, 0)} units received: ${row.reason}`), actor: row.actor, actorName: names.get(row.actor) ?? row.actor });
   for (const row of stock) add(row.orderId, { ...base(
     row.id,

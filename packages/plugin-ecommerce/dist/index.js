@@ -11,29 +11,29 @@ import {
   bindCommerceApi,
   reconcileCommerce,
   shippingOptionsFor
-} from "./chunk-IESTQB3Q.js";
-import "./chunk-TLRIWP2Z.js";
-import "./chunk-YQVSWTGG.js";
+} from "./chunk-OPKAELJD.js";
+import "./chunk-KQ3MMFVN.js";
+import "./chunk-YHPWUIBV.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
 import {
   deliverPendingCommerceEmails
-} from "./chunk-FZBVFNZR.js";
-import "./chunk-T4BAYRSK.js";
+} from "./chunk-MPRBGWGN.js";
+import "./chunk-OZACQY4G.js";
 import {
   COUNTRY_CODES,
   StoreSettingsError,
   isCountryCode,
   readStoreCurrency,
   readStoreSettings
-} from "./chunk-XEY7CW6W.js";
-import "./chunk-LM4JEW7F.js";
+} from "./chunk-IUC5ZIOJ.js";
+import "./chunk-UJ6XROUG.js";
 import "./chunk-GNU6N22K.js";
-import "./chunk-RQGEGKRJ.js";
+import "./chunk-LF4NCC75.js";
 import {
   commerceDb
-} from "./chunk-NF2MUGI7.js";
+} from "./chunk-4WYWYY7J.js";
 import {
   carts,
   categories,
@@ -57,6 +57,7 @@ import {
   giftCardRefunds,
   giftCardReviews,
   giftCards,
+  inspectionStock,
   orders,
   parcelContents,
   productVariantValues,
@@ -68,15 +69,17 @@ import {
   referralSettings,
   referrals,
   restocks,
+  returnInspections,
   returnReceipts,
   returnStock,
   signInTokens,
   stockMovements,
   stocks,
+  stocktakes,
   tags,
   variantComponents,
   variants
-} from "./chunk-X3JP4EB3.js";
+} from "./chunk-OMZRKOH6.js";
 import "./chunk-NQUBOBQT.js";
 import "./chunk-SPRRFCF5.js";
 import {
@@ -980,6 +983,30 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
           nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: "returnStock", idColumn: "id" }
         });
         collections.push({
+          name: "Return Inspections",
+          slug: "_ecommerce_return_inspections",
+          adminSection: "commerce",
+          readOnly: true,
+          fields: nativeFields(returnInspections, ["id", "receiptId", "orderId", "actor", "reason", "createdAt"]),
+          nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: "returnInspections", idColumn: "id" }
+        });
+        collections.push({
+          name: "Inspection Stock",
+          slug: "_ecommerce_inspection_stock",
+          adminSection: "commerce",
+          readOnly: true,
+          fields: nativeFields(inspectionStock, ["id", "inspectionId", "orderId", "reservationType", "reservationId", "targetType", "targetId", "quantity"]),
+          nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: "inspectionStock", idColumn: "id" }
+        });
+        collections.push({
+          name: "Stocktakes",
+          slug: "_ecommerce_stocktakes",
+          adminSection: "commerce",
+          readOnly: true,
+          fields: nativeFields(stocktakes, ["id", "actor", "reason", "createdAt"]),
+          nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: "stocktakes", idColumn: "id" }
+        });
+        collections.push({
           name: "Stock Movements",
           slug: "_ecommerce_stock_movements",
           adminSection: "commerce",
@@ -997,7 +1024,12 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
         if (!collection.adminSection) collection.adminSection = "commerce";
         const inventoryFields = INVENTORY_FIELDS_BY_EXPORT[collection.nativeSchemaMapping.exportName] || [];
         for (const field of collection.fields || []) {
-          if (inventoryFields.includes(field.name)) field.saveOnlyIfChanged = true;
+          if (inventoryFields.includes(field.name)) {
+            field.saveOnlyIfChanged = true;
+            field.readOnly = true;
+            field.defaultValue = 0;
+            if (!field.label.includes("use Stock overview")) field.label = `${field.label} \xB7 use Stock overview`;
+          }
         }
       }
       return {

@@ -83,6 +83,8 @@ interface FieldDefinition {
      * save that re-sent the value loaded at page open would undo those changes.
      */
     saveOnlyIfChanged?: boolean;
+    /** A top-level native field managed by another workflow. Configured writes may only supply its default on create; updates leave it untouched. */
+    readOnly?: boolean;
 }
 interface CollectionHookArgs<T = any> {
     data: Partial<T>;

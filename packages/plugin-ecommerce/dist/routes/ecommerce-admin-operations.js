@@ -1,20 +1,24 @@
 import {
   readCommerceAttention,
   readStockOverview
-} from "../chunk-YMPSVPQN.js";
+} from "../chunk-AJLEUKY7.js";
 import {
   CommerceOperationsConflict,
+  inspectOrderReturn,
   listEmailRecovery,
   listStockLocations,
+  listStocktakes,
   readOrderWarehouse,
   readStockHistory,
+  readStocktakeTargets,
   receiveOrderReturn,
   recordParcelContents,
   recordStockMovement,
+  recordStocktake,
   retryCommerceEmail
-} from "../chunk-T4BAYRSK.js";
-import "../chunk-NF2MUGI7.js";
-import "../chunk-X3JP4EB3.js";
+} from "../chunk-OZACQY4G.js";
+import "../chunk-4WYWYY7J.js";
+import "../chunk-OMZRKOH6.js";
 import "../chunk-NQUBOBQT.js";
 
 // src/routes/ecommerce-admin-operations.ts
@@ -37,6 +41,7 @@ var ALL = async ({ request }) => {
       if (view === "attention") return Response.json(await readCommerceAttention(runtimeEnv), { headers });
       if (view === "emails") return Response.json(await listEmailRecovery(runtimeEnv, params), { headers });
       if (view === "stockLocations") return Response.json(await listStockLocations(runtimeEnv, params), { headers });
+      if (view === "stocktakes") return Response.json(await listStocktakes(runtimeEnv, params), { headers });
       if (view === "stockHistory") return Response.json(await readStockHistory(runtimeEnv, params), { headers });
       if (view === "stock") return Response.json(await readStockOverview(runtimeEnv, { ...params, view: params.inventory }), { headers });
       return Response.json({ error: "Choose an operations view" }, { status: 400, headers });
@@ -48,8 +53,9 @@ var ALL = async ({ request }) => {
       return Response.json({ error: "Invalid request" }, { status: 400, headers });
     }
     const actor = String(authorization.user?.id ?? "");
+    if (body?.action === "stocktakeRead") return Response.json(await readStocktakeTargets(runtimeEnv, body.data), { headers });
     if (body?.action === "warehouseRead") return Response.json(await readOrderWarehouse(runtimeEnv, body.data), { headers });
-    const actions = { retryEmail: retryCommerceEmail, parcelContents: recordParcelContents, receiveReturn: receiveOrderReturn, stockMovement: recordStockMovement };
+    const actions = { retryEmail: retryCommerceEmail, parcelContents: recordParcelContents, receiveReturn: receiveOrderReturn, stockMovement: recordStockMovement, inspectReturn: inspectOrderReturn, stocktake: recordStocktake };
     const action = body?.action;
     if (!Object.hasOwn(actions, action)) return Response.json({ error: "Invalid operations action" }, { status: 400, headers });
     return Response.json({ result: await actions[action](runtimeEnv, body.data, actor) }, { headers });

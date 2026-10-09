@@ -1,7 +1,7 @@
 import { C as CacheContext, T as TalismanEnv, E as EntriesPage, a as CreateEntryInput, U as UpdateEntryInput, S as SiteReadOptions, W as WriteExpectation, b as CreateGlobalInput, c as SaveGlobalOptions } from './client-D1zn08c5.js';
 export { d as ClientOptions, e as EntryStatusTarget, f as UpdateOptions, V as VersionMode, g as createDbClient, h as getClient, j as invalidateCollectionCache, i as invalidateEntryCache, k as invalidateGlobalCache } from './client-D1zn08c5.js';
 export { EntryNotFoundError, PendingPublishWorkflow, RevisionConflictError, SlugConflictError } from './versioning.js';
-import { C as CollectionConfig, G as GlobalConfig, m as UiLibraryDefinition, e as CollectionHooks, p as FieldValidationIssue, d as CollectionHookArgs, F as FieldDefinition } from './fields-CLUM6rSy.js';
+import { C as CollectionConfig, G as GlobalConfig, m as UiLibraryDefinition, e as CollectionHooks, p as FieldValidationIssue, d as CollectionHookArgs, F as FieldDefinition } from './fields-BNNcWDXj.js';
 import { E as EntryQuery } from './query-DgmKqS5C.js';
 export { O as Operators, W as WhereClause } from './query-DgmKqS5C.js';
 import { collections } from './db/schema.js';

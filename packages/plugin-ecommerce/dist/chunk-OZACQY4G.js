@@ -4,16 +4,19 @@ import {
   commerceDb,
   commitBatch,
   errorText
-} from "./chunk-NF2MUGI7.js";
+} from "./chunk-4WYWYY7J.js";
 import {
   emailDeliveries,
   emailRecoveryDecisions,
+  inspectionStock,
   orders,
   parcelContents,
+  returnInspections,
   returnReceipts,
   returnStock,
-  stockMovements
-} from "./chunk-X3JP4EB3.js";
+  stockMovements,
+  stocktakes
+} from "./chunk-OMZRKOH6.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
@@ -232,6 +235,7 @@ import { z as z2 } from "zod";
 var id = z2.string().trim().min(1).max(128);
 var reason = z2.string().trim().min(8).max(500);
 var quantity = z2.number().int().min(1).max(1e6);
+var stockVersion = z2.string().min(20).max(40).refine((s) => /^(?:\d{4}|[+-]\d{6})-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.0+)?Z$/.test(s) && Number.isSafeInteger(Date.parse(s)) && Date.parse(s) % 1e3 === 0, "Reload the exact stock version");
 var parcelItemsSchema = z2.array(z2.object({ lineIndex: z2.number().int().min(0).max(199), quantity }).strict()).min(1).max(200).refine((items) => new Set(items.map((item) => item.lineIndex)).size === items.length, "Choose each order line once");
 var contentsSchema = z2.object({ orderId: id, fulfillmentId: id, items: parcelItemsSchema, reason, requestKey: id.min(8) }).strict();
 var intakeSchema = z2.object({ orderId: id, reason, requestKey: id.min(8), items: z2.array(z2.object({
@@ -300,8 +304,22 @@ async function receiveOrderReturn(env, input, actor) {
   if (!order || order.paymentProvider === "admin_test" || !["paid", "partially_refunded", "refunded", "disputed"].includes(order.status)) {
     throw new CommerceOperationsConflict("Only confirmed real purchases can receive returns.");
   }
+  const restocked = returnDemand(order, values.items, receiptId).map((row) => ({ ...row, receiptId }));
+  try {
+    await db.batch([
+      db.insert(returnReceipts).values({ id: receiptId, orderId: values.orderId, items: values.items, actor, reason: values.reason, fingerprint, createdAt: /* @__PURE__ */ new Date() }),
+      ...restocked.map((row) => db.insert(returnStock).values(row))
+    ]);
+  } catch (cause) {
+    const previous2 = await replay();
+    if (previous2) return previous2;
+    throw new CommerceOperationsConflict(errorText(cause).includes("Return") ? "Return quantities exceed the goods or stock still available to return. Reload the order." : "Return could not be recorded. Reload the order.");
+  }
+  return { receiptId, orderId: values.orderId, restocked };
+}
+function returnDemand(order, items, sourceId) {
   const demand = /* @__PURE__ */ new Map();
-  for (const item of values.items) {
+  for (const item of items) {
     const line = order.items[item.lineIndex];
     if (!line) throw new CommerceOperationsConflict("The order line is unavailable. Reload the order.");
     if (!item.restock) continue;
@@ -316,9 +334,8 @@ async function receiveOrderReturn(env, input, actor) {
     const reservation = target.type === "component" ? order.componentReservations.find((r) => r.componentId === target.target) : order.inventoryReservations.find((r) => r.targetType === target.type && r.targetId === target.target);
     if (!reservation || reservation.releasedAt) throw new CommerceOperationsConflict("These units have already been restored or their stock hold is unavailable. Receive without restocking and reconcile the stock.");
     return {
-      id: `${receiptId}_${reservation.id}`,
-      receiptId,
-      orderId: values.orderId,
+      id: `${sourceId}_${reservation.id}`,
+      orderId: order.id,
       reservationType: target.type === "component" ? "component" : "inventory",
       reservationId: reservation.id,
       targetType: target.type,
@@ -326,21 +343,11 @@ async function receiveOrderReturn(env, input, actor) {
       quantity: target.quantity
     };
   });
-  try {
-    await db.batch([
-      db.insert(returnReceipts).values({ id: receiptId, orderId: values.orderId, items: values.items, actor, reason: values.reason, fingerprint, createdAt: /* @__PURE__ */ new Date() }),
-      ...restocked.map((row) => db.insert(returnStock).values(row))
-    ]);
-  } catch (cause) {
-    const previous2 = await replay();
-    if (previous2) return previous2;
-    throw new CommerceOperationsConflict(errorText(cause).includes("Return") ? "Return quantities exceed the goods or stock still available to return. Reload the order." : "Return could not be recorded. Reload the order.");
-  }
-  return { receiptId, orderId: values.orderId, restocked };
+  return restocked;
 }
 async function readOrderWarehouse(env, input) {
   const { orderId } = z2.object({ orderId: id }).strict().parse(input), db = commerceDb(env);
-  const order = await db.query.orders.findFirst({ where: { id: orderId }, with: { parcelContents: true, returnReceipts: { with: { stock: true } }, fulfillments: true } });
+  const order = await db.query.orders.findFirst({ where: { id: orderId }, with: { parcelContents: true, returnReceipts: { with: { stock: true, inspections: { with: { stock: true } } } }, fulfillments: true } });
   if (!order || order.paymentProvider === "admin_test") throw new CommerceOperationsConflict("Order not found");
   const described = await describeOrderItems(env, order.items);
   const unrecorded = order.fulfillments.filter((row) => row.kind === "shipment" && !order.parcelContents.some((p) => p.fulfillmentId === row.id));
@@ -359,7 +366,7 @@ async function readOrderWarehouse(env, input) {
       restockMapped: Array.isArray(order.items[lineIndex].stockTargets) && !!order.items[lineIndex].stockTargets?.length
     };
   });
-  const names = await adminActorNames(env, [...order.parcelContents.map((p) => p.actor), ...order.returnReceipts.map((r) => r.actor)]);
+  const names = await adminActorNames(env, [...order.parcelContents.map((p) => p.actor), ...order.returnReceipts.flatMap((r) => [r.actor, ...r.inspections.map((i) => i.actor)])]);
   return {
     orderId,
     status: order.status,
@@ -367,7 +374,13 @@ async function readOrderWarehouse(env, input) {
     lines,
     unrecorded: unrecorded.map((p) => ({ id: p.id, createdAt: p.createdAt.toISOString(), note: p.note })),
     parcels: order.parcelContents.map((p) => ({ ...p, actorName: names.get(p.actor) ?? p.actor, createdAt: p.createdAt.toISOString() })),
-    returns: order.returnReceipts.map((r) => ({ ...r, actorName: names.get(r.actor) ?? r.actor, createdAt: r.createdAt.toISOString() })),
+    returns: order.returnReceipts.map((r) => ({
+      ...r,
+      actorName: names.get(r.actor) ?? r.actor,
+      createdAt: r.createdAt.toISOString(),
+      inspectionPending: r.items.filter((i) => i.condition === "inspection").map((i) => ({ lineIndex: i.lineIndex, quantity: i.quantity - r.inspections.reduce((n, decision) => n + (decision.items.find((j) => j.lineIndex === i.lineIndex)?.quantity ?? 0), 0) })),
+      inspections: r.inspections.map((i) => ({ ...i, actorName: names.get(i.actor) ?? i.actor, createdAt: i.createdAt.toISOString() }))
+    })),
     shippingAddress: order.shippingAddress,
     canReceive: ["paid", "partially_refunded", "refunded", "disputed"].includes(order.status)
   };
@@ -379,7 +392,7 @@ var movementSchema = z2.object({
   kind: z2.enum(["receipt", "correction"]),
   delta: z2.number().int().min(-1e6).max(1e6).refine((n) => n !== 0),
   expectedQuantity: z2.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  expectedUpdatedAt: z2.string().datetime(),
+  expectedUpdatedAt: stockVersion,
   reason
 }).strict().refine((v) => v.kind !== "receipt" || v.delta > 0, "Incoming stock must be positive");
 async function recordStockMovement(env, input, actor) {
@@ -438,14 +451,17 @@ async function readStockHistory(env, input) {
   const db = commerceDb(env);
   const history = sql2`WITH inventory_events AS (
     SELECT r.id, 'checkout_hold' AS kind, -r.quantity AS delta, NULL AS beforeQuantity, NULL AS afterQuantity, NULL AS actor, 'Checkout stock reservation' AS reason, o.created_at AS createdAt, r.order_id AS orderId FROM _ecommerce_inventory_reservations r JOIN _ecommerce_orders o ON o.id = r.order_id WHERE r.target_type = ${v.targetType} AND r.target_id = ${v.targetId}
-    UNION ALL SELECT id || '_release', 'checkout_release', quantity, NULL, NULL, NULL, 'Cancelled checkout stock release', released_at, order_id FROM _ecommerce_inventory_reservations r WHERE target_type = ${v.targetType} AND target_id = ${v.targetId} AND released_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM _ecommerce_restocks s WHERE s.reservation_type = 'inventory' AND s.reservation_id = r.id) AND NOT EXISTS(SELECT 1 FROM _ecommerce_return_stock s WHERE s.reservation_type = 'inventory' AND s.reservation_id = r.id)
+    UNION ALL SELECT id || '_release', 'checkout_release', quantity, NULL, NULL, NULL, 'Cancelled checkout stock release', released_at, order_id FROM _ecommerce_inventory_reservations r WHERE target_type = ${v.targetType} AND target_id = ${v.targetId} AND released_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM _ecommerce_restocks s WHERE s.reservation_type = 'inventory' AND s.reservation_id = r.id) AND NOT EXISTS(SELECT 1 FROM _ecommerce_return_stock s WHERE s.reservation_type = 'inventory' AND s.reservation_id = r.id) AND NOT EXISTS(SELECT 1 FROM _ecommerce_inspection_stock s WHERE s.reservation_type = 'inventory' AND s.reservation_id = r.id)
   ), component_events AS (
     SELECT r.id, 'checkout_hold' AS kind, -r.quantity AS delta, NULL AS beforeQuantity, NULL AS afterQuantity, NULL AS actor, 'Checkout component reservation' AS reason, o.created_at AS createdAt, r.order_id AS orderId FROM _ecommerce_component_reservations r JOIN _ecommerce_orders o ON o.id = r.order_id WHERE ${v.targetType} = 'component' AND r.component_id = ${v.targetId}
-    UNION ALL SELECT id || '_release', 'checkout_release', quantity, NULL, NULL, NULL, 'Cancelled checkout component release', released_at, order_id FROM _ecommerce_component_reservations r WHERE ${v.targetType} = 'component' AND component_id = ${v.targetId} AND released_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM _ecommerce_restocks s WHERE s.reservation_type = 'component' AND s.reservation_id = r.id) AND NOT EXISTS(SELECT 1 FROM _ecommerce_return_stock s WHERE s.reservation_type = 'component' AND s.reservation_id = r.id)
+    UNION ALL SELECT id || '_release', 'checkout_release', quantity, NULL, NULL, NULL, 'Cancelled checkout component release', released_at, order_id FROM _ecommerce_component_reservations r WHERE ${v.targetType} = 'component' AND component_id = ${v.targetId} AND released_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM _ecommerce_restocks s WHERE s.reservation_type = 'component' AND s.reservation_id = r.id) AND NOT EXISTS(SELECT 1 FROM _ecommerce_return_stock s WHERE s.reservation_type = 'component' AND s.reservation_id = r.id) AND NOT EXISTS(SELECT 1 FROM _ecommerce_inspection_stock s WHERE s.reservation_type = 'component' AND s.reservation_id = r.id)
+  ), returned_events AS (
+    SELECT s.id, 'return' AS kind, s.quantity AS delta, NULL AS beforeQuantity, NULL AS afterQuantity, r.actor, r.reason, r.created_at AS createdAt, s.order_id AS orderId FROM _ecommerce_return_stock s JOIN _ecommerce_return_receipts r ON r.id = s.receipt_id WHERE s.target_type = ${v.targetType} AND s.target_id = ${v.targetId}
+    UNION ALL SELECT s.id, 'inspection', s.quantity, NULL, NULL, i.actor, i.reason, i.created_at, s.order_id FROM _ecommerce_inspection_stock s JOIN _ecommerce_return_inspections i ON i.id = s.inspection_id WHERE s.target_type = ${v.targetType} AND s.target_id = ${v.targetId}
   ), history AS (
     SELECT id, kind, delta, before_quantity AS beforeQuantity, after_quantity AS afterQuantity, actor, reason, created_at AS createdAt, NULL AS orderId
       FROM _ecommerce_stock_movements WHERE target_type = ${v.targetType} AND target_id = ${v.targetId}
-    UNION ALL SELECT s.id, 'return', s.quantity, NULL, NULL, r.actor, r.reason, r.created_at, s.order_id FROM _ecommerce_return_stock s JOIN _ecommerce_return_receipts r ON r.id = s.receipt_id WHERE s.target_type = ${v.targetType} AND s.target_id = ${v.targetId}
+    UNION ALL SELECT * FROM returned_events
     UNION ALL SELECT id, 'restock', quantity, NULL, NULL, admin_actor, reason, created_at, order_id FROM _ecommerce_restocks WHERE target_type = ${v.targetType} AND target_id = ${v.targetId}
     UNION ALL SELECT * FROM inventory_events
     UNION ALL SELECT * FROM component_events
@@ -456,6 +472,111 @@ async function readStockHistory(env, input) {
   ]);
   const names = await adminActorNames(env, rows.flatMap((row) => row.actor ? [row.actor] : []));
   return { ...v, total: total[0]?.n ?? 0, rows: rows.map((row) => ({ ...row, actorName: row.actor ? names.get(row.actor) ?? row.actor : null, createdAt: new Date(row.createdAt * 1e3).toISOString() })) };
+}
+var inspectionSchema = z2.object({
+  orderId: id,
+  receiptId: id,
+  requestKey: id.min(8),
+  reason,
+  items: z2.array(z2.object({
+    lineIndex: z2.number().int().min(0).max(199),
+    quantity,
+    disposition: z2.enum(["sellable", "quarantine", "damaged"]),
+    restock: z2.boolean()
+  }).strict().refine((i) => !i.restock || i.disposition === "sellable", "Only approved sellable units can be restocked")).min(1).max(200).refine((items) => new Set(items.map((i) => i.lineIndex)).size === items.length, "Choose each line once")
+}).strict();
+async function inspectOrderReturn(env, input, actor) {
+  const v = inspectionSchema.parse(input);
+  actorRequired(actor);
+  const inspectionId = `ins_${await hashOrderAccess(`${v.orderId}:${v.requestKey}`)}`, fingerprint = await warehouseFingerprint(v, actor), db = commerceDb(env);
+  const replay = async () => {
+    const previous2 = await db.query.returnInspections.findFirst({ where: { id: inspectionId }, with: { stock: true } });
+    if (!previous2) return null;
+    if (previous2.fingerprint !== fingerprint) throw new CommerceOperationsConflict("This inspection key was used with other details.");
+    return { inspectionId, orderId: previous2.orderId, restocked: previous2.stock, duplicate: true };
+  };
+  const previous = await replay();
+  if (previous) return previous;
+  const order = await db.query.orders.findFirst({ where: { id: v.orderId }, with: { inventoryReservations: true, componentReservations: true } });
+  if (!order || order.paymentProvider === "admin_test") throw new CommerceOperationsConflict("Order not found");
+  const restocked = returnDemand(order, v.items, inspectionId).map((row) => ({ ...row, inspectionId }));
+  try {
+    await db.batch([
+      db.insert(returnInspections).values({ id: inspectionId, receiptId: v.receiptId, orderId: v.orderId, items: v.items, actor, reason: v.reason, fingerprint, createdAt: /* @__PURE__ */ new Date() }),
+      ...restocked.map((row) => db.insert(inspectionStock).values(row))
+    ]);
+  } catch {
+    const previous2 = await replay();
+    if (previous2) return previous2;
+    throw new CommerceOperationsConflict("Inspection quantities or stock changed. Reload the order before reviewing these goods.");
+  }
+  return { inspectionId, orderId: v.orderId, restocked };
+}
+var countSchema = z2.number().int().min(0).max(1e6);
+var stocktakeSchema = z2.object({ requestKey: id.min(8), reason, lines: z2.array(z2.object({
+  targetType: z2.enum(["product", "variant", "stock", "component"]),
+  targetId: id,
+  expectedQuantity: countSchema,
+  expectedUpdatedAt: stockVersion,
+  countedQuantity: countSchema
+}).strict()).min(1).max(50).refine((lines) => new Set(lines.map((l) => `${l.targetType}:${l.targetId}`)).size === lines.length, "Count each stock record once") }).strict();
+async function recordStocktake(env, input, actor) {
+  const v = stocktakeSchema.parse(input);
+  actorRequired(actor);
+  const stocktakeId = `cnt_${await hashOrderAccess(v.requestKey)}`, fingerprint = await warehouseFingerprint(v, actor), db = commerceDb(env);
+  const replay = async () => {
+    const previous2 = await db.select().from(stocktakes).where(eq2(stocktakes.id, stocktakeId)).get();
+    if (!previous2) return null;
+    if (previous2.fingerprint !== fingerprint) throw new CommerceOperationsConflict("This stocktake key was used with other details.");
+    return { stocktakeId, lines: previous2.lines, duplicate: true };
+  };
+  const previous = await replay();
+  if (previous) return previous;
+  const snapshot = await readStocktakeTargets(env, { targets: v.lines.map((l) => ({ targetType: l.targetType, targetId: l.targetId })) });
+  const lines = v.lines.map((l) => {
+    const row = snapshot.rows.find((r) => r.type === l.targetType && r.id === l.targetId);
+    return { ...l, expectedUpdatedSeconds: Date.parse(l.expectedUpdatedAt) / 1e3, name: row?.name ?? "Unavailable stock record", sku: row?.sku ?? null };
+  });
+  const now = /* @__PURE__ */ new Date();
+  try {
+    await db.batch([
+      db.insert(stocktakes).values({ id: stocktakeId, lines, actor, reason: v.reason, fingerprint, createdAt: now }),
+      ...v.lines.filter((l) => l.countedQuantity !== l.expectedQuantity).map((l, n) => db.insert(stockMovements).values({
+        id: `${stocktakeId}_${n}`,
+        targetType: l.targetType,
+        targetId: l.targetId,
+        kind: "correction",
+        delta: l.countedQuantity - l.expectedQuantity,
+        beforeQuantity: l.expectedQuantity,
+        afterQuantity: l.countedQuantity,
+        expectedUpdatedAt: new Date(l.expectedUpdatedAt),
+        actor,
+        reason: `Stocktake: ${v.reason}`,
+        fingerprint,
+        createdAt: now
+      }))
+    ]);
+  } catch {
+    const previous2 = await replay();
+    if (previous2) return previous2;
+    throw new CommerceOperationsConflict("Stock changed during this count. No counts were applied. Reload and review every discrepancy.");
+  }
+  return { stocktakeId, lines };
+}
+async function listStocktakes(env, input = {}) {
+  const v = z2.object({ offset: z2.coerce.number().int().min(0).max(1e6).default(0) }).strict().parse(input), db = commerceDb(env);
+  const [rows, totals] = await db.batch([
+    db.select().from(stocktakes).orderBy(sql2`${stocktakes.createdAt} DESC, ${stocktakes.id} DESC`).limit(20).offset(v.offset),
+    db.select({ n: sql2`count(*)` }).from(stocktakes)
+  ]);
+  const names = await adminActorNames(env, rows.map((r) => r.actor));
+  return { ...v, total: totals[0]?.n ?? 0, rows: rows.map((r) => ({ ...r, actorName: names.get(r.actor) ?? r.actor, createdAt: r.createdAt.toISOString() })) };
+}
+async function readStocktakeTargets(env, input) {
+  const v = z2.object({ targets: z2.array(z2.object({ targetType: z2.enum(["product", "variant", "stock", "component"]), targetId: id }).strict()).min(1).max(50).refine((t) => new Set(t.map((i) => `${i.targetType}:${i.targetId}`)).size === t.length, "Choose each record once") }).strict().parse(input);
+  const where = sql2.join(v.targets.map((t) => sql2`(type = ${t.targetType} AND id = ${t.targetId})`), sql2` OR `);
+  const rows = await commerceDb(env).all(sql2`${locations} SELECT * FROM locations WHERE ${where}`);
+  return { rows: rows.map((row) => ({ ...row, updatedAt: new Date(row.updated * 1e3).toISOString() })) };
 }
 
 export {
@@ -473,5 +594,9 @@ export {
   readOrderWarehouse,
   recordStockMovement,
   listStockLocations,
-  readStockHistory
+  readStockHistory,
+  inspectOrderReturn,
+  recordStocktake,
+  listStocktakes,
+  readStocktakeTargets
 };

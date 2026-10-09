@@ -1,9 +1,10 @@
 import {
   VariantChangeError,
-  runVariantChange
-} from "../chunk-SJ5NNGW7.js";
-import "../chunk-NF2MUGI7.js";
-import "../chunk-X3JP4EB3.js";
+  runVariantChange,
+  variantChangeSchema
+} from "../chunk-ZFJH2FXY.js";
+import "../chunk-4WYWYY7J.js";
+import "../chunk-OMZRKOH6.js";
 
 // src/routes/ecommerce-admin-variants.ts
 import { authorizeCmsRequest } from "talisman-cms/auth/guard";
@@ -25,6 +26,10 @@ var ALL = async ({ request }) => {
   }
   try {
     const { env } = await import("cloudflare:workers");
+    const parsed = variantChangeSchema.safeParse(body);
+    if (parsed.success && parsed.data.action === "saveValue" && parsed.data.stock) {
+      if (parsed.data.stock.id || parsed.data.stock.quantity !== 0) return Response.json({ error: "Record stock changes in Stock overview with a staff reason." }, { status: 400, headers });
+    }
     const result = await runVariantChange(env, body);
     return Response.json({ result }, { headers });
   } catch (error) {
