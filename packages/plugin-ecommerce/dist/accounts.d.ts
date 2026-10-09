@@ -1,4 +1,7 @@
 import { TalismanEnv } from 'talisman-cms/client';
+import { ParcelItem } from './schema.js';
+import 'drizzle-orm';
+import 'drizzle-orm/sqlite-core';
 
 declare class ShopperPrivacyError extends Error {
 }
@@ -65,6 +68,17 @@ declare function manageShopperData(env: TalismanEnv, actor: string, input: unkno
         createdAt: Date;
         operations: {
             id: string;
+            returnRequests: {
+                id: string;
+                items: ParcelItem[];
+                createdAt: Date;
+                reason: string;
+                events: {
+                    createdAt: Date;
+                    status: "closed" | "pending" | "approved" | "declined" | "cancelled";
+                    customerMessage: string;
+                }[];
+            }[];
             providerRefunds: {
                 createdAt: Date | null;
                 amountCents: number;
@@ -97,7 +111,7 @@ declare function manageShopperData(env: TalismanEnv, actor: string, input: unkno
     giftCardPurchases: {
         id: string;
         amountCents: number;
-        status: "paid" | "partially_refunded" | "refunded" | "cancelled" | "pending" | "review";
+        status: "paid" | "partially_refunded" | "refunded" | "pending" | "cancelled" | "review";
         currency: string;
         providerRefundedCents: number;
         createdAt: Date;
@@ -106,7 +120,7 @@ declare function manageShopperData(env: TalismanEnv, actor: string, input: unkno
         code: string;
         orderId: string;
         amountCents: number;
-        status: "refunded" | "reserved" | "confirmed" | "cancelled";
+        status: "refunded" | "cancelled" | "reserved" | "confirmed";
         createdAt: Date;
     }[];
     accountId?: undefined;

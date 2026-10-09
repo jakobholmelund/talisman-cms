@@ -119,6 +119,7 @@ var orders = sqliteTable("_ecommerce_orders", {
   index("_ecommerce_orders_discount_cleanup_idx").on(table.updatedAt).where(sql`${table.discountCleanupPending} = 1`),
   index("_ecommerce_orders_customer_email_idx").on(sql`lower(${table.customerEmail})`),
   // Checkout reconciliation reads pending orders by age.
+  index("_ecommerce_orders_created_idx").on(table.createdAt),
   index("_ecommerce_orders_pending_idx").on(table.createdAt).where(sql`${table.status} = 'pending'`),
   // The admin orders queue: real orders that can still ship, and real orders past checkout.
   index("_ecommerce_orders_awaiting_idx").on(table.createdAt, table.id).where(sql`${table.status} IN ('paid', 'partially_refunded') AND ${table.fulfillmentStatus} <> 'fulfilled' AND COALESCE(${table.paymentProvider}, 'stripe') <> 'admin_test'`),
@@ -265,6 +266,7 @@ var componentReservations = sqliteTable("_ecommerce_component_reservations", {
   releasedAt: integer("released_at", { mode: "timestamp" })
 }, (table) => [
   uniqueIndex("component_reservation_unique").on(table.orderId, table.componentId),
+  index("_ecommerce_component_reservations_released_idx").on(table.releasedAt),
   index("_ecommerce_component_reservations_target_idx").on(table.componentId),
   check("component_reservation_quantity_positive", money(table.quantity, "positive"))
 ]);
@@ -278,6 +280,7 @@ var inventoryReservations = sqliteTable("_ecommerce_inventory_reservations", {
   releasedAt: integer("released_at", { mode: "timestamp" })
 }, (table) => [
   uniqueIndex("inventory_reservation_unique").on(table.orderId, table.targetType, table.targetId),
+  index("_ecommerce_inventory_reservations_released_idx").on(table.releasedAt),
   index("_ecommerce_inventory_reservations_target_idx").on(table.targetType, table.targetId),
   check("inventory_reservation_target_type", oneOf(table.targetType, RESERVATION_TARGET_TYPES)),
   check("inventory_reservation_quantity_positive", money(table.quantity, "positive"))
@@ -712,6 +715,7 @@ var restocks = sqliteTable("_ecommerce_restocks", {
   createdAt: integer("created_at", { mode: "timestamp" }).notNull()
 }, (table) => [
   uniqueIndex("_ecommerce_restocks_reservation_unique").on(table.reservationType, table.reservationId),
+  index("_ecommerce_restocks_created_idx").on(table.createdAt),
   index("_ecommerce_restocks_order_idx").on(table.orderId, table.createdAt),
   index("_ecommerce_restocks_target_idx").on(table.targetType, table.targetId, table.createdAt),
   check("restock_reservation_type", oneOf(table.reservationType, RESTOCK_RESERVATION_TYPES)),
@@ -867,11 +871,51 @@ var returnReceipts = sqliteTable("_ecommerce_return_receipts", {
   fingerprint: text("fingerprint").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull()
 }, (t) => [
+  index("_ecommerce_return_receipts_created_idx").on(t.createdAt),
   index("_ecommerce_return_receipts_order_idx").on(t.orderId, t.createdAt),
   check("return_items_array", sql`json_valid(${t.items}) AND json_type(${t.items}) = 'array' AND json_array_length(${t.items}) > 0`),
   check("return_actor", filled(t.actor)),
   check("return_reason", trimmed(t.reason, 8))
 ]);
+var RETURN_REQUEST_STATUSES = ["pending", "approved", "declined", "cancelled", "closed"];
+var RETURN_REQUEST_ACTORS = ["staff", "customer"];
+var returnRequests = sqliteTable("_ecommerce_return_requests", {
+  id: text("id").primaryKey(),
+  orderId: text("order_id").notNull().references(() => orders.id),
+  items: text("items", { mode: "json" }).$type().notNull(),
+  reason: text("reason").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  redactedAt: integer("redacted_at", { mode: "timestamp" })
+}, (t) => [
+  index("_ecommerce_return_requests_order_idx").on(t.orderId),
+  index("_ecommerce_return_requests_created_idx").on(t.createdAt),
+  check("return_request_items", sql`json_valid(${t.items}) AND json_type(${t.items}) = 'array' AND json_array_length(${t.items}) BETWEEN 1 AND 50`),
+  check("return_request_reason", trimmed(t.reason, 8))
+]);
+var returnRequestEvents = sqliteTable("_ecommerce_return_request_events", {
+  id: text("id").primaryKey(),
+  requestId: text("request_id").notNull().references(() => returnRequests.id),
+  status: text("status", { enum: RETURN_REQUEST_STATUSES }).notNull(),
+  expectedVersion: text("expected_version").notNull(),
+  actorKind: text("actor_kind", { enum: RETURN_REQUEST_ACTORS }).notNull(),
+  actor: text("actor").notNull(),
+  reason: text("reason").notNull(),
+  customerMessage: text("customer_message").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  redactedAt: integer("redacted_at", { mode: "timestamp" })
+}, (t) => [
+  index("_ecommerce_return_request_events_request_idx").on(t.requestId),
+  check("return_request_event_status", oneOf(t.status, RETURN_REQUEST_STATUSES)),
+  check("return_request_event_actor_kind", oneOf(t.actorKind, RETURN_REQUEST_ACTORS)),
+  check("return_request_event_actor", filled(t.actor)),
+  check("return_request_event_reason", trimmed(t.reason, 8))
+]);
+var returnRequestReceipts = sqliteTable("_ecommerce_return_request_receipts", {
+  receiptId: text("receipt_id").primaryKey().references(() => returnReceipts.id),
+  requestId: text("request_id").notNull().references(() => returnRequests.id)
+}, (t) => [index("_ecommerce_return_request_receipts_request_idx").on(t.requestId)]);
 var returnStock = sqliteTable("_ecommerce_return_stock", {
   id: text("id").primaryKey(),
   receiptId: text("receipt_id").notNull().references(() => returnReceipts.id),
@@ -901,6 +945,7 @@ var returnInspections = sqliteTable("_ecommerce_return_inspections", {
   fingerprint: text("fingerprint").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull()
 }, (t) => [
+  index("_ecommerce_return_inspections_created_idx").on(t.createdAt),
   index("_ecommerce_return_inspections_receipt_idx").on(t.receiptId),
   index("_ecommerce_return_inspections_order_idx").on(t.orderId),
   check("inspection_items_array", sql`json_valid(${t.items}) AND json_type(${t.items}) = 'array' AND json_array_length(${t.items}) > 0`),
@@ -953,6 +998,7 @@ var stockMovements = sqliteTable("_ecommerce_stock_movements", {
   fingerprint: text("fingerprint").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull()
 }, (t) => [
+  index("_ecommerce_stock_movements_created_idx").on(t.createdAt),
   index("_ecommerce_stock_movements_target_idx").on(t.targetType, t.targetId, t.createdAt),
   check("stock_movement_target", oneOf(t.targetType, RESTOCK_TARGET_TYPES)),
   check("stock_movement_kind", oneOf(t.kind, STOCK_MOVEMENT_KINDS)),
@@ -964,6 +1010,9 @@ var stockMovements = sqliteTable("_ecommerce_stock_movements", {
   check("stock_movement_reason", trimmed(t.reason, 8))
 ]);
 var tables = {
+  returnRequests,
+  returnRequestEvents,
+  returnRequestReceipts,
   parcelContents,
   returnReceipts,
   returnStock,
@@ -1036,6 +1085,7 @@ var relations = defineRelations(tables, (r) => ({
     componentReservations: r.many.componentReservations(),
     inventoryReservations: r.many.inventoryReservations(),
     fulfillments: r.many.fulfillments(),
+    returnRequests: r.many.returnRequests(),
     parcelContents: r.many.parcelContents(),
     returnReceipts: r.many.returnReceipts(),
     returnStock: r.many.returnStock(),
@@ -1164,7 +1214,10 @@ var relations = defineRelations(tables, (r) => ({
     order: r.one.orders({ from: r.parcelContents.orderId, to: r.orders.id, optional: false }),
     fulfillment: r.one.fulfillments({ from: r.parcelContents.fulfillmentId, to: r.fulfillments.id, optional: false })
   },
-  returnReceipts: { order: r.one.orders({ from: r.returnReceipts.orderId, to: r.orders.id, optional: false }), stock: r.many.returnStock(), inspections: r.many.returnInspections() },
+  returnRequests: { order: r.one.orders({ from: r.returnRequests.orderId, to: r.orders.id, optional: false }), events: r.many.returnRequestEvents(), receipts: r.many.returnRequestReceipts() },
+  returnRequestEvents: { request: r.one.returnRequests({ from: r.returnRequestEvents.requestId, to: r.returnRequests.id, optional: false }) },
+  returnRequestReceipts: { request: r.one.returnRequests({ from: r.returnRequestReceipts.requestId, to: r.returnRequests.id, optional: false }), receipt: r.one.returnReceipts({ from: r.returnRequestReceipts.receiptId, to: r.returnReceipts.id, optional: false }) },
+  returnReceipts: { requestLinks: r.many.returnRequestReceipts(), order: r.one.orders({ from: r.returnReceipts.orderId, to: r.orders.id, optional: false }), stock: r.many.returnStock(), inspections: r.many.returnInspections() },
   returnInspections: {
     receipt: r.one.returnReceipts({ from: r.returnInspections.receiptId, to: r.returnReceipts.id, optional: false }),
     order: r.one.orders({ from: r.returnInspections.orderId, to: r.orders.id, optional: false }),
@@ -1360,6 +1413,11 @@ export {
   parcelContents,
   RETURN_CONDITIONS,
   returnReceipts,
+  RETURN_REQUEST_STATUSES,
+  RETURN_REQUEST_ACTORS,
+  returnRequests,
+  returnRequestEvents,
+  returnRequestReceipts,
   returnStock,
   INSPECTION_DISPOSITIONS,
   returnInspections,

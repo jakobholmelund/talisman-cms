@@ -1,11 +1,13 @@
-import { a as CommerceApiOptions } from './commerce-context-WlCnckbA.js';
+import { C as CustomerReturns, R as ReturnRequestReceipt, a as ReturnDecisionReceipt } from './return-request-types-BRQL27cB.js';
+import { R as ReturnOwner } from './return-requests-CqFKKpcO.js';
+import { a as CommerceApiOptions } from './commerce-context-ClfhnyAX.js';
 import { TalismanEnv } from 'talisman-cms/client';
 import { a as CommerceEmailResult } from './email-deliveries-CyzibTug.js';
 import { P as PaymentProviderAdapter } from './payments-C3gqo5tp.js';
-import 'drizzle-orm/d1';
 import './schema.js';
 import 'drizzle-orm';
 import 'drizzle-orm/sqlite-core';
+import 'drizzle-orm/d1';
 import 'talisman-cms/email';
 import './emails.js';
 
@@ -1155,6 +1157,11 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 country?: string;
             } | null;
         } | null>;
+    };
+    returns: {
+        read: (id: string, owner?: ReturnOwner) => Promise<CustomerReturns | null>;
+        request: (input: unknown, owner?: ReturnOwner) => Promise<ReturnRequestReceipt | null>;
+        cancel: (input: unknown, owner?: ReturnOwner) => Promise<ReturnDecisionReceipt | null>;
     };
     webhooks: {
         handleStripe: (payload: string, signature: string, secret?: string) => Promise<{

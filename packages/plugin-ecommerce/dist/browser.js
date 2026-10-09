@@ -14,7 +14,7 @@ async function commerceRequest(path, method, body) {
     body: body === void 0 ? void 0 : JSON.stringify(body)
   });
   const result = await response.json();
-  if (!response.ok) throw new Error(result.error || "Commerce request failed");
+  if (!response.ok) throw Object.assign(new Error(result.error || "Commerce request failed"), { status: response.status });
   return result;
 }
 function getCustomerAccount() {
@@ -116,14 +116,25 @@ function installTalismanEcommerceBrowserHelpers(target = window) {
   };
   return target.TalismanEcommerce;
 }
+function getCustomerReturns(orderId) {
+  return commerceRequest(`/api/ecommerce/returns?order=${encodeURIComponent(orderId)}`, "GET");
+}
+function submitCustomerReturn(data) {
+  return commerceRequest("/api/ecommerce/returns", "POST", { action: "request", data });
+}
+function cancelReturnRequest(data) {
+  return commerceRequest("/api/ecommerce/returns", "POST", { action: "cancel", data });
+}
 export {
   CART_UPDATED_EVENT,
   activateNewCustomerAccount,
   cancelCheckout,
+  cancelReturnRequest,
   chooseCustomerBasket,
   claimGiftCardCode,
   dispatchCartUpdated,
   getCustomerAccount,
+  getCustomerReturns,
   getOrderStatus,
   installTalismanEcommerceBrowserHelpers,
   previewCustomerSignIn,
@@ -133,5 +144,6 @@ export {
   signOutCustomerAccount,
   startAdminTestCheckout,
   startCheckout,
+  submitCustomerReturn,
   verifyCustomerEmailSignIn
 };

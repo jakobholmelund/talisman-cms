@@ -1,7 +1,7 @@
 import {
   commerceDb,
   commitBatch
-} from "./chunk-4WYWYY7J.js";
+} from "./chunk-BYV5FZJC.js";
 import {
   carts,
   creditLedger,
@@ -15,9 +15,11 @@ import {
   rateLimits,
   referralCodes,
   referrals,
+  returnRequestEvents,
+  returnRequests,
   shopperAudits,
   signInTokens
-} from "./chunk-OMZRKOH6.js";
+} from "./chunk-2AZBK7KL.js";
 
 // src/shopper-privacy.ts
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
@@ -42,6 +44,10 @@ async function manageShopperData(env, actor, input) {
     AND NOT EXISTS (SELECT 1 FROM _ecommerce_orders o WHERE o.user_id = ${account.id}
       AND (o.status IN ('pending','disputed') OR (o.status IN ('paid','partially_refunded') AND o.fulfillment_status <> 'fulfilled'
         AND (o.shipping_address IS NOT NULL OR EXISTS (SELECT 1 FROM json_each(o.items) i JOIN _ecommerce_products p ON p.id = json_extract(i.value, '$.productId') WHERE p.is_physical = 1)))))
+    AND NOT EXISTS (SELECT 1 FROM _ecommerce_return_requests r JOIN _ecommerce_orders o ON o.id=r.order_id WHERE o.user_id=${account.id}
+      AND COALESCE((SELECT status FROM _ecommerce_return_request_events e WHERE e.request_id=r.id ORDER BY rowid DESC LIMIT 1),'pending') IN ('pending','approved'))
+    AND NOT EXISTS (SELECT 1 FROM _ecommerce_return_receipts r JOIN _ecommerce_orders o ON o.id=r.order_id,json_each(r.items) i WHERE o.user_id=${account.id} AND json_extract(i.value,'$.condition')='inspection'
+      AND json_extract(i.value,'$.quantity')>COALESCE((SELECT sum(json_extract(j.value,'$.quantity')) FROM _ecommerce_return_inspections d,json_each(d.items) j WHERE d.receipt_id=r.id AND json_extract(j.value,'$.lineIndex')=json_extract(i.value,'$.lineIndex')),0))
     AND NOT EXISTS (SELECT 1 FROM _ecommerce_referrals r WHERE (r.referrer_account_id = ${account.id} OR r.referred_account_id = ${account.id})
       AND r.status = 'approved' AND NOT EXISTS (SELECT 1 FROM _ecommerce_credit_ledger l WHERE l.order_id = r.order_id
         AND l.account_id = ${account.id} AND l.kind IN ('welcome_award','referral_award')))
@@ -73,6 +79,7 @@ async function manageShopperData(env, actor, input) {
       where: { userId: account.id },
       columns: { id: true },
       with: {
+        returnRequests: { columns: { id: true, items: true, reason: true, createdAt: true }, with: { events: { columns: { status: true, customerMessage: true, createdAt: true } } } },
         providerRefunds: { columns: { amountCents: true, createdAt: true } },
         giftCardRefunds: { columns: { amountCents: true, createdAt: true } },
         fulfillments: { columns: { kind: true, carrier: true, trackingNumber: true, createdAt: true } }
@@ -133,6 +140,8 @@ async function manageShopperData(env, actor, input) {
   if (values.action === "anonymize") {
     const anonymousEmail = `${account.id}@anonymized.invalid`;
     statements.push(
+      db.update(returnRequests).set({ reason: "[redacted]", redactedAt: now }).where(and(isNull(returnRequests.redactedAt), inArray(returnRequests.orderId, db.select({ id: orders.id }).from(orders).where(eq(orders.userId, account.id))), recorded)),
+      db.update(returnRequestEvents).set({ reason: "[redacted]", customerMessage: "", redactedAt: now }).where(and(isNull(returnRequestEvents.redactedAt), inArray(returnRequestEvents.requestId, db.select({ id: returnRequests.id }).from(returnRequests).where(inArray(returnRequests.orderId, db.select({ id: orders.id }).from(orders).where(eq(orders.userId, account.id))))), recorded)),
       db.update(orders).set({ customerEmail: null, shippingAddress: null, billingAddress: null }).where(and(eq(orders.userId, account.id), recorded)),
       db.update(discountRedemptions).set({ emailNormalized: anonymousEmail }).where(and(eq(discountRedemptions.accountId, account.id), recorded)),
       db.update(giftCardPurchases).set({ buyerEmail: anonymousEmail }).where(and(inArray(giftCardPurchases.id, ownedPurchases), recorded)),
@@ -152,7 +161,7 @@ async function manageShopperData(env, actor, input) {
   }
   await commitBatch(db, statements);
   if (!await db.select({ id: shopperAudits.id }).from(shopperAudits).where(eq(shopperAudits.id, auditId)).get())
-    throw new ShopperPrivacyError("Resolve open payments, deliveries, gift cards and credit awards before anonymizing this shopper");
+    throw new ShopperPrivacyError("Resolve open payments, deliveries, gift cards, open returns and credit awards before anonymizing this shopper");
   return { accountId: account.id, action: values.action, accountingRetained: true };
 }
 

@@ -7,33 +7,34 @@ import {
 import {
   CART_MAX_LINES,
   CART_MAX_LINE_QUANTITY,
-  TaxCalculationError,
   bindCommerceApi,
   reconcileCommerce,
   shippingOptionsFor
-} from "./chunk-OPKAELJD.js";
-import "./chunk-KQ3MMFVN.js";
-import "./chunk-YHPWUIBV.js";
+} from "./chunk-O5RHJP2A.js";
+import {
+  TaxCalculationError
+} from "./chunk-LI6QAID4.js";
+import "./chunk-ESZ7JTG3.js";
+import "./chunk-TA4INXDU.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
 import {
   deliverPendingCommerceEmails
-} from "./chunk-MPRBGWGN.js";
-import "./chunk-OZACQY4G.js";
+} from "./chunk-HLQKP5C5.js";
 import {
   COUNTRY_CODES,
   StoreSettingsError,
   isCountryCode,
   readStoreCurrency,
   readStoreSettings
-} from "./chunk-IUC5ZIOJ.js";
-import "./chunk-UJ6XROUG.js";
+} from "./chunk-DNAK25NY.js";
+import "./chunk-GEPQUKSP.js";
 import "./chunk-GNU6N22K.js";
-import "./chunk-LF4NCC75.js";
+import "./chunk-SALHYN5M.js";
 import {
   commerceDb
-} from "./chunk-4WYWYY7J.js";
+} from "./chunk-BYV5FZJC.js";
 import {
   carts,
   categories,
@@ -71,6 +72,9 @@ import {
   restocks,
   returnInspections,
   returnReceipts,
+  returnRequestEvents,
+  returnRequestReceipts,
+  returnRequests,
   returnStock,
   signInTokens,
   stockMovements,
@@ -79,7 +83,7 @@ import {
   tags,
   variantComponents,
   variants
-} from "./chunk-OMZRKOH6.js";
+} from "./chunk-2AZBK7KL.js";
 import "./chunk-NQUBOBQT.js";
 import "./chunk-SPRRFCF5.js";
 import {
@@ -249,6 +253,8 @@ var ecommercePlugin = (config) => {
     { key: "attention", path: "commerce-attention", component: "Attention", label: "Needs attention", description: "Find payment reviews, email failures, held cards, and orders waiting to ship." },
     { key: "emails", path: "commerce-emails", component: "EmailRecovery", label: "Email recovery", description: "Review failed notices and request an audited retry." },
     { key: "stock", path: "commerce-stock", component: "StockOverview", label: "Stock overview", description: "Find unavailable choices and low shared component stock." },
+    { key: "returns", path: "commerce-returns", component: "Returns", label: "Returns", description: "Review customer return requests and pending inspections." },
+    { key: "exports", path: "commerce-exports", component: "OperationsExports", label: "Operations exports", description: "Download filtered order, return and stock records." },
     { key: "orders", path: "commerce-orders", component: "Orders", label: "Orders & fulfillment", description: "Review paid orders and record shipments." },
     { key: "promotions", path: "commerce-promotions", component: "Promotions", label: "Promotions & referrals", description: "Create discounts and manage referral rewards." },
     { key: "giftCards", path: "commerce-gift-cards", component: "GiftCards", label: "Gift cards", description: "Issue cards, check balances, and manage refunds." },
@@ -974,6 +980,9 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
           fields: nativeFields(returnReceipts, ["id", "orderId", "actor", "reason", "createdAt"]),
           nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: "returnReceipts", idColumn: "id" }
         });
+        collections.push({ name: "Return Requests", slug: "_ecommerce_return_requests", adminSection: "commerce", readOnly: true, fields: nativeFields(returnRequests, ["id", "orderId", "reason", "createdAt"]), nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: "returnRequests", idColumn: "id" } });
+        collections.push({ name: "Return Request Decisions", slug: "_ecommerce_return_request_events", adminSection: "commerce", readOnly: true, fields: nativeFields(returnRequestEvents, ["id", "requestId", "status", "actorKind", "actor", "reason", "customerMessage", "createdAt"]), nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: "returnRequestEvents", idColumn: "id" } });
+        collections.push({ name: "Return Request Receipts", slug: "_ecommerce_return_request_receipts", adminSection: "commerce", readOnly: true, fields: nativeFields(returnRequestReceipts, ["receiptId", "requestId"]), nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: "returnRequestReceipts", idColumn: "receiptId" } });
         collections.push({
           name: "Return Stock",
           slug: "_ecommerce_return_stock",
@@ -1038,6 +1047,7 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
       };
     },
     endpoints: [
+      { path: "/ecommerce/returns", entrypoint: resolveRouteEntrypoint("ecommerce-returns"), public: true },
       { path: "/ecommerce/operations", entrypoint: adminOperationsEndpointPath },
       {
         path: "/ecommerce/account",
