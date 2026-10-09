@@ -37,6 +37,7 @@ import {
   emailDeliveries,
   fulfillments,
   giftCardClaims,
+  giftCardCodeReplacements,
   giftCardLedger,
   giftCardOrderRefunds,
   giftCardPurchases,
@@ -68,7 +69,7 @@ import {
   taxSyncDecisions,
   variantComponents,
   variants
-} from "./chunk-RVXM5XJ4.js";
+} from "./chunk-2LKMD4JM.js";
 export {
   CREDIT_LEDGER_KINDS,
   CUSTOMER_SESSION_PURPOSES,
@@ -108,6 +109,7 @@ export {
   emailDeliveries,
   fulfillments,
   giftCardClaims,
+  giftCardCodeReplacements,
   giftCardLedger,
   giftCardOrderRefunds,
   giftCardPurchases,

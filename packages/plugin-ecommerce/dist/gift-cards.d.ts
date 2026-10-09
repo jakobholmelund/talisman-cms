@@ -35,9 +35,20 @@ declare function issueAdminGiftCard(env: TalismanEnv, actor: string, input: unkn
     currency: string;
     replacesPurchaseId: string | null;
 }>;
+/** Replaces a lost staff-issued bearer code while preserving every ledger and order reference. */
+declare function replaceAdminGiftCardCode(env: TalismanEnv, actor: string, input: unknown): Promise<{
+    id: string;
+    code: string;
+    balanceCents: number;
+    currency: string;
+    status: "active" | "void" | "suspended";
+}>;
 declare function getGiftCardsAdmin(env: TalismanEnv): Promise<{
     id: string;
     codeSuffix: string;
+    codeVersion: string | null;
+    checkoutPending: boolean;
+    lastCodeReplacement: any;
     source: "purchase" | "admin";
     purchaseId: string | null;
     replacesPurchaseId: string | null;
@@ -262,4 +273,4 @@ declare function refundGiftCardOnlyOrder(env: TalismanEnv, actor: string, input:
     status: string;
 }>;
 
-export { GIFT_CARD_CLAIMS_PER_NETWORK_PER_HOUR, GIFT_CARD_CLAIM_SECONDS, GiftCardRefusal, type GiftCardRefusalReason, claimGiftCardCode, composeGiftCardClaimEmail, confirmGiftCardPurchase, evaluateGiftCard, expireGiftCardPurchase, getGiftCardBalance, getGiftCardKeyStatus, getGiftCardReviewsAdmin, getGiftCardsAdmin, getPurchasedGiftCard, giftCardPurchaseChargebackStatements, giftCardPurchaseHoldStatements, giftCardPurchaseReleaseStatements, hashGiftCardSecret, issueAdminGiftCard, reconcileGiftCardPurchase, recordGiftCardPurchaseRefund, reencryptGiftCardCodes, refundGiftCardOnlyOrder, refundGiftCardTender, resendGiftCardClaimLink, resolveGiftCardReview, setGiftCardActive, startGiftCardPurchase };
+export { GIFT_CARD_CLAIMS_PER_NETWORK_PER_HOUR, GIFT_CARD_CLAIM_SECONDS, GiftCardRefusal, type GiftCardRefusalReason, claimGiftCardCode, composeGiftCardClaimEmail, confirmGiftCardPurchase, evaluateGiftCard, expireGiftCardPurchase, getGiftCardBalance, getGiftCardKeyStatus, getGiftCardReviewsAdmin, getGiftCardsAdmin, getPurchasedGiftCard, giftCardPurchaseChargebackStatements, giftCardPurchaseHoldStatements, giftCardPurchaseReleaseStatements, hashGiftCardSecret, issueAdminGiftCard, reconcileGiftCardPurchase, recordGiftCardPurchaseRefund, reencryptGiftCardCodes, refundGiftCardOnlyOrder, refundGiftCardTender, replaceAdminGiftCardCode, resendGiftCardClaimLink, resolveGiftCardReview, setGiftCardActive, startGiftCardPurchase };

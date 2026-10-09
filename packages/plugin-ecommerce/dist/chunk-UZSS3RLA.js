@@ -1,7 +1,7 @@
 import {
   getReferralPolicy,
   referralReversalStatements
-} from "./chunk-JHSJ3R6O.js";
+} from "./chunk-JBDGJ7AR.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
@@ -9,12 +9,13 @@ import {
 import {
   commerceDb,
   commitBatch
-} from "./chunk-FDE2IMK7.js";
+} from "./chunk-7225YI7R.js";
 import {
   creditLedger,
   discountRedemptions,
   emailDeliveries,
   giftCardClaims,
+  giftCardCodeReplacements,
   giftCardOrderRefunds,
   giftCardPurchases,
   giftCardRedemptions,
@@ -22,7 +23,7 @@ import {
   giftCards,
   orders,
   payments
-} from "./chunk-RVXM5XJ4.js";
+} from "./chunk-2LKMD4JM.js";
 import {
   emailLink,
   giftCardClaimEmail
@@ -889,6 +890,13 @@ var adminIssueSchema = z2.object({
   // A card support issues in place of a purchased one takes over the value left on the purchase's card.
   replacesPurchaseId: purchaseIdSchema.optional()
 }).strict();
+var replaceCodeSchema = z2.object({
+  cardId: z2.string().regex(/^gift_[0-9a-f-]{36}$/),
+  codeVersion: z2.string().regex(/^gcr_[0-9a-f]{64}$/).nullable(),
+  balanceCents: z2.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  reason: z2.string().trim().min(8).max(500),
+  requestKey: z2.string().uuid().transform((value) => value.toLowerCase())
+}).strict();
 var hex = (bytes) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 var unhex = (value) => new Uint8Array(value.match(/.{2}/g)?.map((byte) => parseInt(byte, 16)) ?? []);
 var randomHex = (bytes) => hex(crypto.getRandomValues(new Uint8Array(bytes)));
@@ -1086,6 +1094,9 @@ async function issueAdminGiftCard(env, actor, input) {
     if (card.source !== "admin" || card.adminActor !== actor || card.adminReason !== reason || card.initialCents !== amountCents || card.currency !== currency || card.replacesPurchaseId !== replaces) {
       throw new Error("This issuance request was already used by another administrator or with different details");
     }
+    if (await db.select({ id: giftCardCodeReplacements.id }).from(giftCardCodeReplacements).where(eq3(giftCardCodeReplacements.cardId, id)).get()) {
+      throw new Error("The original issuance code has been replaced; use the replacement request to recover its new code");
+    }
     return { id, code: await decryptCardSecret(await giftCardKeyring(env), card), amountCents, currency, replacesPurchaseId: replaces };
   };
   const recovered = await replay();
@@ -1126,6 +1137,84 @@ async function issueAdminGiftCard(env, actor, input) {
   }
   return { id, code: secret.code, amountCents, currency, replacesPurchaseId: replaces };
 }
+var codeVersion = (card) => sql3`(SELECT x.id FROM _ecommerce_gift_card_code_replacements x
+  JOIN _ecommerce_gift_cards current ON current.id = x.card_id AND current.code_hash = x.new_code_hash WHERE x.card_id = ${card})`;
+var cardCheckoutPending = (card) => sql3`EXISTS (SELECT 1 FROM _ecommerce_gift_card_redemptions r
+  WHERE r.card_id = ${card} AND r.status = 'reserved')`;
+async function replaceAdminGiftCardCode(env, actor, input) {
+  giftCardCurrency(env);
+  const values = replaceCodeSchema.parse(input);
+  if (!actor.trim()) throw new Error("Administrator identity is required");
+  const db = commerceDb(env);
+  const id = `gcr_${await hashGiftCardSecret(`admin-replace-code:${values.requestKey}`)}`;
+  const replay = async () => {
+    const replacement = await db.select().from(giftCardCodeReplacements).where(eq3(giftCardCodeReplacements.id, id)).get();
+    if (!replacement) return null;
+    if (replacement.cardId !== values.cardId || replacement.actor !== actor || replacement.reason !== values.reason || replacement.previousReplacementId !== values.codeVersion || replacement.balanceCents !== values.balanceCents) {
+      throw new Error("This replacement request was already used by another administrator or with different details");
+    }
+    const card2 = await db.select().from(giftCards).where(eq3(giftCards.id, values.cardId)).get();
+    if (!card2 || card2.codeHash !== replacement.newCodeHash) {
+      throw new Error("This replacement code has since been replaced again. Reload the card before making another replacement.");
+    }
+    return {
+      id: card2.id,
+      code: await decryptCardSecret(await giftCardKeyring(env), card2),
+      balanceCents: card2.balanceCents,
+      currency: card2.currency,
+      status: card2.status
+    };
+  };
+  const recovered = await replay();
+  if (recovered) return recovered;
+  const card = await db.select({
+    id: giftCards.id,
+    source: giftCards.source,
+    purchaseId: giftCards.purchaseId,
+    replacesPurchaseId: giftCards.replacesPurchaseId,
+    status: giftCards.status,
+    heldForReview: giftCards.heldForReview,
+    balanceCents: giftCards.balanceCents,
+    codeHash: giftCards.codeHash,
+    codeSuffix: giftCards.codeSuffix,
+    codeVersion: codeVersion(sql3.raw("_ecommerce_gift_cards.id")),
+    pending: cardCheckoutPending(sql3.raw("_ecommerce_gift_cards.id"))
+  }).from(giftCards).where(eq3(giftCards.id, values.cardId)).get();
+  if (!card || card.source !== "admin" || card.purchaseId || card.replacesPurchaseId || card.status === "void" || card.heldForReview) {
+    throw new Error("Only a staff-issued card that is not funded by a purchase or void can have its code replaced here");
+  }
+  if (card.pending) throw new Error("A checkout in progress holds value on this card; wait until it completes or expires");
+  if (card.codeVersion !== values.codeVersion || card.balanceCents !== values.balanceCents) {
+    throw new Error("The card code or balance changed. Reload and review it before replacing the code.");
+  }
+  const secret = await newCardSecret(env, card.id);
+  const timestamp = at3(Math.floor(Date.now() / 1e3));
+  const [inserted, updated] = await db.batch([
+    db.all(sql3`INSERT INTO _ecommerce_gift_card_code_replacements
+      (id,card_id,previous_replacement_id,previous_code_hash,new_code_hash,previous_code_suffix,new_code_suffix,balance_cents,actor,reason,created_at)
+      SELECT ${id},id,${values.codeVersion},code_hash,${secret.codeHash},code_suffix,${secret.codeSuffix},balance_cents,${actor},${values.reason},${Math.floor(timestamp.getTime() / 1e3)}
+      FROM _ecommerce_gift_cards WHERE id = ${card.id} AND code_hash = ${card.codeHash} AND balance_cents = ${values.balanceCents}
+        AND source = 'admin' AND purchase_id IS NULL AND replaces_purchase_id IS NULL AND status <> 'void' AND held_for_review = 0
+        AND NOT ${cardCheckoutPending(sql3.raw("_ecommerce_gift_cards.id"))}
+      ON CONFLICT(id) DO NOTHING RETURNING id`),
+    db.update(giftCards).set({
+      codeHash: secret.codeHash,
+      codeSuffix: secret.codeSuffix,
+      encryptedCode: secret.encryptedCode,
+      updatedAt: sql3`MAX(${giftCards.updatedAt} + 1, ${Math.floor(timestamp.getTime() / 1e3)})`
+    }).where(and3(
+      eq3(giftCards.id, card.id),
+      eq3(giftCards.codeHash, card.codeHash),
+      exists(db.select({ id: giftCardCodeReplacements.id }).from(giftCardCodeReplacements).where(and3(eq3(giftCardCodeReplacements.id, id), eq3(giftCardCodeReplacements.newCodeHash, secret.codeHash))))
+    )).returning({ status: giftCards.status, balanceCents: giftCards.balanceCents, currency: giftCards.currency })
+  ]);
+  if (!inserted.length) {
+    const raced = await replay();
+    if (raced) return raced;
+    throw new Error("The card changed while its code was being replaced. Reload and review it before retrying.");
+  }
+  return { id: card.id, code: secret.code, ...updated[0] };
+}
 var isoSeconds = (seconds) => typeof seconds === "number" ? new Date(seconds * 1e3).toISOString() : null;
 function claimLinkView(value) {
   if (typeof value !== "string") return null;
@@ -1148,6 +1237,14 @@ async function getGiftCardsAdmin(env) {
   return db.select({
     id: giftCards.id,
     codeSuffix: giftCards.codeSuffix,
+    codeVersion: codeVersion(sql3.raw("_ecommerce_gift_cards.id")),
+    checkoutPending: cardCheckoutPending(sql3.raw("_ecommerce_gift_cards.id")).mapWith(Boolean),
+    lastCodeReplacement: sql3`(SELECT json_object('actor',x.actor,'reason',x.reason,'createdAt',x.created_at,'previousCodeSuffix',x.previous_code_suffix)
+      FROM _ecommerce_gift_card_code_replacements x WHERE x.id = ${codeVersion(sql3.raw("_ecommerce_gift_cards.id"))})`.mapWith((value) => {
+      if (!value) return null;
+      const record = JSON.parse(value);
+      return { ...record, createdAt: isoSeconds(record.createdAt) };
+    }),
     source: giftCards.source,
     purchaseId: giftCards.purchaseId,
     replacesPurchaseId: giftCards.replacesPurchaseId,
@@ -1827,6 +1924,7 @@ export {
   reencryptGiftCardCodes,
   getGiftCardKeyStatus,
   issueAdminGiftCard,
+  replaceAdminGiftCardCode,
   getGiftCardsAdmin,
   getGiftCardReviewsAdmin,
   setGiftCardActive,

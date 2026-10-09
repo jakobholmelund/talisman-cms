@@ -11,28 +11,28 @@ import {
   bindCommerceApi,
   reconcileCommerce,
   shippingOptionsFor
-} from "./chunk-P3EGABPL.js";
-import "./chunk-BSTJ7GJ6.js";
-import "./chunk-7P5TCZDC.js";
+} from "./chunk-TG2KLQXC.js";
+import "./chunk-3LR7WYMB.js";
+import "./chunk-HKPJHMPB.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
 import {
   deliverPendingCommerceEmails
-} from "./chunk-5LOW7SRF.js";
+} from "./chunk-UCPUP2U7.js";
 import {
   COUNTRY_CODES,
   StoreSettingsError,
   isCountryCode,
   readStoreCurrency,
   readStoreSettings
-} from "./chunk-EV6HVUHO.js";
-import "./chunk-JHSJ3R6O.js";
+} from "./chunk-UZSS3RLA.js";
+import "./chunk-JBDGJ7AR.js";
 import "./chunk-GNU6N22K.js";
-import "./chunk-KGRQF4NN.js";
+import "./chunk-TOUOM5OZ.js";
 import {
   commerceDb
-} from "./chunk-FDE2IMK7.js";
+} from "./chunk-7225YI7R.js";
 import {
   carts,
   categories,
@@ -46,6 +46,7 @@ import {
   disputes,
   emailDeliveries,
   giftCardClaims,
+  giftCardCodeReplacements,
   giftCardLedger,
   giftCardOrderRefunds,
   giftCardPurchases,
@@ -68,7 +69,7 @@ import {
   tags,
   variantComponents,
   variants
-} from "./chunk-RVXM5XJ4.js";
+} from "./chunk-2LKMD4JM.js";
 import "./chunk-NQUBOBQT.js";
 import "./chunk-NMGICNSV.js";
 import {
@@ -632,6 +633,25 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
             { name: "replacesPurchaseId", label: "Replaces Purchase" }
           ]),
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "giftCards", idColumn: "id" }
+        });
+        collections.push({
+          name: "Gift Card Code Replacements",
+          slug: "_ecommerce_gift_card_code_replacements",
+          description: "Staff-issued code replacements. Balances and order histories stay on the original card.",
+          adminSection: "commerce",
+          readOnly: true,
+          fields: nativeFields(giftCardCodeReplacements, [
+            "id",
+            "cardId",
+            "previousReplacementId",
+            "previousCodeSuffix",
+            "newCodeSuffix",
+            { name: "balanceCents", label: "Balance at Replacement (smallest currency unit)" },
+            "actor",
+            "reason",
+            "createdAt"
+          ]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "giftCardCodeReplacements", idColumn: "id" }
         });
         collections.push({
           name: "Gift Card Purchases",

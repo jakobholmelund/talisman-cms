@@ -7,16 +7,17 @@ import {
   reencryptGiftCardCodes,
   refundGiftCardOnlyOrder,
   refundGiftCardTender,
+  replaceAdminGiftCardCode,
   reportStoreSettingsError,
   resendGiftCardClaimLink,
   resolveGiftCardReview,
   setGiftCardActive
-} from "../chunk-EV6HVUHO.js";
-import "../chunk-JHSJ3R6O.js";
+} from "../chunk-UZSS3RLA.js";
+import "../chunk-JBDGJ7AR.js";
 import "../chunk-GNU6N22K.js";
-import "../chunk-KGRQF4NN.js";
-import "../chunk-FDE2IMK7.js";
-import "../chunk-RVXM5XJ4.js";
+import "../chunk-TOUOM5OZ.js";
+import "../chunk-7225YI7R.js";
+import "../chunk-2LKMD4JM.js";
 import "../chunk-NMGICNSV.js";
 import "../chunk-2UYSCNNW.js";
 
@@ -46,6 +47,7 @@ var ALL = async ({ request }) => {
     const actor = String(authorization.user?.id ?? "");
     let result;
     if (body.action === "issue") result = await issueAdminGiftCard(runtimeEnv, actor, body.data);
+    else if (body.action === "replaceCode") result = await replaceAdminGiftCardCode(runtimeEnv, actor, body.data);
     else if (body.action === "setActive" && typeof body.id === "string") {
       result = await setGiftCardActive(runtimeEnv, body.id, body.active);
     } else if (body.action === "resolveReview") result = await resolveGiftCardReview(runtimeEnv, actor, body.data);

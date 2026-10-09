@@ -1,10 +1,10 @@
 import {
   INVENTORY_COLUMNS,
   fullRefundStatements
-} from "./chunk-BSTJ7GJ6.js";
+} from "./chunk-3LR7WYMB.js";
 import {
   evaluateDiscountCode
-} from "./chunk-7P5TCZDC.js";
+} from "./chunk-HKPJHMPB.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
@@ -12,7 +12,7 @@ import {
   deliverCommerceEmail,
   deliverPendingCommerceEmails,
   fulfillCommerceOrder
-} from "./chunk-5LOW7SRF.js";
+} from "./chunk-UCPUP2U7.js";
 import {
   RECONCILE_FAILURE_MESSAGES,
   RECONCILE_TABLES,
@@ -32,6 +32,7 @@ import {
   giftCardPurchaseChargebackStatements,
   giftCardPurchaseHoldStatements,
   giftCardPurchaseReleaseStatements,
+  hashGiftCardSecret,
   isCountryCode,
   isMissingSessionError,
   isOtherStripeModeSession,
@@ -44,7 +45,7 @@ import {
   recordGiftCardPurchaseRefund,
   sessionLookupFailure,
   uncheckedSessionRefusal
-} from "./chunk-EV6HVUHO.js";
+} from "./chunk-UZSS3RLA.js";
 import {
   canonicalEmail,
   canonicalEmails,
@@ -54,7 +55,7 @@ import {
   hasCanonicalPurchase,
   referralReversalStatements,
   releaseReferralAwards
-} from "./chunk-JHSJ3R6O.js";
+} from "./chunk-JBDGJ7AR.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
@@ -63,7 +64,7 @@ import {
   PURCHASED_ORDER_STATUSES,
   claimInterval,
   hasPurchaseHistory
-} from "./chunk-KGRQF4NN.js";
+} from "./chunk-TOUOM5OZ.js";
 import {
   batchGroups,
   chunked,
@@ -71,7 +72,7 @@ import {
   commitBatch,
   errorText,
   runStatements
-} from "./chunk-FDE2IMK7.js";
+} from "./chunk-7225YI7R.js";
 import {
   carts,
   componentReservations,
@@ -81,6 +82,7 @@ import {
   discountRedemptions,
   giftCardPurchases,
   giftCardRedemptions,
+  giftCards,
   inventoryReservations,
   orders,
   productVariantValues,
@@ -90,7 +92,7 @@ import {
   referralCodes,
   taxReversals,
   taxSyncDecisions
-} from "./chunk-RVXM5XJ4.js";
+} from "./chunk-2LKMD4JM.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
@@ -1521,9 +1523,11 @@ async function createOrderFromCart(ctx, cartId, options) {
       }));
     }
     if (giftCard) {
+      const authorizedHash = await hashGiftCardSecret(options.giftCardCode.trim().toUpperCase());
+      const authorizedCard = db.select({ id: giftCards.id }).from(giftCards).where(and4(eq4(giftCards.id, giftCard.id), eq4(giftCards.codeHash, authorizedHash)));
       statements.push(db.insert(giftCardRedemptions).values({
         id: `gcr_${orderId}`,
-        cardId: giftCard.id,
+        cardId: sql4`(${authorizedCard})`,
         orderId,
         amountCents: giftCardApplied,
         status: "reserved",
