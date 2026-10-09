@@ -8,7 +8,7 @@ import './commerce-admin.css';
 
 export { storeCurrency };
 
-export type CommerceTool = 'orders' | 'promotions' | 'gift-cards' | 'test-checkout';
+export type CommerceTool = 'orders' | 'promotions' | 'gift-cards' | 'test-checkout' | 'attention' | 'emails' | 'stock';
 
 /** A JSON request to one of the plugin's admin routes, `<adminPath>/api/ecommerce/<path>`: GET without a body, POST with one. */
 export function adminRequest<T>(path: string, body?: unknown): Promise<T> {
@@ -42,6 +42,9 @@ export function formAmount(value: FormDataEntryValue | null, currency: string) {
 }
 
 const tools: Array<{ key: CommerceTool; label: string }> = [
+  { key: 'attention', label: 'Needs attention' },
+  { key: 'emails', label: 'Email recovery' },
+  { key: 'stock', label: 'Stock overview' },
   { key: 'orders', label: 'Orders' },
   { key: 'promotions', label: 'Promotions' },
   { key: 'gift-cards', label: 'Gift cards' },

@@ -847,15 +847,38 @@ export const emailDeliveries = sqliteTable('_ecommerce_email_deliveries', {
   nextAttemptAt: integer('next_attempt_at', { mode: 'timestamp' }).notNull(),
   claimedAt: integer('claimed_at', { mode: 'timestamp' }),
   sentAt: integer('sent_at', { mode: 'timestamp' }),
+  /** A staff retry starts a fresh delivery window without changing the original creation time. */
+  retryRequestedAt: integer('retry_requested_at', { mode: 'timestamp' }),
+  retryRequestId: text('retry_request_id'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [
   uniqueIndex('_ecommerce_email_deliveries_kind_subject_unique').on(table.kind, table.subjectId),
+  index('_ecommerce_email_deliveries_attention_idx').on(table.createdAt, table.id)
+    .where(sql`${table.status} = 'failed' OR (${table.status} = 'pending' AND ${table.lastError} IS NOT NULL)`),
   // The sender reads due emails; only pending ones are ever due.
   index('_ecommerce_email_deliveries_due_idx').on(table.nextAttemptAt).where(sql`${table.status} = 'pending'`),
   check('email_delivery_kind', oneOf(table.kind, EMAIL_KINDS)),
   check('email_delivery_status', oneOf(table.status, EMAIL_STATUSES)),
   check('email_delivery_attempts_nonnegative', money(table.attempts, 'nonnegative')),
   check('email_delivery_sent_has_time', sql`(${table.status} = 'sent') = (${table.sentAt} IS NOT NULL)`),
+]);
+
+/** Append-only staff requests to retry an email. The id hashes the client's retry key. */
+export const emailRecoveryDecisions = sqliteTable('_ecommerce_email_recovery_decisions', {
+  id: text('id').primaryKey(),
+  emailId: text('email_id').notNull().references(() => emailDeliveries.id),
+  fingerprint: text('fingerprint').notNull(),
+  actor: text('actor').notNull(),
+  reason: text('reason').notNull(),
+  priorAttempts: integer('prior_attempts').notNull(),
+  priorError: text('prior_error'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, (table) => [
+  index('_ecommerce_email_recovery_recent_idx').on(table.createdAt, table.id),
+  index('_ecommerce_email_recovery_email_idx').on(table.emailId, table.createdAt),
+  check('email_recovery_actor', filled(table.actor)),
+  check('email_recovery_reason', trimmed(table.reason, 8)),
+  check('email_recovery_attempts', money(table.priorAttempts, 'nonnegative')),
 ]);
 
 /** One-time links that show a purchased gift card's code; only the token's hash is stored. */
@@ -920,7 +943,7 @@ const tables = {
   customers, customerAccounts, customerSessions, signInTokens, rateLimits, fulfillments, referralCodes, referrals,
   creditLedger, referralSettings, discountCodes, discountCodeCreations, discountRedemptions, giftCardPurchases, giftCards, giftCardLedger,
   giftCardRedemptions, giftCardRefunds, giftCardReviews, giftCardOrderRefunds, taxReversals, disputes, restocks,
-  reconcileDecisions, emailDeliveries, giftCardClaims, giftCardCodeReplacements, shopperAudits, taxSyncDecisions, cmsUsers,
+  reconcileDecisions, emailDeliveries, emailRecoveryDecisions, giftCardClaims, giftCardCodeReplacements, shopperAudits, taxSyncDecisions, cmsUsers,
 };
 
 /**
@@ -1149,6 +1172,9 @@ export const relations = defineRelations(tables, (r) => ({
     purchase: r.one.giftCardPurchases({ from: r.giftCardClaims.purchaseId, to: r.giftCardPurchases.id, optional: false }),
     card: r.one.giftCards({ from: r.giftCardClaims.cardId, to: r.giftCards.id, optional: false }),
   },
+  emailDeliveries: { recoveryDecisions: r.many.emailRecoveryDecisions() },
+  emailRecoveryDecisions: { email: r.one.emailDeliveries({ from: r.emailRecoveryDecisions.emailId,
+    to: r.emailDeliveries.id, optional: false }) },
   shopperAudits: { account: r.one.customerAccounts({ from: r.shopperAudits.accountId, to: r.customerAccounts.id, optional: false }) },
   taxSyncDecisions: { order: r.one.orders({ from: r.taxSyncDecisions.orderId, to: r.orders.id, optional: false }),
     reversal: r.one.taxReversals({ from: r.taxSyncDecisions.reversalId, to: r.taxReversals.id }) },

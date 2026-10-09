@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link } from '@tanstack/react-router';
 import type { AdminSectionWorkspaceProps } from 'talisman-cms/ui/lib/admin-sections';
-import { ArrowRight, Boxes, CircleDollarSign, Gift, Package, Plus, ShoppingBag, Sparkles, Truck } from './icons';
+import { ArrowRight, Boxes, CircleDollarSign, Gift, Mail, Package, Plus, ShoppingBag, Sparkles, Truck } from './icons';
 import { extensionPathOf, groupCommerceModels, modelHelp, type CommerceModel as Model } from './workspace-models';
 
 // The Commerce section's index page (AdminSectionDefinition.componentPath): the store's models in
@@ -9,6 +9,8 @@ import { extensionPathOf, groupCommerceModels, modelHelp, type CommerceModel as 
 // The grouping itself is in workspace-models.ts.
 
 type Tool = AdminSectionWorkspaceProps['adminLinks'][number];
+const toolIcons = new Map([['Needs attention', Sparkles], ['Email recovery', Mail], ['Stock overview', Boxes],
+  ['Orders & fulfillment', Truck], ['Promotions & referrals', CircleDollarSign], ['Gift cards', Gift], ['Test checkout', ShoppingBag]]);
 
 function count(model?: Model) { return model?.itemCount == null ? '—' : model.itemCount.toLocaleString(); }
 
@@ -47,8 +49,8 @@ export default function CommerceWorkspace({ section, collections: models, adminL
         {highlights.map(item => <Link key={item.label} to={`/${sectionId}/${item.model!.slug}`} className="group rounded-xl border border-white/10 bg-white/[0.045] p-4 hover:bg-white/[0.09]"><div className="flex items-center justify-between text-zinc-400"><item.icon size={17} /><ArrowRight size={15} className="opacity-0 group-hover:opacity-100" /></div><div className="mt-4 text-3xl font-semibold tabular-nums text-white">{count(item.model)}</div><div className="mt-1 text-xs text-zinc-400">{item.label}</div></Link>)}
       </div>
     </section>
-    {tools.length > 0 && <section><h2 className="text-xl font-semibold text-white">Get things done</h2><p className="mb-4 mt-1 text-sm text-zinc-400">Dedicated screens for everyday store work.</p><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">{tools.map((tool: Tool, index: number) => {
-      const Icon = [Truck, CircleDollarSign, Gift, ShoppingBag][index % 4];
+    {tools.length > 0 && <section><h2 className="text-xl font-semibold text-white">Get things done</h2><p className="mb-4 mt-1 text-sm text-zinc-400">Dedicated screens for everyday store work.</p><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">{tools.map((tool: Tool) => {
+      const Icon = toolIcons.get(tool.label) ?? Boxes;
       const extensionPath = extensionPathOf(tool.href);
       const className = 'group flex min-h-40 flex-col rounded-2xl border border-white/10 bg-zinc-900/60 p-5 hover:border-indigo-400/40 hover:bg-indigo-500/[0.08]';
       const content = <><Icon size={20} className="text-indigo-300" /><strong className="mt-5 text-sm font-semibold text-white">{tool.label}</strong><span className="mt-1 text-xs leading-5 text-zinc-400">{tool.description}</span><ArrowRight size={16} className="mt-auto self-end text-zinc-500 group-hover:text-indigo-300" /></>;

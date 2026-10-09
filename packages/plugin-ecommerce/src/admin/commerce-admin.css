@@ -39,3 +39,16 @@
 @media (max-width: 700px) { .ecom-admin__stats, .ecom-admin__grid { grid-template-columns: 1fr; } .ecom-admin__nav a:first-child { margin-right: 0; width: 100%; } }
 
 .ecom-admin__fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+
+.ecom-admin__email-record { padding: 20px 0; border-top: 1px solid #3f3f46; overflow-wrap: anywhere; }
+.ecom-admin__email-record form { max-width: 640px; display: grid; gap: 12px; }
+.ecom-admin textarea { width: 100%; min-height: 84px; padding: 8px 10px; border: 1px solid #52525b; border-radius: 8px; background: #09090b; color: #f4f4f5; font: inherit; }
+.ecom-admin textarea:disabled { opacity: .65; }
+.ecom-admin__table-wrap { overflow-x: auto; }
+.ecom-admin__table-wrap table { width: 100%; border-collapse: collapse; }
+.ecom-admin__table-wrap th, .ecom-admin__table-wrap td { padding: 12px; text-align: left; border-bottom: 1px solid #3f3f46; }
+.ecom-admin__table-wrap th { color: #a1a1aa; font-weight: 500; }
+.ecom-admin__grid li { margin: 12px 0; overflow-wrap: anywhere; }
+
+.ecom-admin__panel a { color: #a5b4fc; text-decoration: underline; text-underline-offset: 3px; }
+.ecom-admin__panel a:hover { color: #c7d2fe; }

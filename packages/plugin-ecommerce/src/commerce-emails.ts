@@ -1,4 +1,4 @@
-import { and, eq, inArray, lt, lte, sql } from 'drizzle-orm';
+import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb, type CommerceDb } from './db';
 import { orderConfirmationEmail, shipmentEmail, type OrderConfirmationEmail } from './emails';
@@ -136,7 +136,7 @@ export async function deliverPendingCommerceEmails(options: { env: TalismanEnv }
   // Stated as a literal, so both reads use the partial index `_ecommerce_email_deliveries_due_idx`.
   const pending = sql`${emailDeliveries.status} = 'pending'`;
   const oldest = db.select({ id: emailDeliveries.id }).from(emailDeliveries)
-    .where(and(pending, lt(emailDeliveries.createdAt, at(now - COMMERCE_EMAIL_MAX_AGE_SECONDS)), unclaimedAt(now)))
+    .where(and(pending, sql`COALESCE(${emailDeliveries.retryRequestedAt}, ${emailDeliveries.createdAt}) < ${now - COMMERCE_EMAIL_MAX_AGE_SECONDS}`, unclaimedAt(now)))
     .orderBy(emailDeliveries.createdAt).limit(count);
   const expired = await db.update(emailDeliveries).set({ status: 'failed', lastError: 'expired', claimedAt: null })
     .where(inArray(emailDeliveries.id, oldest)).returning({ kind: emailDeliveries.kind, subjectId: emailDeliveries.subjectId });

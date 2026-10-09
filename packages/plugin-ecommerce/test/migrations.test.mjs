@@ -23,6 +23,8 @@ const tables = [pluginSchema, coreSchema, authSchema].flatMap((module) => Object
 
 /** The commerce triggers, with the table each one is on. */
 const TRIGGERS = [
+  '_ecommerce_email_recovery_no_update ON _ecommerce_email_recovery_decisions',
+  '_ecommerce_email_recovery_no_delete ON _ecommerce_email_recovery_decisions',
   '_ecommerce_discount_code_creations_no_update ON _ecommerce_discount_code_creations',
   '_ecommerce_discount_code_creations_no_delete ON _ecommerce_discount_code_creations',
   '_ecommerce_gift_card_code_replacement_guard ON _ecommerce_gift_card_code_replacements',
