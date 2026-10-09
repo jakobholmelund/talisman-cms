@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Purchase orders now record short, damaged and incorrect supplier deliveries with guarded quantities, stable recovery receipts, staff follow-up and immutable resolution/reopening history. Rejected goods never increase sellable stock.
+- Open supplier issues remain visible on completed or cancelled purchases, in Needs attention and in the current reporting backlog. Resolving an issue leaves stock receipts and expected supply unchanged.
+- Two additive supplier-issue migrations add the report/history tables and guards; no new bindings are needed. Release and checkout remain on hold.
+
 - **Purchase orders** adds versioned supplier records, editable multi-pool drafts, atomic confirmation into expected supply, printable supplier snapshots, partial receipts, revised delivery dates and cancellation that preserves received stock.
 - Private order pages now show return refund progress and tender totals. Confirmed settlement queues one retryable buyer notice; planned amounts stay explicitly unconfirmed. Customers can categorise return requests without exposing their written explanations in reporting.
 - **Operations reporting** shows UTC return reasons/conditions, first-shipment and refund-follow-up turnaround with sample counts, plus separate current backlogs and overdue revised supplier deliveries.
