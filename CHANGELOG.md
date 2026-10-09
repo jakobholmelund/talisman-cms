@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Return inspections resolve received pending goods in bounded partial decisions, record staff/disposition, and optionally restore approved sellable units without duplicating intake or exceeding checkout holds.
+- Stocktakes print count sheets, preview discrepancies and atomically apply up to 50 available-stock counts with exact version guards, staff history and interrupted-response recovery. Product/options count editors become read-only; initial stock and corrections use the audited stock tools.
+- Owner-authenticated customer tracking includes each parcel's exact contents and corrected tracking, remaining units, and received return/inspection progress. A reusable order-tracking component offers refresh recovery without exposing warehouse notes or stock recipes.
+- Two additive inspection/stocktake migrations follow the warehouse migrations and must precede the matching Worker. Public checkout and release remain on hold.
+
 - Orders record item quantities per parcel, calculate remaining units and completion, print exact packing slips and include actual parcel contents in shipment notices. Historical parcels require an explicit audited contents backfill.
 - Return intake records received quantities and condition, restores only selected sellable units using checkout stock snapshots, and shares original-reservation caps with the older whole-hold restock tool.
 - Stock overview adds staff-reasoned incoming stock and signed corrections with guarded versions, immutable before/after receipts, retry recovery and paginated history of receipts, corrections, checkout reservations/releases and returns.
