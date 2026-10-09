@@ -254,6 +254,15 @@ export async function prepareWrite(input: PrepareWriteInput): Promise<PreparedWr
     }
   }
 
+  if (nativeTable && columns === 'configured') {
+    for (const field of activeFields.filter(field => field.readOnly)) {
+      if (!Object.hasOwn(data, field.name)) continue;
+      const expected = operation === 'create' ? field.defaultValue : input.stored?.[field.name];
+      if (JSON.stringify(data[field.name]) !== JSON.stringify(expected)) invalid('Managed outside this editor; use its dedicated workflow', [field.name]);
+      if (operation === 'update') delete data[field.name];
+    }
+  }
+
   data = await runHooks(input.hooks, 'beforeValidate', { ...hookArgs, data }, hookOptions);
 
   // A native update writes only the columns it sends (an editor leaves out stock it did not

@@ -199,3 +199,17 @@ test('through the admin API, a native table whose id has its own default keeps t
     sqlite.close();
   }
 });
+
+test('native read-only fields refuse user count changes and omit echoed values from updates', { skip }, async () => {
+  const table = sqliteTable('counted', { id:text('id').primaryKey(), name:text('name').notNull(),quantity:integer('quantity').notNull().default(0) });
+  const fields = types.nativeFields(table,['id','name','quantity']);fields.find(f=>f.name==='quantity').readOnly=true;
+  const config={slug:'counted',name:'Counted',fields,nativeSchemaMapping:{schemaPath:'test',exportName:'counted',idColumn:'id'}};
+  const collection={config,slug:'counted',activeFields:fields,nativeTable:table,nativeIdCol:'id'};
+  const stored={id:'count',name:'Part',quantity:7};
+  await rejects(write({collection,operation:'create',actor:user('admin'),data:{id:'count',name:'Part',quantity:5}}),errors.ValidationError,error=>assert.deepEqual(error.issues[0].path,['quantity']));
+  await rejects(write({collection,operation:'update',actor:user('admin'),stored,data:{quantity:8}}),errors.ValidationError);
+  const updated=await write({collection,operation:'update',actor:user('admin'),stored,data:{name:'Renamed',quantity:7}});
+  assert.ok(!Object.hasOwn(updated.nativePayload,'quantity'));assert.equal(updated.nativePayload.name,'Renamed');
+  const created=await write({collection,operation:'create',actor:user('admin'),data:{id:'count',name:'Part'}});assert.ok(!Object.hasOwn(created.nativePayload,'quantity'), 'the database default initializes the count');
+  const trusted=await write({collection,operation:'update',actor:actors.systemActor('stock import'),stored,data:{quantity:9}});assert.equal(trusted.nativePayload.quantity,9);
+});

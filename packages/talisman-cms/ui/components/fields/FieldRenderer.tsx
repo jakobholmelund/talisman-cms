@@ -63,6 +63,12 @@ export function FieldRenderer({ field, form, fieldPath, relationOptions, relatio
     [...new Set([...formatFieldErrors(fieldApi.state.meta.errors), ...(serverFieldErrors[fieldName] || [])])];
   const nestedProps = { form, relationOptions, relationSupportEntries, collapseStorageKey };
 
+  if (field.readOnly) return <form.Field name={fieldName} children={(fieldApi: any) => <div data-field-path={fieldName}>
+    <label htmlFor={controlId} className="text-sm font-medium text-zinc-300">{field.label}</label>
+    <input id={controlId} value={String(fieldApi.state.value ?? '')} readOnly disabled className="w-full rounded-md border border-white/10 bg-zinc-950/50 px-3 py-2.5 text-sm" />
+    <p className="text-xs text-zinc-400">Managed outside this editor.</p>
+  </div>} />;
+
   if (field.type === 'array') {
     return (
       <form.Field

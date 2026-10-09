@@ -41,6 +41,7 @@ export function prepareFieldValuesForSave(fields: any[] | undefined, values: any
     const name = field?.name;
     if (typeof name !== 'string' || !Object.prototype.hasOwnProperty.call(next, name)) continue;
     const value = next[name];
+    if (field.readOnly && target.native) { delete next[name]; continue; }
 
     if (CONTAINER_TYPES.has(field.type)) {
       next[name] = prepareNestedValue(field, value);
