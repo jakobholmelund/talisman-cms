@@ -11,7 +11,8 @@ import {
   variants as variantDefinitions,
 } from '@talisman-cms/plugin-ecommerce/schema';
 import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
-import { ensureCartSession, readCartSessionToken, type CookieJar } from '@talisman-cms/plugin-ecommerce/cookies';
+import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from '@talisman-cms/plugin-ecommerce/accounts';
+import { ensureCartSession, readCartSessionToken, readOrderAccess, type CookieJar } from '@talisman-cms/plugin-ecommerce/cookies';
 import { getPrimaryProductImage } from './product-media';
 
 export { formatMoney } from '@talisman-cms/plugin-ecommerce/money';
@@ -176,11 +177,12 @@ export async function getHydratedCart(env: RuntimeEnv, sessionToken?: string | n
   };
 }
 
-export async function getOrderSummary(env: RuntimeEnv, orderId?: string | null) {
+export async function getOrderSummary(env: RuntimeEnv, orderId: string | null | undefined, cookies: CookieJar) {
   if (!orderId) return null;
 
   const db = createDbClient(env);
-  const order = await db.select().from(orders).where(eq(orders.id, orderId)).get();
+  const customer = await findCustomerSession(env, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
+  const order = await bindCommerceApi({ env }).orders.findForSession(orderId, readCartSessionToken(cookies), customer?.id, readOrderAccess(cookies, orderId));
   if (!order) return null;
 
   const items = (await Promise.all(

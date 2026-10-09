@@ -1,10 +1,12 @@
 ---
+import OrderTracking from '@talisman-cms/plugin-ecommerce/components/OrderTracking.astro';
 import Layout from '../../layouts/Layout.astro';
 import { env as cfEnv } from 'cloudflare:workers';
 import { formatMoney, getOrderSummary } from '../../lib/commerce';
 
+Astro.response.headers.set('Cache-Control', 'private, no-store');
 const orderId = Astro.url.searchParams.get('order');
-const orderSummary = await getOrderSummary(cfEnv as any, orderId);
+const orderSummary = await getOrderSummary(cfEnv as any, orderId, Astro.cookies);
 ---
 
 <Layout title="Order Confirmed | Talisman CMS Showcase" description="Order confirmation for the Talisman storefront demo.">
@@ -54,6 +56,7 @@ const orderSummary = await getOrderSummary(cfEnv as any, orderId);
         </>
       )}
 
+      {orderSummary && orderSummary.order.paymentProvider !== 'admin_test' && <OrderTracking orderId={orderSummary.order.id} />}
       <div class="mt-8 flex flex-wrap gap-3">
         <a href="/shop" class="inline-flex h-11 items-center justify-center rounded-full bg-brand-600 px-6 text-sm font-medium text-white transition-colors hover:bg-brand-700">
           Back to shop
