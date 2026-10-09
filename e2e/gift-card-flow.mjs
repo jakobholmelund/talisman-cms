@@ -9,6 +9,9 @@ export async function giftCardFlow(ctx, { fail, expectVisible, expectHidden, exp
   const attempts = [];
   const otherWrites = [];
   const issued = [];
+  const replacementAttempts = [];
+  const replacementAnswers = [];
+  let loseReplacementAnswer = true;
   const reason = `Browser issuance ${ctx.runId}`;
   const prompts = [];
   let acceptPrompts = false;
@@ -36,6 +39,14 @@ export async function giftCardFlow(ctx, { fail, expectVisible, expectHidden, exp
         return route.continue();
       }
       const body = route.request().postDataJSON();
+      if (body.action === 'replaceCode') {
+        replacementAttempts.push(body.data);
+        const response = await route.fetch();
+        if (!response.ok()) throw new Error(`Local code replacement failed (${response.status()})`);
+        replacementAnswers.push((await response.json()).result);
+        if (loseReplacementAnswer) { loseReplacementAnswer = false; pending = route; return; }
+        return route.fulfill({ response });
+      }
       if (body.action !== 'issue') {
         otherWrites.push(body);
         if (!fixture) return route.continue();
@@ -111,6 +122,50 @@ export async function giftCardFlow(ctx, { fail, expectVisible, expectHidden, exp
     if (attempts[2].requestKey !== attempts[3].requestKey || attempts[2].requestKey === attempts[0].requestKey) fail('new issuance did not get its own stable key');
     await page.getByRole('button', { name: 'I have saved this code', exact: true }).click();
     await expectVisible(page.getByRole('status').filter({ hasText: 'Private code marked as saved' }), 'manual code acknowledgment');
+    const originalCard = page.getByRole('group', { name: `Gift card ${issued[0].id}`, exact: true });
+    await originalCard.getByRole('button', { name: `Replace lost code for ${issued[0].id}`, exact: true }).click();
+    const replacement = page.getByRole('region', { name: 'Replace a lost staff-issued code', exact: true });
+    const replacementReason = `${reason} replace lost code`;
+    await replacement.getByLabel('Replacement reason', { exact: true }).fill(replacementReason);
+    acceptPrompts = false;
+    await replacement.getByRole('button', { name: 'Replace code', exact: true }).click();
+    if (replacementAttempts.length || !prompts.at(-1)?.message.includes('$25.00')) fail('replacement cancellation wrote or omitted the balance');
+    acceptPrompts = true;
+    await replacement.locator('form').evaluate(form => { form.requestSubmit(); form.requestSubmit(); });
+    await waitUntil('replacement commits with its answer held', async () => Boolean(pending));
+    if (replacementAttempts.length !== 1) fail('code replacement double submitted');
+    acceptPrompts = false;
+    await page.getByRole('link', { name: 'Commerce workspace', exact: true }).click();
+    if (!prompts.at(-1)?.message.includes('old code may already have stopped working') || new URL(page.url()).pathname !== url) fail('pending replacement did not protect navigation');
+    await pending.abort(); pending = null;
+    await expectVisible(page.getByRole('alert'), 'lost code-replacement answer'); await settle();
+    await expectValue(replacement.getByLabel('Replacement reason', { exact: true }), replacementReason, 'replacement reason after lost answer');
+    if (!await replacement.getByLabel('Replacement reason', { exact: true }).evaluate(input => input.readOnly)) fail('pending replacement payload could change');
+    await issuance.locator('form').evaluate(form => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    if (attempts.length !== 4) fail('unconfirmed replacement allowed another issuance');
+    await originalCard.getByRole('button', { name: `Suspend ${issued[0].id}`, exact: true }).click({ force: true });
+    if (otherWrites.length) fail('unconfirmed replacement allowed a status change');
+    await replacement.getByRole('button', { name: 'Cancel replacement', exact: true }).click();
+    await expectVisible(replacement, 'cancelled retry discard retains recovery');
+    acceptPrompts = true;
+    await replacement.getByRole('button', { name: 'Retry code replacement', exact: true }).click();
+    await expectVisible(page.getByRole('status').filter({ hasText: 'Gift-card code replaced' }), 'code replacement recovered');
+    await expectValue(code, replacementAnswers[0].code, 'recovered replacement code');
+    if (JSON.stringify(replacementAttempts[0]) !== JSON.stringify(replacementAttempts[1]) || replacementAnswers[0].code !== replacementAnswers[1].code
+      || replacementAnswers[0].code === issued[0].code || replacementAnswers[0].id !== issued[0].id) fail('replacement retry changed the card or code');
+    const afterReplacement = await (await page.request.get(api)).json();
+    const retained = afterReplacement.cards.find(card => card.id === issued[0].id);
+    if (!retained.codeVersion || retained.balanceCents !== 2500 || retained.lastCodeReplacement.reason !== replacementReason
+      || afterReplacement.cards.filter(card => card.adminReason === reason).length !== 1) fail('replacement lost card value, audit details or identity');
+    for (const privateValue of [replacementAnswers[0].code, replacementAttempts[0].requestKey]) {
+      if (JSON.stringify(afterReplacement).includes(privateValue)) fail('replacement list disclosed private recovery data');
+    }
+    const checkBalance = code => page.request.post('/api/ecommerce/gift-cards', { headers: origin, data: { action: 'balance', code } });
+    const oldBalance = await checkBalance(issued[0].code);
+    if (oldBalance.status() !== 400) fail(`replaced code balance refused with unexpected status ${oldBalance.status()}`);
+    const currentBalance = await checkBalance(replacementAnswers[0].code);
+    if (!currentBalance.ok() || (await currentBalance.json()).balanceCents !== 2500) fail('replacement code cannot read preserved balance');
+    await page.getByRole('button', { name: 'I have saved this code', exact: true }).click();
     // Review and refund controls use response fixtures; this part cannot move actual money or send email.
     fixture = { cards: [], encryption: data.encryption, reviewCount: 2, reviews: [
       { purchaseId: 'gp_review', amountCents: 10000, currency: 'usd', refundedCents: 2000, adjustedCents: 0, cardId: 'gift_review',
@@ -151,7 +206,7 @@ export async function giftCardFlow(ctx, { fail, expectVisible, expectHidden, exp
     await expectVisible(page.getByRole('alert').filter({ hasText: 'Refund temporarily unavailable' }), 'refund refusal');
     await expectValue(refund.getByLabel('Reason', { exact: true }), 'Restore returned order payment', 'refund reason retained after refusal');
     if (otherWrites[2].data.amountCents !== 1000) fail('refund amount was not sent in minor units');
-    return 'real local lost-answer issuance, stable keys and one card; refresh/copy/code-leave recovery; controlled review and refund confirmations retain reasons and stale guards';
+    return 'real local lost-answer issuance and code replacement retain keys, value, identity and code privacy; old code stops working; refresh/copy/leave recovery and controlled review/refund guards';
   } catch (cause) {
     failed = true; throw cause;
   } finally {

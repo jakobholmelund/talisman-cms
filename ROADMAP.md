@@ -224,6 +224,8 @@ The admin tools and background jobs a store needs to run orders every day. The i
 
 The gift-card admin workflow now preserves reasons after refused decisions, reloads stale refund totals before another decision, and confirms gift-card payment refunds. Administrative issuance uses a private caller-held retry key to recover the same card/code after an interrupted answer without another ledger credit or replacement transfer; legacy unkeyed callers are unchanged. Codes survive refresh/copy failures, and navigation warns before losing recovery state. The `gift-card-workflow` browser flow covers a real local issuance with a lost response and controlled review/refund recovery; service tests cover competing keyed requests and later replacements. No migration is needed.
 
+Lost staff-issued codes can now be replaced with a confirmation and append-only audit. The previous code stops working, while the card ID, balance, suspension and order/refund references remain intact. A private replacement key recovers the same new code after a lost response; newer code versions, changed balances and pending reservations are guarded. Original issuance keys cannot reveal subsequently replaced codes. The two 9 October migrations add audit storage and guards without rebuilding existing tables or moving funds. Purchased cards retain their existing replacement/claim-link path.
+
 **Why:** A refunded purchase of a partly spent card puts the card in `suspended` and the purchase in `review`, and nothing can take it out again.
 
 **Approach:** Add an audited "resolve review" action that either reinstates the card with a balance adjustment equal to the refund or voids it with a matching reversal.

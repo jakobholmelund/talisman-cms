@@ -23,6 +23,9 @@ const tables = [pluginSchema, coreSchema, authSchema].flatMap((module) => Object
 
 /** The commerce triggers, with the table each one is on. */
 const TRIGGERS = [
+  '_ecommerce_gift_card_code_replacement_guard ON _ecommerce_gift_card_code_replacements',
+  '_ecommerce_gift_card_code_replacements_no_update ON _ecommerce_gift_card_code_replacements',
+  '_ecommerce_gift_card_code_replacements_no_delete ON _ecommerce_gift_card_code_replacements',
   '_ecommerce_credit_ledger_balance ON _ecommerce_credit_ledger',
   '_ecommerce_credit_reserve_guard ON _ecommerce_credit_ledger',
   '_ecommerce_discount_credit_release ON _ecommerce_discount_redemptions',
@@ -677,8 +680,8 @@ test('the recovery migrations preserve populated catalog, accounts, orders, paym
   const db = openDatabase();
   try {
     const files = migrationFiles();
-    const previous = files.filter(file => !file.name.startsWith('20261002'));
-    const additions = files.filter(file => file.name.startsWith('20261002'));
+    const previous = files.filter(file => file.name < '20261002');
+    const additions = files.filter(file => file.name >= '20261002');
     for (const file of previous) db.exec(readFileSync(file.path, 'utf8'));
     db.exec(`INSERT INTO _ecommerce_products (id,name,slug,base_price,inventory_quantity,created_at,updated_at)
       VALUES ('upgrade-product','Existing product','upgrade-product',1000,9,1,1);

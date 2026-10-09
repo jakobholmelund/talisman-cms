@@ -592,6 +592,17 @@ export const ecommercePlugin = (
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCards', idColumn: 'id' }
         });
         collections.push({
+          name: 'Gift Card Code Replacements', slug: '_ecommerce_gift_card_code_replacements',
+          description: 'Staff-issued code replacements. Balances and order histories stay on the original card.',
+          adminSection: 'commerce', readOnly: true,
+          fields: nativeFields(schema.giftCardCodeReplacements, [
+            'id', 'cardId', 'previousReplacementId', 'previousCodeSuffix', 'newCodeSuffix',
+            { name: 'balanceCents', label: 'Balance at Replacement (smallest currency unit)' },
+            'actor', 'reason', 'createdAt',
+          ]),
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardCodeReplacements', idColumn: 'id' }
+        });
+        collections.push({
           name: 'Gift Card Purchases', slug: '_ecommerce_gift_card_purchases',
           description: 'Payment and refund status for purchased cards.',
           adminSection: 'commerce', readOnly: true,

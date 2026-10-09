@@ -623,6 +623,29 @@ export const giftCards = sqliteTable('_ecommerce_gift_cards', {
 
 export const GIFT_CARD_LEDGER_KINDS = ['issue', 'reserve', 'release', 'refund_restore', 'purchase_reversal'] as const;
 
+/** Code replacement changes access to a staff-issued card, never its funding or order identity. */
+export const giftCardCodeReplacements = sqliteTable('_ecommerce_gift_card_code_replacements', {
+  id: text('id').primaryKey(),
+  cardId: text('card_id').notNull().references(() => giftCards.id),
+  previousReplacementId: text('previous_replacement_id').references((): AnySQLiteColumn => giftCardCodeReplacements.id),
+  previousCodeHash: text('previous_code_hash').notNull(),
+  newCodeHash: text('new_code_hash').notNull().unique(),
+  previousCodeSuffix: text('previous_code_suffix').notNull(),
+  newCodeSuffix: text('new_code_suffix').notNull(),
+  balanceCents: integer('balance_cents').notNull(),
+  actor: text('actor').notNull(),
+  reason: text('reason').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, (table) => [
+  uniqueIndex('_ecommerce_gift_card_code_replacements_previous_idx').on(table.cardId, table.previousCodeHash),
+  index('_ecommerce_gift_card_code_replacements_card_idx').on(table.cardId, table.createdAt),
+  check('gift_card_code_replacement_hashes', sql`length(${table.previousCodeHash}) = 64 AND length(${table.newCodeHash}) = 64 AND ${table.previousCodeHash} <> ${table.newCodeHash}`),
+  check('gift_card_code_replacement_suffixes', sql`length(${table.previousCodeSuffix}) = 4 AND length(${table.newCodeSuffix}) = 4`),
+  check('gift_card_code_replacement_balance', money(table.balanceCents, 'nonnegative')),
+  check('gift_card_code_replacement_actor', filled(table.actor)),
+  check('gift_card_code_replacement_reason', sql`length(trim(${table.reason})) BETWEEN 8 AND 500`),
+]);
+
 export const giftCardLedger = sqliteTable('_ecommerce_gift_card_ledger', {
   id: text('id').primaryKey(),
   cardId: text('card_id').notNull().references(() => giftCards.id),
@@ -881,7 +904,7 @@ const tables = {
   customers, customerAccounts, customerSessions, signInTokens, rateLimits, fulfillments, referralCodes, referrals,
   creditLedger, referralSettings, discountCodes, discountRedemptions, giftCardPurchases, giftCards, giftCardLedger,
   giftCardRedemptions, giftCardRefunds, giftCardReviews, giftCardOrderRefunds, taxReversals, disputes, restocks,
-  reconcileDecisions, emailDeliveries, giftCardClaims, shopperAudits, taxSyncDecisions, cmsUsers,
+  reconcileDecisions, emailDeliveries, giftCardClaims, giftCardCodeReplacements, shopperAudits, taxSyncDecisions, cmsUsers,
 };
 
 /**
@@ -1066,7 +1089,13 @@ export const relations = defineRelations(tables, (r) => ({
     refunds: r.many.giftCardRefunds(),
     reviews: r.many.giftCardReviews(),
     claims: r.many.giftCardClaims(),
+    codeReplacements: r.many.giftCardCodeReplacements(),
     orders: r.many.orders(),
+  },
+  giftCardCodeReplacements: {
+    card: r.one.giftCards({ from: r.giftCardCodeReplacements.cardId, to: r.giftCards.id, optional: false }),
+    previousReplacement: r.one.giftCardCodeReplacements({ from: r.giftCardCodeReplacements.previousReplacementId, to: r.giftCardCodeReplacements.id }),
+    subsequentReplacements: r.many.giftCardCodeReplacements({ from: r.giftCardCodeReplacements.id, to: r.giftCardCodeReplacements.previousReplacementId }),
   },
   giftCardLedger: {
     card: r.one.giftCards({ from: r.giftCardLedger.cardId, to: r.giftCards.id, optional: false }),

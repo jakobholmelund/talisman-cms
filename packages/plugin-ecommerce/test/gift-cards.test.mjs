@@ -28,7 +28,8 @@ const { bindCommerceApi } = await import('../dist/api.js');
 const schema = await import('../dist/schema.js');
 const { issueAdminGiftCard, startGiftCardPurchase, confirmGiftCardPurchase, getPurchasedGiftCard,
   evaluateGiftCard, setGiftCardActive, getGiftCardsAdmin, getGiftCardReviewsAdmin, resolveGiftCardReview,
-  reencryptGiftCardCodes, getGiftCardKeyStatus, giftCardPurchaseHoldStatements } = await import('../dist/gift-cards.js');
+  reencryptGiftCardCodes, getGiftCardKeyStatus, giftCardPurchaseHoldStatements,
+  replaceAdminGiftCardCode, refundGiftCardTender } = await import('../dist/gift-cards.js');
 
 
 /** The D1 shim from shared-components.test.mjs; `beforeNextBatch` runs once before the next batch. */
@@ -257,6 +258,141 @@ test('a replacement replay never repeats the value transfer or voids a later rep
   assert.equal(rows(sqlite, 'SELECT id FROM _ecommerce_gift_cards').length, 3);
   assert.equal(rows(sqlite, "SELECT id FROM _ecommerce_gift_card_ledger WHERE kind = 'issue'").length, 3);
   sqlite.close();
+});
+
+const replacementInput = (card, balanceCents = card.amountCents, codeVersion = null) => ({
+  cardId: card.id, balanceCents, codeVersion, reason: 'Replace the lost staff-issued code', requestKey: crypto.randomUUID(),
+});
+const codeAudits = (sqlite) => rows(sqlite, 'SELECT * FROM _ecommerce_gift_card_code_replacements ORDER BY rowid');
+
+test('staff code replacement preserves funding and order identity, and later refunds reach the new code', async () => {
+  const { sqlite, DB } = database(); const env = giftEnv(DB); const api = bindCommerceApi({ env, paymentAdapters: [stripe] });
+  const issuance = { amountCents: 5000, reason: 'Original goodwill card', requestKey: crypto.randomUUID() };
+  const card = await issueAdminGiftCard(env, 'admin-1', issuance);
+  const order = await spend(api, card.code);
+  const ledger = ledgerOf(sqlite, card.id);
+  const input = replacementInput(card, 2000);
+  const replaced = await replaceAdminGiftCardCode(env, 'support-1', input);
+  assert.equal(replaced.id, card.id); assert.notEqual(replaced.code, card.code);
+  assert.equal(replaced.balanceCents, 2000); assert.deepEqual(ledgerOf(sqlite, card.id), ledger);
+  assert.equal(ledgerBalance(sqlite, card.id), 2000);
+  assert.equal(row(sqlite, 'SELECT gift_card_id FROM _ecommerce_orders WHERE id = ?', order.id).gift_card_id, card.id);
+  await assert.rejects(evaluateGiftCard(env, card.code, 1), /unavailable/);
+  assert.equal((await evaluateGiftCard(env, replaced.code, 1)).remainingCents, 2000);
+  await refundGiftCardTender(env, 'support-1', { orderId: order.id, amountCents: 500, reason: 'Partial order return after code replacement' });
+  assert.equal(ledgerBalance(sqlite, card.id), 2500);
+  assert.equal((await evaluateGiftCard(env, replaced.code, 1)).remainingCents, 2500);
+  const replayed = await replaceAdminGiftCardCode(env, 'support-1', { ...input, requestKey: input.requestKey.toUpperCase() });
+  assert.equal(replayed.code, replaced.code); assert.equal(replayed.balanceCents, 2500);
+  assert.equal(codeAudits(sqlite).length, 1); assert.equal(codeAudits(sqlite)[0].balance_cents, 2000);
+  await assert.rejects(issueAdminGiftCard(env, 'admin-1', issuance), /original issuance code has been replaced/);
+  const listed = (await getGiftCardsAdmin(env)).find(item => item.id === card.id);
+  assert.equal(listed.codeVersion, codeAudits(sqlite)[0].id);
+  assert.equal(listed.lastCodeReplacement.reason, input.reason);
+  const publicData = JSON.stringify(listed);
+  for (const privateValue of [card.code, replaced.code, input.requestKey, codeAudits(sqlite)[0].new_code_hash]) assert.ok(!publicData.includes(privateValue));
+  for (const changed of [{ cardId: `gift_${crypto.randomUUID()}` }, { balanceCents: 3000 }, { reason: 'A different replacement reason' }, { codeVersion: listed.codeVersion }]) {
+    await assert.rejects(replaceAdminGiftCardCode(env, 'support-1', { ...input, ...changed }), /already used/);
+  }
+  await assert.rejects(replaceAdminGiftCardCode(env, 'admin-2', input), /already used/);
+  await reencryptGiftCardCodes(giftEnv(DB, KEY_B, KEY_A));
+  assert.equal((await replaceAdminGiftCardCode(giftEnv(DB, KEY_B), 'support-1', input)).code, replaced.code);
+  assert.throws(() => sqlite.exec("UPDATE _ecommerce_gift_card_code_replacements SET reason = 'Changed audit reason'"), /append-only/);
+  assert.throws(() => sqlite.exec('DELETE FROM _ecommerce_gift_card_code_replacements'), /append-only/);
+  sqlite.close();
+});
+
+test('code replacement handles one-cent and exhausted balances and preserves suspension', async () => {
+  for (const remainder of [1, 0]) {
+    const { sqlite, DB } = database(); const env = giftEnv(DB); const api = bindCommerceApi({ env, paymentAdapters: [stripe] });
+    const card = await issueAdminGiftCard(env, 'admin-1', { amountCents: 5000, reason: 'Small remaining card value' });
+    sqlite.prepare('UPDATE _ecommerce_products SET base_price = ? WHERE id = ?').run(5000 - remainder, 'frame');
+    await spend(api, card.code); await setGiftCardActive(env, card.id, false);
+    const ledger = ledgerOf(sqlite, card.id);
+    const result = await replaceAdminGiftCardCode(env, 'support-1', replacementInput(card, remainder));
+    assert.equal(result.status, 'suspended'); assert.equal(result.balanceCents, remainder);
+    assert.deepEqual(ledgerOf(sqlite, card.id), ledger); assert.equal(ledgerBalance(sqlite, card.id), remainder);
+    assert.equal(rows(sqlite, 'SELECT id FROM _ecommerce_gift_cards').length, 1);
+    await assert.rejects(evaluateGiftCard(env, result.code, 1), /unavailable/);
+    if (remainder) {
+      await setGiftCardActive(env, card.id, true); assert.equal((await evaluateGiftCard(env, result.code, 1)).remainingCents, 1);
+      DB.beforeNextBatch = () => setGiftCardActive(env, card.id, false);
+      const raced = await replaceAdminGiftCardCode(env, 'admin-1', replacementInput(card, 1, codeAudits(sqlite)[0].id));
+      assert.equal(raced.status, 'suspended'); assert.equal(ledgerBalance(sqlite, card.id), 1);
+    }
+    sqlite.close();
+  }
+});
+
+test('code replacement refuses purchased, purchase-backed, void, pending and stale cards', async () => {
+  const { sqlite, DB } = database(); const env = giftEnv(DB); const api = bindCommerceApi({ env, paymentAdapters: [stripe] });
+  const purchase = await buyGiftCard(sqlite, env, 5000, 'pi_code_replacement');
+  await assert.rejects(replaceAdminGiftCardCode(env, 'admin-1', replacementInput(purchase.card, 5000)), /staff-issued/);
+  const backed = await issueAdminGiftCard(env, 'admin-1', { amountCents: 5000, reason: 'Purchased replacement card', replacesPurchaseId: purchase.id });
+  await assert.rejects(replaceAdminGiftCardCode(env, 'admin-1', replacementInput(backed)), /staff-issued/);
+  const card = await issueAdminGiftCard(env, 'admin-1', { amountCents: 2000, reason: 'Card reserved in checkout' });
+  await assert.rejects(replaceAdminGiftCardCode(env, 'admin-1', replacementInput(card, 1000)), /balance changed/);
+  await assert.rejects(replaceAdminGiftCardCode(env, 'admin-1', { ...replacementInput(card), requestKey: card.id }));
+  await assert.rejects(replaceAdminGiftCardCode(env, '', replacementInput(card)), /identity/);
+  await pendingOrder(api, card.code);
+  assert.equal((await getGiftCardsAdmin(env)).find(item => item.id === card.id).checkoutPending, true);
+  await assert.rejects(replaceAdminGiftCardCode(env, 'admin-1', replacementInput(card, 0)), /checkout in progress/);
+  sqlite.prepare("UPDATE _ecommerce_gift_cards SET status = 'void' WHERE id = ?").run(backed.id);
+  await assert.rejects(replaceAdminGiftCardCode(env, 'admin-1', replacementInput(backed)), /staff-issued/);
+  assert.equal(codeAudits(sqlite).length, 0); sqlite.close();
+});
+
+test('competing code replacements commit one version and retries never overwrite a later version', async () => {
+  const { sqlite, DB } = database(); const env = giftEnv(DB);
+  const card = await issueAdminGiftCard(env, 'admin-1', { amountCents: 2500, reason: 'Concurrent code replacement' });
+  const input = replacementInput(card); let winner;
+  DB.beforeNextBatch = async () => { winner = await replaceAdminGiftCardCode(env, 'admin-1', input); };
+  assert.deepEqual(await replaceAdminGiftCardCode(env, 'admin-1', input), winner);
+  assert.equal(codeAudits(sqlite).length, 1); assert.equal(ledgerBalance(sqlite, card.id), 2500);
+  const version = codeAudits(sqlite)[0].id;
+  const next = replacementInput(card, 2500, version); let latest;
+  DB.beforeNextBatch = async () => {
+    await replaceAdminGiftCardCode(env, 'admin-1', next);
+    latest = await replaceAdminGiftCardCode(env, 'support-2', replacementInput(card, 2500, codeAudits(sqlite)[1].id));
+  };
+  await assert.rejects(replaceAdminGiftCardCode(env, 'admin-1', next), /replaced again/);
+  assert.equal(codeAudits(sqlite).length, 3); assert.equal(ledgerBalance(sqlite, card.id), 2500);
+  assert.equal((await evaluateGiftCard(env, latest.code, 1)).remainingCents, 2500);
+  await assert.rejects(evaluateGiftCard(env, winner.code, 1), /unavailable/);
+  await assert.rejects(replaceAdminGiftCardCode(env, 'admin-1', { ...replacementInput(card), codeVersion: version }), /code or balance changed/);
+  sqlite.close();
+});
+
+test('code replacement rechecks balance and reservations at commit and rolls its audit back on failure', async () => {
+  const { sqlite, DB } = database(); const env = giftEnv(DB); const api = bindCommerceApi({ env, paymentAdapters: [stripe] });
+  const card = await issueAdminGiftCard(env, 'admin-1', { amountCents: 5000, reason: 'Replacement transaction checks' });
+  const input = replacementInput(card);
+  sqlite.exec("CREATE TRIGGER fail_code_update BEFORE UPDATE OF code_hash ON _ecommerce_gift_cards BEGIN SELECT RAISE(ABORT,'Test replacement failure'); END;");
+  await assert.rejects(replaceAdminGiftCardCode(env, 'admin-1', input));
+  assert.equal(codeAudits(sqlite).length, 0); assert.equal((await evaluateGiftCard(env, card.code, 1)).remainingCents, 5000);
+  sqlite.exec('DROP TRIGGER fail_code_update');
+  DB.beforeNextBatch = () => spend(api, card.code);
+  await assert.rejects(replaceAdminGiftCardCode(env, 'admin-1', input), /card changed/);
+  assert.equal(codeAudits(sqlite).length, 0); assert.equal(ledgerBalance(sqlite, card.id), 2000);
+  DB.beforeNextBatch = () => pendingOrder(api, card.code);
+  await assert.rejects(replaceAdminGiftCardCode(env, 'admin-1', replacementInput(card, 2000)), /card changed/);
+  assert.equal(codeAudits(sqlite).length, 0); assert.equal(ledgerBalance(sqlite, card.id), 0);
+  sqlite.close();
+});
+
+test('the admin code replacement route requires administrator, same origin and a private retry key', async (t) => {
+  t.after(() => { delete globalThis.cmsUser; delete globalThis.workerEnv; });
+  const { sqlite, DB } = database(); const env = giftEnv(DB);
+  const card = await issueAdminGiftCard(env, 'admin-1', { amountCents: 2500, reason: 'Authorized code replacement' });
+  const body = { action: 'replaceCode', data: replacementInput(card) }; const admin = { id: 'admin-1', role: 'admin' };
+  assert.equal((await callAdmin(env, undefined, { body })).status, 401);
+  assert.equal((await callAdmin(env, { id: 'editor-1', role: 'editor' }, { body })).status, 403);
+  assert.equal((await callAdmin(env, admin, { body, origin: 'https://other.test' })).status, 403);
+  const invalid = { action: 'replaceCode', data: { ...body.data, requestKey: undefined } };
+  assert.equal((await callAdmin(env, admin, { body: invalid })).status, 400);
+  const first = await callAdmin(env, admin, { body }); assert.equal(first.status, 200);
+  assert.deepEqual(await callAdmin(env, admin, { body }), first);
+  assert.equal(codeAudits(sqlite).length, 1); sqlite.close();
 });
 
 test('a code encrypted before a key rotation still decrypts after it, and new codes use the new key', async () => {

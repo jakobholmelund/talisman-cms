@@ -6,7 +6,7 @@ import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb, commitBatch, type CommerceDb } from './db';
 import { readSetting } from 'talisman-cms/env';
 import { creditLedger, discountRedemptions, giftCardClaims, giftCardOrderRefunds, giftCardPurchases, giftCardRedemptions,
-  giftCardRefunds, giftCards, orders, payments } from './schema';
+  giftCardRefunds, giftCards, giftCardCodeReplacements, orders, payments } from './schema';
 import type { PaymentProviderAdapter } from './payments';
 import { getReferralPolicy, referralReversalStatements } from './referrals';
 import { readStoreSettings } from './store-settings';
@@ -34,6 +34,13 @@ const adminIssueSchema = z.object({
   reason: z.string().trim().min(8).max(500),
   // A card support issues in place of a purchased one takes over the value left on the purchase's card.
   replacesPurchaseId: purchaseIdSchema.optional(),
+}).strict();
+const replaceCodeSchema = z.object({
+  cardId: z.string().regex(/^gift_[0-9a-f-]{36}$/),
+  codeVersion: z.string().regex(/^gcr_[0-9a-f]{64}$/).nullable(),
+  balanceCents: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  reason: z.string().trim().min(8).max(500),
+  requestKey: z.string().uuid().transform(value => value.toLowerCase()),
 }).strict();
 
 const hex = (bytes: Uint8Array) => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
@@ -278,6 +285,9 @@ export async function issueAdminGiftCard(env: TalismanEnv, actor: string, input:
       || card.initialCents !== amountCents || card.currency !== currency || card.replacesPurchaseId !== replaces) {
       throw new Error('This issuance request was already used by another administrator or with different details');
     }
+    if (await db.select({ id: giftCardCodeReplacements.id }).from(giftCardCodeReplacements).where(eq(giftCardCodeReplacements.cardId, id)).get()) {
+      throw new Error('The original issuance code has been replaced; use the replacement request to recover its new code');
+    }
     return { id, code: await decryptCardSecret(await giftCardKeyring(env), card), amountCents, currency, replacesPurchaseId: replaces };
   };
   const recovered = await replay();
@@ -320,6 +330,72 @@ export async function issueAdminGiftCard(env: TalismanEnv, actor: string, input:
   return { id, code: secret.code, amountCents, currency, replacesPurchaseId: replaces };
 }
 
+/** A public concurrency token for the code currently attached to a card; contains no bearer secret. */
+const codeVersion = (card: AnySQLiteColumn | SQL) => sql<string | null>`(SELECT x.id FROM _ecommerce_gift_card_code_replacements x
+  JOIN _ecommerce_gift_cards current ON current.id = x.card_id AND current.code_hash = x.new_code_hash WHERE x.card_id = ${card})`;
+const cardCheckoutPending = (card: AnySQLiteColumn | SQL) => sql<boolean>`EXISTS (SELECT 1 FROM _ecommerce_gift_card_redemptions r
+  WHERE r.card_id = ${card} AND r.status = 'reserved')`;
+
+/** Replaces a lost staff-issued bearer code while preserving every ledger and order reference. */
+export async function replaceAdminGiftCardCode(env: TalismanEnv, actor: string, input: unknown) {
+  giftCardCurrency(env);
+  const values = replaceCodeSchema.parse(input);
+  if (!actor.trim()) throw new Error('Administrator identity is required');
+  const db = commerceDb(env);
+  const id = `gcr_${await hashGiftCardSecret(`admin-replace-code:${values.requestKey}`)}`;
+  const replay = async () => {
+    const replacement = await db.select().from(giftCardCodeReplacements).where(eq(giftCardCodeReplacements.id, id)).get();
+    if (!replacement) return null;
+    if (replacement.cardId !== values.cardId || replacement.actor !== actor || replacement.reason !== values.reason
+      || replacement.previousReplacementId !== values.codeVersion || replacement.balanceCents !== values.balanceCents) {
+      throw new Error('This replacement request was already used by another administrator or with different details');
+    }
+    const card = await db.select().from(giftCards).where(eq(giftCards.id, values.cardId)).get();
+    if (!card || card.codeHash !== replacement.newCodeHash) {
+      throw new Error('This replacement code has since been replaced again. Reload the card before making another replacement.');
+    }
+    return { id: card.id, code: await decryptCardSecret(await giftCardKeyring(env), card), balanceCents: card.balanceCents,
+      currency: card.currency, status: card.status };
+  };
+  const recovered = await replay();
+  if (recovered) return recovered;
+  const card = await db.select({ id: giftCards.id, source: giftCards.source, purchaseId: giftCards.purchaseId,
+    replacesPurchaseId: giftCards.replacesPurchaseId, status: giftCards.status, heldForReview: giftCards.heldForReview,
+    balanceCents: giftCards.balanceCents, codeHash: giftCards.codeHash, codeSuffix: giftCards.codeSuffix,
+    codeVersion: codeVersion(sql.raw('_ecommerce_gift_cards.id')), pending: cardCheckoutPending(sql.raw('_ecommerce_gift_cards.id')) })
+    .from(giftCards).where(eq(giftCards.id, values.cardId)).get();
+  if (!card || card.source !== 'admin' || card.purchaseId || card.replacesPurchaseId || card.status === 'void' || card.heldForReview) {
+    throw new Error('Only a staff-issued card that is not funded by a purchase or void can have its code replaced here');
+  }
+  if (card.pending) throw new Error('A checkout in progress holds value on this card; wait until it completes or expires');
+  if (card.codeVersion !== values.codeVersion || card.balanceCents !== values.balanceCents) {
+    throw new Error('The card code or balance changed. Reload and review it before replacing the code.');
+  }
+  const secret = await newCardSecret(env, card.id);
+  const timestamp = at(Math.floor(Date.now() / 1000));
+  const [inserted, updated] = await db.batch([
+    db.all<{ id: string }>(sql`INSERT INTO _ecommerce_gift_card_code_replacements
+      (id,card_id,previous_replacement_id,previous_code_hash,new_code_hash,previous_code_suffix,new_code_suffix,balance_cents,actor,reason,created_at)
+      SELECT ${id},id,${values.codeVersion},code_hash,${secret.codeHash},code_suffix,${secret.codeSuffix},balance_cents,${actor},${values.reason},${Math.floor(timestamp.getTime() / 1000)}
+      FROM _ecommerce_gift_cards WHERE id = ${card.id} AND code_hash = ${card.codeHash} AND balance_cents = ${values.balanceCents}
+        AND source = 'admin' AND purchase_id IS NULL AND replaces_purchase_id IS NULL AND status <> 'void' AND held_for_review = 0
+        AND NOT ${cardCheckoutPending(sql.raw('_ecommerce_gift_cards.id'))}
+      ON CONFLICT(id) DO NOTHING RETURNING id`),
+    db.update(giftCards).set({ codeHash: secret.codeHash, codeSuffix: secret.codeSuffix, encryptedCode: secret.encryptedCode,
+      updatedAt: sql`MAX(${giftCards.updatedAt} + 1, ${Math.floor(timestamp.getTime() / 1000)})` })
+      .where(and(eq(giftCards.id, card.id), eq(giftCards.codeHash, card.codeHash),
+        exists(db.select({ id: giftCardCodeReplacements.id }).from(giftCardCodeReplacements)
+          .where(and(eq(giftCardCodeReplacements.id, id), eq(giftCardCodeReplacements.newCodeHash, secret.codeHash))))))
+      .returning({ status: giftCards.status, balanceCents: giftCards.balanceCents, currency: giftCards.currency }),
+  ]);
+  if (!inserted.length) {
+    const raced = await replay();
+    if (raced) return raced;
+    throw new Error('The card changed while its code was being replaced. Reload and review it before retrying.');
+  }
+  return { id: card.id, code: secret.code, ...updated[0] };
+}
+
 const isoSeconds = (seconds: unknown) => typeof seconds === 'number' ? new Date(seconds * 1000).toISOString() : null;
 
 /** The newest claim link of a card, as the admin list shows it. */
@@ -340,6 +416,11 @@ function claimEmailView(value: unknown) {
 export async function getGiftCardsAdmin(env: TalismanEnv) {
   const db = commerceDb(env);
   return db.select({ id: giftCards.id, codeSuffix: giftCards.codeSuffix,
+    codeVersion: codeVersion(sql.raw('_ecommerce_gift_cards.id')),
+    checkoutPending: cardCheckoutPending(sql.raw('_ecommerce_gift_cards.id')).mapWith(Boolean),
+    lastCodeReplacement: sql<string | null>`(SELECT json_object('actor',x.actor,'reason',x.reason,'createdAt',x.created_at,'previousCodeSuffix',x.previous_code_suffix)
+      FROM _ecommerce_gift_card_code_replacements x WHERE x.id = ${codeVersion(sql.raw('_ecommerce_gift_cards.id'))})`
+      .mapWith((value: string | null) => { if (!value) return null; const record = JSON.parse(value); return { ...record, createdAt: isoSeconds(record.createdAt) }; }),
     source: giftCards.source, purchaseId: giftCards.purchaseId, replacesPurchaseId: giftCards.replacesPurchaseId,
     // The buyer of the purchase the card belongs to or replaces; the claim link resend goes there. The
     // subqueries name the card's columns with their table, because drizzle leaves them unqualified.

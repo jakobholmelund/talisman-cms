@@ -6,7 +6,10 @@ type ClaimLink = { createdAt: string | null; expiresAt: string | null; usedAt: s
 type Card = { id: string; codeSuffix: string; source: string; initialCents: number;
   balanceCents: number; currency: string; status: 'active' | 'suspended' | 'void'; adminReason: string | null;
   purchaseId: string | null; replacesPurchaseId: string | null; inReview: boolean; buyerEmail: string | null;
-  claimLink: ClaimLink | null; claimEmail: { status: string; lastError: string | null; attempts: number } | null };
+  claimLink: ClaimLink | null; claimEmail: { status: string; lastError: string | null; attempts: number } | null;
+  codeVersion: string | null; checkoutPending: boolean;
+  lastCodeReplacement: { actor: string; reason: string; createdAt: string | null; previousCodeSuffix: string } | null };
+type CodeReplacement = { cardId: string; codeVersion: string | null; balanceCents: number; reason: string; requestKey: string };
 type Review = { purchaseId: string; amountCents: number; currency: string; refundedCents: number;
   adjustedCents: number; cardId: string | null; codeSuffix: string | null; cardStatus: 'active' | 'suspended' | null;
   cardHeld: boolean; cardReplacement: boolean; balanceCents: number | null; spentCents: number; pendingCents: number;
@@ -22,6 +25,7 @@ const limits = { issue: { min: 500, max: 100_000 }, refund: { min: 1 } };
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 const day = (iso: string | null) => iso ? new Date(iso).toLocaleDateString() : '';
+const canReplaceCode = (card: Card) => card.source === 'admin' && !card.purchaseId && !card.replacesPurchaseId && card.status !== 'void' && !card.inReview && !card.checkoutPending;
 
 /** What the buyer was sent: the claim email while it is not sent, and the newest claim link. */
 function claimSummary(card: Card) {
@@ -51,6 +55,9 @@ export default function GiftCards() {
   const [issuedCardId, setIssuedCardId] = useState('');
   const [codeSaved, setCodeSaved] = useState(false);
   const [issuePending, setIssuePending] = useState(false);
+  const [replacement, setReplacement] = useState<{ card: Card; reason: string } | null>(null);
+  const [replacementPending, setReplacementPending] = useState(false);
+  const replacementRetry = useRef<CodeReplacement | null>(null);
   const [reading, setReading] = useState(false);
   const [readFailed, setReadFailed] = useState(false);
   const [working, setWorking] = useState('');
@@ -71,15 +78,20 @@ export default function GiftCards() {
   const canIssue = currency === GIFT_CARD_CURRENCY;
   const currencyCode = GIFT_CARD_CURRENCY.toUpperCase();
   const show = (value: string, failed = false) => { setMessage(value); setError(failed); };
-  const blocked = busy || reading || readFailed;
+  const baseBlocked = busy || reading || readFailed;
+  const blocked = baseBlocked || issuePending || replacementPending;
   const cannotWrite = () => writing.current || loading.current || failedRead.current;
-  const protectIssuance = issuePending || (Boolean(issuedCode) && !codeSaved);
+  const cannotChange = () => cannotWrite() || Boolean(issueKey.current || replacementRetry.current);
+  const protectIssuance = issuePending || replacementPending || Boolean(replacement?.reason) || (Boolean(issuedCode) && !codeSaved);
   useBlocker({
     shouldBlockFn: ({ current, next }) => current.pathname !== next.pathname && (protectIssuance || busy)
-      && !window.confirm(issuePending
+      && !window.confirm(replacementPending
+        ? 'This code replacement has not been confirmed. Leaving loses its retry key; the old code may already have stopped working. Leave gift cards?'
+        : issuePending
         ? 'This issuance has not been confirmed. Leaving loses its retry key; a card may already have been created. Leave gift cards?'
         : busy ? 'A gift-card change is still running. Leave gift cards?'
-          : 'Have you saved the private gift-card code? Leaving hides it. Leave gift cards?'),
+          : issuedCode && !codeSaved ? 'Have you saved the private gift-card code? Leaving hides it. Leave gift cards?'
+            : 'You have an unsaved code replacement reason. Leave gift cards?'),
     enableBeforeUnload: protectIssuance || busy,
   });
   useEffect(() => {
@@ -135,7 +147,7 @@ export default function GiftCards() {
 
   async function issue(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (cannotWrite() || !canIssue) return;
+    if (cannotWrite() || replacement || replacementRetry.current || !canIssue) return;
     const form = event.currentTarget; const values = new FormData(form);
     if (issuedCode && !codeSaved && !issueKey.current && !window.confirm('Have you saved the currently displayed private code? Issuing another card replaces its display.')) return;
     const replacesPurchaseId = String(values.get('replacesPurchaseId') || '').trim();
@@ -157,6 +169,42 @@ export default function GiftCards() {
     });
   }
 
+  function selectReplacement(card: Card) {
+    if (cannotChange() || !canIssue || !canReplaceCode(card)) return;
+    if (replacement?.reason && !window.confirm('Discard the current replacement reason and select another card?')) return;
+    setReplacement({ card, reason: '' });
+  }
+
+  function cancelReplacement() {
+    if (writing.current || loading.current) return;
+    if (replacementRetry.current && !window.confirm('Discard this replacement retry? This does not undo a replacement that already committed. Its new code may be lost, and the old code may already have stopped working.')) return;
+    if (!replacementRetry.current && replacement?.reason && !window.confirm('Discard this replacement reason?')) return;
+    replacementRetry.current = null; setReplacementPending(false); setReplacement(null);
+  }
+
+  async function replaceCode(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (cannotWrite() || issueKey.current || !replacement || !canIssue) return;
+    const data = replacementRetry.current ?? { cardId: replacement.card.id, codeVersion: replacement.card.codeVersion ?? null,
+      balanceCents: replacement.card.balanceCents, reason: replacement.reason.trim(), requestKey: crypto.randomUUID() };
+    if (!replacementRetry.current) {
+      if (issuedCode && !codeSaved && !window.confirm('Have you saved the currently displayed private code? Replacing a code replaces its display.')) return;
+      if (!window.confirm(`Replace code •••• ${replacement.card.codeSuffix} for ${data.cardId}? The old code will stop working. Keep ${money(data.balanceCents, GIFT_CARD_CURRENCY)} and the card’s ${replacement.card.status} status.`)) return;
+    }
+    replacementRetry.current = data; setReplacementPending(true);
+    await act('Replacing gift-card code…', async () => {
+      const response = await adminRequest<{ result: { id: string; code: string } }>('gift-cards-admin', { action: 'replaceCode', data });
+      if (!response?.result?.code || typeof response.result.code !== 'string' || response.result.id !== data.cardId) {
+        throw new Error('The replacement response did not include its private code. Retry the same replacement to recover it.');
+      }
+      if (activePage.current) {
+        setIssuedCode(response.result.code); setIssuedCardId(response.result.id); setCodeSaved(false); setCopyMessage('');
+        replacementRetry.current = null; setReplacementPending(false); setReplacement(null);
+      }
+      return 'Gift-card code replaced. The previous code no longer works. Copy the new private code now.';
+    }, true);
+  }
+
   async function copyCode() {
     if (copyingCode.current || !issuedCode) return;
     copyingCode.current = true; setCopying(true); setCopyMessage('');
@@ -174,7 +222,7 @@ export default function GiftCards() {
   }
 
   async function toggle(card: Card) {
-    if (cannotWrite() || (card.status !== 'active' && card.inReview)) return;
+    if (cannotChange() || (card.status !== 'active' && card.inReview)) return;
     await act('Updating card status…', async () => {
       await adminRequest('gift-cards-admin', { action: 'setActive', id: card.id, active: card.status !== 'active' });
       return 'Card status updated.';
@@ -183,7 +231,7 @@ export default function GiftCards() {
 
   async function refund(event: FormEvent<HTMLFormElement>, action: 'refundTender' | 'refundGiftOnlyOrder') {
     event.preventDefault();
-    if (cannotWrite()) return;
+    if (cannotChange()) return;
     const form = event.currentTarget; const values = new FormData(form);
     const orderId = String(values.get('orderId') || '').trim();
     const amountCents = formAmount(values.get('amount'), GIFT_CARD_CURRENCY);
@@ -200,7 +248,7 @@ export default function GiftCards() {
 
   // Each decision is its own button, and pressing Enter in the reason field decides nothing.
   async function resolve(form: HTMLFormElement | null, review: Review, outcome: 'reinstate' | 'void') {
-    if (cannotWrite() || (outcome === 'reinstate' && (!review.cardId || (review.balanceCents ?? 0) < review.refundedCents - review.adjustedCents))
+    if (cannotChange() || (outcome === 'reinstate' && (!review.cardId || (review.balanceCents ?? 0) < review.refundedCents - review.adjustedCents))
       || (outcome === 'void' && review.pendingCents > 0) || !form?.reportValidity()) return;
     const reason = String(new FormData(form).get('reason') || '').trim();
     const due = money(review.refundedCents - review.adjustedCents, review.currency);
@@ -217,7 +265,7 @@ export default function GiftCards() {
 
   // The buyer gets a new one-time link by email; once it is sent, earlier unused links stop working.
   async function resendClaim(form: HTMLFormElement | null, card: Card, purchaseId: string) {
-    if (cannotWrite() || !form?.reportValidity()) return;
+    if (cannotChange() || !form?.reportValidity()) return;
     const reason = String(new FormData(form).get('reason') || '').trim();
     if (!window.confirm(`Email ${card.buyerEmail ?? 'the buyer'} a new link to the code of card •••• ${card.codeSuffix}? Earlier unused links for ${purchaseId} stop working.`)) return;
     await act('Resending claim link…', async () => {
@@ -228,7 +276,7 @@ export default function GiftCards() {
   }
 
   async function reencrypt() {
-    if (cannotWrite()) return;
+    if (cannotChange()) return;
     if (encryption?.legacyCodes && !window.confirm('A Worker from a release before key ids cannot show codes once they are re-encrypted. Re-encrypt them now?')) return;
     await act('Re-encrypting gift-card codes…', async () => {
       let after: string | null = null; let reencrypted = 0; let failed = 0;
@@ -279,10 +327,11 @@ export default function GiftCards() {
     <Panel title="Issue a gift card" label="Issue a gift card">
       <p className="ecom-admin__muted">Every administrative issuance records your reason. Share the code through a secure channel. To replace a purchased card, for example when its code was lost, enter its purchase ID and, as the amount, the balance left on it: the old card is voided and its links stop working, its balance moves to the new card, and a later refund of the purchase holds the new card. Resend the claim link from the new card's row to email the buyer its code.</p>
       {!canIssue && <p className="ecom-admin__notice">Gift cards are kept in {currencyCode} only, so a store that sells in {currency.toUpperCase()} cannot issue, sell or redeem them. Existing cards can still be refunded.</p>}
-      <form onSubmit={event => void issue(event)}><div className="ecom-admin__grid"><Field label={`Amount (${currencyCode})`}><input readOnly={blocked} name="amount" type="number" {...amountInput(GIFT_CARD_CURRENCY, limits.issue)} required /></Field><Field label="Reason"><input readOnly={blocked} name="reason" minLength={8} maxLength={500} required /></Field><Field label="Replaces purchase (optional)"><input readOnly={blocked} name="replacesPurchaseId" pattern="gp_[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}" placeholder="gp_…" /></Field></div><div className="ecom-admin__actions"><button type="submit" aria-disabled={blocked || !canIssue}>{issuePending ? 'Retry issuance' : 'Issue gift card'}</button></div></form>
+      <form onSubmit={event => void issue(event)}><div className="ecom-admin__grid"><Field label={`Amount (${currencyCode})`}><input readOnly={baseBlocked || replacementPending || Boolean(replacement)} name="amount" type="number" {...amountInput(GIFT_CARD_CURRENCY, limits.issue)} required /></Field><Field label="Reason"><input readOnly={baseBlocked || replacementPending || Boolean(replacement)} name="reason" minLength={8} maxLength={500} required /></Field><Field label="Replaces purchase (optional)"><input readOnly={baseBlocked || replacementPending || Boolean(replacement)} name="replacesPurchaseId" pattern="gp_[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}" placeholder="gp_…" /></Field></div><div className="ecom-admin__actions"><button type="submit" aria-disabled={baseBlocked || replacementPending || Boolean(replacement) || !canIssue}>{issuePending ? 'Retry issuance' : 'Issue gift card'}</button></div></form>
       {issuePending && <p className="ecom-admin__notice">If the response was interrupted, retry with the same amount, reason and purchase to recover that card. Keep this page open until the issuance is confirmed.</p>}
       {issuedCode && <section className="ecom-admin__notice" aria-label="Issued private code">
-        <strong>Card created — copy this code now</strong>
+        <strong>Private gift-card code — copy it now</strong>
+        <p>Card <code>{issuedCardId}</code></p>
         {issuedCard && issuedCard.status !== 'active' && <p role="status">This card is currently {issuedCard.status} and cannot be redeemed.</p>}
         <Field label="Private code"><input ref={privateCode} readOnly value={issuedCode} /></Field>
         <div className="ecom-admin__actions"><button type="button" aria-disabled={copying} onClick={() => void copyCode()}>Copy code</button>
@@ -290,6 +339,16 @@ export default function GiftCards() {
         </div><Feedback message={copyMessage} error={copyError} />
       </section>}
     </Panel>
+    {replacement && <Panel title="Replace a lost staff-issued code" label="Replace a lost staff-issued code">
+      <p className="ecom-admin__muted">Replace code •••• {replacement.card.codeSuffix} on <code>{replacement.card.id}</code>. The old code stops working. Its {money(replacement.card.balanceCents, replacement.card.currency)} balance, {replacement.card.status} status and order history stay on this card. Purchased cards use their existing purchase replacement or claim-link tools.</p>
+      <form onSubmit={event => void replaceCode(event)}>
+        <Field label="Replacement reason"><input value={replacement.reason} readOnly={baseBlocked || replacementPending} minLength={8} maxLength={500} required
+          onChange={event => setReplacement({ ...replacement, reason: event.target.value })} autoFocus /></Field>
+        <div className="ecom-admin__actions"><button type="submit" aria-disabled={baseBlocked || issuePending || !canIssue}>{replacementPending ? 'Retry code replacement' : 'Replace code'}</button>
+          <button type="button" className="ecom-admin__secondary" aria-disabled={busy || reading} onClick={cancelReplacement}>Cancel replacement</button></div>
+      </form>
+      {replacementPending && <p className="ecom-admin__notice">Keep this page open to recover this replacement. Retrying keeps the original card details and reason. If the card changed, cancel this retry and select the card again to review its latest details.</p>}
+    </Panel>}
     <Panel title="Issued cards">
       <p className="ecom-admin__muted">After payment, the buyer of a card is emailed a one-time link that shows its code once, for 7 days. To send a new link, for example when the email was lost or after a replacement, enter a reason and resend it; earlier unused links stop working.</p>
       <Field label="Find a card"><input type="search" readOnly={busy || reading} value={search} onChange={event => setSearch(event.target.value)} placeholder="Code suffix, source, purchase or buyer email" /></Field>
@@ -299,6 +358,12 @@ export default function GiftCards() {
         const purchase = card.purchaseId ?? card.replacesPurchaseId;
         return <div className="ecom-admin__row" role="group" aria-label={`Gift card ${card.id}`} key={card.id}><span><strong>•••• {card.codeSuffix}</strong><small>{card.source}{card.purchaseId ? ` · purchase ${card.purchaseId}` : ''}{card.buyerEmail ? ` · bought by ${card.buyerEmail}` : ''} · {money(card.balanceCents, card.currency)} of {money(card.initialCents, card.currency)} remaining · {card.status}{card.replacesPurchaseId ? ` · replaces purchase ${card.replacesPurchaseId}` : ''}{card.adminReason ? ` · ${card.adminReason}` : ''}{claimSummary(card)}</small></span>
           <div className="ecom-admin__actions">
+            {card.source === 'admin' && !purchase && card.status !== 'void' && <>
+              {card.lastCodeReplacement && <small className="ecom-admin__muted">Code •••• {card.lastCodeReplacement.previousCodeSuffix} replaced {day(card.lastCodeReplacement.createdAt)} · {card.lastCodeReplacement.reason}</small>}
+              <button type="button" className="ecom-admin__secondary" aria-disabled={blocked || !canIssue || !canReplaceCode(card)}
+                title={card.checkoutPending ? 'Wait until the checkout in progress completes or expires' : undefined}
+                onClick={() => selectReplacement(card)} aria-label={`Replace lost code for ${card.id}`}>Replace lost code</button>
+            </>}
             {purchase && card.status === 'active' && <form className="ecom-admin__actions" onSubmit={event => event.preventDefault()}>
               <input readOnly={blocked} name="reason" aria-label={`Reason to resend the claim link of ${purchase}`} placeholder="Reason to resend" minLength={8} maxLength={500} required />
               <button type="button" className="ecom-admin__secondary" aria-disabled={blocked} onClick={event => void resendClaim(event.currentTarget.form, card, purchase)} aria-label={`Resend claim link for ${card.id}`}>Resend claim link</button>

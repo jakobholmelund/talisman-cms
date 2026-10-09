@@ -3,7 +3,7 @@ import type { TalismanEnv } from 'talisman-cms/client';
 import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
 import { getGiftCardsAdmin, getGiftCardReviewsAdmin, getGiftCardKeyStatus, issueAdminGiftCard,
   setGiftCardActive, resolveGiftCardReview, reencryptGiftCardCodes, refundGiftCardTender,
-  refundGiftCardOnlyOrder, resendGiftCardClaimLink } from '../gift-cards';
+  refundGiftCardOnlyOrder, resendGiftCardClaimLink, replaceAdminGiftCardCode } from '../gift-cards';
 import { StoreSettingsError, reportStoreSettingsError } from '../store-settings';
 
 export const ALL: APIRoute = async ({ request }) => {
@@ -27,6 +27,7 @@ export const ALL: APIRoute = async ({ request }) => {
     const actor = String(authorization.user?.id ?? '');
     let result: unknown;
     if (body.action === 'issue') result = await issueAdminGiftCard(runtimeEnv, actor, body.data);
+    else if (body.action === 'replaceCode') result = await replaceAdminGiftCardCode(runtimeEnv, actor, body.data);
     else if (body.action === 'setActive' && typeof body.id === 'string') {
       result = await setGiftCardActive(runtimeEnv, body.id, body.active as boolean);
     } else if (body.action === 'resolveReview') result = await resolveGiftCardReview(runtimeEnv, actor, body.data);
