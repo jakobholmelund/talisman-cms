@@ -945,3 +945,24 @@ test('the plugin schema names only reconciliation columns the migrations create'
   }
   sqlite.close();
 });
+
+
+test('review history keeps completed decisions, staff names and tax reasons in a bounded list', async () => {
+  const { sqlite, DB } = database();
+  const order = await placeOrder(DB, 'review-history');
+  const now = Math.floor(Date.now() / 1000);
+  sqlite.prepare(`INSERT INTO galaxy_auth_user(id,name,email,created_at,updated_at) VALUES ('admin-1','Alex','staff@example.test',?,?)`).run(now,now);
+  sqlite.prepare(`UPDATE _ecommerce_orders SET reconcile_review_at=?,reconcile_last_error='session_missing' WHERE id=?`).run(now,order.id);
+  const reason = 'Corrected the provider setup';
+  assert.equal((await admin(DB, { action: 'retry', kind: 'order', id: order.id, reason })).status, 200);
+  for (let index=0; index<55; index++) sqlite.prepare(`INSERT INTO _ecommerce_tax_sync_decisions(id,order_id,action,actor,reason,created_at)
+    VALUES (?,?,'retry','deleted-staff','Tax cause corrected',?)`).run('tax-history-'+index,order.id,now-index-1);
+  const review = await admin(DB);
+  assert.equal(review.status,200); assert.equal(review.json.parkedCount,0);
+  assert.equal(review.json.history.length,50);
+  assert.equal(review.json.history[0].reason,reason); assert.equal(review.json.history[0].actorName,'Alex');
+  assert.equal(review.json.history[1].actorName,'deleted-staff');
+  assert.equal(review.json.history[1].kind,'tax_transaction');
+  assert.doesNotMatch(JSON.stringify(review.json.history),/staff@example|cs_test_|paymentIntent|token/);
+  sqlite.close();
+});

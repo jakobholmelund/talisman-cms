@@ -1,13 +1,14 @@
+import { adminActorNames } from './admin-actors';
 import { listTaxSyncReview } from './tax';
 import { z } from 'zod';
-import { and, eq, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb } from './db';
 import { bindCommerceApi, type CommerceApiOptions } from './api';
 import { RECONCILE_FAILURE_MESSAGES, RECONCILE_TABLES, completedCheckoutReturn, decisionInsert, isMissingSessionError,
   isOtherStripeModeSession, isProviderError, reconcileFailure, uncheckedSessionRefusal, type PaymentReturn, type ReconcileDecision,
   type ReconcileFailureCode, type ReconcileKind, type ReconcileTable } from './reconcile';
-import { giftCardPurchases, orders, reconcileDecisions } from './schema';
+import { giftCardPurchases, orders, reconcileDecisions, taxSyncDecisions } from './schema';
 import { runtimeStripeMode, stripeSessionMode } from './stripe-mode';
 
 /** Invalid input to a review action. The admin route answers it with 400. */
@@ -90,9 +91,22 @@ export async function listParkedCommerce(env: TalismanEnv) {
     db.get<{ count: number }>(sql`SELECT (SELECT COUNT(*) FROM _ecommerce_orders WHERE ${parked(orders)})
       + (SELECT COUNT(*) FROM _ecommerce_gift_card_purchases WHERE ${parked(giftCardPurchases)}) AS count`),
   ]);
+  const [paymentHistory, taxHistory] = await db.batch([
+    db.select().from(reconcileDecisions).orderBy(desc(reconcileDecisions.createdAt), desc(reconcileDecisions.id)).limit(50),
+    db.select().from(taxSyncDecisions).orderBy(desc(taxSyncDecisions.createdAt), desc(taxSyncDecisions.id)).limit(50),
+  ]);
+  const names = await adminActorNames(env, [...paymentHistory.map(row => row.adminActor), ...taxHistory.map(row => row.actor)]);
+  const history = [
+    ...paymentHistory.map(row => ({ id: row.id, kind: row.orderId ? 'order' : 'gift_card_purchase', subjectId: row.orderId ?? row.purchaseId!,
+      action: row.action, reason: row.reason, actor: row.adminActor, actorName: names.get(row.adminActor) ?? row.adminActor,
+      paymentReturned: row.paymentReturned, createdAt: row.createdAt.toISOString() })),
+    ...taxHistory.map(row => ({ id: row.id, kind: row.reversalId ? 'tax_reversal' : 'tax_transaction', subjectId: row.reversalId ?? row.orderId,
+      action: row.action, reason: row.reason, actor: row.actor, actorName: names.get(row.actor) ?? row.actor,
+      paymentReturned: null, createdAt: row.createdAt.toISOString() })),
+  ].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)).slice(0, 50);
   const storeMode = runtimeStripeMode(env);
   return {
-    storeMode,
+    storeMode, history,
     tax: await listTaxSyncReview(env),
     parkedCount: Number(counted?.count ?? 0),
     parked: rows.map((row) => {
