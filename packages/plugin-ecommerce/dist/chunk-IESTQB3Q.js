@@ -1,10 +1,10 @@
 import {
   INVENTORY_COLUMNS,
   fullRefundStatements
-} from "./chunk-4IG6PUVV.js";
+} from "./chunk-TLRIWP2Z.js";
 import {
   evaluateDiscountCode
-} from "./chunk-CQTWJTOM.js";
+} from "./chunk-YQVSWTGG.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
@@ -12,10 +12,10 @@ import {
   deliverCommerceEmail,
   deliverPendingCommerceEmails,
   fulfillCommerceOrder
-} from "./chunk-34DQPQAD.js";
+} from "./chunk-FZBVFNZR.js";
 import {
   adminActorNames
-} from "./chunk-HQYYNOMX.js";
+} from "./chunk-T4BAYRSK.js";
 import {
   RECONCILE_FAILURE_MESSAGES,
   RECONCILE_TABLES,
@@ -48,7 +48,7 @@ import {
   recordGiftCardPurchaseRefund,
   sessionLookupFailure,
   uncheckedSessionRefusal
-} from "./chunk-FXE7QHWH.js";
+} from "./chunk-XEY7CW6W.js";
 import {
   canonicalEmail,
   canonicalEmails,
@@ -58,7 +58,7 @@ import {
   hasCanonicalPurchase,
   referralReversalStatements,
   releaseReferralAwards
-} from "./chunk-QVXNRCNA.js";
+} from "./chunk-LM4JEW7F.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
@@ -67,7 +67,7 @@ import {
   PURCHASED_ORDER_STATUSES,
   claimInterval,
   hasPurchaseHistory
-} from "./chunk-MCHSKWPD.js";
+} from "./chunk-RQGEGKRJ.js";
 import {
   batchGroups,
   chunked,
@@ -75,7 +75,7 @@ import {
   commitBatch,
   errorText,
   runStatements
-} from "./chunk-S5M56U3H.js";
+} from "./chunk-NF2MUGI7.js";
 import {
   carts,
   componentReservations,
@@ -95,7 +95,7 @@ import {
   referralCodes,
   taxReversals,
   taxSyncDecisions
-} from "./chunk-7YP7VGC3.js";
+} from "./chunk-X3JP4EB3.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
@@ -1352,7 +1352,8 @@ async function createOrderFromCart(ctx, cartId, options) {
       ...item,
       priceAtPurchase: price,
       name: finalName,
-      usesComponents: tracksInventory && requiredComponents.length > 0
+      usesComponents: tracksInventory && requiredComponents.length > 0,
+      stockTargets: defaultAdapter.reservesInventory === false || !tracksInventory ? [] : requiredComponents.length ? requiredComponents.map((part) => ({ type: "component", id: part.id, units: part.quantity })) : inventoryTarget ? [{ type: inventoryTarget.type, id: inventoryTarget.id, units: 1 }] : []
     });
   }
   const componentDemand = aggregateComponentDemand(componentItems);

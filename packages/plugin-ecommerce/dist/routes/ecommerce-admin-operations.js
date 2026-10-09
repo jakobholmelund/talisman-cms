@@ -1,13 +1,21 @@
 import {
+  readCommerceAttention,
+  readStockOverview
+} from "../chunk-YMPSVPQN.js";
+import {
   CommerceOperationsConflict,
   listEmailRecovery,
-  readCommerceAttention,
-  readStockOverview,
+  listStockLocations,
+  readOrderWarehouse,
+  readStockHistory,
+  receiveOrderReturn,
+  recordParcelContents,
+  recordStockMovement,
   retryCommerceEmail
-} from "../chunk-YEAZUYW3.js";
-import "../chunk-HQYYNOMX.js";
-import "../chunk-S5M56U3H.js";
-import "../chunk-7YP7VGC3.js";
+} from "../chunk-T4BAYRSK.js";
+import "../chunk-NF2MUGI7.js";
+import "../chunk-X3JP4EB3.js";
+import "../chunk-NQUBOBQT.js";
 
 // src/routes/ecommerce-admin-operations.ts
 import { authorizeCmsRequest } from "talisman-cms/auth/guard";
@@ -28,6 +36,8 @@ var ALL = async ({ request }) => {
       const { view, ...params } = Object.fromEntries(url.searchParams);
       if (view === "attention") return Response.json(await readCommerceAttention(runtimeEnv), { headers });
       if (view === "emails") return Response.json(await listEmailRecovery(runtimeEnv, params), { headers });
+      if (view === "stockLocations") return Response.json(await listStockLocations(runtimeEnv, params), { headers });
+      if (view === "stockHistory") return Response.json(await readStockHistory(runtimeEnv, params), { headers });
       if (view === "stock") return Response.json(await readStockOverview(runtimeEnv, { ...params, view: params.inventory }), { headers });
       return Response.json({ error: "Choose an operations view" }, { status: 400, headers });
     }
@@ -37,12 +47,16 @@ var ALL = async ({ request }) => {
     } catch {
       return Response.json({ error: "Invalid request" }, { status: 400, headers });
     }
-    if (!body || body.action !== "retryEmail") return Response.json({ error: "Invalid email action" }, { status: 400, headers });
-    return Response.json({ result: await retryCommerceEmail(runtimeEnv, body.data, String(authorization.user?.id ?? "")) }, { headers });
+    const actor = String(authorization.user?.id ?? "");
+    if (body?.action === "warehouseRead") return Response.json(await readOrderWarehouse(runtimeEnv, body.data), { headers });
+    const actions = { retryEmail: retryCommerceEmail, parcelContents: recordParcelContents, receiveReturn: receiveOrderReturn, stockMovement: recordStockMovement };
+    const action = body?.action;
+    if (!Object.hasOwn(actions, action)) return Response.json({ error: "Invalid operations action" }, { status: 400, headers });
+    return Response.json({ result: await actions[action](runtimeEnv, body.data, actor) }, { headers });
   } catch (error) {
     if (error instanceof ZodError) return Response.json({ error: "Check the supplied fields and give a reason of 8 to 500 characters." }, { status: 400, headers });
     if (error instanceof CommerceOperationsConflict) return Response.json({ error: error.message }, { status: 409, headers });
-    console.error("[commerce:operations] Request failed");
+    console.error("[commerce:operations] Request failed", error instanceof Error && error.cause instanceof Error ? error.cause.message : error instanceof Error ? error.name : "Unknown error");
     return Response.json({ error: "Commerce operations could not be loaded or saved. Try again." }, { status: 500, headers });
   }
 };

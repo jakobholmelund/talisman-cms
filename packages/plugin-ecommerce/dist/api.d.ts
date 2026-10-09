@@ -350,6 +350,11 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                     quantity: number;
                     priceAtPurchase: number;
                     usesComponents?: boolean;
+                    stockTargets?: Array<{
+                        type: "product" | "variant" | "stock" | "component";
+                        id: string;
+                        units: number;
+                    }>;
                 }[];
                 totalAmount: number;
                 currency: string;
@@ -429,6 +434,11 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                     quantity: number;
                     priceAtPurchase: number;
                     usesComponents?: boolean;
+                    stockTargets?: Array<{
+                        type: "product" | "variant" | "stock" | "component";
+                        id: string;
+                        units: number;
+                    }>;
                 }[];
                 totalAmount: number;
                 currency: string;
@@ -508,6 +518,11 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                     quantity: number;
                     priceAtPurchase: number;
                     usesComponents?: boolean;
+                    stockTargets?: Array<{
+                        type: "product" | "variant" | "stock" | "component";
+                        id: string;
+                        units: number;
+                    }>;
                 }[];
                 totalAmount: number;
                 currency: string;
@@ -608,6 +623,11 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                     quantity: number;
                     priceAtPurchase: number;
                     usesComponents?: boolean;
+                    stockTargets?: Array<{
+                        type: "product" | "variant" | "stock" | "component";
+                        id: string;
+                        units: number;
+                    }>;
                 }[];
                 totalAmount: number;
                 currency: string;
@@ -719,6 +739,11 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 quantity: number;
                 priceAtPurchase: number;
                 usesComponents?: boolean;
+                stockTargets?: Array<{
+                    type: "product" | "variant" | "stock" | "component";
+                    id: string;
+                    units: number;
+                }>;
             }[];
             totalAmount: number;
             currency: string;
@@ -794,6 +819,11 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 quantity: number;
                 priceAtPurchase: number;
                 usesComponents?: boolean;
+                stockTargets?: Array<{
+                    type: "product" | "variant" | "stock" | "component";
+                    id: string;
+                    units: number;
+                }>;
             }[];
             totalAmount: number;
             currency: string;
@@ -869,6 +899,11 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 quantity: number;
                 priceAtPurchase: number;
                 usesComponents?: boolean;
+                stockTargets?: Array<{
+                    type: "product" | "variant" | "stock" | "component";
+                    id: string;
+                    units: number;
+                }>;
             }[];
             totalAmount: number;
             currency: string;
@@ -949,6 +984,11 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 quantity: number;
                 priceAtPurchase: number;
                 usesComponents?: boolean;
+                stockTargets?: Array<{
+                    type: "product" | "variant" | "stock" | "component";
+                    id: string;
+                    units: number;
+                }>;
             }[];
             totalAmount: number;
             currency: string;
@@ -1051,6 +1091,11 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                 quantity: number;
                 priceAtPurchase: number;
                 usesComponents?: boolean;
+                stockTargets?: Array<{
+                    type: "product" | "variant" | "stock" | "component";
+                    id: string;
+                    units: number;
+                }>;
             }[];
             totalAmount: number;
             currency: string;

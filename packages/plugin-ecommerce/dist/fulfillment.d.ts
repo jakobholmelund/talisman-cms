@@ -103,9 +103,9 @@ declare function listCommerceOrdersAdmin(env: TalismanEnv, options?: {
         amounts: OrderAmount[];
         shipments: Shipment[];
         fulfillmentEvents: {
-            orderId: string;
             id: string;
             createdAt: Date;
+            orderId: string;
             adminActor: string;
             note: string;
             kind: "shipment" | "correction" | "reopen" | "complete";
@@ -113,8 +113,9 @@ declare function listCommerceOrdersAdmin(env: TalismanEnv, options?: {
     }[];
 }>;
 /**
- * Records a shipment of a paid real order that has not shipped in full. It completes the order
- * unless `completesOrder` is false, which records one parcel of a split shipment. The database
+ * Records a shipment of a paid real order that has not shipped in full. With `items`, quantities
+ * complete the order automatically and `completesOrder` is ignored. Legacy callers without item
+ * allocations retain their manual final-parcel flag. The database
  * trigger enforces the same rules. A later refund or dispute changes only the payment status.
  * The buyer is emailed a shipment notice with the carrier and tracking number; a failed send never
  * fails the shipment, and the scheduled job retries it.

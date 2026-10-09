@@ -164,7 +164,7 @@ function shipmentEmail({ store, order, shipment, update }) {
         rest: "The rest of your order is on its way"
       }[part],
       paragraphs,
-      sections: rows.length ? [{ title: "Shipment", rows }] : [],
+      sections: [...rows.length ? [{ title: "Shipment", rows }] : [], ...shipment.items?.length ? [{ title: "Items in this parcel", rows: shipment.items.map((i) => ({ label: `${i.quantity} \xD7 ${i.name}`, value: i.sku ? `SKU ${i.sku}` : "" })) }] : []],
       footer: [`Questions about your delivery? Please ${contact(store)} and mention the order number.`]
     })
   };

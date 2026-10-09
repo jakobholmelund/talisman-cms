@@ -1,6 +1,11 @@
 import {
-  adminActorNames
-} from "./chunk-HQYYNOMX.js";
+  adminActorNames,
+  describeOrderItems,
+  orderAmountColumns,
+  orderAmounts,
+  parcelContentsValue,
+  parcelItemsSchema
+} from "./chunk-T4BAYRSK.js";
 import {
   COMMERCE_EMAIL_LEASE_SECONDS,
   COMMERCE_EMAIL_MAX_AGE_SECONDS,
@@ -14,35 +19,39 @@ import {
   sendCommerceEmailNow,
   unclaimedAt,
   waitingEmailsResult
-} from "./chunk-FXE7QHWH.js";
+} from "./chunk-XEY7CW6W.js";
 import {
   batchGroups,
   chunked,
   commerceDb,
   errorText
-} from "./chunk-S5M56U3H.js";
+} from "./chunk-NF2MUGI7.js";
 import {
   creditLedger,
   emailDeliveries,
   fulfillments,
   giftCardLedger,
   orders,
-  restocks
-} from "./chunk-7YP7VGC3.js";
+  parcelContents,
+  restocks,
+  returnReceipts
+} from "./chunk-X3JP4EB3.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
 import {
   orderConfirmationEmail,
   shipmentEmail
-} from "./chunk-NMGICNSV.js";
+} from "./chunk-SPRRFCF5.js";
 
 // src/order-activity.ts
 import { and, eq, inArray } from "drizzle-orm";
 async function loadOrderActivity(env, orderIds) {
   const db = commerceDb(env);
   const groups = chunked(orderIds);
-  const { stock, gift, credit, parcels, confirmations } = await batchGroups(db, {
+  const { stock, gift, credit, parcels, confirmations, contents, returns } = await batchGroups(db, {
+    contents: groups.map((ids) => db.select().from(parcelContents).where(inArray(parcelContents.orderId, ids))),
+    returns: groups.map((ids) => db.select().from(returnReceipts).where(inArray(returnReceipts.orderId, ids))),
     stock: groups.map((ids) => db.select().from(restocks).where(inArray(restocks.orderId, ids))),
     gift: groups.map((ids) => db.select().from(giftCardLedger).where(and(inArray(giftCardLedger.orderId, ids), eq(giftCardLedger.kind, "refund_restore")))),
     credit: groups.map((ids) => db.select().from(creditLedger).where(and(inArray(creditLedger.orderId, ids), eq(creditLedger.kind, "purchase_credit_refund")))),
@@ -50,7 +59,7 @@ async function loadOrderActivity(env, orderIds) {
     confirmations: groups.map((ids) => db.select().from(emailDeliveries).where(and(inArray(emailDeliveries.subjectId, ids), eq(emailDeliveries.kind, "order_confirmation"))))
   });
   const { notices } = await batchGroups(db, { notices: chunked(parcels.map((row) => row.id)).map((ids) => db.select().from(emailDeliveries).where(and(inArray(emailDeliveries.subjectId, ids), inArray(emailDeliveries.kind, ["shipment", "shipment_update"])))) });
-  const names = await adminActorNames(env, [...stock, ...parcels].map((row) => row.adminActor));
+  const names = await adminActorNames(env, [...stock, ...parcels].map((row) => row.adminActor).concat([...contents, ...returns].map((row) => row.actor)));
   const parcelOrders = new Map(parcels.map((row) => [row.id, row.orderId]));
   const activity = /* @__PURE__ */ new Map();
   function add(orderId, event) {
@@ -66,6 +75,8 @@ async function loadOrderActivity(env, orderIds) {
     amountCents: null,
     email: null
   });
+  for (const row of contents) add(row.orderId, { ...base(row.id, "parcel_contents", row.createdAt, `${row.items.reduce((n, i) => n + i.quantity, 0)} units in parcel ${row.fulfillmentId}: ${row.reason}`), actor: row.actor, actorName: names.get(row.actor) ?? row.actor });
+  for (const row of returns) add(row.orderId, { ...base(row.id, "return_intake", row.createdAt, `${row.items.reduce((n, i) => n + i.quantity, 0)} units received: ${row.reason}`), actor: row.actor, actorName: names.get(row.actor) ?? row.actor });
   for (const row of stock) add(row.orderId, { ...base(
     row.id,
     "restock",
@@ -100,79 +111,6 @@ async function loadOrderActivity(env, orderIds) {
 // src/fulfillment.ts
 import { and as and3, asc, count, desc, eq as eq3, sql as sql2 } from "drizzle-orm";
 import { z } from "zod";
-
-// src/order-items.ts
-var orderAmountColumns = {
-  subtotalAmount: orders.subtotalAmount,
-  discountCode: orders.discountCode,
-  discountAmount: orders.discountAmount,
-  creditApplied: orders.creditApplied,
-  shippingAmount: orders.shippingAmount,
-  shippingLabel: orders.shippingLabel,
-  taxAmount: orders.taxAmount,
-  taxBehavior: orders.taxBehavior,
-  giftCardApplied: orders.giftCardApplied,
-  totalAmount: orders.totalAmount,
-  providerRefundedCents: orders.providerRefundedCents,
-  giftCardRefundedCents: orders.giftCardRefundedCents
-};
-function orderAmounts(row) {
-  const amounts = [{ key: "itemsSubtotal", label: "Items subtotal", cents: row.subtotalAmount || row.totalAmount }];
-  if (row.discountAmount > 0) {
-    amounts.push({ key: "discount", label: row.discountCode ? `Discount (${row.discountCode})` : "Discount", cents: -row.discountAmount });
-  }
-  if (row.creditApplied > 0) amounts.push({ key: "storeCredit", label: "Store credit", cents: -row.creditApplied });
-  if (row.shippingAmount > 0 || row.shippingLabel) {
-    amounts.push({ key: "shipping", label: row.shippingLabel ? `Shipping (${row.shippingLabel})` : "Shipping", cents: row.shippingAmount });
-  }
-  if (row.taxAmount > 0) {
-    amounts.push(row.taxBehavior === "inclusive" ? { key: "taxIncluded", label: "Tax included in the prices", cents: row.taxAmount } : { key: "tax", label: "Tax", cents: row.taxAmount });
-  }
-  if (row.giftCardApplied > 0) amounts.push({ key: "giftCard", label: "Gift card", cents: -row.giftCardApplied });
-  amounts.push({ key: "charged", label: "Charged by the payment provider", cents: row.totalAmount });
-  if (row.providerRefundedCents > 0) {
-    amounts.push({ key: "providerRefunded", label: "Refunded by the payment provider", cents: row.providerRefundedCents });
-  }
-  if (row.giftCardRefundedCents > 0) {
-    amounts.push({ key: "giftCardRefunded", label: "Refunded to the gift card", cents: row.giftCardRefundedCents });
-  }
-  return amounts;
-}
-async function describeOrderItems(env, items) {
-  const db = commerceDb(env);
-  const productIds = [...new Set(items.map((item) => item.productId))];
-  const variantIds = [...new Set(items.flatMap((item) => item.variantId ? [item.variantId] : []))];
-  const rows = await batchGroups(db, {
-    products: chunked(productIds).map((ids) => db.query.products.findMany({
-      columns: { id: true, name: true, sku: true },
-      where: { id: { in: ids } }
-    })),
-    values: chunked(variantIds).map((ids) => db.query.productVariantValues.findMany({
-      columns: { id: true, value: true, sku: true },
-      where: { id: { in: ids } },
-      with: { productVariant: { columns: { name: true, sku: true }, with: { variant: { columns: { name: true } } } } }
-    })),
-    // A variant group without values is sold as itself.
-    groups: chunked(variantIds).map((ids) => db.query.productVariants.findMany({
-      columns: { id: true, name: true, sku: true },
-      where: { id: { in: ids } }
-    }))
-  });
-  const products = new Map(rows.products.map((row) => [row.id, row]));
-  const values = new Map(rows.values.map((row) => [row.id, row]));
-  const groups = new Map(rows.groups.map((row) => [row.id, row]));
-  return items.map((item) => {
-    const product = products.get(item.productId);
-    const value = item.variantId ? values.get(item.variantId) : void 0;
-    const group = item.variantId && !value ? groups.get(item.variantId) : void 0;
-    return {
-      ...item,
-      productName: product?.name ?? null,
-      variantLabel: value ? `${value.productVariant.variant?.name ?? value.productVariant.name}: ${value.value}` : group?.name ?? null,
-      sku: (value ? value.sku || value.productVariant.sku : group?.sku) || product?.sku || null
-    };
-  });
-}
 
 // src/commerce-emails.ts
 import { and as and2, eq as eq2, inArray as inArray2, lte, sql } from "drizzle-orm";
@@ -248,11 +186,19 @@ function shipmentComposer(update) {
       id: orders.id,
       customerEmail: orders.customerEmail,
       paymentProvider: orders.paymentProvider,
+      items: orders.items,
       createdAt: orders.createdAt
     }).from(orders).where(eq2(orders.id, shipment.orderId)).get();
     if (!order || (order.paymentProvider ?? "stripe") === "admin_test") return { cancel: "not_found" };
     const to = bareEmailAddress(order.customerEmail);
     if (!to) return { fail: "invalid_recipient" };
+    const contents = await db.query.parcelContents.findMany({ where: { orderId: order.id } });
+    const parcel = contents.find((p) => p.fulfillmentId === shipment.id);
+    const earlierIds = new Set(rows.slice(0, index + 1).filter((p) => p.kind === "shipment").map((p) => p.id));
+    const known = contents.filter((p) => earlierIds.has(p.fulfillmentId));
+    const allKnown = known.length === earlierIds.size;
+    const completesOrder = parcel && allKnown ? order.items.every((line, lineIndex) => known.reduce((n, p) => n + (p.items.find((i) => i.lineIndex === lineIndex)?.quantity ?? 0), 0) >= line.quantity) : shipment.completesOrder;
+    const described = parcel ? await describeOrderItems(env, parcel.items.map((i) => ({ ...order.items[i.lineIndex], quantity: i.quantity }))) : [];
     const email = {
       store: setup.store,
       order: { id: order.id, placedAt: order.createdAt },
@@ -262,7 +208,8 @@ function shipmentComposer(update) {
         // A shipment row may hold an empty string where there is no value.
         carrier: current.carrier || null,
         trackingNumber: current.trackingNumber || null,
-        completesOrder: shipment.completesOrder,
+        completesOrder,
+        items: described.map((i) => ({ name: [i.productName || i.productId, i.variantLabel].filter(Boolean).join(" / "), sku: i.sku, quantity: i.quantity })),
         earlierShipments: rows.slice(0, index).filter((row) => row.kind === "shipment").length
       },
       update
@@ -353,6 +300,7 @@ var shipmentSchema = z.object({
   trackingNumber: optionalText(150),
   note: z.string().trim().min(8).max(500),
   completesOrder: z.boolean().default(true),
+  items: parcelItemsSchema.optional(),
   requestKey: z.string().trim().min(8).max(128).optional()
 }).strict();
 var correctionSchema = z.object({
@@ -387,19 +335,27 @@ async function loadShipments(env, orderIds) {
   const { rows } = await batchGroups(db, {
     rows: chunked(orderIds).map((ids) => db.query.fulfillments.findMany({
       where: { orderId: { in: ids } },
+      with: { contents: true, order: { columns: { items: true } } },
       orderBy: (_table, { sql: sql3 }) => sql3`rowid`
     }))
   });
   const shipments = /* @__PURE__ */ new Map();
   const byOrder = /* @__PURE__ */ new Map();
+  const counts = /* @__PURE__ */ new Map();
+  const unknown = /* @__PURE__ */ new Set();
   for (const row of rows) {
     if (row.kind === "shipment") {
+      const shipped = counts.get(row.orderId) ?? /* @__PURE__ */ new Map();
+      if (!row.contents) unknown.add(row.orderId);
+      else for (const item of row.contents.items) shipped.set(item.lineIndex, (shipped.get(item.lineIndex) ?? 0) + item.quantity);
+      counts.set(row.orderId, shipped);
+      const completes = row.contents && !unknown.has(row.orderId) ? row.order.items.every((item, index) => (shipped.get(index) ?? 0) >= item.quantity) : row.completesOrder;
       const shipment2 = {
         id: row.id,
         createdAt: row.createdAt.toISOString(),
         adminActor: row.adminActor,
         note: row.note,
-        completesOrder: row.completesOrder,
+        completesOrder: completes,
         carrier: row.carrier,
         trackingNumber: row.trackingNumber,
         recorded: { carrier: row.carrier, trackingNumber: row.trackingNumber },
@@ -503,8 +459,13 @@ async function fulfillCommerceOrder(env, actor, input) {
   const replay = async () => {
     const previous2 = await db.select().from(fulfillments).where(eq3(fulfillments.id, id)).get();
     if (!previous2) return null;
-    if (previous2.kind !== "shipment" || previous2.note !== values.note || previous2.carrier !== values.carrier || previous2.trackingNumber !== values.trackingNumber || previous2.completesOrder !== values.completesOrder) {
+    if (previous2.kind !== "shipment" || previous2.note !== values.note || previous2.carrier !== values.carrier || previous2.trackingNumber !== values.trackingNumber || previous2.completesOrder !== (values.items ? false : values.completesOrder)) {
       throw new FulfillmentInputError("The shipment request key was already used with other details");
+    }
+    {
+      const contents2 = await db.select().from(parcelContents).where(eq3(parcelContents.fulfillmentId, id)).get();
+      const expected = values.items ? await parcelContentsValue(values.orderId, id, values.items, actor, values.note, "shipment") : null;
+      if (!!contents2 !== !!expected || contents2 && expected && contents2.fingerprint !== expected.fingerprint) throw new FulfillmentInputError("Shipment key already used with other contents");
     }
     const current2 = await db.select({ status: orders.status, fulfillmentStatus: orders.fulfillmentStatus }).from(orders).where(eq3(orders.id, values.orderId)).get();
     return { fulfillmentId: previous2.id, orderId: values.orderId, ...current2, duplicate: true };
@@ -521,6 +482,10 @@ async function fulfillCommerceOrder(env, actor, input) {
   if (order.fulfillmentStatus === "fulfilled") throw new Error("Order has already shipped in full");
   if (!SHIPPABLE_STATUSES.includes(order.status)) throw new Error(`A ${order.status.replaceAll("_", " ")} order cannot ship`);
   const now = Math.floor(Date.now() / 1e3);
+  const contents = values.items ? await parcelContentsValue(values.orderId, id, values.items, actor, values.note, "shipment") : null;
+  if (contents && await db.select({ id: fulfillments.id }).from(fulfillments).where(sql2`${fulfillments.orderId} = ${values.orderId} AND ${fulfillments.kind} = 'shipment' AND NOT EXISTS (SELECT 1 FROM _ecommerce_parcel_contents p WHERE p.fulfillment_id = _ecommerce_fulfillments.id)`).get()) {
+    throw new FulfillmentInputError("Record the contents of earlier parcels before shipping more items.");
+  }
   try {
     await db.batch([
       db.insert(fulfillments).values({
@@ -528,18 +493,20 @@ async function fulfillCommerceOrder(env, actor, input) {
         requestKey,
         orderId: values.orderId,
         kind: "shipment",
-        completesOrder: values.completesOrder,
+        completesOrder: contents ? false : values.completesOrder,
         adminActor: actor,
         carrier: values.carrier,
         trackingNumber: values.trackingNumber,
         note: values.note,
         createdAt: new Date(now * 1e3)
       }),
+      ...contents ? [db.insert(parcelContents).values(contents)] : [],
       db.run(commerceEmailStatement("shipment", id, now))
     ]);
   } catch (cause) {
     const previous2 = await replay();
     if (previous2) return previous2;
+    if (errorText(cause).includes("Parcel")) throw new Error("Parcel quantities exceed the order or earlier parcel contents are missing. Reload the order.");
     throw refusal(cause, "Order is not ready for fulfillment");
   }
   await deliverCommerceEmail(env, "shipment", id);

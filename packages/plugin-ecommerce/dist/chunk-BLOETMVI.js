@@ -1,6 +1,6 @@
 import {
   clientOverLimit
-} from "./chunk-MCHSKWPD.js";
+} from "./chunk-RQGEGKRJ.js";
 
 // src/basket-limits.ts
 var NEW_BASKETS_PER_NETWORK_PER_HOUR = 20;

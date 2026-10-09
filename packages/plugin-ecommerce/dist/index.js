@@ -11,29 +11,29 @@ import {
   bindCommerceApi,
   reconcileCommerce,
   shippingOptionsFor
-} from "./chunk-V4AFX4JI.js";
-import "./chunk-4IG6PUVV.js";
-import "./chunk-CQTWJTOM.js";
+} from "./chunk-IESTQB3Q.js";
+import "./chunk-TLRIWP2Z.js";
+import "./chunk-YQVSWTGG.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
 import {
   deliverPendingCommerceEmails
-} from "./chunk-34DQPQAD.js";
-import "./chunk-HQYYNOMX.js";
+} from "./chunk-FZBVFNZR.js";
+import "./chunk-T4BAYRSK.js";
 import {
   COUNTRY_CODES,
   StoreSettingsError,
   isCountryCode,
   readStoreCurrency,
   readStoreSettings
-} from "./chunk-FXE7QHWH.js";
-import "./chunk-QVXNRCNA.js";
+} from "./chunk-XEY7CW6W.js";
+import "./chunk-LM4JEW7F.js";
 import "./chunk-GNU6N22K.js";
-import "./chunk-MCHSKWPD.js";
+import "./chunk-RQGEGKRJ.js";
 import {
   commerceDb
-} from "./chunk-S5M56U3H.js";
+} from "./chunk-NF2MUGI7.js";
 import {
   carts,
   categories,
@@ -58,6 +58,7 @@ import {
   giftCardReviews,
   giftCards,
   orders,
+  parcelContents,
   productVariantValues,
   productVariants,
   products,
@@ -67,14 +68,17 @@ import {
   referralSettings,
   referrals,
   restocks,
+  returnReceipts,
+  returnStock,
   signInTokens,
+  stockMovements,
   stocks,
   tags,
   variantComponents,
   variants
-} from "./chunk-7YP7VGC3.js";
+} from "./chunk-X3JP4EB3.js";
 import "./chunk-NQUBOBQT.js";
-import "./chunk-NMGICNSV.js";
+import "./chunk-SPRRFCF5.js";
 import {
   SUPPORTED_CURRENCIES,
   currencyMinorUnits,
@@ -948,6 +952,40 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
             "reason"
           ]),
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "reconcileDecisions", idColumn: "id" }
+        });
+      }
+      if (inject) {
+        collections.push({
+          name: "Parcel Contents",
+          slug: "_ecommerce_parcel_contents",
+          adminSection: "commerce",
+          readOnly: true,
+          fields: nativeFields(parcelContents, ["id", "orderId", "fulfillmentId", "source", "actor", "reason", "createdAt"]),
+          nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: "parcelContents", idColumn: "id" }
+        });
+        collections.push({
+          name: "Return Receipts",
+          slug: "_ecommerce_return_receipts",
+          adminSection: "commerce",
+          readOnly: true,
+          fields: nativeFields(returnReceipts, ["id", "orderId", "actor", "reason", "createdAt"]),
+          nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: "returnReceipts", idColumn: "id" }
+        });
+        collections.push({
+          name: "Return Stock",
+          slug: "_ecommerce_return_stock",
+          adminSection: "commerce",
+          readOnly: true,
+          fields: nativeFields(returnStock, ["id", "orderId", "receiptId", "reservationType", "reservationId", "targetType", "targetId", "quantity"]),
+          nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: "returnStock", idColumn: "id" }
+        });
+        collections.push({
+          name: "Stock Movements",
+          slug: "_ecommerce_stock_movements",
+          adminSection: "commerce",
+          readOnly: true,
+          fields: nativeFields(stockMovements, ["id", "targetType", "targetId", "kind", "delta", "beforeQuantity", "afterQuantity", "actor", "reason", "createdAt"]),
+          nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: "stockMovements", idColumn: "id" }
         });
       }
       for (const collection of collections) {

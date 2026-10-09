@@ -265,6 +265,7 @@ var componentReservations = sqliteTable("_ecommerce_component_reservations", {
   releasedAt: integer("released_at", { mode: "timestamp" })
 }, (table) => [
   uniqueIndex("component_reservation_unique").on(table.orderId, table.componentId),
+  index("_ecommerce_component_reservations_target_idx").on(table.componentId),
   check("component_reservation_quantity_positive", money(table.quantity, "positive"))
 ]);
 var RESERVATION_TARGET_TYPES = ["product", "variant", "stock"];
@@ -277,6 +278,7 @@ var inventoryReservations = sqliteTable("_ecommerce_inventory_reservations", {
   releasedAt: integer("released_at", { mode: "timestamp" })
 }, (table) => [
   uniqueIndex("inventory_reservation_unique").on(table.orderId, table.targetType, table.targetId),
+  index("_ecommerce_inventory_reservations_target_idx").on(table.targetType, table.targetId),
   check("inventory_reservation_target_type", oneOf(table.targetType, RESERVATION_TARGET_TYPES)),
   check("inventory_reservation_quantity_positive", money(table.quantity, "positive"))
 ]);
@@ -711,6 +713,7 @@ var restocks = sqliteTable("_ecommerce_restocks", {
 }, (table) => [
   uniqueIndex("_ecommerce_restocks_reservation_unique").on(table.reservationType, table.reservationId),
   index("_ecommerce_restocks_order_idx").on(table.orderId, table.createdAt),
+  index("_ecommerce_restocks_target_idx").on(table.targetType, table.targetId, table.createdAt),
   check("restock_reservation_type", oneOf(table.reservationType, RESTOCK_RESERVATION_TYPES)),
   check("restock_target_type", oneOf(table.targetType, RESTOCK_TARGET_TYPES)),
   check("restock_quantity_positive", money(table.quantity, "positive")),
@@ -835,7 +838,88 @@ var taxSyncDecisions = sqliteTable("_ecommerce_tax_sync_decisions", {
   check("tax_sync_reason", trimmed(table.reason, 8)),
   check("tax_sync_attach_id", sql`(${table.action} = 'attach') = (${table.providerId} IS NOT NULL)`)
 ]);
+var PARCEL_CONTENT_SOURCES = ["shipment", "backfill"];
+var parcelContents = sqliteTable("_ecommerce_parcel_contents", {
+  id: text("id").primaryKey(),
+  fulfillmentId: text("fulfillment_id").notNull().references(() => fulfillments.id),
+  orderId: text("order_id").notNull().references(() => orders.id),
+  items: text("items", { mode: "json" }).$type().notNull(),
+  source: text("source", { enum: PARCEL_CONTENT_SOURCES }).notNull(),
+  actor: text("actor").notNull(),
+  reason: text("reason").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+}, (t) => [
+  uniqueIndex("_ecommerce_parcel_contents_shipment_unique").on(t.fulfillmentId),
+  index("_ecommerce_parcel_contents_order_idx").on(t.orderId),
+  check("parcel_items_array", sql`json_valid(${t.items}) AND json_type(${t.items}) = 'array' AND json_array_length(${t.items}) > 0`),
+  check("parcel_source", oneOf(t.source, PARCEL_CONTENT_SOURCES)),
+  check("parcel_actor", filled(t.actor)),
+  check("parcel_reason", trimmed(t.reason, 8))
+]);
+var RETURN_CONDITIONS = ["sellable", "damaged", "inspection"];
+var returnReceipts = sqliteTable("_ecommerce_return_receipts", {
+  id: text("id").primaryKey(),
+  orderId: text("order_id").notNull().references(() => orders.id),
+  items: text("items", { mode: "json" }).$type().notNull(),
+  actor: text("actor").notNull(),
+  reason: text("reason").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+}, (t) => [
+  index("_ecommerce_return_receipts_order_idx").on(t.orderId, t.createdAt),
+  check("return_items_array", sql`json_valid(${t.items}) AND json_type(${t.items}) = 'array' AND json_array_length(${t.items}) > 0`),
+  check("return_actor", filled(t.actor)),
+  check("return_reason", trimmed(t.reason, 8))
+]);
+var returnStock = sqliteTable("_ecommerce_return_stock", {
+  id: text("id").primaryKey(),
+  receiptId: text("receipt_id").notNull().references(() => returnReceipts.id),
+  orderId: text("order_id").notNull().references(() => orders.id),
+  reservationType: text("reservation_type", { enum: RESTOCK_RESERVATION_TYPES }).notNull(),
+  reservationId: text("reservation_id").notNull(),
+  targetType: text("target_type", { enum: RESTOCK_TARGET_TYPES }).notNull(),
+  targetId: text("target_id").notNull(),
+  quantity: integer("quantity").notNull()
+}, (t) => [
+  uniqueIndex("_ecommerce_return_stock_receipt_unique").on(t.receiptId, t.reservationType, t.reservationId),
+  index("_ecommerce_return_stock_reservation_idx").on(t.reservationType, t.reservationId),
+  index("_ecommerce_return_stock_order_idx").on(t.orderId),
+  index("_ecommerce_return_stock_target_idx").on(t.targetType, t.targetId),
+  check("return_stock_reservation_type", oneOf(t.reservationType, RESTOCK_RESERVATION_TYPES)),
+  check("return_stock_target_type", oneOf(t.targetType, RESTOCK_TARGET_TYPES)),
+  check("return_stock_quantity", money(t.quantity, "positive"))
+]);
+var STOCK_MOVEMENT_KINDS = ["receipt", "correction"];
+var stockMovements = sqliteTable("_ecommerce_stock_movements", {
+  id: text("id").primaryKey(),
+  targetType: text("target_type", { enum: RESTOCK_TARGET_TYPES }).notNull(),
+  targetId: text("target_id").notNull(),
+  kind: text("kind", { enum: STOCK_MOVEMENT_KINDS }).notNull(),
+  delta: integer("delta").notNull(),
+  beforeQuantity: integer("before_quantity").notNull(),
+  afterQuantity: integer("after_quantity").notNull(),
+  expectedUpdatedAt: integer("expected_updated_at", { mode: "timestamp" }).notNull(),
+  actor: text("actor").notNull(),
+  reason: text("reason").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+}, (t) => [
+  index("_ecommerce_stock_movements_target_idx").on(t.targetType, t.targetId, t.createdAt),
+  check("stock_movement_target", oneOf(t.targetType, RESTOCK_TARGET_TYPES)),
+  check("stock_movement_kind", oneOf(t.kind, STOCK_MOVEMENT_KINDS)),
+  check("stock_movement_delta", sql`${t.delta} <> 0 AND (${t.kind} <> 'receipt' OR ${t.delta} > 0)`),
+  check("stock_movement_before", money(t.beforeQuantity, "nonnegative")),
+  check("stock_movement_after", money(t.afterQuantity, "nonnegative")),
+  check("stock_movement_balance", sql`${t.afterQuantity} = ${t.beforeQuantity} + ${t.delta}`),
+  check("stock_movement_actor", filled(t.actor)),
+  check("stock_movement_reason", trimmed(t.reason, 8))
+]);
 var tables = {
+  parcelContents,
+  returnReceipts,
+  returnStock,
+  stockMovements,
   carts,
   orders,
   payments,
@@ -901,6 +985,9 @@ var relations = defineRelations(tables, (r) => ({
     componentReservations: r.many.componentReservations(),
     inventoryReservations: r.many.inventoryReservations(),
     fulfillments: r.many.fulfillments(),
+    parcelContents: r.many.parcelContents(),
+    returnReceipts: r.many.returnReceipts(),
+    returnStock: r.many.returnStock(),
     referral: r.one.referrals({ from: r.orders.id, to: r.referrals.orderId }),
     creditLedger: r.many.creditLedger(),
     discountRedemption: r.one.discountRedemptions({ from: r.orders.id, to: r.discountRedemptions.orderId }),
@@ -1020,7 +1107,17 @@ var relations = defineRelations(tables, (r) => ({
     /** The order an order-status session shows; null for an account session. */
     order: r.one.orders({ from: r.customerSessions.orderId, to: r.orders.id })
   },
+  parcelContents: {
+    order: r.one.orders({ from: r.parcelContents.orderId, to: r.orders.id, optional: false }),
+    fulfillment: r.one.fulfillments({ from: r.parcelContents.fulfillmentId, to: r.fulfillments.id, optional: false })
+  },
+  returnReceipts: { order: r.one.orders({ from: r.returnReceipts.orderId, to: r.orders.id, optional: false }), stock: r.many.returnStock() },
+  returnStock: {
+    receipt: r.one.returnReceipts({ from: r.returnStock.receiptId, to: r.returnReceipts.id, optional: false }),
+    order: r.one.orders({ from: r.returnStock.orderId, to: r.orders.id, optional: false })
+  },
   fulfillments: {
+    contents: r.one.parcelContents(),
     order: r.one.orders({ from: r.fulfillments.orderId, to: r.orders.id, optional: false }),
     /** The shipment a correction restates. */
     corrects: r.one.fulfillments({ from: r.fulfillments.correctsId, to: r.fulfillments.id, alias: "fulfillment_corrections" }),
@@ -1197,5 +1294,12 @@ export {
   shopperAudits,
   TAX_SYNC_ACTIONS,
   taxSyncDecisions,
+  PARCEL_CONTENT_SOURCES,
+  parcelContents,
+  RETURN_CONDITIONS,
+  returnReceipts,
+  returnStock,
+  STOCK_MOVEMENT_KINDS,
+  stockMovements,
   relations
 };

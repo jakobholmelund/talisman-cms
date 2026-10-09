@@ -86,6 +86,12 @@ interface ShipmentEmail {
         completesOrder: boolean;
         /** Parcels of the order recorded before this one. */
         earlierShipments: number;
+        /** Actual parcel contents, absent for legacy shipments without item allocations. */
+        items?: Array<{
+            name: string;
+            sku: string | null;
+            quantity: number;
+        }>;
     };
     /** True for the notice sent after a correction changed the carrier or tracking number. */
     update: boolean;

@@ -8,7 +8,7 @@ import {
   renderCommerceEmail,
   shipmentEmail,
   shopperSignInEmail
-} from "./chunk-NMGICNSV.js";
+} from "./chunk-SPRRFCF5.js";
 import "./chunk-2UYSCNNW.js";
 export {
   emailLink,

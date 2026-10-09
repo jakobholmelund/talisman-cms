@@ -29,6 +29,7 @@ type OrderReservation = {
     label: string | null;
     sku: string | null;
     quantity: number;
+    intakeRestockedQuantity: number;
     /** When the stock went back: by a restock, or by the cancellation of an unpaid checkout. */
     returnedAt: string | null;
     restock: {

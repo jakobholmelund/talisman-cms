@@ -2,7 +2,7 @@ import {
   batchGroups,
   chunked,
   commerceDb
-} from "./chunk-S5M56U3H.js";
+} from "./chunk-NF2MUGI7.js";
 import {
   componentReservations,
   components,
@@ -11,8 +11,9 @@ import {
   productVariants,
   products,
   restocks,
+  returnStock,
   stocks
-} from "./chunk-7YP7VGC3.js";
+} from "./chunk-X3JP4EB3.js";
 
 // src/order-adjustments.ts
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
@@ -82,6 +83,7 @@ async function loadReservations(env, orderIds) {
   const catalogNames = { columns: { name: true, sku: true } };
   const restock = { columns: { adminActor: true, reason: true, createdAt: true } };
   const rows = await batchGroups(db, {
+    returned: chunked(orderIds).map((ids) => db.select().from(returnStock).where(inArray(returnStock.orderId, ids))),
     inventory: chunked(orderIds).map((ids) => db.query.inventoryReservations.findMany({
       where: { orderId: { in: ids } },
       orderBy: (table, { sql: sql2 }) => [table.orderId, sql2`rowid`],
@@ -101,6 +103,7 @@ async function loadReservations(env, orderIds) {
       with: { component: catalogNames, restock }
     }))
   });
+  const restored = (type, id) => rows.returned.filter((row) => row.reservationType === type && row.reservationId === id).reduce((n, row) => n + row.quantity, 0);
   return [
     ...rows.inventory.map((row) => {
       const target = inventoryTarget(row);
@@ -110,9 +113,10 @@ async function loadReservations(env, orderIds) {
         orderId: row.orderId,
         targetType: row.targetType,
         targetId: row.targetId,
+        intakeRestockedQuantity: restored("inventory", row.id),
         label: target?.label ?? null,
         sku: target?.sku ?? null,
-        quantity: row.quantity,
+        quantity: row.releasedAt ? row.quantity : row.quantity - restored("inventory", row.id),
         returnedAt: row.releasedAt?.toISOString() ?? null,
         restock: restockView(row.restock),
         available: target !== null
@@ -125,9 +129,10 @@ async function loadReservations(env, orderIds) {
       orderId: row.orderId,
       targetType: "component",
       targetId: row.componentId,
+      intakeRestockedQuantity: restored("component", row.id),
       label: row.component.name,
       sku: row.component.sku,
-      quantity: row.quantity,
+      quantity: row.releasedAt ? row.quantity : row.quantity - restored("component", row.id),
       returnedAt: row.releasedAt?.toISOString() ?? null,
       restock: restockView(row.restock),
       available: true
@@ -237,7 +242,7 @@ async function restockOrder(env, actor, input) {
   const returning = sql`RETURNING reservation_type, reservation_id, target_type, target_id, quantity`;
   const inventoryRestocks = db.all(sql`INSERT INTO _ecommerce_restocks
     (id, order_id, reservation_type, reservation_id, target_type, target_id, quantity, admin_actor, reason, created_at)
-    SELECT c.id, r.order_id, 'inventory', r.id, r.target_type, r.target_id, r.quantity, ${actor}, ${values.reason}, ${now}
+    SELECT c.id, r.order_id, 'inventory', r.id, r.target_type, r.target_id, r.quantity - COALESCE((SELECT sum(quantity) FROM _ecommerce_return_stock s WHERE s.reservation_type = 'inventory' AND s.reservation_id = r.id),0), ${actor}, ${values.reason}, ${now}
     FROM (${picked("inventory")}) AS c JOIN _ecommerce_inventory_reservations r ON r.id = c.reservation
     WHERE r.order_id = ${values.orderId} AND r.released_at IS NULL AND ${allowed}
       AND CASE r.target_type
@@ -247,7 +252,7 @@ async function restockOrder(env, actor, input) {
     ON CONFLICT DO NOTHING ${returning}`);
   const componentRestocks = db.all(sql`INSERT INTO _ecommerce_restocks
     (id, order_id, reservation_type, reservation_id, target_type, target_id, quantity, admin_actor, reason, created_at)
-    SELECT c.id, r.order_id, 'component', r.id, 'component', r.component_id, r.quantity, ${actor}, ${values.reason}, ${now}
+    SELECT c.id, r.order_id, 'component', r.id, 'component', r.component_id, r.quantity - COALESCE((SELECT sum(quantity) FROM _ecommerce_return_stock s WHERE s.reservation_type = 'component' AND s.reservation_id = r.id),0), ${actor}, ${values.reason}, ${now}
     FROM (${picked("component")}) AS c JOIN _ecommerce_component_reservations r ON r.id = c.reservation
     WHERE r.order_id = ${values.orderId} AND r.released_at IS NULL AND ${allowed}
     ON CONFLICT DO NOTHING ${returning}`);
