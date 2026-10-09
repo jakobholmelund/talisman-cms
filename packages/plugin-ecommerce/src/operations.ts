@@ -9,3 +9,6 @@ export { exportCommerceOperations } from './operations-export';
 
 export { listRefundFollowUp, readRefundCase, recordRefundFollowUp } from './refund-follow-up';
 export { listReplenishment, readReplenishment, saveReplenishmentPolicy, planReplenishmentDelivery, recordReplenishmentDelivery } from './replenishment';
+
+export { listSuppliers, saveSupplier, listPurchaseOrders, readPurchaseOrder, savePurchaseOrder, recordPurchaseOrder } from './purchasing';
+export { readOperationsReport } from './operations-report';

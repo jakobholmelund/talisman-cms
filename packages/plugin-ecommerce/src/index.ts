@@ -38,7 +38,7 @@ export interface EcommercePluginConfig {
    * such as `extensions/orders`, or an absolute path on the site, such as `/orders`. The integration
    * refuses anything that is not a path on the site, such as a full URL, at config time.
    */
-  adminPages?: Partial<Record<'orders' | 'promotions' | 'giftCards' | 'testCheckout' | 'attention' | 'emails' | 'stock' | 'returns' | 'refunds' | 'replenishment' | 'exports', string>>;
+  adminPages?: Partial<Record<'orders' | 'promotions' | 'giftCards' | 'testCheckout' | 'attention' | 'emails' | 'stock' | 'returns' | 'refunds' | 'replenishment' | 'purchasing' | 'report' | 'exports', string>>;
   /**
    * Adds the admin-only Test checkout screen and `/admin/api/ecommerce/test-checkout`, which place
    * orders through the simulated `admin_test` payment provider. When false, neither is injected and
@@ -220,6 +220,8 @@ export const ecommercePlugin = (
     { key: 'returns', path: 'commerce-returns', component: 'Returns', label: 'Returns', description: 'Review customer return requests and pending inspections.' },
     { key: 'refunds', path: 'commerce-refunds', component: 'RefundFollowUp', label: 'Refund follow-up', description: 'Resolve received returns against confirmed refund records.' },
     { key: 'replenishment', path: 'commerce-replenishment', component: 'Replenishment', label: 'Replenishment', description: 'Set stock targets and track expected supplier deliveries.' },
+    { key: 'purchasing', path: 'commerce-purchasing', component: 'PurchaseOrders', label: 'Purchase orders', description: 'Manage suppliers, purchase stock and receive partial deliveries.' },
+    { key: 'report', path: 'commerce-report', component: 'OperationsReport', label: 'Operations reporting', description: 'Track shipping turnaround, return reasons and outstanding deliveries.' },
     { key: 'exports', path: 'commerce-exports', component: 'OperationsExports', label: 'Operations exports', description: 'Download filtered order, return and stock records.' },
     { key: 'orders', path: 'commerce-orders', component: 'Orders', label: 'Orders & fulfillment', description: 'Review paid orders and record shipments.' },
     { key: 'promotions', path: 'commerce-promotions', component: 'Promotions', label: 'Promotions & referrals', description: 'Create discounts and manage referral rewards.' },
@@ -747,6 +749,36 @@ export const ecommercePlugin = (
             'reason',
           ]),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'giftCardClaims', idColumn: 'id' }
+        });
+        collections.push({
+          name: 'Suppliers', slug: '_ecommerce_suppliers', readOnly: true, adminSection: 'commerce',
+          fields: nativeFields(schema.suppliers, ['id', 'createdAt']),
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'suppliers', idColumn: 'id' }
+        });
+        collections.push({
+          name: 'Supplier History', slug: '_ecommerce_supplier_revisions', readOnly: true, adminSection: 'commerce',
+          fields: nativeFields(schema.supplierRevisions, ['id', 'supplierId', 'expectedVersion', 'name', 'contact', 'address', 'active', 'actor', 'reason', 'fingerprint', 'createdAt']),
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'supplierRevisions', idColumn: 'id' }
+        });
+        collections.push({
+          name: 'Purchase Orders', slug: '_ecommerce_purchase_orders', readOnly: true, adminSection: 'commerce',
+          fields: nativeFields(schema.purchaseOrders, ['id', 'supplierId', 'createdAt']),
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'purchaseOrders', idColumn: 'id' }
+        });
+        collections.push({
+          name: 'Purchase History', slug: '_ecommerce_purchase_order_events', readOnly: true, adminSection: 'commerce',
+          fields: nativeFields(schema.purchaseOrderEvents, ['id', 'purchaseOrderId', 'expectedVersion', 'status', 'reference', 'expectedDate', { name: 'lines', type: 'array' }, { name: 'supplier', type: 'group' }, 'actor', 'reason', 'fingerprint', 'createdAt']),
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'purchaseOrderEvents', idColumn: 'id' }
+        });
+        collections.push({
+          name: 'Purchase Lines', slug: '_ecommerce_purchase_order_lines', readOnly: true, adminSection: 'commerce',
+          fields: nativeFields(schema.purchaseOrderLines, ['id', 'purchaseOrderId', 'lineIndex', 'deliveryId']),
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'purchaseOrderLines', idColumn: 'id' }
+        });
+        collections.push({
+          name: 'Return Categories', slug: '_ecommerce_return_request_reasons', readOnly: true, adminSection: 'commerce',
+          fields: nativeFields(schema.returnRequestReasons, ['requestId', 'code']),
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'returnRequestReasons', idColumn: 'requestId' }
         });
         collections.push({
           name: 'Return Refund Decisions', slug: '_ecommerce_return_refund_decisions',

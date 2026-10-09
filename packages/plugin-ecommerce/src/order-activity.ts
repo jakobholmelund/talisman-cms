@@ -22,9 +22,10 @@ export async function loadOrderActivity(env: TalismanEnv, orderIds: string[]) {
   });
   const { notices } = await batchGroups(db, { notices: chunked(parcels.map(row => row.id)).map(ids =>
     db.select().from(emailDeliveries).where(and(inArray(emailDeliveries.subjectId, ids), inArray(emailDeliveries.kind, ['shipment', 'shipment_update'])))) });
-  const { returnNotices }=await batchGroups(db,{returnNotices:chunked([...returns.map(r=>r.id),...requests.flatMap(r=>r.events.map(e=>e.id))]).map(ids=>db.select().from(emailDeliveries).where(and(inArray(emailDeliveries.subjectId,ids),inArray(emailDeliveries.kind,['return_decision','return_received']))))});
+  const { returnNotices }=await batchGroups(db,{returnNotices:chunked([...returns.map(r=>r.id),...refundCases.flatMap(r=>r.refundDecisions.map(d=>d.id)),...requests.flatMap(r=>r.events.map(e=>e.id))]).map(ids=>db.select().from(emailDeliveries).where(and(inArray(emailDeliveries.subjectId,ids),inArray(emailDeliveries.kind,['return_decision','return_received','return_refund']))))});
   const names = await adminActorNames(env, [...stock, ...parcels].map(row => row.adminActor).concat([...contents, ...returns, ...inspections, ...refundCases.flatMap(r=>r.refundDecisions)].map(row => row.actor)));
   const parcelOrders = new Map([...parcels,...returns].map(row => [row.id, row.orderId]));
+  for(const r of refundCases)for(const d of r.refundDecisions)parcelOrders.set(d.id,r.orderId);
   for(const r of requests)for(const e of r.events)parcelOrders.set(e.id,r.orderId);
   type Event = { id: string; kind: string; createdAt: string; detail: string; actor: string | null; actorName: string | null;
     amountCents: number | null; email: { status: string; attempts: number; lastError: string | null; sentAt: string | null; nextAttemptAt: string | null } | null };

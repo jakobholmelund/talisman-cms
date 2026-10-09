@@ -1,0 +1,5 @@
+body { font: 16px system-ui; padding: 24px; line-height: 1.5; overflow-wrap: anywhere; color: #000; background: #fff; }
+p { white-space: pre-line; }
+h1 { font-size: 24px; }
+li { margin: 12px 0; }
+@media print { button { display: none; } }

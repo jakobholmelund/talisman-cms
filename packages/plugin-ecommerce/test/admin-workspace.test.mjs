@@ -39,6 +39,8 @@ test('commerce tools link relative to the admin path and pass adminPages overrid
     'extensions/commerce-returns',
     'extensions/commerce-refunds',
     'extensions/commerce-replenishment',
+    'extensions/commerce-purchasing',
+    'extensions/commerce-report',
     'extensions/commerce-exports',
     'extensions/commerce-orders',
     'extensions/commerce-promotions',
@@ -47,7 +49,7 @@ test('commerce tools link relative to the admin path and pass adminPages overrid
   const custom = ecommercePlugin({ adminPages: { attention: 'extensions/daily', emails: '/email-help', stock: 'extensions/inventory' } });
   assert.deepEqual(custom.adminLinks.slice(0, 3).map(link => link.href), ['extensions/daily', '/email-help', 'extensions/inventory']);
   assert.deepEqual(defaults.adminUi?.map(page => [page.path, page.section]), [
-    ['commerce-attention', 'commerce'], ['commerce-emails', 'commerce'], ['commerce-stock', 'commerce'], ['commerce-returns', 'commerce'], ['commerce-refunds', 'commerce'], ['commerce-replenishment', 'commerce'], ['commerce-exports', 'commerce'],
+    ['commerce-attention', 'commerce'], ['commerce-emails', 'commerce'], ['commerce-stock', 'commerce'], ['commerce-returns', 'commerce'], ['commerce-refunds', 'commerce'], ['commerce-replenishment', 'commerce'], ['commerce-purchasing', 'commerce'], ['commerce-report', 'commerce'], ['commerce-exports', 'commerce'],
     ['commerce-orders', 'commerce'], ['commerce-promotions', 'commerce'],
     ['commerce-gift-cards', 'commerce']
   ]);
@@ -65,6 +67,8 @@ test('commerce tools link relative to the admin path and pass adminPages overrid
     ['commerce', 'Returns', 'extensions/commerce-returns'],
     ['commerce', 'Refund follow-up', 'extensions/commerce-refunds'],
     ['commerce', 'Replenishment', 'extensions/commerce-replenishment'],
+    ['commerce', 'Purchase orders', 'extensions/commerce-purchasing'],
+    ['commerce', 'Operations reporting', 'extensions/commerce-report'],
     ['commerce', 'Operations exports', 'extensions/commerce-exports'],
     ['commerce', 'Orders & fulfillment', '/orders'],
     ['commerce', 'Promotions & referrals', 'extensions/promotions'],

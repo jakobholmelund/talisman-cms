@@ -9,14 +9,14 @@ import { describeOrderItems } from './order-items';
 import { hashOrderAccess } from './cookies';
 import { adminActorNames } from './admin-actors';
 import { CommerceOperationsConflict } from './email-recovery';
-import { returnRequests, returnRequestEvents, RETURN_REQUEST_STATUSES } from './schema';
+import { returnRequests, returnRequestEvents, returnRequestReasons, RETURN_REASON_CODES, REFUND_SOURCE_KINDS, RETURN_REQUEST_STATUSES } from './schema';
 import type { CustomerReturns, ReturnRequestReceipt, ReturnDecisionReceipt, AdminReturnRequest, ReturnsQueue } from './return-request-types';
 export type { CustomerReturns } from './return-request-types';
 
 const id = z.string().trim().min(1).max(128), key = id.min(8);
 const items = z.array(z.object({ lineIndex:z.number().int().min(0).max(199), quantity:z.number().int().min(1).max(1000000) }).strict()).min(1).max(50)
   .refine(rows => new Set(rows.map(r=>r.lineIndex)).size === rows.length, 'Choose each line once');
-const createSchema = z.object({ orderId:id, requestKey:key, reason:z.string().trim().min(8).max(1000), items }).strict();
+const createSchema = z.object({ orderId:id, requestKey:key, reason:z.string().trim().min(8).max(1000), reasonCode:z.enum(RETURN_REASON_CODES).default('unspecified'), items }).strict();
 const decisionSchema = z.object({ requestId:id, requestKey:key, expectedVersion:id, status:z.enum(['approved','declined','closed']),
   reason:z.string().trim().min(8).max(500), customerMessage:z.string().trim().min(8).max(1000) }).strict();
 const cancelSchema = z.object({ orderId:id, requestId:id, requestKey:key, expectedVersion:id }).strict();
@@ -30,13 +30,13 @@ async function owned(ctx:CommerceContext,orderId:string,owner:ReturnOwner) {
 }
 async function requestsForOrder(env:TalismanEnv,orderId:string) {
   return commerceDb(env).query.returnRequests.findMany({where:{orderId},orderBy:{createdAt:'asc'},with:{
-    events:{orderBy:(_t,{sql})=>sql`rowid`},receipts:{with:{receipt:{columns:{items:true,createdAt:true}}}}
+    reasonCategory:true, events:{orderBy:(_t,{sql})=>sql`rowid`},receipts:{with:{receipt:{columns:{items:true,createdAt:true}}}}
   }});
 }
 /** Caller supplies verified credentials, exactly as for private order tracking. */
 export async function readCustomerReturns(ctx:CommerceContext,orderId:string,owner:ReturnOwner={}):Promise<CustomerReturns|null> {
   if(!await owned(ctx,orderId,owner)) return null;
-  const order=await ctx.db.query.orders.findFirst({where:{id:orderId},with:{parcelContents:true,fulfillments:{columns:{id:true,kind:true}},returnReceipts:{columns:{items:true}}}});
+  const order=await ctx.db.query.orders.findFirst({where:{id:orderId},with:{parcelContents:true,fulfillments:{columns:{id:true,kind:true}},returnReceipts:{with:{refundDecisions:{orderBy:(_t,{sql})=>sql`rowid DESC`,limit:1}}}}});
   if(!order)return null;
   const requests=await requestsForOrder(ctx.env,orderId), described=await describeOrderItems(ctx.env,order.items);
   const unknown=order.fulfillments.some(f=>f.kind==='shipment'&&!order.parcelContents.some(p=>p.fulfillmentId===f.id));
@@ -48,8 +48,12 @@ export async function readCustomerReturns(ctx:CommerceContext,orderId:string,own
     const held=requests.filter(r=>['pending','approved'].includes(statusOf(r.events))).reduce((n,r)=>n+Math.max(0,(r.items.find(i=>i.lineIndex===lineIndex)?.quantity??0)-receiptQuantity(r,lineIndex)),0);
     return {lineIndex,name:[l.productName||'Ordered item',l.variantLabel].filter(Boolean).join(' / '),sku:l.sku,available:confirmed&&!unknown?Math.max(0,shipped-received-held):0};
   });
-  return {orderId,unknownParcelContents:unknown,lines,requests:requests.map(r=>({
-    id:r.id,status:statusOf(r.events),version:r.events.at(-1)?.id??r.id,reason:r.reason,createdAt:r.createdAt.toISOString(),
+  return {orderId,unknownParcelContents:unknown,lines,refunds:order.returnReceipts.map(r=>{
+    const d=r.refundDecisions[0],sums=new Map<typeof REFUND_SOURCE_KINDS[number],number>();
+    if(d?.status==='settled')for(const a of d.allocations)sums.set(a.kind,(sums.get(a.kind)??0)+a.amountMinor);
+    return {receiptId:r.id,receivedAt:r.createdAt.toISOString(),status:d?.status??'review',amountMinor:d?.amountMinor??0,currency:order.currency,updatedAt:(d?.createdAt??r.createdAt).toISOString(),tenders:[...sums].map(([kind,amountMinor])=>({kind,amountMinor}))};
+  }),requests:requests.map(r=>({
+    id:r.id,reasonCode:r.reasonCategory?.code??'unspecified',status:statusOf(r.events),version:r.events.at(-1)?.id??r.id,reason:r.reason,createdAt:r.createdAt.toISOString(),
     items:r.items.map(i=>({...i,name:lines[i.lineIndex]?.name??'Ordered item',received:receiptQuantity(r,i.lineIndex)})),
     canCancel:['pending','approved'].includes(statusOf(r.events))&&!r.receipts.length,
     updates:r.events.map(e=>({status:e.status,message:e.customerMessage,createdAt:e.createdAt.toISOString()})),
@@ -61,7 +65,7 @@ export async function createCustomerReturn(ctx:CommerceContext,input:unknown,own
   const requestId=`rma_${await hashOrderAccess(`${v.orderId}:${v.requestKey}`)}`,hash=await fingerprint(values,'customer');
   const replay=async()=>{const r=await ctx.db.select().from(returnRequests).where(eq(returnRequests.id,requestId)).get();if(!r)return null;if(r.fingerprint!==hash)throw new CommerceOperationsConflict('This return request key was used with different details.');return {requestId,duplicate:true};};
   const previous=await replay();if(previous)return previous;
-  try{await ctx.db.insert(returnRequests).values({id:requestId,orderId:v.orderId,items:values.items,reason:v.reason,fingerprint:hash,createdAt:new Date()});}
+  try{await ctx.db.batch([ctx.db.insert(returnRequests).values({id:requestId,orderId:v.orderId,items:values.items,reason:v.reason,fingerprint:hash,createdAt:new Date()}),ctx.db.insert(returnRequestReasons).values({requestId,code:v.reasonCode})]);}
   catch(error){const previous=await replay();if(previous)return previous;if(!errorText(error).includes('Return request exceeds available shipped goods'))throw error;throw new CommerceOperationsConflict('Return quantities changed or parcel details are unavailable. Refresh before requesting a return.');}
   return {requestId};
 }

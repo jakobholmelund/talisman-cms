@@ -105,6 +105,7 @@ export interface CommerceEmailTemplates {
   shipment?: Template<ShipmentEmail>;
   giftCardClaim?: Template<GiftCardClaimEmail>;
   returnNotice?: Template<ReturnNoticeEmail>;
+  returnRefund?: Template<ReturnRefundEmail>;
 }
 
 /** An amount in minor units: `1250` in `usd` reads `$12.50` and in `jpy` `¥1,250`; deductions read `-$12.50`. */
@@ -331,4 +332,17 @@ export function returnNoticeEmail(email: ReturnNoticeEmail): CommerceEmailMessag
     ...(store.origin ? {action:{label:'View your order',url:`${store.origin}/checkout/success?order=${encodeURIComponent(orderId)}`}} : {}),
     sections:[{title:status==='received'?'Received items':'Requested items',rows:items.map(i=>({label:i.name,value:String(i.quantity)}))},...storeSections(store)],
     footer:[`Questions about your return? Please ${contact(store)} and mention the order number.`] }) };
+}
+
+/** Only confirmed allocated refunds; no internal notes or ledger identifiers. */
+export interface ReturnRefundEmail {
+  store: CommerceEmailStore; orderId: string; occurredAt: Date; currency: string; amountMinor: number;
+  tenders: Array<{ label: string; amountMinor: number }>;
+}
+export function returnRefundEmail(email: ReturnRefundEmail): CommerceEmailMessage {
+  const {store,orderId,occurredAt,currency,amountMinor,tenders}=email;
+  return {subject:oneLine(`Your return refund is recorded — ${store.name}`),...renderCommerceEmail({storeName:store.name,heading:'Your return refund is recorded',
+    paragraphs:[`Order ${orderId} · ${formatDate(occurredAt)}`,`A refund of ${formatMoney(amountMinor,currency)} has been recorded for your received return. Your payment provider may take time to show the amount in your account.`],
+    ...(store.origin?{action:{label:'View your order',url:`${store.origin}/checkout/success?order=${encodeURIComponent(orderId)}`}}:{}),
+    sections:[{title:'Recorded refund',rows:tenders.map(t=>({label:t.label,value:formatMoney(t.amountMinor,currency)}))},...storeSections(store)],footer:[`Questions about your refund? Please ${contact(store)} and mention the order number.`]})};
 }

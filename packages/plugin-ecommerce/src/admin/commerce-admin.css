@@ -59,3 +59,6 @@
 .ecom-admin__aftercare .ecom-admin__field { min-width: 0; }
 .ecom-admin__aftercare input, .ecom-admin__aftercare select { min-width: 0; max-width: 100%; box-sizing: border-box; }
 .ecom-admin__aftercare button { max-width: 100%; white-space: normal; }
+
+.ecom-admin__aftercare textarea { min-width: 0; max-width: 100%; box-sizing: border-box; font: inherit; padding: .65rem; color: inherit; background: var(--ecom-bg, transparent); border: 1px solid #8885; border-radius: .4rem; }
+.ecom-admin__preline { white-space: pre-line; }

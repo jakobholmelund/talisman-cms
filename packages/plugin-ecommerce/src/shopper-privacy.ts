@@ -59,7 +59,8 @@ export async function manageShopperData(env: TalismanEnv, actor: string, input: 
     const orderIds = orders.map(order => order.id);
     const details = orderIds.length ? await db.query.orders.findMany({ where: { userId: account.id },
       columns: { id: true }, with: {
-        returnRequests: { columns: { id:true,items:true,reason:true,createdAt:true }, with: { events: { columns: { status:true,customerMessage:true,createdAt:true } } } },
+        returnRequests: { columns: { id:true,items:true,reason:true,createdAt:true }, with: { reasonCategory: { columns: { code:true } }, events: { columns: { status:true,customerMessage:true,createdAt:true } } } },
+        returnReceipts: { columns: { id:true,items:true,createdAt:true }, with: { refundDecisions: { columns: { status:true,amountMinor:true,createdAt:true } } } },
         providerRefunds: { columns: { amountCents: true, createdAt: true } },
         giftCardRefunds: { columns: { amountCents: true, createdAt: true } },
         fulfillments: { columns: { kind: true, carrier: true, trackingNumber: true, createdAt: true } },

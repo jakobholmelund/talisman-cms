@@ -1,3 +1,4 @@
+import { commerceEmailStatement } from './email-deliveries';
 import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { TalismanEnv } from 'talisman-cms/client';
@@ -47,7 +48,7 @@ export async function recordRefundFollowUp(env:TalismanEnv,input:unknown,actor:s
  const db=commerceDb(env),decisionId=`rrf_${await hashOrderAccess(`${v.receiptId}:${v.requestKey}`)}`,fingerprint=await hashOrderAccess(JSON.stringify({...v,allocations,actor}));
  const replay=async()=>{const d=await db.select().from(returnRefundDecisions).where(eq(returnRefundDecisions.id,decisionId)).get();if(!d)return null;if(d.fingerprint!==fingerprint)throw new CommerceOperationsConflict('This refund decision key was used with other details.');return {decisionId,duplicate:true};};
  const previous=await replay();if(previous)return previous;
- try{await db.insert(returnRefundDecisions).values({id:decisionId,receiptId:v.receiptId,expectedVersion:v.expectedVersion,status:v.status,amountMinor:v.amountMinor,allocations,actor,reason:v.reason,fingerprint,createdAt:new Date()});}
+ try{await db.batch([db.insert(returnRefundDecisions).values({id:decisionId,receiptId:v.receiptId,expectedVersion:v.expectedVersion,status:v.status,amountMinor:v.amountMinor,allocations,actor,reason:v.reason,fingerprint,createdAt:new Date()}), ...(v.status==='settled'?[db.run(commerceEmailStatement('return_refund',decisionId,Math.floor(Date.now()/1000)))]:[])]);}
  catch(error){const previous=await replay();if(previous)return previous;if(!/Refund follow-up|Confirmed refunds/.test(errorText(error)))throw error;throw new CommerceOperationsConflict('This return or confirmed refund balance changed. Refresh before recording a decision.');}
  return {decisionId};
 }

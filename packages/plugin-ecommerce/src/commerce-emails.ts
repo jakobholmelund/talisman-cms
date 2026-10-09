@@ -1,13 +1,13 @@
 import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb, type CommerceDb } from './db';
-import { orderConfirmationEmail, shipmentEmail, returnNoticeEmail, type ReturnNoticeEmail, type OrderConfirmationEmail } from './emails';
+import { orderConfirmationEmail, shipmentEmail, returnNoticeEmail, returnRefundEmail, type ReturnNoticeEmail, type OrderConfirmationEmail } from './emails';
 import { COMMERCE_EMAIL_LEASE_SECONDS, COMMERCE_EMAIL_MAX_AGE_SECONDS, applyEmailTemplate, bareEmailAddress,
   commerceEmailSetup, missingEmailSettings, runCommerceEmailDelivery, sendCommerceEmailNow, unclaimedAt, waitingEmailsResult,
   type CommerceEmailComposer, type CommerceEmailKind, type CommerceEmailResult } from './email-deliveries';
 import { composeGiftCardClaimEmail } from './gift-cards';
 import { describeOrderItems, orderAmountColumns, orderAmounts } from './order-items';
-import { emailDeliveries, fulfillments, orders, returnRequestEvents, returnReceipts } from './schema';
+import { emailDeliveries, fulfillments, orders, returnRequestEvents, returnReceipts, returnRefundDecisions } from './schema';
 
 /** A time in Unix seconds as the schema's timestamp columns take it. */
 const at = (seconds: number) => new Date(seconds * 1000);
@@ -132,12 +132,25 @@ function returnComposer(received: boolean): CommerceEmailComposer {
   };
 }
 
+const composeReturnRefund: CommerceEmailComposer = async (env,subjectId,setup) => {
+ const db=commerceDb(env),decision=await db.query.returnRefundDecisions.findFirst({where:{id:subjectId},with:{receipt:{with:{order:true}}}});
+ if(!decision || decision.status!=='settled' || decision.redactedAt || decision.receipt.order.paymentProvider==='admin_test')return {cancel:'not_due'};
+ const order=decision.receipt.order;
+ const erased=await db.get<{n:number}>(sql`SELECT count(*) AS n FROM _ecommerce_shopper_audits WHERE account_id=${order.userId} AND action='anonymize'`);
+ if(erased?.n)return {cancel:'not_due'};
+ const to=bareEmailAddress(order.customerEmail);if(!to)return {cancel:'not_due'};
+ const labels={provider:'Original payment method',gift_card:'Gift card',store_credit:'Store credit'},sums=new Map<keyof typeof labels,number>();
+ for(const a of decision.allocations)sums.set(a.kind,(sums.get(a.kind)??0)+a.amountMinor);
+ const email={store:setup.store,orderId:order.id,occurredAt:decision.createdAt,currency:order.currency,amountMinor:decision.amountMinor,tenders:[...sums].map(([kind,amountMinor])=>({label:labels[kind],amountMinor}))};
+ return {to,message:await applyEmailTemplate(setup,'returnRefund',email,returnRefundEmail(email))};
+};
+
 const COMPOSERS: Record<CommerceEmailKind, CommerceEmailComposer> = {
   order_confirmation: composeOrderConfirmation,
   shipment: shipmentComposer(false),
   shipment_update: shipmentComposer(true),
   gift_card_claim: composeGiftCardClaimEmail,
-  return_decision: returnComposer(false), return_received: returnComposer(true),
+  return_refund: composeReturnRefund, return_decision: returnComposer(false), return_received: returnComposer(true),
 };
 
 /** Sends the email of this kind and subject now if it is due; see sendCommerceEmailNow. Never throws. */

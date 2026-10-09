@@ -37,7 +37,7 @@ const KIND_HEADERS: Record<CommerceEmailKind, string> = {
   shipment: 'order-shipment',
   shipment_update: 'order-shipment-update',
   gift_card_claim: 'gift-card-claim',
-  return_decision: 'return-decision', return_received: 'return-received',
+  return_refund: 'return-refund', return_decision: 'return-decision', return_received: 'return-received',
 };
 
 const KIND_LABELS: Record<CommerceEmailKind, string> = {
@@ -45,7 +45,7 @@ const KIND_LABELS: Record<CommerceEmailKind, string> = {
   shipment: 'Shipment email',
   shipment_update: 'Shipment update email',
   gift_card_claim: 'Gift card claim email',
-  return_decision: 'Return decision email', return_received: 'Return receipt email',
+  return_refund: 'Return refund email', return_decision: 'Return decision email', return_received: 'Return receipt email',
 };
 
 /** Failures an operator has to fix: every email fails the same way until they do. */

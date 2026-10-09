@@ -23,6 +23,21 @@ const tables = [pluginSchema, coreSchema, authSchema].flatMap((module) => Object
 
 /** The commerce triggers, with the table each one is on. */
 const TRIGGERS = [
+  '_ecommerce_suppliers_immutable_update ON _ecommerce_suppliers',
+  '_ecommerce_suppliers_immutable_delete ON _ecommerce_suppliers',
+  '_ecommerce_supplier_revisions_immutable_update ON _ecommerce_supplier_revisions',
+  '_ecommerce_supplier_revisions_immutable_delete ON _ecommerce_supplier_revisions',
+  '_ecommerce_purchase_orders_immutable_update ON _ecommerce_purchase_orders',
+  '_ecommerce_purchase_orders_immutable_delete ON _ecommerce_purchase_orders',
+  '_ecommerce_purchase_order_events_immutable_update ON _ecommerce_purchase_order_events',
+  '_ecommerce_purchase_order_events_immutable_delete ON _ecommerce_purchase_order_events',
+  '_ecommerce_purchase_order_lines_immutable_update ON _ecommerce_purchase_order_lines',
+  '_ecommerce_purchase_order_lines_immutable_delete ON _ecommerce_purchase_order_lines',
+  '_ecommerce_return_request_reasons_immutable_update ON _ecommerce_return_request_reasons',
+  '_ecommerce_return_request_reasons_immutable_delete ON _ecommerce_return_request_reasons',
+  '_ecommerce_supplier_revision_guard ON _ecommerce_supplier_revisions',
+  '_ecommerce_purchase_order_event_guard ON _ecommerce_purchase_order_events',
+  '_ecommerce_purchase_order_line_guard ON _ecommerce_purchase_order_lines',
   '_ecommerce_return_receipt_privacy_guard ON _ecommerce_return_receipts',
   '_ecommerce_replenishment_policies_immutable_delete ON _ecommerce_replenishment_policies',
   '_ecommerce_replenishment_policies_immutable_update ON _ecommerce_replenishment_policies',
@@ -795,7 +810,7 @@ test('rebuild guards refuse real foreign-key damage before clearing the deferred
   const db = openDatabase();
   try {
     applyAllMigrations(db);
-    for (const name of ['20261002023911_shopper_recovery_invariants', '20261002024155_replacement_refunds_privacy', '20261009095621_commerce_aftercare']) {
+    for (const name of ['20261002023911_shopper_recovery_invariants', '20261002024155_replacement_refunds_privacy', '20261009095621_commerce_aftercare', '20261009105407_purchasing_refund_updates']) {
       const source = readFileSync(join(pluginMigrationsDir, name, 'migration.sql'), 'utf8');
       const guard = source.slice(source.indexOf('SELECT CASE WHEN EXISTS (SELECT 1 FROM pragma_foreign_key_check)'));
       db.exec('BEGIN'); db.exec('PRAGMA defer_foreign_keys = true');

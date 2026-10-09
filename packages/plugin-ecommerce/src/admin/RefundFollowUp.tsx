@@ -14,7 +14,7 @@ function RefundDetail({receiptId,refresh,dirtyChanged}:{receiptId:string;refresh
  const r=read.data,locked=write.busy||!!write.pending||read.loading||!!read.error||write.needsReload;
  const reset=()=>{form.current?.reset();setStatus('needed');write.setDirty(false);};
  return <section onChange={()=>write.setDirty(true)}>{write.feedback}<OperationsReadStatus loading={read.loading} error={read.error} reload={()=>void read.load()}/>{r&&<>
- <p>Order {r.orderId} · {r.status} · Planned refund {money(r.amountMinor,r.currency)}</p><ul>{r.items.map((i,n)=><li key={n}>{i.quantity} × {i.name}</li>)}</ul>
+ <p>Order {r.orderId} · {r.status} · {r.status==='settled'?'Recorded refund':'Planned refund'} {money(r.amountMinor,r.currency)}</p><ul>{r.items.map((i,n)=><li key={n}>{i.quantity} × {i.name}</li>)}</ul>
  <details><summary>Refund decision history</summary><ul>{r.history.map(d=><li key={d.id}>{dateTime(d.createdAt)} · {d.actorName} · {d.status} · {money(d.amountMinor,r.currency)} · {d.reason}{d.allocations.map(a=><p key={`${a.kind}:${a.sourceId}`}>{a.kind.replaceAll('_',' ')} · {a.sourceId} · {money(a.amountMinor,r.currency)}</p>)}</li>)}</ul></details>
  <h3>Confirmed refunds for this order</h3><p>Only refunds already recorded by the payment provider or tender ledger can be allocated. Allocating them resolves follow-up and does not move money.</p>
  {!r.sources.length?<p>No confirmed refunds yet.</p>:<ul>{r.sources.map(s=><li key={`${s.kind}:${s.id}`}>{s.kind.replaceAll('_',' ')} · {s.id} · {money(s.amountMinor,r.currency)} recorded · {money(s.availableMinor,r.currency)} unallocated</li>)}</ul>}

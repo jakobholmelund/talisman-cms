@@ -52,3 +52,7 @@ declare module 'virtual:talisman-cms/ui-libraries' {
   import type { UiLibraryDefinition } from 'talisman-cms';
   export const uiLibraries: UiLibraryDefinition[];
 }
+declare module '*.css?url&no-inline' {
+  const url: string;
+  export default url;
+}
