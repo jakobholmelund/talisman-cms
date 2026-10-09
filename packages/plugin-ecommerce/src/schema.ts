@@ -669,6 +669,7 @@ export const giftCardLedger = sqliteTable('_ecommerce_gift_card_ledger', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [
   index('_ecommerce_gift_card_ledger_card_idx').on(table.cardId, table.createdAt),
+  index('_ecommerce_gift_card_ledger_order_idx').on(table.orderId, table.createdAt),
   check('gift_card_ledger_kind', oneOf(table.kind, GIFT_CARD_LEDGER_KINDS)),
   check('gift_card_ledger_amount_nonzero', sql`${table.amountCents} != 0`),
   // Funding and returns add to the balance; reservations and reversals take from it.
@@ -818,6 +819,7 @@ export const reconcileDecisions = sqliteTable('_ecommerce_reconcile_decisions', 
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [
   index('_ecommerce_reconcile_decisions_order_idx').on(table.orderId, table.createdAt),
+  index('_ecommerce_reconcile_decisions_recent_idx').on(table.createdAt, table.id),
   index('_ecommerce_reconcile_decisions_purchase_idx').on(table.purchaseId, table.createdAt),
   check('reconcile_decision_action', oneOf(table.action, RECONCILE_DECISION_ACTIONS)),
   check('reconcile_decision_payment_returned', nullOrOneOf(table.paymentReturned, PAYMENT_RETURNED_KINDS)),
@@ -903,6 +905,7 @@ export const taxSyncDecisions = sqliteTable('_ecommerce_tax_sync_decisions', {
   reason: text('reason').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [
+  index('_ecommerce_tax_sync_decisions_recent_idx').on(table.createdAt, table.id),
   check('tax_sync_action', oneOf(table.action, TAX_SYNC_ACTIONS)),
   check('tax_sync_actor', filled(table.actor)),
   check('tax_sync_reason', trimmed(table.reason, 8)),
