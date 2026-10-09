@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Approved exchange requests now open a prefilled staff handoff with the recorded return receipt, inspected quantity and current preferred catalog choice. Existing exchange cases can be resumed from the request, interrupted case writes recover with the same key, and a changed catalog price refuses the draft before repricing it.
+- Returns and replacement queues filter by the next action: waiting for goods, inspection, arranging an exchange, refund/payment confirmation, stock, dispatch or outcome review, with complete filtered totals and pagination.
+- Customer return requests include one exchange progress view with partial quantities, replacement parcels, current tracking and the next customer action. Staff notes, stock recipes and payment references remain private.
+
 - Customers can attach a preferred physical catalog item to an owner-only exchange request. Staff review it, receive and inspect the original goods, then agree stock and payment/refund requirements before dispatch. Stable request recovery preserves the preference without reserving stock or charging money.
 - Order details include paginated replacement and exchange history with customer requests, parcel/inspection records, payment reviews and notice delivery status.
 - Operations reports and the new replacement/exchange CSV include dated activity, verified extra payments, confirmed cheaper-item refund allocations and current inspection/payment review work. Unknown provider-event amounts stay blank. Order-filtered stock exports now include replacement dispatch and restock movements.
