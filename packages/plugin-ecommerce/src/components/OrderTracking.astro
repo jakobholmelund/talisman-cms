@@ -1,0 +1,44 @@
+---
+interface Props { orderId: string; }
+const { orderId } = Astro.props;
+---
+<section class="talisman-order-tracking" data-talisman-order-tracking data-order-id={orderId} aria-label="Parcels and returns">
+  <h2>Parcels and returns</h2>
+  <p data-tracking-status role="status" aria-live="polite">Loading your parcel details…</p>
+  <div data-tracking-details></div>
+  <button type="button" data-refresh-tracking>Refresh parcel details</button>
+</section>
+<script>
+  import { getOrderStatus } from '@talisman-cms/plugin-ecommerce/browser';
+  import { renderOrderTracking } from './order-tracking-view';
+  for (const root of document.querySelectorAll<HTMLElement>('[data-talisman-order-tracking]')) {
+    const message = root.querySelector<HTMLElement>('[data-tracking-status]')!;
+    const content = root.querySelector<HTMLElement>('[data-tracking-details]')!;
+    const button = root.querySelector<HTMLButtonElement>('[data-refresh-tracking]')!;
+    let busy = false;
+    const load = async () => {
+      if (busy) return; busy = true; button.disabled = true;
+      message.textContent = 'Loading your parcel details…';
+      try {
+        const order = await getOrderStatus(root.dataset.orderId || '');
+        if (!order.tracking) throw new Error('Parcel details are unavailable for this order.');
+        renderOrderTracking(content, order.tracking);
+        message.textContent = 'Parcel details are up to date.';
+      } catch {
+        message.textContent = content.childElementCount ? 'Could not refresh. Displayed details may be out of date; please try again.' : 'Could not load parcel details. Please try again.';
+      } finally { busy = false; button.disabled = false; }
+    };
+    button.addEventListener('click', () => void load());
+    void load();
+  }
+</script>
+<style is:global>
+  .talisman-order-tracking { margin: 2rem 0; max-width: 48rem; overflow-wrap: anywhere; }
+  .talisman-order-tracking h2 { font-size: 1.5rem; margin-bottom: 1rem; }
+  .talisman-order-tracking h3 { font-size: 1.1rem; margin: 1.5rem 0 .5rem; }
+  .talisman-order-tracking ul { padding-left: 1.5rem; margin: .75rem 0; }
+  .talisman-order-tracking li { margin: .5rem 0; }
+  .talisman-order-tracking article { padding: 1rem 0; border-top: 1px solid #aaa5; }
+  .talisman-order-tracking button { padding: .6rem 1rem; border: 1px solid currentColor; border-radius: .5rem; font: inherit; background: transparent; cursor: pointer; }
+  .talisman-order-tracking button:disabled { opacity: .6; cursor: wait; }
+</style>

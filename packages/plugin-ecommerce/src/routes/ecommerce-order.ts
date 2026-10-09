@@ -64,6 +64,7 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
       status: order.status,
       paymentUnderReview: order.status === 'pending' && order.reconcileReviewAt !== null,
       fulfillmentStatus: order.fulfillmentStatus,
+      tracking: await api.orders.tracking(order.id, sessionToken, customer?.id, orderAccessToken),
       paymentProvider: order.paymentProvider,
       accountCreatedByOrder: order.userId === `acct_${order.id}`,
       accountLinked: Boolean(order.userId),

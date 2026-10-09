@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { batchGroups, chunked, commerceDb } from './db';
 import { STOCK_COLUMNS } from './inventory';
-import { componentReservations, inventoryReservations, orders as ordersTable, restocks, returnStock } from './schema';
+import { componentReservations, inventoryReservations, orders as ordersTable, restocks, returnStock, inspectionStock } from './schema';
 
 /** A time in Unix seconds as the schema's timestamp columns take it. */
 const at = (seconds: number) => new Date(seconds * 1000);
@@ -111,6 +111,7 @@ async function loadReservations(env: TalismanEnv, orderIds: string[]): Promise<R
   const catalogNames = { columns: { name: true, sku: true } } as const;
   const restock = { columns: { adminActor: true, reason: true, createdAt: true } } as const;
   const rows = await batchGroups(db, {
+    inspected: chunked(orderIds).map(ids => db.select().from(inspectionStock).where(inArray(inspectionStock.orderId, ids))),
     returned: chunked(orderIds).map(ids => db.select().from(returnStock).where(inArray(returnStock.orderId, ids))),
     inventory: chunked(orderIds).map((ids) => db.query.inventoryReservations.findMany({
       where: { orderId: { in: ids } }, orderBy: (table, { sql }) => [table.orderId, sql`rowid`],
@@ -127,7 +128,7 @@ async function loadReservations(env: TalismanEnv, orderIds: string[]): Promise<R
       with: { component: catalogNames, restock },
     })),
   });
-  const restored = (type: string, id: string) => rows.returned.filter(row => row.reservationType === type && row.reservationId === id).reduce((n, row) => n + row.quantity, 0);
+  const restored = (type: string, id: string) => [...rows.returned, ...rows.inspected].filter(row => row.reservationType === type && row.reservationId === id).reduce((n, row) => n + row.quantity, 0);
   return [
     ...rows.inventory.map((row): Reservation => {
       const target = inventoryTarget(row);
@@ -261,7 +262,7 @@ export async function restockOrder(env: TalismanEnv, actor: string, input: unkno
   const returning = sql`RETURNING reservation_type, reservation_id, target_type, target_id, quantity`;
   const inventoryRestocks = db.all<RestockedRow>(sql`INSERT INTO _ecommerce_restocks
     (id, order_id, reservation_type, reservation_id, target_type, target_id, quantity, admin_actor, reason, created_at)
-    SELECT c.id, r.order_id, 'inventory', r.id, r.target_type, r.target_id, r.quantity - COALESCE((SELECT sum(quantity) FROM _ecommerce_return_stock s WHERE s.reservation_type = 'inventory' AND s.reservation_id = r.id),0), ${actor}, ${values.reason}, ${now}
+    SELECT c.id, r.order_id, 'inventory', r.id, r.target_type, r.target_id, r.quantity - COALESCE((SELECT sum(quantity) FROM _ecommerce_return_stock s WHERE s.reservation_type = 'inventory' AND s.reservation_id = r.id),0) - COALESCE((SELECT sum(quantity) FROM _ecommerce_inspection_stock s WHERE s.reservation_type = 'inventory' AND s.reservation_id = r.id),0), ${actor}, ${values.reason}, ${now}
     FROM (${picked('inventory')}) AS c JOIN _ecommerce_inventory_reservations r ON r.id = c.reservation
     WHERE r.order_id = ${values.orderId} AND r.released_at IS NULL AND ${allowed}
       AND CASE r.target_type
@@ -271,7 +272,7 @@ export async function restockOrder(env: TalismanEnv, actor: string, input: unkno
     ON CONFLICT DO NOTHING ${returning}`);
   const componentRestocks = db.all<RestockedRow>(sql`INSERT INTO _ecommerce_restocks
     (id, order_id, reservation_type, reservation_id, target_type, target_id, quantity, admin_actor, reason, created_at)
-    SELECT c.id, r.order_id, 'component', r.id, 'component', r.component_id, r.quantity - COALESCE((SELECT sum(quantity) FROM _ecommerce_return_stock s WHERE s.reservation_type = 'component' AND s.reservation_id = r.id),0), ${actor}, ${values.reason}, ${now}
+    SELECT c.id, r.order_id, 'component', r.id, 'component', r.component_id, r.quantity - COALESCE((SELECT sum(quantity) FROM _ecommerce_return_stock s WHERE s.reservation_type = 'component' AND s.reservation_id = r.id),0) - COALESCE((SELECT sum(quantity) FROM _ecommerce_inspection_stock s WHERE s.reservation_type = 'component' AND s.reservation_id = r.id),0), ${actor}, ${values.reason}, ${now}
     FROM (${picked('component')}) AS c JOIN _ecommerce_component_reservations r ON r.id = c.reservation
     WHERE r.order_id = ${values.orderId} AND r.released_at IS NULL AND ${allowed}
     ON CONFLICT DO NOTHING ${returning}`);

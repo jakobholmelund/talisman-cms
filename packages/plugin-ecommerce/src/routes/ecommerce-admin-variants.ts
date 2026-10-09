@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
-import { VariantChangeError, runVariantChange } from '../variants';
+import { VariantChangeError, runVariantChange, variantChangeSchema } from '../variants';
 
 /** The product editor's variant configurator: save a value with its stock, delete a value or a group. */
 export const ALL: APIRoute = async ({ request }) => {
@@ -22,6 +22,10 @@ export const ALL: APIRoute = async ({ request }) => {
   }
   try {
     const { env } = await import('cloudflare:workers');
+    const parsed = variantChangeSchema.safeParse(body);
+    if (parsed.success && parsed.data.action === 'saveValue' && parsed.data.stock) {
+      if (parsed.data.stock.id || parsed.data.stock.quantity !== 0) return Response.json({ error: 'Record stock changes in Stock overview with a staff reason.' }, { status: 400, headers });
+    }
     const result = await runVariantChange(env as unknown as TalismanEnv, body);
     return Response.json({ result }, { headers });
   } catch (error) {

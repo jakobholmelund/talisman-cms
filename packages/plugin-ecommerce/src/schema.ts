@@ -977,6 +977,38 @@ export const returnStock = sqliteTable('_ecommerce_return_stock', {
   index('_ecommerce_return_stock_target_idx').on(t.targetType, t.targetId),
   check('return_stock_reservation_type', oneOf(t.reservationType, RESTOCK_RESERVATION_TYPES)),
   check('return_stock_target_type', oneOf(t.targetType, RESTOCK_TARGET_TYPES)), check('return_stock_quantity', money(t.quantity, 'positive'))]);
+/** Inspection decisions never amend or receive the original goods again. */
+export const INSPECTION_DISPOSITIONS = ['sellable', 'quarantine', 'damaged'] as const;
+export type InspectedItem = ParcelItem & { disposition: typeof INSPECTION_DISPOSITIONS[number]; restock: boolean };
+export const returnInspections = sqliteTable('_ecommerce_return_inspections', {
+  id: text('id').primaryKey(), receiptId: text('receipt_id').notNull().references(() => returnReceipts.id),
+  orderId: text('order_id').notNull().references(() => orders.id),
+  items: text('items', { mode: 'json' }).$type<InspectedItem[]>().notNull(),
+  actor: text('actor').notNull(), reason: text('reason').notNull(), fingerprint: text('fingerprint').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, t => [index('_ecommerce_return_inspections_receipt_idx').on(t.receiptId), index('_ecommerce_return_inspections_order_idx').on(t.orderId),
+  check('inspection_items_array', sql`json_valid(${t.items}) AND json_type(${t.items}) = 'array' AND json_array_length(${t.items}) > 0`),
+  check('inspection_actor', filled(t.actor)), check('inspection_reason', trimmed(t.reason, 8))]);
+/** Restored stock from inspected goods shares the same reservation budget as immediate intake. */
+export const inspectionStock = sqliteTable('_ecommerce_inspection_stock', {
+  id: text('id').primaryKey(), inspectionId: text('inspection_id').notNull().references(() => returnInspections.id),
+  orderId: text('order_id').notNull().references(() => orders.id),
+  reservationType: text('reservation_type', { enum: RESTOCK_RESERVATION_TYPES }).notNull(), reservationId: text('reservation_id').notNull(),
+  targetType: text('target_type', { enum: RESTOCK_TARGET_TYPES }).notNull(), targetId: text('target_id').notNull(), quantity: integer('quantity').notNull(),
+}, t => [uniqueIndex('_ecommerce_inspection_stock_decision_unique').on(t.inspectionId, t.reservationType, t.reservationId),
+  index('_ecommerce_inspection_stock_reservation_idx').on(t.reservationType, t.reservationId), index('_ecommerce_inspection_stock_order_idx').on(t.orderId),
+  index('_ecommerce_inspection_stock_target_idx').on(t.targetType, t.targetId),
+  check('inspection_stock_reservation', oneOf(t.reservationType, RESTOCK_RESERVATION_TYPES)), check('inspection_stock_target', oneOf(t.targetType, RESTOCK_TARGET_TYPES)),
+  check('inspection_stock_quantity', money(t.quantity, 'positive'))]);
+export type StocktakeLine = { expectedUpdatedSeconds?: number; name?: string; sku?: string | null; targetType: typeof RESTOCK_TARGET_TYPES[number]; targetId: string; expectedQuantity: number; expectedUpdatedAt: string; countedQuantity: number };
+/** All counted rows, including unchanged counts, are retained in one immutable stocktake receipt. */
+export const stocktakes = sqliteTable('_ecommerce_stocktakes', {
+  id: text('id').primaryKey(), lines: text('lines', { mode: 'json' }).$type<StocktakeLine[]>().notNull(),
+  actor: text('actor').notNull(), reason: text('reason').notNull(), fingerprint: text('fingerprint').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, t => [index('_ecommerce_stocktakes_created_idx').on(t.createdAt),
+  check('stocktake_lines_array', sql`json_valid(${t.lines}) AND json_type(${t.lines}) = 'array' AND json_array_length(${t.lines}) BETWEEN 1 AND 50`),
+  check('stocktake_actor', filled(t.actor)), check('stocktake_reason', trimmed(t.reason, 8))]);
 export const STOCK_MOVEMENT_KINDS = ['receipt', 'correction'] as const;
 export const stockMovements = sqliteTable('_ecommerce_stock_movements', {
   id: text('id').primaryKey(), targetType: text('target_type', { enum: RESTOCK_TARGET_TYPES }).notNull(), targetId: text('target_id').notNull(),
@@ -995,7 +1027,7 @@ export const stockMovements = sqliteTable('_ecommerce_stock_movements', {
 // --- Relations, for the relational query builder ---
 
 const tables = {
-  parcelContents, returnReceipts, returnStock, stockMovements, carts, orders, payments, providerRefunds, products, variants, productVariants, productVariantValues, stocks, components,
+  parcelContents, returnReceipts, returnStock, returnInspections, inspectionStock, stocktakes, stockMovements, carts, orders, payments, providerRefunds, products, variants, productVariants, productVariantValues, stocks, components,
   variantComponents, componentReservations, inventoryReservations, categories, productCategories, tags, productTags,
   customers, customerAccounts, customerSessions, signInTokens, rateLimits, fulfillments, referralCodes, referrals,
   creditLedger, referralSettings, discountCodes, discountCodeCreations, discountRedemptions, giftCardPurchases, giftCards, giftCardLedger,
@@ -1027,7 +1059,7 @@ export const relations = defineRelations(tables, (r) => ({
     componentReservations: r.many.componentReservations(),
     inventoryReservations: r.many.inventoryReservations(),
     fulfillments: r.many.fulfillments(),
-    parcelContents: r.many.parcelContents(), returnReceipts: r.many.returnReceipts(), returnStock: r.many.returnStock(),
+    parcelContents: r.many.parcelContents(), returnReceipts: r.many.returnReceipts(), returnStock: r.many.returnStock(), returnInspections: r.many.returnInspections(), inspectionStock: r.many.inspectionStock(),
     referral: r.one.referrals({ from: r.orders.id, to: r.referrals.orderId }),
     creditLedger: r.many.creditLedger(),
     discountRedemption: r.one.discountRedemptions({ from: r.orders.id, to: r.discountRedemptions.orderId }),
@@ -1143,7 +1175,11 @@ export const relations = defineRelations(tables, (r) => ({
   },
   parcelContents: { order: r.one.orders({ from: r.parcelContents.orderId, to: r.orders.id, optional: false }),
     fulfillment: r.one.fulfillments({ from: r.parcelContents.fulfillmentId, to: r.fulfillments.id, optional: false }) },
-  returnReceipts: { order: r.one.orders({ from: r.returnReceipts.orderId, to: r.orders.id, optional: false }), stock: r.many.returnStock() },
+  returnReceipts: { order: r.one.orders({ from: r.returnReceipts.orderId, to: r.orders.id, optional: false }), stock: r.many.returnStock(), inspections: r.many.returnInspections() },
+  returnInspections: { receipt: r.one.returnReceipts({ from: r.returnInspections.receiptId, to: r.returnReceipts.id, optional: false }),
+    order: r.one.orders({ from: r.returnInspections.orderId, to: r.orders.id, optional: false }), stock: r.many.inspectionStock() },
+  inspectionStock: { inspection: r.one.returnInspections({ from: r.inspectionStock.inspectionId, to: r.returnInspections.id, optional: false }),
+    order: r.one.orders({ from: r.inspectionStock.orderId, to: r.orders.id, optional: false }) },
   returnStock: { receipt: r.one.returnReceipts({ from: r.returnStock.receiptId, to: r.returnReceipts.id, optional: false }),
     order: r.one.orders({ from: r.returnStock.orderId, to: r.orders.id, optional: false }) },
   fulfillments: {

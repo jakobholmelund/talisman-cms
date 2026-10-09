@@ -1,3 +1,4 @@
+import ReturnInspection from './ReturnInspection';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { readOrderWarehouse } from '@talisman-cms/plugin-ecommerce/operations';
 import { adminRequest, errorText, Feedback, Field } from './common';
@@ -27,6 +28,7 @@ function printParcel(data: Snapshot, parcel: Snapshot['parcels'][number], tracki
 }
 export default function OrderWarehouse({ order, refreshOrders, parentBlocked, canRecord, draftChanged }: { order: Order; refreshOrders: () => Promise<unknown>; parentBlocked: boolean; canRecord: () => boolean; draftChanged: (dirty: boolean) => void }) {
   const [data, setData] = useState<Snapshot | null>(null), [loading, setLoading] = useState(true), [readError, setReadError] = useState(''), [inputError, setInputError] = useState('');
+  const [resetVersion, setResetVersion] = useState(0);
   const [conditions, setConditions] = useState<Record<number, string>>({}), [restockChecks, setRestockChecks] = useState<Record<number, boolean>>({});
   const unavailable = useRef(true), sequence = useRef(0), forms = useRef<HTMLDivElement>(null);
   const load = useCallback(async () => {
@@ -44,7 +46,7 @@ export default function OrderWarehouse({ order, refreshOrders, parentBlocked, ca
   useEffect(() => { if (data && !unavailable.current) write.loaded(); }, [data]);
   useEffect(() => { draftChanged(write.dirty || !!write.pending); return () => draftChanged(false); }, [write.dirty, write.pending]);
   const disabled = parentBlocked || write.needsReload || loading || !!readError || write.busy || !!write.pending;
-  const reset = () => { setConditions({}); setRestockChecks({}); forms.current?.querySelectorAll('form').forEach(form => form.reset()); write.setDirty(false); };
+  const reset = () => { setResetVersion(n => n + 1); setConditions({}); setRestockChecks({}); forms.current?.querySelectorAll('form').forEach(form => form.reset()); write.setDirty(false); };
   function parcel(event: React.FormEvent<HTMLFormElement>, fulfillmentId?: string) {
     event.preventDefault(); if (!data || !canRecord() || unavailable.current || write.blocked()) return;
     const form = event.currentTarget, f = new FormData(form);
@@ -63,6 +65,14 @@ export default function OrderWarehouse({ order, refreshOrders, parentBlocked, ca
     if (!items.length) { setInputError('Enter at least one item quantity.'); return; }
     setInputError('');
     void write.send({ path: 'operations', body: { action: 'receiveReturn', data: { orderId: order.id, requestKey: crypto.randomUUID(), reason: text(f, 'reason'), items } }, receipt: 'receiptId', success: 'Return intake recorded; only selected sellable units were added to stock.' }, () => { setConditions({}); setRestockChecks({}); form.reset(); write.setDirty(false); });
+  }
+  function inspect(form: HTMLFormElement, receiptId: string) {
+    if (!data || !canRecord() || unavailable.current || write.blocked()) return;
+    const f = new FormData(form), receipt = data.returns.find(r => r.id === receiptId);
+    const items = (receipt?.inspectionPending ?? []).map(i => ({ lineIndex: i.lineIndex, quantity: Number(f.get(`inspected-${i.lineIndex}`)), disposition: text(f, `disposition-${i.lineIndex}`), restock: f.has(`inspection-restock-${i.lineIndex}`) })).filter(i => i.quantity > 0);
+    if (!items.length) { setInputError('Enter at least one inspected quantity.'); return; }
+    setInputError('');
+    void write.send({ path: 'operations', body: { action: 'inspectReturn', data: { orderId: order.id, receiptId, items, reason: text(f,'reason'), requestKey: crypto.randomUUID() } }, receipt: 'inspectionId', success: 'Inspection decision recorded; only selected approved goods were restocked.' }, reset);
   }
   return <section aria-label={`Warehouse ${order.id}`} ref={forms} onChange={() => write.setDirty(true)}>
     <h3>Parcel contents and returns</h3>
@@ -93,7 +103,10 @@ export default function OrderWarehouse({ order, refreshOrders, parentBlocked, ca
         </fieldset>)}
         <Field label="Reason for the return"><input name="reason" required minLength={8} maxLength={500} disabled={disabled} /></Field><button type="submit" disabled={disabled || !data.lines.some(line => line.returnable > 0)}>Record return intake</button>
       </form></details>}
-      {data.returns.length > 0 && <><h4>Return intake history</h4><ul>{data.returns.map(receipt => <li key={receipt.id}>{dateTime(receipt.createdAt)} · {receipt.actorName || receipt.actor} · {receipt.reason}<ul>{receipt.items.map(item => <li key={item.lineIndex}>{item.quantity} × {data.lines[item.lineIndex]?.name} · {item.condition} · {item.restock ? 'Restocked' : 'Kept out of stock'}</li>)}</ul></li>)}</ul></>}
+      {data.returns.length > 0 && <><h4>Return intake history</h4><ul>{data.returns.map(receipt => <li key={receipt.id}>{dateTime(receipt.createdAt)} · {receipt.actorName || receipt.actor} · {receipt.reason}<ul>{receipt.items.map(item => <li key={item.lineIndex}>{item.quantity} × {data.lines[item.lineIndex]?.name} · {item.condition} · {item.restock ? 'Restocked' : 'Kept out of stock'}</li>)}</ul>
+        {(receipt.inspections ?? []).map(decision => <div key={decision.id}><small>{dateTime(decision.createdAt)} · {decision.actorName} · {decision.reason}</small><ul>{decision.items.map(i => <li key={i.lineIndex}>{i.quantity} × {data.lines[i.lineIndex]?.name} · {i.disposition} · {i.restock ? 'Restocked' : 'Kept out of stock'}</li>)}</ul></div>)}
+        <ReturnInspection key={`${receipt.id}:${resetVersion}`} receipt={receipt} lines={data.lines} disabled={disabled} submit={inspect} />
+      </li>)}</ul></>}
     </>}
   </section>;
   function parcelForm(event: React.FormEvent<HTMLFormElement>, fulfillmentId: string) { parcel(event, fulfillmentId); }

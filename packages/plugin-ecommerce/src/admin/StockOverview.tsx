@@ -1,3 +1,4 @@
+import Stocktakes from './Stocktakes';
 import StockMovements from './StockMovements';
 import React, { useState } from 'react';
 import { Link } from '@tanstack/react-router';
@@ -30,15 +31,16 @@ export default function StockOverview() {
     <OperationsReadStatus loading={loading} error={error} reload={() => void load()} />
     {data && <Panel title={data.view === 'components' ? 'Shared component stock' : 'Sellable choice stock'} label="Stock results">
       <p>A choice using shared components shows the maximum units those parts can make. Choices sharing a part draw from the same supply; their quantities cannot be added together.</p>
-      {!data.rows.length ? <p>No stock matches these filters.</p> : <div className="ecom-admin__table-wrap"><table><thead><tr><th>Item</th><th>SKU</th><th>Available</th><th>Stock source</th><th>Adjust stock</th></tr></thead><tbody>{data.rows.map(row => {
+      {!data.rows.length ? <p>No stock matches these filters.</p> : <div className="ecom-admin__table-wrap"><table><thead><tr><th>Item</th><th>SKU</th><th>Available</th><th>Stock source</th><th>Catalog record</th></tr></thead><tbody>{data.rows.map(row => {
         const model = row.kind === 'component' ? parts : products;
         const id = row.productId ?? row.id;
         return <tr key={`${row.kind}:${row.id}`}><td>{row.name}</td><td>{row.sku || '—'}</td><td>{row.quantity === 0 ? 'Unavailable (0)' : row.quantity}</td><td>{row.source}</td><td>{model && !model.readOnly
-          ? <Link to={`/${model.adminSection || 'commerce'}/${model.slug}/${id}`}>Edit {row.kind === 'component' ? 'component' : 'product'}</Link>
-          : 'Use the store’s stock editor'}</td></tr>;
+          ? <Link to={`/${model.adminSection || 'commerce'}/${model.slug}/${id}`}>View {row.kind === 'component' ? 'component' : 'product'}</Link>
+          : 'Use stock tools below'}</td></tr>;
       })}</tbody></table></div>}
       <OperationsPagination offset={data.offset} total={data.total} loading={loading} change={offset => setFilters(current => ({ ...current, offset: String(offset) }))} />
     </Panel>}
     <StockMovements refreshOverview={load} />
+    <Stocktakes refreshOverview={load} />
   </CommerceAdmin>;
 }

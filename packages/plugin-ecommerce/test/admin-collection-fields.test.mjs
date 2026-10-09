@@ -249,7 +249,7 @@ test('the commerce collections the admin edits configure every column the server
   const groups = injectedCollection('_ecommerce_product_variants').collection;
   // The count is sent only when changed: checkout moves it in place (see saveOnlyIfChanged in the core).
   assert.deepEqual(groups.fields.find((field) => field.name === 'inventoryQuantity'),
-    { name: 'inventoryQuantity', label: 'Inventory Quantity', type: 'number', defaultValue: 0, saveOnlyIfChanged: true });
+    { name: 'inventoryQuantity', label: 'Inventory Quantity · use Stock overview', type: 'number', defaultValue: 0, saveOnlyIfChanged: true, readOnly: true });
 });
 
 test('a new commerce record from the collection form starts its optional fields with values the server keeps', () => {

@@ -10,9 +10,11 @@ const stubs = {
   'virtual:talisman-cms/ecommerce-emails': 'export const emailTemplates = null;',
 };
 registerHooks({ resolve(specifier, context, next) { return specifier in stubs ? {url:`data:text/javascript,${encodeURIComponent(stubs[specifier])}`,shortCircuit:true} : next(specifier,context); } });
-const { readOrderWarehouse, recordParcelContents, receiveOrderReturn, listStockLocations, readStockHistory, recordStockMovement } = await import('../dist/operations.js');
+const { readOrderWarehouse, recordParcelContents, receiveOrderReturn, listStockLocations, readStockHistory, recordStockMovement, inspectOrderReturn, recordStocktake, listStocktakes, readStocktakeTargets } = await import('../dist/operations.js');
 const { fulfillCommerceOrder, listCommerceOrdersAdmin } = await import('../dist/fulfillment.js');
 const { restockOrder, getOrderAdjustmentsAdmin } = await import('../dist/order-adjustments.js');
+const { bindCommerceApi } = await import('../dist/api.js');
+const { hashOrderAccess } = await import('../dist/cookies.js');
 const route = (await import('../dist/routes/ecommerce-admin-operations.js')).ALL;
 function database() {
   const sqlite = new DatabaseSync(':memory:');
@@ -179,4 +181,102 @@ test('legacy restock racing item intake never restores a hold twice',async()=>{
  const outcomes=await Promise.allSettled([receiveOrderReturn(env,intake(1),'a'),restockOrder(env,'b',{orderId:ORDER,reason:'Whole remainder physically received'})]);
  assert.ok(outcomes.some(o=>o.status==='fulfilled'));assert.equal(qty(s),14);
  assert.equal(s.prepare("SELECT sum(quantity) n FROM (SELECT quantity FROM _ecommerce_return_stock UNION ALL SELECT quantity FROM _ecommerce_restocks)").get().n,4);s.close();
+});
+
+const pendingIntake = (n) => intake(n, {items:[{lineIndex:0,quantity:n,condition:'inspection',restock:false}]});
+const inspect = (receiptId,n,extra={}) => ({orderId:ORDER,receiptId,requestKey:crypto.randomUUID(),reason:'Inspected the received goods',items:[{lineIndex:0,quantity:n,disposition:'sellable',restock:true}],...extra});
+const counted = (row,n) => ({targetType:row.type,targetId:row.id,expectedQuantity:row.quantity,expectedUpdatedAt:row.updatedAt,countedQuantity:n});
+
+test('inspection resolves partial received units once and preserves intake and payment totals',async()=>{
+ const {sqlite:s,env}=fixture({parts:true});await fulfillCommerceOrder(env,'staff',parcel(4));
+ const intakeResult=await receiveOrderReturn(env,pendingIntake(4),'receiver');
+ const request=inspect(intakeResult.receiptId,1), result=await inspectOrderReturn(env,request,'inspector');
+ assert.equal(qty(s,true),22);assert.equal((await inspectOrderReturn(env,request,'inspector')).inspectionId,result.inspectionId);assert.equal(qty(s,true),22);
+ await assert.rejects(inspectOrderReturn(env,{...request,reason:'Changed inspection decision'},'inspector'),/key/);
+ const warehouse=await readOrderWarehouse(env,{orderId:ORDER});assert.equal(warehouse.lines[0].received,4);assert.equal(warehouse.returns[0].inspectionPending[0].quantity,3);assert.equal(warehouse.returns[0].inspections[0].items[0].quantity,1);
+ assert.equal(s.prepare('SELECT status FROM _ecommerce_orders').get().status,'paid');
+ await inspectOrderReturn(env,inspect(intakeResult.receiptId,2,{items:[{lineIndex:0,quantity:2,disposition:'quarantine',restock:false}]}),'inspector');assert.equal(qty(s,true),22);
+ await inspectOrderReturn(env,inspect(intakeResult.receiptId,1,{items:[{lineIndex:0,quantity:1,disposition:'damaged',restock:false}]}),'inspector');assert.equal(qty(s,true),22);
+ assert.equal((await readOrderWarehouse(env,{orderId:ORDER})).returns[0].inspectionPending[0].quantity,0);
+ const history=await readStockHistory(env,{targetType:'component',targetId:'part'});assert.ok(history.rows.some(r=>r.kind==='inspection'&&r.delta===2&&r.actor==='inspector'));s.close();
+});
+test('competing inspections never decide more goods than awaiting review',async()=>{
+ const {sqlite:s,env}=fixture();await fulfillCommerceOrder(env,'staff',parcel(4));const receipt=await receiveOrderReturn(env,pendingIntake(4),'staff');
+ const results=await Promise.allSettled([inspectOrderReturn(env,inspect(receipt.receiptId,3),'a'),inspectOrderReturn(env,inspect(receipt.receiptId,3),'b')]);assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal(qty(s),13);assert.equal(count(s,'_ecommerce_return_inspections'),1);
+ await assert.rejects(inspectOrderReturn(env,inspect(receipt.receiptId,2),'staff'));assert.equal(qty(s),13);s.close();
+});
+test('inspections only resolve inspection lines of their own order and only approve sellable stock',async()=>{
+ const {sqlite:s,env}=fixture();await fulfillCommerceOrder(env,'staff',parcel(4));const damaged=await receiveOrderReturn(env,intake(1,{items:[{lineIndex:0,quantity:1,condition:'damaged',restock:false}]}),'staff');
+ await assert.rejects(inspectOrderReturn(env,inspect(damaged.receiptId,1),'staff'));const receipt=await receiveOrderReturn(env,pendingIntake(2),'staff');
+ for(const v of [inspect('missing',1),inspect(receipt.receiptId,1,{items:[{lineIndex:9,quantity:1,disposition:'sellable',restock:true}]}),inspect(receipt.receiptId,1,{items:[{lineIndex:0,quantity:1,disposition:'quarantine',restock:true}]})]) await assert.rejects(inspectOrderReturn(env,v,'staff'));
+ assert.equal(count(s,'_ecommerce_return_inspections'),0);assert.equal(qty(s),10);s.close();
+});
+test('immediate returns and inspection restorations share a hold and fully restore it exactly once',async()=>{
+ const {sqlite:s,env}=fixture();await fulfillCommerceOrder(env,'staff',parcel(4));await receiveOrderReturn(env,intake(1),'staff');const receipt=await receiveOrderReturn(env,pendingIntake(3),'staff');
+ await inspectOrderReturn(env,inspect(receipt.receiptId,3),'staff');assert.equal(qty(s),14);assert.ok(s.prepare('SELECT released_at FROM _ecommerce_inventory_reservations').get().released_at);
+ s.exec("UPDATE _ecommerce_orders SET status='refunded'");assert.equal((await getOrderAdjustmentsAdmin(env,{orderIds:[ORDER]})).orders[ORDER].reservations[0].intakeRestockedQuantity,4);
+ await assert.rejects(restockOrder(env,'staff',{orderId:ORDER,reason:'Remaining received goods checked'}),/Nothing/);assert.equal(qty(s),14);s.close();
+});
+test('legacy whole restocking restores only the remainder after inspection',async()=>{
+ const {sqlite:s,env}=fixture({parts:true});await fulfillCommerceOrder(env,'staff',parcel(4));const receipt=await receiveOrderReturn(env,pendingIntake(4),'staff');await inspectOrderReturn(env,inspect(receipt.receiptId,1),'staff');
+ s.exec("UPDATE _ecommerce_orders SET status='refunded'");const result=await restockOrder(env,'staff',{orderId:ORDER,reason:'Remaining received goods checked'});assert.equal(result.restocked[0].quantity,6);assert.equal(qty(s,true),28);
+ await assert.rejects(inspectOrderReturn(env,inspect(receipt.receiptId,1),'staff'),/already been restored/);assert.equal(count(s,'_ecommerce_return_inspections'),1);s.close();
+});
+test('inspection failures roll back the decision and do not guess old checkout recipes',async()=>{
+ const {sqlite:s,env}=fixture({legacy:true});await fulfillCommerceOrder(env,'staff',{orderId:ORDER,note:'Historical order shipped'});const receipt=await receiveOrderReturn(env,pendingIntake(2),'staff');
+ await assert.rejects(inspectOrderReturn(env,inspect(receipt.receiptId,1),'staff'),/no checkout stock mapping/);assert.equal(count(s,'_ecommerce_return_inspections'),0);
+ await inspectOrderReturn(env,inspect(receipt.receiptId,1,{items:[{lineIndex:0,quantity:1,disposition:'sellable',restock:false}]}),'staff');assert.equal(qty(s),10);s.close();
+});
+test('stocktakes record unchanged lines, apply discrepancies atomically and safely replay',async()=>{
+ const {sqlite:s,env}=fixture();const rows=(await listStockLocations(env)).rows;const caseRow=rows.find(r=>r.type==='product'),partRow=rows.find(r=>r.type==='component');
+ const request={requestKey:crypto.randomUUID(),reason:'Quarterly physical available stock count',lines:[counted(caseRow,8),counted(partRow,20)]};
+ const receipt=await recordStocktake(env,request,'staff');assert.equal(qty(s),8);assert.equal(qty(s,true),20);assert.equal(count(s,'_ecommerce_stock_movements'),1);
+ assert.equal((await recordStocktake(env,request,'staff')).stocktakeId,receipt.stocktakeId);assert.equal(qty(s),8);await assert.rejects(recordStocktake(env,{...request,reason:'Different count explanation'},'staff'),/key/);
+ s.exec("UPDATE _ecommerce_products SET name='Renamed after count'");const history=await listStocktakes(env);assert.equal(history.total,1);assert.equal(history.rows[0].lines.length,2);assert.equal(history.rows[0].lines[0].name,'Travel case');
+ assert.ok((await readStockHistory(env,{targetType:'product',targetId:'case'})).rows.some(r=>r.reason.startsWith('Stocktake:')&&r.beforeQuantity===10&&r.afterQuantity===8));s.close();
+});
+test('a stale unchanged stocktake line rolls back every discrepancy and the count receipt',async()=>{
+ const {sqlite:s,env}=fixture();const rows=(await listStockLocations(env)).rows;const caseRow=rows.find(r=>r.type==='product'),partRow=rows.find(r=>r.type==='component');
+ s.exec("UPDATE _ecommerce_components SET quantity=19,updated_at=updated_at+1");
+ await assert.rejects(recordStocktake(env,{requestKey:crypto.randomUUID(),reason:'Physical available stock count',lines:[counted(caseRow,8),counted(partRow,20)]},'staff'),/No counts were applied/);
+ assert.equal(qty(s),10);assert.equal(qty(s,true),19);assert.equal(count(s,'_ecommerce_stocktakes'),0);assert.equal(count(s,'_ecommerce_stock_movements'),0);s.close();
+});
+test('stocktakes validate missing/duplicate records and later failures roll back earlier counts',async()=>{
+ const {sqlite:s,env}=fixture();const rows=(await listStockLocations(env)).rows;const a=rows.find(r=>r.type==='product'),b=rows.find(r=>r.type==='component');
+ const request={requestKey:crypto.randomUUID(),reason:'Physical available stock count',lines:[counted(a,9),counted(b,18)]};
+ await assert.rejects(recordStocktake(env,{...request,lines:[counted(a,9),counted(a,8)]},'staff'));
+ await assert.rejects(recordStocktake(env,{...request,lines:[{...counted(a,9),targetId:'missing'}]},'staff'));
+ s.exec("CREATE TRIGGER refuse_count BEFORE INSERT ON _ecommerce_stock_movements WHEN NEW.target_type='component' BEGIN SELECT RAISE(ABORT,'forced stock count failure'); END");
+ await assert.rejects(recordStocktake(env,request,'staff'));assert.equal(qty(s),10);assert.equal(count(s,'_ecommerce_stocktakes'),0);assert.equal(count(s,'_ecommerce_stock_movements'),0);s.close();
+});
+test('fifty stocktake targets fit D1 bindings and histories cannot be edited',async()=>{
+ const {sqlite:s,env,recorded}=fixture();for(let i=0;i<49;i++)s.prepare("INSERT INTO _ecommerce_components(id,name,sku,quantity,created_at,updated_at) VALUES (?,?,?,2,?,?)").run('part-'+i,'Count part '+i,'PART-'+i,NOW,NOW);
+ const selected=(await listStockLocations(env)).rows.slice(0,50);assert.equal(selected.length,50);
+ const reloaded=await readStocktakeTargets(env,{targets:selected.map(r=>({targetType:r.type,targetId:r.id}))});assert.equal(reloaded.rows.length,50);
+ await recordStocktake(env,{requestKey:crypto.randomUUID(),reason:'Large physical available stock count',lines:reloaded.rows.map(r=>counted(r,r.quantity+1))},'staff');
+ assert.equal(count(s,'_ecommerce_stock_movements'),50);assert.ok(recorded.every(([,values])=>values.length<=100));
+ assert.throws(()=>s.exec("UPDATE _ecommerce_stocktakes SET reason='altered reason'"),/immutable/);assert.throws(()=>s.exec('DELETE FROM _ecommerce_stocktakes'),/immutable/);s.close();
+});
+test('shopper tracking needs owner credentials and exposes corrected parcels and inspection progress only',async()=>{
+ const {sqlite:s,env}=fixture();const api=bindCommerceApi({env});s.prepare('UPDATE _ecommerce_orders SET guest_basket_token_hash=?, guest_access_token_hash=?, user_id=?').run(await hashOrderAccess('browser'),await hashOrderAccess('access-token'),'owner');
+ const first=await fulfillCommerceOrder(env,'staff',parcel(1,{carrier:'Original carrier',trackingNumber:'OLD'}));await fulfillCommerceOrder(env,'staff',parcel(3));
+ const { correctCommerceFulfillment }=await import('../dist/fulfillment.js');await correctCommerceFulfillment(env,'staff',{fulfillmentId:first.fulfillmentId,carrier:'Corrected carrier',trackingNumber:'NEW',reason:'Private staff tracking explanation'});
+ const receipt=await receiveOrderReturn(env,pendingIntake(2),'staff');await inspectOrderReturn(env,inspect(receipt.receiptId,1),'staff');
+ for(const args of [[ORDER],[ORDER,'wrong'],[ORDER,undefined,'other'],[ORDER,undefined,undefined,'wrong']]) assert.equal(await api.orders.tracking(...args),null);
+ const tracking=await api.orders.tracking(ORDER,'browser');assert.equal(tracking.parcels[0].trackingNumber,'NEW');assert.deepEqual(tracking.parcels.map(p=>p.items[0].quantity),[1,3]);assert.equal(tracking.lines[0].remaining,0);assert.equal(tracking.lines[0].received,2);assert.equal(tracking.returns[0].items[0].awaitingInspection,1);
+ const serialized=JSON.stringify(tracking);for(const secret of ['actor','reason','fingerprint','stockTargets','reservation','shippingAddress','Private staff'])assert.ok(!serialized.includes(secret),secret);
+ assert.ok(await api.orders.tracking(ORDER,undefined,'owner'));assert.ok(await api.orders.tracking(ORDER,undefined,undefined,'access-token'));s.close();
+});
+test('shopper tracking preserves unknown historical parcel quantities and missing catalog labels',async()=>{
+ const {sqlite:s,env}=fixture({legacy:true});s.prepare('UPDATE _ecommerce_orders SET guest_basket_token_hash=?').run(await hashOrderAccess('browser'));await fulfillCommerceOrder(env,'staff',{orderId:ORDER,note:'Historical shipment recorded'});s.exec('DELETE FROM _ecommerce_products');
+ const tracking=await bindCommerceApi({env}).orders.tracking(ORDER,'browser');assert.equal(tracking.parcels[0].items,null);assert.equal(tracking.lines[0].remaining,null);assert.equal(tracking.lines[0].name,'Ordered item');s.close();
+});
+
+test('audited count tools preserve exact extended-year versions from legacy seed timestamps',async()=>{
+ const {sqlite:s,env}=fixture();const legacy=1790000000000;s.prepare("UPDATE _ecommerce_products SET updated_at=? WHERE id='case'").run(legacy);
+ let row=(await listStockLocations(env,{search:'Travel case'})).rows[0];assert.ok(row.updatedAt.startsWith('+'));
+ await recordStockMovement(env,stock({kind:'correction',delta:-1,expectedUpdatedAt:row.updatedAt}),'staff');assert.equal(qty(s),9);assert.equal(s.prepare("SELECT updated_at FROM _ecommerce_products").get().updated_at,legacy+1);
+ row=(await readStocktakeTargets(env,{targets:[{targetType:'product',targetId:'case'}]})).rows[0];
+ const request={requestKey:crypto.randomUUID(),reason:'Legacy available stock physically counted',lines:[counted(row,8)]};await recordStocktake(env,request,'staff');assert.equal(qty(s),8);assert.equal(s.prepare("SELECT updated_at FROM _ecommerce_products").get().updated_at,legacy+2);
+ await assert.rejects(recordStocktake(env,{...request,requestKey:crypto.randomUUID()},'staff'),/No counts/);s.close();
 });

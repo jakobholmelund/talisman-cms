@@ -23,6 +23,23 @@ const tables = [pluginSchema, coreSchema, authSchema].flatMap((module) => Object
 
 /** The commerce triggers, with the table each one is on. */
 const TRIGGERS = [
+  '_ecommerce_return_inspections_immutable_update ON _ecommerce_return_inspections',
+  '_ecommerce_return_inspections_immutable_delete ON _ecommerce_return_inspections',
+  '_ecommerce_inspection_stock_immutable_update ON _ecommerce_inspection_stock',
+  '_ecommerce_inspection_stock_immutable_delete ON _ecommerce_inspection_stock',
+  '_ecommerce_stocktakes_immutable_update ON _ecommerce_stocktakes',
+  '_ecommerce_stocktakes_immutable_delete ON _ecommerce_stocktakes',
+  '_ecommerce_return_inspection_received_guard ON _ecommerce_return_inspections',
+  '_ecommerce_inspection_stock_inventory_guard ON _ecommerce_inspection_stock',
+  '_ecommerce_inspection_stock_component_guard ON _ecommerce_inspection_stock',
+  '_ecommerce_inspection_stock_product_apply ON _ecommerce_inspection_stock',
+  '_ecommerce_inspection_stock_variant_apply ON _ecommerce_inspection_stock',
+  '_ecommerce_inspection_stock_stock_apply ON _ecommerce_inspection_stock',
+  '_ecommerce_inspection_stock_component_apply ON _ecommerce_inspection_stock',
+  '_ecommerce_inspection_stock_inventory_release ON _ecommerce_inspection_stock',
+  '_ecommerce_inspection_stock_component_release ON _ecommerce_inspection_stock',
+  '_ecommerce_inspection_stock_received_guard ON _ecommerce_inspection_stock',
+  '_ecommerce_stocktake_versions_guard ON _ecommerce_stocktakes',
   '_ecommerce_parcel_contents_no_update ON _ecommerce_parcel_contents',
   '_ecommerce_parcel_contents_no_delete ON _ecommerce_parcel_contents',
   '_ecommerce_return_receipts_no_update ON _ecommerce_return_receipts',

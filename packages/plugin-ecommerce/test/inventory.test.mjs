@@ -373,11 +373,10 @@ test('an admin save of stock loaded before a reservation in the same second gets
   assert.deepEqual([refused.status, refused.body.error], [409, STALE_MESSAGE]);
   assert.equal(value(sqlite, `SELECT quantity FROM _ecommerce_stocks WHERE id = 'p1-stock'`), 99);
 
-  // With updated_at left at the second the admin loaded, as reservations used to leave it, the same
-  // save would have gone through and undone the reservation.
+  // A current token still cannot edit stock outside the audited workflow.
   sqlite.prepare(`UPDATE _ecommerce_stocks SET updated_at = ? WHERE id = 'p1-stock'`).run(stamp);
-  assert.equal((await cms('PUT', '/collections/_ecommerce_stocks/entries/p1-stock', staleSave)).status, 200);
-  assert.equal(value(sqlite, `SELECT quantity FROM _ecommerce_stocks WHERE id = 'p1-stock'`), 100);
+  assert.equal((await cms('PUT', '/collections/_ecommerce_stocks/entries/p1-stock', staleSave)).status, 400);
+  assert.equal(value(sqlite, `SELECT quantity FROM _ecommerce_stocks WHERE id = 'p1-stock'`), 99);
   sqlite.close();
 });
 
@@ -408,9 +407,8 @@ test('a stock token run minutes ahead by a burst of checkouts never moves back t
 
   // Admin B loads the row and saves a recount: the token moves on from the stamp B loaded.
   const loadedByB = await cms('GET', path);
-  const recount = await cms('PUT', path, { data: { productVariantValueId: 'p1-value', quantity: 500 },
-    expectedUpdatedAt: loadedByB.body.data.updatedAt });
-  assert.equal(recount.status, 200);
+  const { recordStockMovement } = await import('../dist/operations.js');
+  await recordStockMovement({ DB }, { requestKey:crypto.randomUUID(),targetType:'stock',targetId:'p1-stock',kind:'correction',delta:400,expectedQuantity:100,expectedUpdatedAt:loadedByB.body.data.updatedAt,reason:'Physical unreserved units counted' }, 'staff');
   assert.equal(stockStamp(), stamp + 321);
 
   // A's save from before the burst is still stale, so it cannot overwrite B's recount.
@@ -496,7 +494,7 @@ test('a failed stock write leaves no half-saved value, and a retry creates no du
   sqlite.exec(`CREATE TRIGGER fail_stock_insert BEFORE INSERT ON _ecommerce_stocks
     BEGIN SELECT RAISE(ABORT, 'stock write failed'); END`);
   const change = { action: 'saveValue', groupId: 'frame-lens',
-    value: { value: 'Rose', sku: 'FRAME-ROS', image: null, priceOverride: null }, stock: { quantity: 4 } };
+    value: { value: 'Rose', sku: 'FRAME-ROS', image: null, priceOverride: null }, stock: { quantity: 0 } };
   const failed = await postVariants({ DB }, change);
   assert.equal(failed.status, 500);
   assert.doesNotMatch(failed.json.error, /stock write failed|INSERT|_ecommerce/);
@@ -507,7 +505,7 @@ test('a failed stock write leaves no half-saved value, and a retry creates no du
   const saved = await postVariants({ DB }, change);
   assert.equal(saved.status, 200);
   assert.equal(value(sqlite, `SELECT COUNT(*) FROM _ecommerce_product_variant_values WHERE value = 'Rose'`), 1);
-  assert.equal(stockRow(sqlite, saved.json.result.value.id).quantity, 4);
+  assert.equal(stockRow(sqlite, saved.json.result.value.id).quantity, 0);
   sqlite.close();
 });
 
@@ -712,15 +710,14 @@ test('a change through the variants endpoint clears the cached reads of the rows
   sqlite.exec(`UPDATE _ecommerce_product_variant_values SET value = 'Amber' WHERE id = 'frame-amber'`);
 
   const saved = await postVariants(env, { action: 'saveValue', groupId: 'frame-lens',
-    value: { id: 'frame-amber', expectedUpdatedAt: loadedAt(stamp), ...amber, value: 'Amber gold', priceOverride: 13900 },
-    stock: { id: 'frame-amber-stock', expectedUpdatedAt: loadedAt(stamp), quantity: 9 } });
+    value: { id: 'frame-amber', expectedUpdatedAt: loadedAt(stamp), ...amber, value: 'Amber gold', priceOverride: 13900 } });
   assert.equal(saved.status, 200);
   const created = await postVariants(env, { action: 'saveValue', groupId: 'frame-lens',
-    value: { value: 'Rose', sku: null, image: null, priceOverride: null }, stock: { quantity: 4 } });
+    value: { value: 'Rose', sku: null, image: null, priceOverride: null }, stock: { quantity: 0 } });
   assert.equal(created.status, 200);
   const { value: rose, stock: roseStock } = created.json.result;
   let now = await storefront();
-  assert.deepEqual([now.amber, now.amberStock], [['Amber gold', 13900], 9]);
+  assert.deepEqual([now.amber, now.amberStock], [['Amber gold', 13900], 5]);
   assert.deepEqual(now.values, ['frame-amber', 'frame-smoke', 'other-amber', rose.id].sort());
   assert.deepEqual(now.stockRows, ['frame-amber-stock', 'frame-smoke-stock', 'other-amber-stock', roseStock.id].sort());
 
@@ -744,7 +741,7 @@ test('a change through the variants endpoint clears the cached reads of the rows
   sqlite.close();
 });
 
-test('a stock save through the variants endpoint loaded before a same-second reservation gets 409', async (t) => {
+test('the variants endpoint directs stock changes to the audited workflow', async (t) => {
   const stamp = second();
   t.mock.timers.enable({ apis: ['Date'], now: stamp * 1000 + 300 });
   const { sqlite, DB } = database();
@@ -759,7 +756,8 @@ test('a stock save through the variants endpoint loaded before a same-second res
   const refused = await postVariants({ DB }, { action: 'saveValue', groupId: 'frame-lens',
     value: { id: 'frame-smoke', expectedUpdatedAt: loadedAt(stamp), value: 'Smoke', sku: 'FRAME-SMK', image: null, priceOverride: null },
     stock: { id: 'frame-smoke-stock', expectedUpdatedAt: loadedAt(stamp), quantity: 5 } });
-  assert.deepEqual([refused.status, refused.json.code], [409, 'stale_record']);
+  assert.equal(refused.status, 400);
+  assert.match(refused.json.error, /Stock overview/);
   assert.equal(stockRow(sqlite, 'frame-smoke').quantity, 2);
   sqlite.close();
 });

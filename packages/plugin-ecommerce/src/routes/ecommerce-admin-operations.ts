@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { authorizeCmsRequest } from 'talisman-cms/auth/guard';
 import { ZodError } from 'zod';
-import { CommerceOperationsConflict, readOrderWarehouse, recordParcelContents, receiveOrderReturn, listStockLocations, readStockHistory, recordStockMovement, listEmailRecovery, readCommerceAttention, readStockOverview, retryCommerceEmail } from '../operations';
+import { CommerceOperationsConflict, readOrderWarehouse, recordParcelContents, receiveOrderReturn, listStockLocations, readStockHistory, recordStockMovement, inspectOrderReturn, recordStocktake, listStocktakes, readStocktakeTargets, listEmailRecovery, readCommerceAttention, readStockOverview, retryCommerceEmail } from '../operations';
 
 export const ALL: APIRoute = async ({ request }) => {
   const authorization = await authorizeCmsRequest(request, 'admin');
@@ -21,6 +21,7 @@ export const ALL: APIRoute = async ({ request }) => {
       if (view === 'attention') return Response.json(await readCommerceAttention(runtimeEnv), { headers });
       if (view === 'emails') return Response.json(await listEmailRecovery(runtimeEnv, params), { headers });
       if (view === 'stockLocations') return Response.json(await listStockLocations(runtimeEnv, params), { headers });
+      if (view === 'stocktakes') return Response.json(await listStocktakes(runtimeEnv, params), { headers });
       if (view === 'stockHistory') return Response.json(await readStockHistory(runtimeEnv, params), { headers });
       if (view === 'stock') return Response.json(await readStockOverview(runtimeEnv, { ...params, view: params.inventory }), { headers });
       return Response.json({ error: 'Choose an operations view' }, { status: 400, headers });
@@ -28,8 +29,9 @@ export const ALL: APIRoute = async ({ request }) => {
     let body: { action?: string; data?: unknown };
     try { body = await request.json(); } catch { return Response.json({ error: 'Invalid request' }, { status: 400, headers }); }
     const actor = String(authorization.user?.id ?? '');
+    if (body?.action === 'stocktakeRead') return Response.json(await readStocktakeTargets(runtimeEnv, body.data), { headers });
     if (body?.action === 'warehouseRead') return Response.json(await readOrderWarehouse(runtimeEnv, body.data), { headers });
-    const actions = { retryEmail: retryCommerceEmail, parcelContents: recordParcelContents, receiveReturn: receiveOrderReturn, stockMovement: recordStockMovement };
+    const actions = { retryEmail: retryCommerceEmail, parcelContents: recordParcelContents, receiveReturn: receiveOrderReturn, stockMovement: recordStockMovement, inspectReturn: inspectOrderReturn, stocktake: recordStocktake };
     const action = body?.action as keyof typeof actions;
     if (!Object.hasOwn(actions, action)) return Response.json({ error: 'Invalid operations action' }, { status: 400, headers });
     return Response.json({ result: await actions[action](runtimeEnv, body.data, actor) }, { headers });

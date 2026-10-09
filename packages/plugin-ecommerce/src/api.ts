@@ -1,3 +1,4 @@
+import { readOrderTracking } from './order-tracking';
 import { commerceContext, type CommerceApiOptions } from './commerce-context';
 import { checkCartItems, claimCart, findCart, getOrCreateCart, quoteCart, updateCartItems, type CartItemInput } from './basket';
 import { createOrderFromCart, reconcilePendingOrder, resumeCheckout } from './checkout';
@@ -47,6 +48,8 @@ export function bindCommerceApi(options: CommerceApiOptions) {
       updateItems: (cartId: string, items: CartItemInput[]) => updateCartItems(ctx, cartId, items),
     },
     orders: {
+      /** Shopper-safe parcel contents and return progress, after the same ownership check as order status. */
+      tracking: (id: string, sessionToken?: string, customerId?: string, orderAccessToken?: string) => readOrderTracking(ctx, id, sessionToken, customerId, orderAccessToken),
       resumeFromCart: (cartId: string, options: { limitProviderChecks?: boolean } = {}) => resumeCheckout(ctx, cartId, options),
       reconcilePending: (id: string) => reconcilePendingOrder(ctx, id),
       createFromCart: (cartId: string, options: CheckoutOptions) => createOrderFromCart(ctx, cartId, options),

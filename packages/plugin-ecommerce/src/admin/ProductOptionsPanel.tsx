@@ -866,6 +866,7 @@ function ProductVariantConfigurator({
                     id={controlId(group.localId, 'inventory')}
                     type="number"
                     value={group.inventoryQuantity}
+                    disabled readOnly
                     onChange={(event) => updateGroupDraft(group.localId, { inventoryQuantity: event.target.value })}
                     className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
                   />
@@ -900,7 +901,7 @@ function ProductVariantConfigurator({
                         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                           <div>
                             <div className="text-sm font-medium text-white">{value.value || 'Untitled value'}</div>
-                            <p className="mt-1 text-xs text-zinc-400">Stock rows are saved alongside the value.</p>
+                            <p className="mt-1 text-xs text-zinc-400">New stock rows start at zero. Receive or adjust stock in Stock overview with a staff reason.</p>
                           </div>
                           <div className="flex gap-2">
                             <Button type="button" variant="outline" onClick={() => void saveValue(group, value)} disabled={!group.id} aria-disabled={busyKey === `value:${value.localId}` || undefined} aria-busy={busyKey === `value:${value.localId}` || undefined}>
@@ -964,6 +965,7 @@ function ProductVariantConfigurator({
                               id={controlId(value.localId, 'stock')}
                               type="number"
                               value={value.stockQuantity}
+                              disabled readOnly
                               onChange={(event) => updateValueDraft(group.localId, value.localId, { stockQuantity: event.target.value })}
                               className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
                             />

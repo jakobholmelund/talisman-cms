@@ -869,6 +869,15 @@ export const ecommercePlugin = (
         collections.push({ name: 'Return Stock', slug: '_ecommerce_return_stock', adminSection: 'commerce', readOnly: true,
           fields: nativeFields(schema.returnStock, ['id', 'orderId', 'receiptId', 'reservationType', 'reservationId', 'targetType', 'targetId', 'quantity']),
           nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: 'returnStock', idColumn: 'id' } });
+        collections.push({ name: 'Return Inspections', slug: '_ecommerce_return_inspections', adminSection: 'commerce', readOnly: true,
+          fields: nativeFields(schema.returnInspections, ['id', 'receiptId', 'orderId', 'actor', 'reason', 'createdAt']),
+          nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: 'returnInspections', idColumn: 'id' } });
+        collections.push({ name: 'Inspection Stock', slug: '_ecommerce_inspection_stock', adminSection: 'commerce', readOnly: true,
+          fields: nativeFields(schema.inspectionStock, ['id', 'inspectionId', 'orderId', 'reservationType', 'reservationId', 'targetType', 'targetId', 'quantity']),
+          nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: 'inspectionStock', idColumn: 'id' } });
+        collections.push({ name: 'Stocktakes', slug: '_ecommerce_stocktakes', adminSection: 'commerce', readOnly: true,
+          fields: nativeFields(schema.stocktakes, ['id', 'actor', 'reason', 'createdAt']),
+          nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: 'stocktakes', idColumn: 'id' } });
         collections.push({ name: 'Stock Movements', slug: '_ecommerce_stock_movements', adminSection: 'commerce', readOnly: true,
           fields: nativeFields(schema.stockMovements, ['id', 'targetType', 'targetId', 'kind', 'delta', 'beforeQuantity', 'afterQuantity', 'actor', 'reason', 'createdAt']),
           nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: 'stockMovements', idColumn: 'id' } });
@@ -884,7 +893,10 @@ export const ecommercePlugin = (
         if (!collection.adminSection) collection.adminSection = 'commerce';
         const inventoryFields = INVENTORY_FIELDS_BY_EXPORT[collection.nativeSchemaMapping.exportName] || [];
         for (const field of collection.fields || []) {
-          if (inventoryFields.includes(field.name)) field.saveOnlyIfChanged = true;
+          if (inventoryFields.includes(field.name)) {
+            field.saveOnlyIfChanged = true; field.readOnly = true; field.defaultValue = 0;
+            if (!field.label.includes('use Stock overview')) field.label = `${field.label} · use Stock overview`;
+          }
         }
       }
 

@@ -9,7 +9,8 @@ export function useWarehouseWrite(refresh: () => Promise<unknown>) {
   const pendingRef = useRef<Pending | null>(null), saving = useRef(false), refused = useRef(false), active = useRef(true);
   const [busy, setBusy] = useState(false), [needsReload, setNeedsReload] = useState(false), [dirty, setDirty] = useState(false), [message, setMessage] = useState(''), [error, setError] = useState('');
   const confirm = useRef<(() => void) | null>(null);
-  useBlocker({ shouldBlockFn: () => (dirty || !!pendingRef.current) && !window.confirm('Leave this unsaved warehouse draft? An unconfirmed change may already be recorded.') });
+  // The explicit listener below protects only dirty or unconfirmed drafts.
+  useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => (dirty || !!pendingRef.current) && !window.confirm('Leave this unsaved warehouse draft? An unconfirmed change may already be recorded.') });
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
     if (!dirty && !pending) return;

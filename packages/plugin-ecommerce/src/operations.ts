@@ -2,4 +2,4 @@
 export { readCommerceAttention, type AttentionKind } from './attention';
 export { listEmailRecovery, retryCommerceEmail, CommerceOperationsConflict } from './email-recovery';
 export { readStockOverview, type StockOverviewRow } from './stock-overview';
-export { readOrderWarehouse, recordParcelContents, receiveOrderReturn, listStockLocations, readStockHistory, recordStockMovement } from './warehouse';
+export { readOrderWarehouse, recordParcelContents, receiveOrderReturn, listStockLocations, readStockHistory, recordStockMovement, inspectOrderReturn, recordStocktake, listStocktakes, readStocktakeTargets } from './warehouse';
