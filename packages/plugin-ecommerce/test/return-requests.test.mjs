@@ -97,6 +97,7 @@ test('staff decisions use last-written versions, recover the same receipt, and k
  const approved=await decideReturnRequest(env,payload,'admin-a');assert.equal((await decideReturnRequest(env,payload,'admin-a')).duplicate,true);
  await assert.rejects(decideReturnRequest(env,{...payload,requestKey:crypto.randomUUID()},'admin-b'),/changed/);
  let data=await api.returns.read(ORDER,owner);assert.equal(data.requests[0].status,'approved');assert.equal(data.requests[0].updates[0].message,payload.customerMessage);assert.doesNotMatch(JSON.stringify(data),/Internal approval|admin-a|fingerprint|expectedVersion|stockTargets/);
+ const staff=await readReturnRequestAdmin(env,{requestId:r.requestId});assert.equal(staff.events[0].reason,payload.reason);assert.doesNotMatch(JSON.stringify(staff),/fingerprint|expectedVersion|stockTargets/);
  const cancelled=await api.returns.cancel({orderId:ORDER,requestId:r.requestId,expectedVersion:approved.eventId,requestKey:crypto.randomUUID()},owner);assert.ok(cancelled.eventId);assert.equal((await api.returns.read(ORDER,owner)).requests[0].status,'cancelled');
  assert.throws(()=>s.prepare('UPDATE _ecommerce_return_requests SET reason=? WHERE id=?').run('New shopper reason',r.requestId),/immutable/);assert.throws(()=>s.exec('DELETE FROM _ecommerce_return_request_events'),/immutable/);s.close();
 });

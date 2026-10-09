@@ -1,5 +1,5 @@
-import type { CustomerReturns } from './return-requests';
-export type { CustomerReturns } from './return-requests';
+import type { CustomerReturns } from './return-request-types';
+export type { CustomerReturns } from './return-request-types';
 import type { CustomerOrderTracking } from './order-tracking';
 export type { CustomerOrderTracking } from './order-tracking';
 export const CART_UPDATED_EVENT = 'talisman:cart-updated';

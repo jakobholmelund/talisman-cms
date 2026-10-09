@@ -9,6 +9,8 @@ import { hashOrderAccess } from './cookies';
 import { adminActorNames } from './admin-actors';
 import { CommerceOperationsConflict } from './email-recovery';
 import { returnRequests, returnRequestEvents, RETURN_REQUEST_STATUSES } from './schema';
+import type { CustomerReturns, ReturnRequestReceipt, ReturnDecisionReceipt, AdminReturnRequest, ReturnsQueue } from './return-request-types';
+export type { CustomerReturns } from './return-request-types';
 
 const id = z.string().trim().min(1).max(128), key = id.min(8);
 const items = z.array(z.object({ lineIndex:z.number().int().min(0).max(199), quantity:z.number().int().min(1).max(1000000) }).strict()).min(1).max(50)
@@ -31,7 +33,7 @@ async function requestsForOrder(env:TalismanEnv,orderId:string) {
   }});
 }
 /** Caller supplies verified credentials, exactly as for private order tracking. */
-export async function readCustomerReturns(ctx:CommerceContext,orderId:string,owner:ReturnOwner={}) {
+export async function readCustomerReturns(ctx:CommerceContext,orderId:string,owner:ReturnOwner={}):Promise<CustomerReturns|null> {
   if(!await owned(ctx,orderId,owner)) return null;
   const order=await ctx.db.query.orders.findFirst({where:{id:orderId},with:{parcelContents:true,fulfillments:{columns:{id:true,kind:true}},returnReceipts:{columns:{items:true}}}});
   if(!order)return null;
@@ -52,8 +54,7 @@ export async function readCustomerReturns(ctx:CommerceContext,orderId:string,own
     updates:r.events.map(e=>({status:e.status,message:e.customerMessage,createdAt:e.createdAt.toISOString()})),
   }))};
 }
-export type CustomerReturns = NonNullable<Awaited<ReturnType<typeof readCustomerReturns>>>;
-export async function createCustomerReturn(ctx:CommerceContext,input:unknown,owner:ReturnOwner={}) {
+export async function createCustomerReturn(ctx:CommerceContext,input:unknown,owner:ReturnOwner={}):Promise<ReturnRequestReceipt|null> {
   const v=createSchema.parse(input);if(!await owned(ctx,v.orderId,owner))return null;
   const values={...v,items:[...v.items].sort((a,b)=>a.lineIndex-b.lineIndex)};
   const requestId=`rma_${await hashOrderAccess(`${v.orderId}:${v.requestKey}`)}`,hash=await fingerprint(values,'customer');
@@ -63,7 +64,7 @@ export async function createCustomerReturn(ctx:CommerceContext,input:unknown,own
   catch(error){const previous=await replay();if(previous)return previous;if(!errorText(error).includes('Return request exceeds available shipped goods'))throw error;throw new CommerceOperationsConflict('Return quantities changed or parcel details are unavailable. Refresh before requesting a return.');}
   return {requestId};
 }
-async function appendDecision(env:TalismanEnv,v:z.output<typeof decisionSchema>|(z.output<typeof cancelSchema>&{status:'cancelled';reason:string;customerMessage:string}),actor:string,actorKind:'staff'|'customer') {
+async function appendDecision(env:TalismanEnv,v:z.output<typeof decisionSchema>|(z.output<typeof cancelSchema>&{status:'cancelled';reason:string;customerMessage:string}),actor:string,actorKind:'staff'|'customer'):Promise<ReturnDecisionReceipt> {
   const db=commerceDb(env),eventId=`rme_${await hashOrderAccess(`${v.requestId}:${v.requestKey}`)}`,hash=await fingerprint(v,`${actorKind}:${actor}`);
   const replay=async()=>{const e=await db.select().from(returnRequestEvents).where(eq(returnRequestEvents.id,eventId)).get();if(!e)return null;if(e.fingerprint!==hash)throw new CommerceOperationsConflict('This decision key was used with different details.');return {eventId,requestId:e.requestId,duplicate:true};};
   const previous=await replay();if(previous)return previous;
@@ -80,21 +81,21 @@ export async function cancelCustomerReturn(ctx:CommerceContext,input:unknown,own
   const request=await ctx.db.select({orderId:returnRequests.orderId}).from(returnRequests).where(eq(returnRequests.id,v.requestId)).get();if(request?.orderId!==v.orderId)return null;
   return appendDecision(ctx.env,{...v,status:'cancelled',reason:'Customer cancelled the return request',customerMessage:'You cancelled this return request.'},'customer','customer');
 }
-export async function readReturnRequestAdmin(env:TalismanEnv,input:unknown) {
+export async function readReturnRequestAdmin(env:TalismanEnv,input:unknown):Promise<AdminReturnRequest> {
   const v=z.object({requestId:id}).strict().parse(input),db=commerceDb(env);
   const request=await db.query.returnRequests.findFirst({where:{id:v.requestId},with:{order:{columns:{id:true,items:true,status:true}},events:{orderBy:(_t,{sql})=>sql`rowid`},receipts:{with:{receipt:{with:{inspections:true}}}}}});
   if(!request)throw new CommerceOperationsConflict('Return request not found.');
   const names=await adminActorNames(env,request.events.filter(e=>e.actorKind==='staff').map(e=>e.actor));
   const described=await describeOrderItems(env,request.order.items);
-  return {...request,order:undefined,status:statusOf(request.events),version:request.events.at(-1)?.id??request.id,createdAt:request.createdAt.toISOString(),
+  return {id:request.id,orderId:request.orderId,reason:request.reason,status:statusOf(request.events),version:request.events.at(-1)?.id??request.id,createdAt:request.createdAt.toISOString(),
     items:request.items.map(i=>({...i,name:[described[i.lineIndex]?.productName||'Ordered item',described[i.lineIndex]?.variantLabel].filter(Boolean).join(' / '),
       restockMapped:!!request.order.items[i.lineIndex]?.stockTargets?.length,
       received:request.receipts.reduce((n,l)=>n+(l.receipt.items.find(j=>j.lineIndex===i.lineIndex)?.quantity??0),0)})),
-    events:request.events.map(e=>({...e,actorName:e.actorKind==='customer'?'Customer':names.get(e.actor)??e.actor,createdAt:e.createdAt.toISOString()})),
+    events:request.events.map(e=>({id:e.id,status:e.status,reason:e.reason,actorKind:e.actorKind,actor:e.actor,customerMessage:e.customerMessage,actorName:e.actorKind==='customer'?'Customer':names.get(e.actor)??e.actor,createdAt:e.createdAt.toISOString()})),
     receipts:request.receipts.map(l=>({receiptId:l.receiptId,createdAt:l.receipt.createdAt.toISOString()}))};
 }
 /** Flat, bounded queue; a pending inspection appears even when intake had no customer request. */
-export async function listReturnsQueue(env:TalismanEnv,input:unknown={}) {
+export async function listReturnsQueue(env:TalismanEnv,input:unknown={}):Promise<ReturnsQueue> {
   const v=z.object({filter:z.enum(['active','pending','approved','inspection','all']).default('active'),orderId:z.string().trim().max(128).default(''),offset:z.coerce.number().int().min(0).max(1000000).default(0)}).strict().parse(input);
   const queue=sql`WITH requests AS (
     SELECT 'request' AS kind,r.id,r.order_id AS orderId,COALESCE((SELECT status FROM _ecommerce_return_request_events e WHERE e.request_id=r.id ORDER BY rowid DESC LIMIT 1),'pending') AS status,r.created_at AS createdAt,r.reason,
