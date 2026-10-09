@@ -2,13 +2,15 @@ import { and, eq, inArray } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { batchGroups, chunked, commerceDb } from './db';
 import { adminActorNames } from './admin-actors';
-import { creditLedger, emailDeliveries, fulfillments, giftCardLedger, restocks } from './schema';
+import { creditLedger, emailDeliveries, fulfillments, giftCardLedger, restocks, returnReceipts, parcelContents } from './schema';
 
 /** Read recorded operational events, without inferring refunds from the order's payment status. */
 export async function loadOrderActivity(env: TalismanEnv, orderIds: string[]) {
   const db = commerceDb(env);
   const groups = chunked(orderIds);
-  const { stock, gift, credit, parcels, confirmations } = await batchGroups(db, {
+  const { stock, gift, credit, parcels, confirmations, contents, returns } = await batchGroups(db, {
+    contents: groups.map(ids => db.select().from(parcelContents).where(inArray(parcelContents.orderId, ids))),
+    returns: groups.map(ids => db.select().from(returnReceipts).where(inArray(returnReceipts.orderId, ids))),
     stock: groups.map(ids => db.select().from(restocks).where(inArray(restocks.orderId, ids))),
     gift: groups.map(ids => db.select().from(giftCardLedger).where(and(inArray(giftCardLedger.orderId, ids), eq(giftCardLedger.kind, 'refund_restore')))),
     credit: groups.map(ids => db.select().from(creditLedger).where(and(inArray(creditLedger.orderId, ids), eq(creditLedger.kind, 'purchase_credit_refund')))),
@@ -17,7 +19,7 @@ export async function loadOrderActivity(env: TalismanEnv, orderIds: string[]) {
   });
   const { notices } = await batchGroups(db, { notices: chunked(parcels.map(row => row.id)).map(ids =>
     db.select().from(emailDeliveries).where(and(inArray(emailDeliveries.subjectId, ids), inArray(emailDeliveries.kind, ['shipment', 'shipment_update'])))) });
-  const names = await adminActorNames(env, [...stock, ...parcels].map(row => row.adminActor));
+  const names = await adminActorNames(env, [...stock, ...parcels].map(row => row.adminActor).concat([...contents, ...returns].map(row => row.actor)));
   const parcelOrders = new Map(parcels.map(row => [row.id, row.orderId]));
   type Event = { id: string; kind: string; createdAt: string; detail: string; actor: string | null; actorName: string | null;
     amountCents: number | null; email: { status: string; attempts: number; lastError: string | null; sentAt: string | null; nextAttemptAt: string | null } | null };
@@ -25,6 +27,8 @@ export async function loadOrderActivity(env: TalismanEnv, orderIds: string[]) {
   function add(orderId: string, event: Event) { activity.set(orderId, [...activity.get(orderId) ?? [], event]); }
   const base = (id: string, kind: string, createdAt: Date, detail: string): Event => ({ id, kind, createdAt: createdAt.toISOString(), detail,
     actor: null, actorName: null, amountCents: null, email: null });
+  for (const row of contents) add(row.orderId, { ...base(row.id, 'parcel_contents', row.createdAt, `${row.items.reduce((n, i) => n + i.quantity, 0)} units in parcel ${row.fulfillmentId}: ${row.reason}`), actor: row.actor, actorName: names.get(row.actor) ?? row.actor });
+  for (const row of returns) add(row.orderId, { ...base(row.id, 'return_intake', row.createdAt, `${row.items.reduce((n, i) => n + i.quantity, 0)} units received: ${row.reason}`), actor: row.actor, actorName: names.get(row.actor) ?? row.actor });
   for (const row of stock) add(row.orderId, { ...base(row.id, 'restock', row.createdAt,
     `${row.quantity} × ${row.targetType} ${row.targetId}: ${row.reason}`), actor: row.adminActor, actorName: names.get(row.adminActor) ?? row.adminActor });
   for (const row of parcels) add(row.orderId, { ...base(row.id, row.kind, row.createdAt,

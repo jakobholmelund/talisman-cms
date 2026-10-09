@@ -701,3 +701,31 @@ test('order activity scopes email status and resolves staff names while preservi
   assert.deepEqual(dates, [...dates].sort());
   sqlite.close();
 });
+
+test('checkout freezes each line stock requirements, so a changed component recipe cannot alter return restocking', async () => {
+  const {sqlite,DB}=database();
+  sqlite.prepare(`INSERT INTO _ecommerce_components(id,sku,name,quantity,created_at,updated_at) VALUES ('hinge','HINGE','Hinge',20,?,?)`).run(NOW,NOW);
+  sqlite.prepare(`INSERT INTO _ecommerce_variant_components(id,product_variant_value_id,component_id,quantity,created_at,updated_at) VALUES ('recipe','frame-amber','hinge',2,?,?)`).run(NOW,NOW);
+  const {order}=await paidOrder(DB,'frozen-recipe',{items:[{productId:'frame',variantId:'frame-amber',quantity:3},{productId:'case',quantity:2}]});
+  assert.deepEqual(order.items.map(line=>line.stockTargets),[[{type:'component',id:'hinge',units:2}],[{type:'product',id:'case',units:1}]]);
+  assert.equal(sqlite.prepare('SELECT quantity FROM _ecommerce_components').get().quantity,14);
+  sqlite.exec('UPDATE _ecommerce_variant_components SET quantity=5');
+  await fulfillCommerceOrder({DB},'staff',{orderId:order.id,note:'All goods left in parcel',requestKey:crypto.randomUUID(),items:[{lineIndex:0,quantity:3},{lineIndex:1,quantity:2}]});
+  const {receiveOrderReturn}=await import('../dist/operations.js');
+  await receiveOrderReturn({DB},{orderId:order.id,reason:'One frame physically received',requestKey:crypto.randomUUID(),items:[{lineIndex:0,quantity:1,condition:'sellable',restock:true}]},'staff');
+  assert.equal(sqlite.prepare('SELECT quantity FROM _ecommerce_components').get().quantity,16);
+  assert.equal(sqlite.prepare("SELECT inventory_quantity FROM _ecommerce_products WHERE id='case'").get().inventory_quantity,48);
+  sqlite.close();
+});
+
+test('different order lines sharing a component restock their combined captured requirements once',async()=>{
+ const {sqlite,DB}=database();
+ sqlite.prepare(`INSERT INTO _ecommerce_components(id,sku,name,quantity,created_at,updated_at) VALUES ('hinge','HINGE','Hinge',20,?,?)`).run(NOW,NOW);
+ const recipe=sqlite.prepare(`INSERT INTO _ecommerce_variant_components(id,product_variant_value_id,component_id,quantity,created_at,updated_at) VALUES (?,?,'hinge',?,?,?)`);
+ recipe.run('amber-recipe','frame-amber',2,NOW,NOW);recipe.run('smoke-recipe','frame-smoke',3,NOW,NOW);
+ const {order}=await paidOrder(DB,'shared-return',{items:[{productId:'frame',variantId:'frame-amber',quantity:2},{productId:'frame',variantId:'frame-smoke',quantity:2}]});
+ await fulfillCommerceOrder({DB},'staff',{orderId:order.id,note:'Both choices physically shipped',requestKey:crypto.randomUUID(),items:[{lineIndex:0,quantity:2},{lineIndex:1,quantity:2}]});
+ const {receiveOrderReturn}=await import('../dist/operations.js');
+ const receipt=await receiveOrderReturn({DB},{orderId:order.id,reason:'One of each choice physically received',requestKey:crypto.randomUUID(),items:[{lineIndex:0,quantity:1,condition:'sellable',restock:true},{lineIndex:1,quantity:1,condition:'sellable',restock:true}]},'staff');
+ assert.equal(receipt.restocked.length,1);assert.equal(receipt.restocked[0].quantity,5);assert.equal(sqlite.prepare('SELECT quantity FROM _ecommerce_components').get().quantity,15);sqlite.close();
+});

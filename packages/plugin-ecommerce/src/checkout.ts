@@ -70,7 +70,7 @@ export async function createOrderFromCart(ctx: CommerceContext, cartId: string, 
 
   let requiresShipping = false;
   let totalAmount = 0;
-  const orderItems: Array<{ productId: string; variantId?: string; quantity: number; priceAtPurchase: number; name: string; usesComponents?: boolean }> = [];
+  const orderItems: Array<{ productId: string; variantId?: string; quantity: number; priceAtPurchase: number; name: string; usesComponents?: boolean; stockTargets?: typeof schema.orders.$inferSelect.items[number]["stockTargets"] }> = [];
   const componentItems: Array<{ quantity: number; components: RequiredComponent[] }> = [];
   const inventoryDemand = new Map<string, InventoryTarget>();
 
@@ -129,7 +129,10 @@ export async function createOrderFromCart(ctx: CommerceContext, cartId: string, 
         ...item,
         priceAtPurchase: price,
         name: finalName,
-        usesComponents: tracksInventory && requiredComponents.length > 0
+        usesComponents: tracksInventory && requiredComponents.length > 0,
+        stockTargets: defaultAdapter.reservesInventory === false || !tracksInventory ? []
+          : requiredComponents.length ? requiredComponents.map(part => ({ type: "component" as const, id: part.id, units: part.quantity }))
+          : inventoryTarget ? [{ type: inventoryTarget.type, id: inventoryTarget.id, units: 1 }] : []
      });
   }
 

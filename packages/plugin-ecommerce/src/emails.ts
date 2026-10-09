@@ -83,6 +83,8 @@ export interface ShipmentEmail {
     completesOrder: boolean;
     /** Parcels of the order recorded before this one. */
     earlierShipments: number;
+    /** Actual parcel contents, absent for legacy shipments without item allocations. */
+    items?: Array<{ name: string; sku: string | null; quantity: number }>;
   };
   /** True for the notice sent after a correction changed the carrier or tracking number. */
   update: boolean;
@@ -291,7 +293,7 @@ export function shipmentEmail({ store, order, shipment, update }: ShipmentEmail)
         whole: 'Your order is on its way', part: 'Part of your order is on its way', rest: 'The rest of your order is on its way',
       }[part],
       paragraphs,
-      sections: rows.length ? [{ title: 'Shipment', rows }] : [],
+      sections: [...(rows.length ? [{ title: 'Shipment', rows }] : []), ...(shipment.items?.length ? [{ title: 'Items in this parcel', rows: shipment.items.map(i => ({ label: `${i.quantity} × ${i.name}`, value: i.sku ? `SKU ${i.sku}` : '' })) }] : [])],
       footer: [`Questions about your delivery? Please ${contact(store)} and mention the order number.`],
     }),
   };

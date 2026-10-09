@@ -428,7 +428,7 @@ test('restocking a refunded order returns every kind of stock once, and cannot b
   // A reservation row takes one restock, whatever path writes it.
   assert.throws(() => sqlite.prepare(`INSERT INTO _ecommerce_restocks (id, order_id, reservation_type, reservation_id,
     target_type, target_id, quantity, admin_actor, reason, created_at) VALUES ('again', ?, ?, ?, 'component', 'amber-lens', 1, 'admin-1', ?, ?)`)
-    .run(order.id, returned.type, returned.id, reason, NOW), /UNIQUE constraint failed/);
+    .run(order.id, returned.type, returned.id, reason, NOW), /UNIQUE constraint failed|Return stock already restored/);
   assert.deepEqual(stockLevels(sqlite), FULL);
   sqlite.close();
 });

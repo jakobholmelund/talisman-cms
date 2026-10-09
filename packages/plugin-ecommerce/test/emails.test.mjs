@@ -1012,3 +1012,12 @@ test('the plugin schema only names email and claim link columns the migrations c
   }
   sqlite.close();
 });
+
+test('quantity-aware shipment notices describe only their parcel and finish when all order units shipped',async()=>{
+ const store=shop(),order=await paidOrder(store);
+ await fulfillCommerceOrder(store.env,'staff',{orderId:order.id,note:'First actual item parcel',requestKey:crypto.randomUUID(),items:[{lineIndex:0,quantity:1}]});
+ const first=store.sent.at(-1);assert.match(first.text,/Items in this parcel/);assert.match(first.text,/1 × The Forest Floor/);assert.ok(!first.text.includes('Travel case'));assert.match(first.text,/More parcels will follow/);
+ await fulfillCommerceOrder(store.env,'staff',{orderId:order.id,note:'Remaining goods shipped',requestKey:crypto.randomUUID(),items:[{lineIndex:0,quantity:1},{lineIndex:1,quantity:1}]});
+ const last=store.sent.at(-1);assert.match(last.subject,/rest of your/);assert.match(last.text,/1 × Travel case/);assert.ok(!last.text.includes('More parcels will follow'));
+ store.sqlite.close();
+});

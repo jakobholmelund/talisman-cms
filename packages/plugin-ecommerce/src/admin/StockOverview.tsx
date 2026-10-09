@@ -1,3 +1,4 @@
+import StockMovements from './StockMovements';
 import React, { useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { collections } from 'virtual:talisman-cms/config';
@@ -38,5 +39,6 @@ export default function StockOverview() {
       })}</tbody></table></div>}
       <OperationsPagination offset={data.offset} total={data.total} loading={loading} change={offset => setFilters(current => ({ ...current, offset: String(offset) }))} />
     </Panel>}
+    <StockMovements refreshOverview={load} />
   </CommerceAdmin>;
 }

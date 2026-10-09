@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, type FormEvent } from 'react';
 import { adminRequest, CommerceAdmin, errorText, Feedback, Field, money, Panel, Stat } from './common';
+import OrderWarehouse from './OrderWarehouse';
 import OrderAdjustments from './OrderAdjustments';
 import ReconcileReview from './ReconcileReview';
 
@@ -49,6 +50,7 @@ export default function Orders() {
   const writing = useRef(false);
   const loading = useRef(false);
   const readFailed = useRef(false);
+  const warehouseDrafts = useRef(new Set<string>());
   const shipmentKeys = useRef(new WeakMap<HTMLFormElement, string>());
   // The view and search on screen. A reload after a write or a payment check reads them here, so it
   // loads what is selected when it runs, not what was selected when the action began.
@@ -108,6 +110,7 @@ export default function Orders() {
   /** Shows another view or search from its first page. */
   function select(nextView: View, nextQuery: string) {
     if (writing.current) return;
+    if (warehouseDrafts.current.size && !window.confirm('Discard the warehouse drafts and change the order list? An unconfirmed change may already be recorded.')) return;
     selected.current = { view: nextView, query: nextQuery };
     setView(nextView); setQuery(nextQuery); setPage(null); setOrders([]); show('');
     void load();
@@ -148,25 +151,6 @@ export default function Orders() {
   const blocked = busy || reading || retryCursor !== undefined;
   const cannotRecord = () => writing.current || loading.current || readFailed.current;
 
-  function ship(event: FormEvent<HTMLFormElement>, order: Order) {
-    event.preventDefault();
-    if (cannotRecord()) return;
-    const orderId = order.id;
-    const values = new FormData(event.currentTarget);
-    const completesOrder = values.has('completesOrder');
-    // Parcels of a split shipment are recorded one by one; closing the order early cannot be undone.
-    if (completesOrder && order.fulfillmentStatus === 'partially_fulfilled'
-      && !window.confirm(`Record this as the last parcel of ${orderId}? The order then counts as shipped in full, and no further parcels can be recorded for it.`)) {
-      return;
-    }
-    const form = event.currentTarget;
-    const requestKey = shipmentKeys.current.get(form) ?? crypto.randomUUID();
-    shipmentKeys.current.set(form, requestKey);
-    record({ action: 'ship', requestKey, orderId, completesOrder, carrier: formText(values, 'carrier') || null,
-      trackingNumber: formText(values, 'trackingNumber') || null, note: formText(values, 'note') },
-    completesOrder ? `Shipment recorded; ${orderId} has shipped in full.` : `Partial shipment recorded for ${orderId}.`,
-    event.currentTarget);
-  }
 
   function correct(event: FormEvent<HTMLFormElement>, fulfillmentId: string) {
     event.preventDefault();
@@ -264,13 +248,7 @@ export default function Orders() {
             </form>
           </details>
         </React.Fragment>)}
-        {order.canShip && <form onSubmit={event => ship(event, order)}>
-          <h3>Record shipment</h3><p className="ecom-admin__muted">Record a shipment only after the parcel has left. A shipment that completes the order cannot be undone: the order leaves the queue and no further parcels can be recorded for it. For an order sent in several parcels, clear the checkbox on all but the last.</p>
-          <div className="ecom-admin__grid"><Field label="Carrier"><input readOnly={blocked} name="carrier" maxLength={100} /></Field><Field label="Tracking number"><input readOnly={blocked} name="trackingNumber" maxLength={150} /></Field></div>
-          <Field label="Shipment note"><input readOnly={blocked} name="note" minLength={8} maxLength={500} required /></Field>
-          <div className="ecom-admin__actions"><label className="ecom-admin__check"><input type="checkbox" disabled={blocked} name="completesOrder" defaultChecked /> This shipment completes the order</label></div>
-          <div className="ecom-admin__actions"><button type="submit" aria-disabled={blocked}>Record shipment</button></div>
-        </form>}
+        <OrderWarehouse order={order} refreshOrders={() => load()} parentBlocked={blocked} canRecord={() => !cannotRecord()} draftChanged={dirty => { if (dirty) warehouseDrafts.current.add(order.id); else warehouseDrafts.current.delete(order.id); }} />
       </Panel>;
     })}
     {page && <p ref={summary} role="status" tabIndex={-1} className="ecom-admin__muted">Showing {orders.length} {orders.length === 1 ? 'order' : 'orders'}{view === 'awaiting' ? ' awaiting shipment, oldest first' : ', newest first'}; {PAGE_SIZE} per page.</p>}

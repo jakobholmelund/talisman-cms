@@ -23,6 +23,36 @@ const tables = [pluginSchema, coreSchema, authSchema].flatMap((module) => Object
 
 /** The commerce triggers, with the table each one is on. */
 const TRIGGERS = [
+  '_ecommerce_parcel_contents_no_update ON _ecommerce_parcel_contents',
+  '_ecommerce_parcel_contents_no_delete ON _ecommerce_parcel_contents',
+  '_ecommerce_return_receipts_no_update ON _ecommerce_return_receipts',
+  '_ecommerce_return_receipts_no_delete ON _ecommerce_return_receipts',
+  '_ecommerce_return_stock_no_update ON _ecommerce_return_stock',
+  '_ecommerce_return_stock_no_delete ON _ecommerce_return_stock',
+  '_ecommerce_stock_movements_no_update ON _ecommerce_stock_movements',
+  '_ecommerce_stock_movements_no_delete ON _ecommerce_stock_movements',
+  '_ecommerce_warehouse_items_immutable ON _ecommerce_orders',
+  '_ecommerce_parcel_contents_guard ON _ecommerce_parcel_contents',
+  '_ecommerce_parcel_contents_progress ON _ecommerce_parcel_contents',
+  '_ecommerce_return_receipts_guard ON _ecommerce_return_receipts',
+  '_ecommerce_return_stock_inventory_guard ON _ecommerce_return_stock',
+  '_ecommerce_return_stock_component_guard ON _ecommerce_return_stock',
+  '_ecommerce_return_stock_received_guard ON _ecommerce_return_stock',
+  '_ecommerce_legacy_restock_return_guard ON _ecommerce_restocks',
+  '_ecommerce_stock_movement_product_guard ON _ecommerce_stock_movements',
+  '_ecommerce_stock_movement_product_apply ON _ecommerce_stock_movements',
+  '_ecommerce_return_stock_product_apply ON _ecommerce_return_stock',
+  '_ecommerce_stock_movement_variant_guard ON _ecommerce_stock_movements',
+  '_ecommerce_stock_movement_variant_apply ON _ecommerce_stock_movements',
+  '_ecommerce_return_stock_variant_apply ON _ecommerce_return_stock',
+  '_ecommerce_stock_movement_stock_guard ON _ecommerce_stock_movements',
+  '_ecommerce_stock_movement_stock_apply ON _ecommerce_stock_movements',
+  '_ecommerce_return_stock_stock_apply ON _ecommerce_return_stock',
+  '_ecommerce_stock_movement_component_guard ON _ecommerce_stock_movements',
+  '_ecommerce_stock_movement_component_apply ON _ecommerce_stock_movements',
+  '_ecommerce_return_stock_component_apply ON _ecommerce_return_stock',
+  '_ecommerce_return_stock_inventory_release ON _ecommerce_return_stock',
+  '_ecommerce_return_stock_component_release ON _ecommerce_return_stock',
   '_ecommerce_email_recovery_no_update ON _ecommerce_email_recovery_decisions',
   '_ecommerce_email_recovery_no_delete ON _ecommerce_email_recovery_decisions',
   '_ecommerce_discount_code_creations_no_update ON _ecommerce_discount_code_creations',
@@ -450,7 +480,8 @@ test('refund rows, disputes and restocks are checked', () => {
         ('res-paid', 'order-paid', 'stock', 'stock-1', 1, NULL),
         ('res-cancelled', 'order-cancelled', 'product', 'prod-1', 1, ${T + 5});
       INSERT INTO _ecommerce_component_reservations (id, order_id, component_id, quantity, released_at) VALUES
-        ('cres-paid', 'order-paid', 'comp-lens', 1, NULL);
+        ('cres-paid', 'order-paid', 'comp-lens', 1, NULL),
+        ('cres-partly', 'order-partly', 'comp-lens', 1, NULL);
     `);
     assert.throws(() => db.exec(`INSERT INTO _ecommerce_inventory_reservations (id, order_id, target_type, target_id, quantity) VALUES ('res-bad', 'order-paid', 'bundle', 'x', 1)`), /CHECK constraint failed/);
     assert.throws(() => db.exec(`UPDATE _ecommerce_components SET quantity = -1 WHERE id = 'comp-lens'`), /CHECK constraint failed/);
@@ -482,10 +513,10 @@ test('refund rows, disputes and restocks are checked', () => {
     const restock = (id, reservationId, actor = 'admin-1', reason = 'Parcel came back unopened') => db.exec(`INSERT INTO _ecommerce_restocks
       (id, order_id, reservation_type, reservation_id, target_type, target_id, quantity, admin_actor, reason, created_at)
       VALUES ('${id}', 'order-partly', 'component', '${reservationId}', 'component', 'comp-lens', 1, '${actor}', '${reason}', ${T})`);
-    restock('rst-1', 'cres-paid');
-    assert.throws(() => restock('rst-2', 'cres-paid'), /UNIQUE constraint failed/);
-    assert.throws(() => restock('rst-3', 'cres-other', ' '), /CHECK constraint failed/);
-    assert.throws(() => restock('rst-4', 'cres-other', 'admin-1', 'short'), /CHECK constraint failed/);
+    restock('rst-1', 'cres-partly');
+    assert.throws(() => restock('rst-2', 'cres-partly'), /UNIQUE constraint failed/);
+    assert.throws(() => restock('rst-3', 'cres-partly', ' '), /CHECK constraint failed/);
+    assert.throws(() => restock('rst-4', 'cres-partly', 'admin-1', 'short'), /CHECK constraint failed/);
     assertIntegrity(db);
   } finally {
     db.close();

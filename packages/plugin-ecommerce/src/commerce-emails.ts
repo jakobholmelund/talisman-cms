@@ -80,11 +80,19 @@ function shipmentComposer(update: boolean): CommerceEmailComposer {
     const shipment = rows[index];
     const current = rows.filter((row) => row.correctsId === shipment.id).at(-1) ?? shipment;
     const order = await db.select({ id: orders.id, customerEmail: orders.customerEmail,
-      paymentProvider: orders.paymentProvider, createdAt: orders.createdAt }).from(orders)
+      paymentProvider: orders.paymentProvider, items: orders.items, createdAt: orders.createdAt }).from(orders)
       .where(eq(orders.id, shipment.orderId)).get();
     if (!order || (order.paymentProvider ?? 'stripe') === 'admin_test') return { cancel: 'not_found' };
     const to = bareEmailAddress(order.customerEmail);
     if (!to) return { fail: 'invalid_recipient' };
+    const contents = await db.query.parcelContents.findMany({ where: { orderId: order.id } });
+    const parcel = contents.find(p => p.fulfillmentId === shipment.id);
+    const earlierIds = new Set(rows.slice(0, index + 1).filter(p => p.kind === 'shipment').map(p => p.id));
+    const known = contents.filter(p => earlierIds.has(p.fulfillmentId));
+    const allKnown = known.length === earlierIds.size;
+    const completesOrder = parcel && allKnown ? order.items.every((line, lineIndex) =>
+      known.reduce((n, p) => n + (p.items.find(i => i.lineIndex === lineIndex)?.quantity ?? 0), 0) >= line.quantity) : shipment.completesOrder;
+    const described = parcel ? await describeOrderItems(env, parcel.items.map(i => ({ ...order.items[i.lineIndex], quantity: i.quantity }))) : [];
     const email = {
       store: setup.store,
       order: { id: order.id, placedAt: order.createdAt },
@@ -94,7 +102,8 @@ function shipmentComposer(update: boolean): CommerceEmailComposer {
         // A shipment row may hold an empty string where there is no value.
         carrier: current.carrier || null,
         trackingNumber: current.trackingNumber || null,
-        completesOrder: shipment.completesOrder,
+        completesOrder,
+        items: described.map(i => ({ name: [i.productName || i.productId, i.variantLabel].filter(Boolean).join(' / '), sku: i.sku, quantity: i.quantity })),
         earlierShipments: rows.slice(0, index).filter((row) => row.kind === 'shipment').length,
       },
       update,

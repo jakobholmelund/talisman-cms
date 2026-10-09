@@ -1,3 +1,4 @@
+import { parcelItemsSchema, parcelContentsValue } from './warehouse';
 import { loadOrderActivity } from './order-activity';
 import { hashOrderAccess } from './cookies';
 import { and, asc, count, desc, eq, sql, type SQL } from 'drizzle-orm';
@@ -7,7 +8,7 @@ import { batchGroups, chunked, commerceDb, errorText } from './db';
 import { describeOrderItems, orderAmountColumns, orderAmounts } from './order-items';
 import { deliverCommerceEmail } from './commerce-emails';
 import { COMMERCE_EMAIL_LEASE_SECONDS, commerceEmailStatement } from './email-deliveries';
-import { fulfillments, orders as ordersTable } from './schema';
+import { fulfillments, parcelContents, orders as ordersTable } from './schema';
 
 /** Orders per page of the admin orders queue unless a request asks for another size. */
 export const ORDERS_PAGE_SIZE = 50;
@@ -64,6 +65,7 @@ const shipmentSchema = z.object({
   trackingNumber: optionalText(150),
   note: z.string().trim().min(8).max(500),
   completesOrder: z.boolean().default(true),
+  items: parcelItemsSchema.optional(),
   requestKey: z.string().trim().min(8).max(128).optional(),
 }).strict();
 
@@ -110,15 +112,23 @@ async function loadShipments(env: TalismanEnv, orderIds: string[]) {
   const db = commerceDb(env);
   const { rows } = await batchGroups(db, {
     rows: chunked(orderIds).map((ids) => db.query.fulfillments.findMany({
-      where: { orderId: { in: ids } }, orderBy: (_table, { sql }) => sql`rowid`,
+      where: { orderId: { in: ids } }, with: { contents: true, order: { columns: { items: true } } }, orderBy: (_table, { sql }) => sql`rowid`,
     })),
   });
   const shipments = new Map<string, Shipment>();
   const byOrder = new Map<string, Shipment[]>();
+  const counts = new Map<string, Map<number, number>>();
+  const unknown = new Set<string>();
   for (const row of rows) {
     if (row.kind === 'shipment') {
+      const shipped = counts.get(row.orderId) ?? new Map<number, number>();
+      if (!row.contents) unknown.add(row.orderId);
+      else for (const item of row.contents.items) shipped.set(item.lineIndex, (shipped.get(item.lineIndex) ?? 0) + item.quantity);
+      counts.set(row.orderId, shipped);
+      const completes = row.contents && !unknown.has(row.orderId)
+        ? row.order.items.every((item, index) => (shipped.get(index) ?? 0) >= item.quantity) : row.completesOrder;
       const shipment: Shipment = { id: row.id, createdAt: row.createdAt.toISOString(), adminActor: row.adminActor,
-        note: row.note, completesOrder: row.completesOrder,
+        note: row.note, completesOrder: completes,
         carrier: row.carrier, trackingNumber: row.trackingNumber,
         recorded: { carrier: row.carrier, trackingNumber: row.trackingNumber }, corrections: [] };
       shipments.set(row.id, shipment);
@@ -219,8 +229,9 @@ function refusal(cause: unknown, message: string) {
 }
 
 /**
- * Records a shipment of a paid real order that has not shipped in full. It completes the order
- * unless `completesOrder` is false, which records one parcel of a split shipment. The database
+ * Records a shipment of a paid real order that has not shipped in full. With `items`, quantities
+ * complete the order automatically and `completesOrder` is ignored. Legacy callers without item
+ * allocations retain their manual final-parcel flag. The database
  * trigger enforces the same rules. A later refund or dispute changes only the payment status.
  * The buyer is emailed a shipment notice with the carrier and tracking number; a failed send never
  * fails the shipment, and the scheduled job retries it.
@@ -237,8 +248,13 @@ export async function fulfillCommerceOrder(env: TalismanEnv, actor: string, inpu
     const previous = await db.select().from(fulfillments).where(eq(fulfillments.id, id)).get();
     if (!previous) return null;
     if (previous.kind !== 'shipment' || previous.note !== values.note || previous.carrier !== values.carrier ||
-      previous.trackingNumber !== values.trackingNumber || previous.completesOrder !== values.completesOrder) {
+      previous.trackingNumber !== values.trackingNumber || previous.completesOrder !== (values.items ? false : values.completesOrder)) {
       throw new FulfillmentInputError('The shipment request key was already used with other details');
+    }
+    {
+      const contents = await db.select().from(parcelContents).where(eq(parcelContents.fulfillmentId, id)).get();
+      const expected = values.items ? await parcelContentsValue(values.orderId, id, values.items, actor, values.note, 'shipment') : null;
+      if (!!contents !== !!expected || (contents && expected && contents.fingerprint !== expected.fingerprint)) throw new FulfillmentInputError('Shipment key already used with other contents');
     }
     const current = await db.select({ status: ordersTable.status, fulfillmentStatus: ordersTable.fulfillmentStatus })
       .from(ordersTable).where(eq(ordersTable.id, values.orderId)).get();
@@ -252,16 +268,22 @@ export async function fulfillCommerceOrder(env: TalismanEnv, actor: string, inpu
   if (order.fulfillmentStatus === 'fulfilled') throw new Error('Order has already shipped in full');
   if (!SHIPPABLE_STATUSES.includes(order.status)) throw new Error(`A ${order.status.replaceAll('_', ' ')} order cannot ship`);
   const now = Math.floor(Date.now() / 1000);
+  const contents = values.items ? await parcelContentsValue(values.orderId, id, values.items, actor, values.note, 'shipment') : null;
+  if (contents && await db.select({ id: fulfillments.id }).from(fulfillments).where(sql`${fulfillments.orderId} = ${values.orderId} AND ${fulfillments.kind} = 'shipment' AND NOT EXISTS (SELECT 1 FROM _ecommerce_parcel_contents p WHERE p.fulfillment_id = _ecommerce_fulfillments.id)`).get()) {
+    throw new FulfillmentInputError('Record the contents of earlier parcels before shipping more items.');
+  }
   try {
     // The notice is recorded with the shipment, so a shipment is never recorded without it.
     await db.batch([
-      db.insert(fulfillments).values({ id, requestKey, orderId: values.orderId, kind: 'shipment', completesOrder: values.completesOrder,
+      db.insert(fulfillments).values({ id, requestKey, orderId: values.orderId, kind: 'shipment', completesOrder: contents ? false : values.completesOrder,
         adminActor: actor, carrier: values.carrier, trackingNumber: values.trackingNumber, note: values.note,
         createdAt: new Date(now * 1000) }),
+      ...(contents ? [db.insert(parcelContents).values(contents)] : []),
       db.run(commerceEmailStatement('shipment', id, now)),
     ]);
   } catch (cause) {
     const previous = await replay(); if (previous) return previous;
+    if (errorText(cause).includes('Parcel')) throw new Error('Parcel quantities exceed the order or earlier parcel contents are missing. Reload the order.');
     throw refusal(cause, 'Order is not ready for fulfillment');
   }
   await deliverCommerceEmail(env, 'shipment', id);

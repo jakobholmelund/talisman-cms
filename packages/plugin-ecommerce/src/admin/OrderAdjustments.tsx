@@ -7,7 +7,7 @@ type Dispute = {
 };
 type Reservation = {
   type: 'inventory' | 'component'; id: string; targetType: string; targetId: string; label: string | null;
-  sku: string | null; quantity: number; returnedAt: string | null;
+  sku: string | null; quantity: number; intakeRestockedQuantity?: number; returnedAt: string | null;
   restock: { adminActor: string; reason: string; createdAt: string } | null; available: boolean;
 };
 type Adjustments = {
@@ -130,11 +130,13 @@ export default function OrderAdjustments({ order }: { order: { id: string; statu
         : disputeLost && <p className="ecom-admin__muted">A lost dispute took the payment back, so the order counts as refunded.</p>}
     </>}
     {data.restock && data.reservations.length > 0 && <>
-      <h3>Return stock</h3>
+      <h3>Restore remaining stock holds</h3>
       {settled.length > 0 && <ul>{settled.map((row) => <li key={rowKey(row)}>{describe(row)}
         {row.restock ? ` · returned ${when(row.restock.createdAt)} by ${row.restock.adminActor}: ${row.restock.reason}`
+          : row.intakeRestockedQuantity && row.returnedAt ? ` · restored through return intake (${row.intakeRestockedQuantity} units)`
           : row.returnedAt ? ` · returned ${when(row.returnedAt)} when its checkout was cancelled`
           : ' · its stock record no longer exists, so it cannot be returned'}</li>)}</ul>}
+      <p className="ecom-admin__muted">Use return intake for item quantities and condition. This tool restores whole remaining stock holds for goods received or never sent.</p>
       {left.length > 0
         // Keyed by the rows left, so the form starts empty again after a restock.
         ? <form key={left.map(rowKey).join(' ')} onSubmit={restock}>

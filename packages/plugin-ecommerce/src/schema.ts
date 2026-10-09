@@ -107,7 +107,7 @@ export const orders = sqliteTable('_ecommerce_orders', {
   status: text('status').notNull().default('draft'),
   /** Shipping, kept apart from payment so that a refund never hides a shipment. */
   fulfillmentStatus: text('fulfillment_status', { enum: FULFILLMENT_STATUSES }).notNull().default('unfulfilled'),
-  items: text('items', { mode: 'json' }).$type<Array<{ productId: string, variantId?: string, quantity: number, priceAtPurchase: number, usesComponents?: boolean }>>().notNull().default([]),
+  items: text('items', { mode: 'json' }).$type<Array<{ productId: string, variantId?: string, quantity: number, priceAtPurchase: number, usesComponents?: boolean, stockTargets?: Array<{ type: "product" | "variant" | "stock" | "component", id: string, units: number }> }>>().notNull().default([]),
   totalAmount: integer('total_amount').notNull(),
   currency: text('currency').notNull().default('usd'),
   customerEmail: text('customer_email'),
@@ -289,6 +289,7 @@ export const componentReservations = sqliteTable('_ecommerce_component_reservati
   releasedAt: integer('released_at', { mode: 'timestamp' })
 }, (table) => [
   uniqueIndex('component_reservation_unique').on(table.orderId, table.componentId),
+  index('_ecommerce_component_reservations_target_idx').on(table.componentId),
   check('component_reservation_quantity_positive', money(table.quantity, 'positive'))
 ]);
 
@@ -304,6 +305,7 @@ export const inventoryReservations = sqliteTable('_ecommerce_inventory_reservati
   releasedAt: integer('released_at', { mode: 'timestamp' })
 }, (table) => [
   uniqueIndex('inventory_reservation_unique').on(table.orderId, table.targetType, table.targetId),
+  index('_ecommerce_inventory_reservations_target_idx').on(table.targetType, table.targetId),
   check('inventory_reservation_target_type', oneOf(table.targetType, RESERVATION_TARGET_TYPES)),
   check('inventory_reservation_quantity_positive', money(table.quantity, 'positive'))
 ]);
@@ -792,6 +794,7 @@ export const restocks = sqliteTable('_ecommerce_restocks', {
 }, (table) => [
   uniqueIndex('_ecommerce_restocks_reservation_unique').on(table.reservationType, table.reservationId),
   index('_ecommerce_restocks_order_idx').on(table.orderId, table.createdAt),
+  index('_ecommerce_restocks_target_idx').on(table.targetType, table.targetId, table.createdAt),
   check('restock_reservation_type', oneOf(table.reservationType, RESTOCK_RESERVATION_TYPES)),
   check('restock_target_type', oneOf(table.targetType, RESTOCK_TARGET_TYPES)),
   check('restock_quantity_positive', money(table.quantity, 'positive')),
@@ -935,10 +938,64 @@ export const taxSyncDecisions = sqliteTable('_ecommerce_tax_sync_decisions', {
   check('tax_sync_attach_id', sql`(${table.action} = 'attach') = (${table.providerId} IS NOT NULL)`),
 ]);
 
+/** Immutable item allocations. lineIndex addresses the order's frozen items array. */
+export type ParcelItem = { lineIndex: number; quantity: number };
+export const PARCEL_CONTENT_SOURCES = ['shipment', 'backfill'] as const;
+export const parcelContents = sqliteTable('_ecommerce_parcel_contents', {
+  id: text('id').primaryKey(),
+  fulfillmentId: text('fulfillment_id').notNull().references(() => fulfillments.id),
+  orderId: text('order_id').notNull().references(() => orders.id),
+  items: text('items', { mode: 'json' }).$type<ParcelItem[]>().notNull(),
+  source: text('source', { enum: PARCEL_CONTENT_SOURCES }).notNull(),
+  actor: text('actor').notNull(), reason: text('reason').notNull(), fingerprint: text('fingerprint').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, t => [uniqueIndex('_ecommerce_parcel_contents_shipment_unique').on(t.fulfillmentId),
+  index('_ecommerce_parcel_contents_order_idx').on(t.orderId),
+  check('parcel_items_array', sql`json_valid(${t.items}) AND json_type(${t.items}) = 'array' AND json_array_length(${t.items}) > 0`),
+  check('parcel_source', oneOf(t.source, PARCEL_CONTENT_SOURCES)),
+  check('parcel_actor', filled(t.actor)), check('parcel_reason', trimmed(t.reason, 8))]);
+export const RETURN_CONDITIONS = ['sellable', 'damaged', 'inspection'] as const;
+export type ReturnedItem = ParcelItem & { condition: typeof RETURN_CONDITIONS[number]; restock: boolean };
+export const returnReceipts = sqliteTable('_ecommerce_return_receipts', {
+  id: text('id').primaryKey(), orderId: text('order_id').notNull().references(() => orders.id),
+  items: text('items', { mode: 'json' }).$type<ReturnedItem[]>().notNull(),
+  actor: text('actor').notNull(), reason: text('reason').notNull(), fingerprint: text('fingerprint').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, t => [index('_ecommerce_return_receipts_order_idx').on(t.orderId, t.createdAt),
+  check('return_items_array', sql`json_valid(${t.items}) AND json_type(${t.items}) = 'array' AND json_array_length(${t.items}) > 0`),
+  check('return_actor', filled(t.actor)), check('return_reason', trimmed(t.reason, 8))]);
+/** Stock returned by an intake receipt, bounded by the original checkout reservation. */
+export const returnStock = sqliteTable('_ecommerce_return_stock', {
+  id: text('id').primaryKey(), receiptId: text('receipt_id').notNull().references(() => returnReceipts.id),
+  orderId: text('order_id').notNull().references(() => orders.id),
+  reservationType: text('reservation_type', { enum: RESTOCK_RESERVATION_TYPES }).notNull(), reservationId: text('reservation_id').notNull(),
+  targetType: text('target_type', { enum: RESTOCK_TARGET_TYPES }).notNull(), targetId: text('target_id').notNull(),
+  quantity: integer('quantity').notNull(),
+}, t => [uniqueIndex('_ecommerce_return_stock_receipt_unique').on(t.receiptId, t.reservationType, t.reservationId),
+  index('_ecommerce_return_stock_reservation_idx').on(t.reservationType, t.reservationId),
+  index('_ecommerce_return_stock_order_idx').on(t.orderId),
+  index('_ecommerce_return_stock_target_idx').on(t.targetType, t.targetId),
+  check('return_stock_reservation_type', oneOf(t.reservationType, RESTOCK_RESERVATION_TYPES)),
+  check('return_stock_target_type', oneOf(t.targetType, RESTOCK_TARGET_TYPES)), check('return_stock_quantity', money(t.quantity, 'positive'))]);
+export const STOCK_MOVEMENT_KINDS = ['receipt', 'correction'] as const;
+export const stockMovements = sqliteTable('_ecommerce_stock_movements', {
+  id: text('id').primaryKey(), targetType: text('target_type', { enum: RESTOCK_TARGET_TYPES }).notNull(), targetId: text('target_id').notNull(),
+  kind: text('kind', { enum: STOCK_MOVEMENT_KINDS }).notNull(), delta: integer('delta').notNull(),
+  beforeQuantity: integer('before_quantity').notNull(), afterQuantity: integer('after_quantity').notNull(),
+  expectedUpdatedAt: integer('expected_updated_at', { mode: 'timestamp' }).notNull(),
+  actor: text('actor').notNull(), reason: text('reason').notNull(), fingerprint: text('fingerprint').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, t => [index('_ecommerce_stock_movements_target_idx').on(t.targetType, t.targetId, t.createdAt),
+  check('stock_movement_target', oneOf(t.targetType, RESTOCK_TARGET_TYPES)), check('stock_movement_kind', oneOf(t.kind, STOCK_MOVEMENT_KINDS)),
+  check('stock_movement_delta', sql`${t.delta} <> 0 AND (${t.kind} <> 'receipt' OR ${t.delta} > 0)`),
+  check('stock_movement_before', money(t.beforeQuantity, 'nonnegative')), check('stock_movement_after', money(t.afterQuantity, 'nonnegative')),
+  check('stock_movement_balance', sql`${t.afterQuantity} = ${t.beforeQuantity} + ${t.delta}`),
+  check('stock_movement_actor', filled(t.actor)), check('stock_movement_reason', trimmed(t.reason, 8))]);
+
 // --- Relations, for the relational query builder ---
 
 const tables = {
-  carts, orders, payments, providerRefunds, products, variants, productVariants, productVariantValues, stocks, components,
+  parcelContents, returnReceipts, returnStock, stockMovements, carts, orders, payments, providerRefunds, products, variants, productVariants, productVariantValues, stocks, components,
   variantComponents, componentReservations, inventoryReservations, categories, productCategories, tags, productTags,
   customers, customerAccounts, customerSessions, signInTokens, rateLimits, fulfillments, referralCodes, referrals,
   creditLedger, referralSettings, discountCodes, discountCodeCreations, discountRedemptions, giftCardPurchases, giftCards, giftCardLedger,
@@ -970,6 +1027,7 @@ export const relations = defineRelations(tables, (r) => ({
     componentReservations: r.many.componentReservations(),
     inventoryReservations: r.many.inventoryReservations(),
     fulfillments: r.many.fulfillments(),
+    parcelContents: r.many.parcelContents(), returnReceipts: r.many.returnReceipts(), returnStock: r.many.returnStock(),
     referral: r.one.referrals({ from: r.orders.id, to: r.referrals.orderId }),
     creditLedger: r.many.creditLedger(),
     discountRedemption: r.one.discountRedemptions({ from: r.orders.id, to: r.discountRedemptions.orderId }),
@@ -1083,7 +1141,13 @@ export const relations = defineRelations(tables, (r) => ({
     /** The order an order-status session shows; null for an account session. */
     order: r.one.orders({ from: r.customerSessions.orderId, to: r.orders.id }),
   },
+  parcelContents: { order: r.one.orders({ from: r.parcelContents.orderId, to: r.orders.id, optional: false }),
+    fulfillment: r.one.fulfillments({ from: r.parcelContents.fulfillmentId, to: r.fulfillments.id, optional: false }) },
+  returnReceipts: { order: r.one.orders({ from: r.returnReceipts.orderId, to: r.orders.id, optional: false }), stock: r.many.returnStock() },
+  returnStock: { receipt: r.one.returnReceipts({ from: r.returnStock.receiptId, to: r.returnReceipts.id, optional: false }),
+    order: r.one.orders({ from: r.returnStock.orderId, to: r.orders.id, optional: false }) },
   fulfillments: {
+    contents: r.one.parcelContents(),
     order: r.one.orders({ from: r.fulfillments.orderId, to: r.orders.id, optional: false }),
     /** The shipment a correction restates. */
     corrects: r.one.fulfillments({ from: r.fulfillments.correctsId, to: r.fulfillments.id, alias: 'fulfillment_corrections' }),

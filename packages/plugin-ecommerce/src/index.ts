@@ -859,6 +859,21 @@ export const ecommercePlugin = (
         });
       }
 
+      if (inject) {
+        collections.push({ name: 'Parcel Contents', slug: '_ecommerce_parcel_contents', adminSection: 'commerce', readOnly: true,
+          fields: nativeFields(schema.parcelContents, ['id', 'orderId', 'fulfillmentId', 'source', 'actor', 'reason', 'createdAt']),
+          nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: 'parcelContents', idColumn: 'id' } });
+        collections.push({ name: 'Return Receipts', slug: '_ecommerce_return_receipts', adminSection: 'commerce', readOnly: true,
+          fields: nativeFields(schema.returnReceipts, ['id', 'orderId', 'actor', 'reason', 'createdAt']),
+          nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: 'returnReceipts', idColumn: 'id' } });
+        collections.push({ name: 'Return Stock', slug: '_ecommerce_return_stock', adminSection: 'commerce', readOnly: true,
+          fields: nativeFields(schema.returnStock, ['id', 'orderId', 'receiptId', 'reservationType', 'reservationId', 'targetType', 'targetId', 'quantity']),
+          nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: 'returnStock', idColumn: 'id' } });
+        collections.push({ name: 'Stock Movements', slug: '_ecommerce_stock_movements', adminSection: 'commerce', readOnly: true,
+          fields: nativeFields(schema.stockMovements, ['id', 'targetType', 'targetId', 'kind', 'delta', 'beforeQuantity', 'afterQuantity', 'actor', 'reason', 'createdAt']),
+          nativeSchemaMapping: { schemaPath: ADMIN_SCHEMA_PATH, exportName: 'stockMovements', idColumn: 'id' } });
+      }
+
       for (const collection of collections) {
         if (collection.nativeSchemaMapping?.schemaPath !== ADMIN_SCHEMA_PATH) continue;
         collection.access = { read: 'admin', create: 'admin', update: 'admin', delete: 'admin' };
