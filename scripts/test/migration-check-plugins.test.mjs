@@ -45,6 +45,19 @@ test('release schema gate checks Stripe as well as core and commerce', (t) => {
   assert.match(result.stdout, /@talisman-cms\/plugin-stripe: 1 migration/);
 });
 
+test('large schema exports survive a CLI that exits before a pipe flushes', (t) => {
+  const { write, run } = fixture(t);
+  const ddl = `/* ${'schema padding '.repeat(100000)} */\nCREATE TABLE _ecommerce_orders (id text PRIMARY KEY);`;
+  write('packages/plugin-ecommerce/declared.sql', ddl);
+  write('node_modules/drizzle-kit/bin.cjs', `const fs = require('node:fs');
+if (process.argv[2] === 'export') { process.stdout.write(fs.readFileSync('declared.sql', 'utf8')); process.exit(0); }
+else if (process.argv[2] === 'generate') console.log('No schema changes');
+else process.exit(2);`);
+  const result = run();
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /plugin-ecommerce: 1 migration/);
+});
+
 test('an unmigrated Stripe table fails the release gate instead of passing unnoticed', (t) => {
   const { write, run } = fixture(t);
   write('packages/plugin-stripe/declared.sql', 'CREATE TABLE _stripe_sync (id text PRIMARY KEY); CREATE TABLE _stripe_sync_operations (id text PRIMARY KEY);');

@@ -12,7 +12,7 @@
 // 3. Every migration is a folder drizzle-kit wrote, `<timestamp>_<name>/migration.sql`, and none relies
 //    on `PRAGMA foreign_keys`, which D1 ignores inside a migration.
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { closeSync, cpSync, existsSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -30,9 +30,19 @@ const MIGRATION_FOLDER = /^\d{14}_[a-z0-9_]+$/;
 const problems = [];
 
 function runKit(cwd, args) {
-  const result = spawnSync(process.execPath, [kit, ...args], { cwd, encoding: 'utf8', env: { ...process.env, CI: 'true' } });
-  if (result.status !== 0) throw new Error(`drizzle-kit ${args.join(' ')} failed in ${cwd}:\n${result.stdout}\n${result.stderr}`);
-  return result.stdout;
+  // drizzle-kit exits immediately after writing. File descriptors make these writes synchronous;
+  // a pipe can lose the tail of a schema export larger than its buffer before exit flushes it.
+  const capture = mkdtempSync(join(tmpdir(), 'talisman-kit-output-'));
+  const stdoutPath = join(capture, 'stdout'), stderrPath = join(capture, 'stderr');
+  const stdoutFd = openSync(stdoutPath, 'w'), stderrFd = openSync(stderrPath, 'w');
+  try {
+    const result = spawnSync(process.execPath, [kit, ...args], { cwd, stdio: ['ignore', stdoutFd, stderrFd], env: { ...process.env, CI: 'true' } });
+    const stdout = readFileSync(stdoutPath, 'utf8'), stderr = readFileSync(stderrPath, 'utf8');
+    if (result.status !== 0) throw new Error(`drizzle-kit ${args.join(' ')} failed in ${cwd}:\n${stdout}\n${stderr}`, { cause: result.error });
+    return stdout;
+  } finally {
+    closeSync(stdoutFd); closeSync(stderrFd); rmSync(capture, { recursive: true, force: true });
+  }
 }
 
 /** The DDL drizzle-kit derives from a package's schema files. */
