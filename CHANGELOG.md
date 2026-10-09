@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Customers can request bounded item returns and cancel requests before intake. Staff approval, decline and closure record separate internal reasons and customer-visible instructions; quantity guards, version checks and stable retry keys protect overlapping requests and interrupted responses.
+- Commerce adds an oldest-first **Returns** queue for request review, approved partial intake and outstanding inspections, plus attention counts for both kinds of work. Customer order pages show request status, received quantities and staff messages without internal notes.
+- **Operations exports** downloads complete filtered orders, received return items and stock movement CSV files, with inclusive UTC dates, exact IDs, money in minor units and spreadsheet formula protection. Selections over 1,000 rows are refused rather than truncated.
+- Three additive return-request/export migrations add audited request history, atomic receipt links and date indexes. Shopper data export includes their return messages; open returns block anonymization and audited redaction preserves quantity history. Apply the migrations before the matching Worker; release remains on hold.
+
 - Return inspections resolve received pending goods in bounded partial decisions, record staff/disposition, and optionally restore approved sellable units without duplicating intake or exceeding checkout holds.
 - Stocktakes print count sheets, preview discrepancies and atomically apply up to 50 available-stock counts with exact version guards, staff history and interrupted-response recovery. Product/options count editors become read-only; initial stock and corrections use the audited stock tools.
 - Owner-authenticated customer tracking includes each parcel's exact contents and corrected tracking, remaining units, and received return/inspection progress. A reusable order-tracking component offers refresh recovery without exposing warehouse notes or stock recipes.
