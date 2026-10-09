@@ -27,6 +27,7 @@
 // the exit code; they are printed as GAP.
 
 import { chromium } from 'playwright-core';
+import { warehouseLifecycleFlow } from './warehouse-lifecycle-flow.mjs';
 import { warehouseFlow } from './warehouse-flow.mjs';
 import { ordersFlow } from './orders-flow.mjs';
 import { giftCardFlow } from './gift-card-flow.mjs';
@@ -507,6 +508,7 @@ const steps = {
   'promotions-workflow': ctx => promotionsFlow(ctx, { fail, expectVisible, expectHidden, expectValue, expectNoAlert, waitUntil }),
 
   'commerce-warehouse': ctx => warehouseFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
+  'warehouse-lifecycle': ctx => warehouseLifecycleFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'commerce-daily': ctx => commerceDailyFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'commerce-operations': ctx => commerceOpsFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'orders-workflow': ctx => ordersFlow(ctx, { fail, expectVisible, expectHidden, expectValue, expectNoAlert, waitUntil }),
@@ -1821,7 +1823,7 @@ const steps = {
     const productId = await ensureProduct(ctx);
     const groupName = `E2E group ${ctx.runId}`;
     const valueLabel = `E2E value ${ctx.runId}`;
-    const stock = '7';
+    const stock = '0';
 
     // The product editor reads only this product's rows: every read of the flow tables carries a
     // where filter, the groups are read by this product's id, and the products table is never listed.
@@ -1867,7 +1869,7 @@ const steps = {
     const valueLabelInputs = groupCard.getByLabel('Value Label');
     await expectVisible(valueLabelInputs.last(), 'the new value card');
     await valueLabelInputs.last().fill(valueLabel);
-    await groupCard.getByLabel('Stock Quantity').last().fill(stock);
+    if (!await groupCard.getByLabel('Stock Quantity').last().isDisabled()) fail('options stock can bypass the audited tools');
     const valueResponse = await clickAndAwaitResponse(
       page,
       groupCard.getByRole('button', { name: 'Create Value', exact: true }).last(),

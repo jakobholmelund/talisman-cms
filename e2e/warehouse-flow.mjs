@@ -77,8 +77,11 @@ export async function warehouseFlow(ctx, { fail, expectVisible, expectHidden, ex
     await expectVisible(warehouse.getByText(/1 × Return fixture · sellable · Restocked/),'sellable unit restocked');
     await capture('commerce-return-intake');
     // Use an actual local stock record and actual worker writes for receipts and corrections.
-    const fixture=await page.request.post('/admin/api/collections/_ecommerce_components/entries',{headers:{Origin:origin},data:{data:{sku:`WAREHOUSE-${ctx.runId}`,name:'Warehouse shared-part fixture',quantity:3}}});
+    const fixture=await page.request.post('/admin/api/collections/_ecommerce_components/entries',{headers:{Origin:origin},data:{data:{sku:`WAREHOUSE-${ctx.runId}`,name:'Warehouse shared-part fixture',quantity:0}}});
     if(!fixture.ok())fail('stock fixture creation failed');componentId=(await fixture.json()).id;
+    const initial=(await (await page.request.get(`/admin/api/collections/_ecommerce_components/entries/${componentId}`)).json());
+    const filled=await page.request.post('/admin/api/ecommerce/operations',{headers:{Origin:origin},data:{action:'stockMovement',data:{requestKey:crypto.randomUUID(),targetType:'component',targetId:componentId,kind:'receipt',delta:3,expectedQuantity:0,expectedUpdatedAt:initial.updatedAt,reason:'Initial physical available stock received'}}});
+    if(!filled.ok())fail('audited stock fixture receipt failed');
     await warehouse.getByRole('button',{name:'Discard warehouse draft',exact:true}).count().then(n=>{if(n)fail('confirmed return left an unsaved draft');});
     await page.getByRole('link',{name:'Stock overview',exact:true}).click();
     const panel=page.getByRole('region',{name:'Stock movements',exact:true});
@@ -98,7 +101,7 @@ export async function warehouseFlow(ctx, { fail, expectVisible, expectHidden, ex
     if(movements[0].requestKey!==movements[1].requestKey)fail('stock receipt retry changed key');
     await change.getByLabel('Change type',{exact:true}).selectOption('correction');await change.getByLabel('Quantity change (positive or negative)',{exact:true}).fill('-2');await change.getByLabel('Reason for stock change',{exact:true}).fill('Damaged parts removed after inspection');
     const entry=await page.request.get(`/admin/api/collections/_ecommerce_components/entries/${componentId}`);const loaded=await entry.json();
-    const update=await page.request.put(`/admin/api/collections/_ecommerce_components/entries/${componentId}`,{headers:{Origin:origin},data:{data:{quantity:9},expectedUpdatedAt:loaded.updatedAt}});
+    const update=await page.request.post('/admin/api/ecommerce/operations',{headers:{Origin:origin},data:{action:'stockMovement',data:{requestKey:crypto.randomUUID(),targetType:'component',targetId:componentId,kind:'receipt',delta:2,expectedQuantity:7,expectedUpdatedAt:loaded.updatedAt,reason:'Competing supplier delivery received'}}});
     if(!update.ok())fail(`competing stock update failed: ${update.status()} ${await update.text()}`);
     await change.getByRole('button',{name:'Record stock change',exact:true}).click();
     await expectVisible(panel.getByRole('alert').filter({hasText:'Stock changed'}),'real stale stock conflict');

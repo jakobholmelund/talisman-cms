@@ -21,13 +21,16 @@ export async function commerceDailyFlow(ctx, { fail, expectVisible, expectHidden
   const payloads = [];
   let componentId;
   try {
-    const fixture = await page.request.post('/admin/api/collections/_ecommerce_components/entries', { headers: { Origin: ctx.options.baseUrl }, data: { data: { sku: `DAILY-${ctx.runId}`, name: 'Daily stock fixture', quantity: 3 } } });
+    const fixture = await page.request.post('/admin/api/collections/_ecommerce_components/entries', { headers: { Origin: ctx.options.baseUrl }, data: { data: { sku: `DAILY-${ctx.runId}`, name: 'Daily stock fixture', quantity: 0 } } });
     if (!fixture.ok()) fail(`component fixture creation failed: ${fixture.status()} ${await fixture.text()}`);
     componentId = (await fixture.json()).id;
+    const initial = await (await page.request.get(`/admin/api/collections/_ecommerce_components/entries/${componentId}`)).json();
+    const receipt = await page.request.post('/admin/api/ecommerce/operations', {headers:{Origin:ctx.options.baseUrl},data:{action:'stockMovement',data:{requestKey:crypto.randomUUID(),targetType:'component',targetId:componentId,kind:'receipt',delta:3,expectedQuantity:0,expectedUpdatedAt:initial.updatedAt,reason:'Initial available stock physically received'}}});
+    if (!receipt.ok()) fail('daily initial stock receipt failed');
     await page.route('**/api/ecommerce/operations?*', async route => {
       const request = route.request();
       const query = new URL(request.url()).searchParams;
-      if (query.get('view') === 'stockLocations' || query.get('view') === 'stockHistory') return route.continue();
+      if (query.get('view') === 'stockLocations' || query.get('view') === 'stockHistory' || query.get('view') === 'stocktakes') return route.continue();
       if (query.get('view') === 'stock') { payloads.push(query); return route.continue(); }
       if (failRead) return json(route, { error: 'Read unavailable' }, 503);
       if (failRefresh) { failRefresh = false; return json(route, { error: 'Refresh unavailable' }, 503); }
@@ -88,14 +91,14 @@ export async function commerceDailyFlow(ctx, { fail, expectVisible, expectHidden
     const filters = page.getByRole('region', { name: 'Stock filters', exact: true });
     await filters.getByLabel('Show', { exact: true }).selectOption('all');
     await filters.getByRole('button', { name: 'Apply filters', exact: true }).click();
-    await expectVisible(page.getByRole('link', { name: 'Edit product', exact: true }).first(), 'stock links to product editor');
-    const target = await page.getByRole('link', { name: 'Edit product', exact: true }).first().getAttribute('href');
+    await expectVisible(page.getByRole('link', { name: 'View product', exact: true }).first(), 'stock links to product editor');
+    const target = await page.getByRole('link', { name: 'View product', exact: true }).first().getAttribute('href');
     if (!target?.startsWith('/admin/commerce/products/')) fail(`stock editor link uses wrong path: ${target}`);
     await filters.getByLabel('Inventory', { exact: true }).selectOption('components');
     await filters.getByLabel('Low stock threshold', { exact: true }).fill('7');
     await filters.getByRole('button', { name: 'Apply filters', exact: true }).click();
     await expectVisible(page.getByRole('heading', { name: 'Shared component stock', exact: true }), 'component stock view');
-    await expectVisible(page.getByRole('link', { name: 'Edit component', exact: true }).first(), 'component stock editor link');
+    await expectVisible(page.getByRole('link', { name: 'View component', exact: true }).first(), 'component stock editor link');
     await capture('commerce-stock');
     await page.setViewportSize({width:390,height:844});
     const closeMenu = page.getByRole('button', {name:'Close navigation menu',exact:true});
@@ -106,8 +109,8 @@ export async function commerceDailyFlow(ctx, { fail, expectVisible, expectHidden
     await capture('commerce-stock-mobile');
     const query = payloads.at(-1);
     if (query?.get('inventory') !== 'components' || query.get('threshold') !== '7') fail('stock filters were not sent to the server');
-    await page.getByRole('link', { name: 'Edit component', exact: true }).first().click();
-    await expectVisible(page.getByLabel('Available Quantity', { exact: true }), 'stock link opens component adjustment field');
+    await page.getByRole('link', { name: 'View component', exact: true }).first().click();
+    await expectVisible(page.getByLabel('Available Quantity · use Stock overview', { exact: true }), 'stock link opens component adjustment field');
     return 'Daily attention, guarded email retry recovery, named history, and stock/component editor links passed.';
   } catch (cause) { await capture('commerce-daily-active-failure'); console.error('Daily flow failure at', page.url(), await page.getByRole('combobox').evaluateAll(elements => elements.map(element => ({name:element.name, label:element.getAttribute('aria-label'), labels:Array.from(element.labels || []).map(label => label.textContent)})))); throw cause; } finally { if (held) await held.abort(); if (componentId) await page.request.delete(`/admin/api/collections/_ecommerce_components/entries/${componentId}`, { headers: { Origin: ctx.options.baseUrl } }); await page.close(); }
 }
