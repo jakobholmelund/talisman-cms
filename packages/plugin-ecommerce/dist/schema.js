@@ -31,6 +31,7 @@ import {
   customerAccounts,
   customerSessions,
   customers,
+  discountCodeCreations,
   discountCodes,
   discountRedemptions,
   disputes,
@@ -69,7 +70,7 @@ import {
   taxSyncDecisions,
   variantComponents,
   variants
-} from "./chunk-2LKMD4JM.js";
+} from "./chunk-IITGXIBG.js";
 export {
   CREDIT_LEDGER_KINDS,
   CUSTOMER_SESSION_PURPOSES,
@@ -103,6 +104,7 @@ export {
   customerAccounts,
   customerSessions,
   customers,
+  discountCodeCreations,
   discountCodes,
   discountRedemptions,
   disputes,

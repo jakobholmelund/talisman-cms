@@ -475,6 +475,18 @@ var discountCodes = sqliteTable("_ecommerce_discount_codes", {
     OR (${table.type} = 'amount' AND ${table.remainingCents} IS NULL AND ${table.maxDiscountCents} IS NULL)
     OR (${table.type} = 'percent' AND ${table.value} BETWEEN 1 AND 10000 AND ${table.remainingCents} IS NULL)`)
 ]);
+var discountCodeCreations = sqliteTable("_ecommerce_discount_code_creations", {
+  id: text("id").primaryKey(),
+  // Domain-separated hash of the private request key.
+  code: text("code").notNull().references(() => discountCodes.code).unique(),
+  fingerprint: text("fingerprint").notNull(),
+  actor: text("actor").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+}, (table) => [
+  check("discount_code_creation_id", sql`length(${table.id}) = 64 AND ${table.id} NOT GLOB '*[^0-9a-f]*'`),
+  check("discount_code_creation_fingerprint", sql`length(${table.fingerprint}) = 64 AND ${table.fingerprint} NOT GLOB '*[^0-9a-f]*'`),
+  check("discount_code_creation_actor", sql`length(trim(${table.actor})) BETWEEN 1 AND 128`)
+]);
 var REDEMPTION_STATUSES = ["reserved", "confirmed", "cancelled", "refunded"];
 var discountRedemptions = sqliteTable("_ecommerce_discount_redemptions", {
   id: text("id").primaryKey(),
@@ -829,6 +841,7 @@ var tables = {
   creditLedger,
   referralSettings,
   discountCodes,
+  discountCodeCreations,
   discountRedemptions,
   giftCardPurchases,
   giftCards,
@@ -1003,7 +1016,10 @@ var relations = defineRelations(tables, (r) => ({
     account: r.one.customerAccounts({ from: r.creditLedger.accountId, to: r.customerAccounts.id, optional: false }),
     order: r.one.orders({ from: r.creditLedger.orderId, to: r.orders.id, optional: false })
   },
-  discountCodes: { redemptions: r.many.discountRedemptions() },
+  discountCodes: { redemptions: r.many.discountRedemptions(), creation: r.one.discountCodeCreations() },
+  discountCodeCreations: {
+    discountCode: r.one.discountCodes({ from: r.discountCodeCreations.code, to: r.discountCodes.code, optional: false })
+  },
   discountRedemptions: {
     discountCode: r.one.discountCodes({ from: r.discountRedemptions.code, to: r.discountCodes.code, optional: false }),
     order: r.one.orders({ from: r.discountRedemptions.orderId, to: r.orders.id, optional: false }),
@@ -1118,6 +1134,7 @@ export {
   referralSettings,
   DISCOUNT_CODE_TYPES,
   discountCodes,
+  discountCodeCreations,
   REDEMPTION_STATUSES,
   discountRedemptions,
   GIFT_CARD_PURCHASE_STATUSES,

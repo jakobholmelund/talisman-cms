@@ -11,28 +11,28 @@ import {
   bindCommerceApi,
   reconcileCommerce,
   shippingOptionsFor
-} from "./chunk-TG2KLQXC.js";
-import "./chunk-3LR7WYMB.js";
-import "./chunk-HKPJHMPB.js";
+} from "./chunk-HSKSWESH.js";
+import "./chunk-737MTCCE.js";
+import "./chunk-6DICT5V4.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
 import {
   deliverPendingCommerceEmails
-} from "./chunk-UCPUP2U7.js";
+} from "./chunk-QQAERUXI.js";
 import {
   COUNTRY_CODES,
   StoreSettingsError,
   isCountryCode,
   readStoreCurrency,
   readStoreSettings
-} from "./chunk-UZSS3RLA.js";
-import "./chunk-JBDGJ7AR.js";
+} from "./chunk-HZYMV637.js";
+import "./chunk-IYLXVBBY.js";
 import "./chunk-GNU6N22K.js";
-import "./chunk-TOUOM5OZ.js";
+import "./chunk-HYAFBBZB.js";
 import {
   commerceDb
-} from "./chunk-7225YI7R.js";
+} from "./chunk-P3TQBWDQ.js";
 import {
   carts,
   categories,
@@ -41,6 +41,7 @@ import {
   customerAccounts,
   customerSessions,
   customers,
+  discountCodeCreations,
   discountCodes,
   discountRedemptions,
   disputes,
@@ -69,7 +70,7 @@ import {
   tags,
   variantComponents,
   variants
-} from "./chunk-2LKMD4JM.js";
+} from "./chunk-IITGXIBG.js";
 import "./chunk-NQUBOBQT.js";
 import "./chunk-NMGICNSV.js";
 import {
@@ -601,6 +602,15 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
             "active"
           ]),
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "discountCodes", idColumn: "code" }
+        });
+        collections.push({
+          name: "Discount Code Creations",
+          slug: "_ecommerce_discount_code_creations",
+          description: "Original creation requests used to recover interrupted promotion saves.",
+          adminSection: "commerce",
+          readOnly: true,
+          fields: nativeFields(discountCodeCreations, ["id", "code", "actor", "createdAt"]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "discountCodeCreations", idColumn: "id" }
         });
         collections.push({
           name: "Discount Redemptions",

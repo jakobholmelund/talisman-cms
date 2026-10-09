@@ -4,13 +4,13 @@ import {
   saveReferralSettings,
   setReferralCodeActive,
   updateDiscountCode
-} from "../chunk-HKPJHMPB.js";
-import "../chunk-UZSS3RLA.js";
-import "../chunk-JBDGJ7AR.js";
+} from "../chunk-6DICT5V4.js";
+import "../chunk-HZYMV637.js";
+import "../chunk-IYLXVBBY.js";
 import "../chunk-GNU6N22K.js";
-import "../chunk-TOUOM5OZ.js";
-import "../chunk-7225YI7R.js";
-import "../chunk-2LKMD4JM.js";
+import "../chunk-HYAFBBZB.js";
+import "../chunk-P3TQBWDQ.js";
+import "../chunk-IITGXIBG.js";
 import "../chunk-NMGICNSV.js";
 import "../chunk-2UYSCNNW.js";
 
@@ -39,7 +39,7 @@ var ALL = async ({ request }) => {
         body.code,
         body.data?.active
       );
-    } else if (body.action === "createCode") result = await createDiscountCode(runtimeEnv, body.data);
+    } else if (body.action === "createCode") result = await createDiscountCode(runtimeEnv, body.data, String(authorization.user?.id ?? ""));
     else if (body.action === "updateCode" && typeof body.code === "string") {
       result = await updateDiscountCode(runtimeEnv, body.code, body.data);
     } else return Response.json({ error: "Invalid promotion action" }, { status: 400, headers });

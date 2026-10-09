@@ -21,9 +21,9 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     expiresAt: z.ZodNullable<z.ZodNumber>;
     active: z.ZodBoolean;
 }, "strict", z.ZodTypeAny, {
-    active: boolean;
     description: string | null;
     type: "amount" | "credit" | "percent";
+    active: boolean;
     value: number;
     expiresAt: number | null;
     code: string;
@@ -35,9 +35,9 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     firstOrderOnly: boolean;
     startsAt: number | null;
 }, {
-    active: boolean;
     description: string | null;
     type: "amount" | "credit" | "percent";
+    active: boolean;
     value: number;
     expiresAt: number | null;
     code: string;
@@ -49,9 +49,9 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     firstOrderOnly: boolean;
     startsAt: number | null;
 }>, {
-    active: boolean;
     description: string | null;
     type: "amount" | "credit" | "percent";
+    active: boolean;
     value: number;
     expiresAt: number | null;
     code: string;
@@ -63,9 +63,9 @@ declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
     firstOrderOnly: boolean;
     startsAt: number | null;
 }, {
-    active: boolean;
     description: string | null;
     type: "amount" | "credit" | "percent";
+    active: boolean;
     value: number;
     expiresAt: number | null;
     code: string;
@@ -188,7 +188,8 @@ declare function setReferralCodeActive(env: TalismanEnv, code: string, active: b
     active: boolean;
 }>;
 declare function saveReferralSettings(env: TalismanEnv, input: unknown): Promise<ReferralPolicy>;
-declare function createDiscountCode(env: TalismanEnv, input: unknown): Promise<{
+/** Optional requestKey + actor make a creation recoverable without repeating its financial effects. */
+declare function createDiscountCode(env: TalismanEnv, input: unknown, actor?: string): Promise<{
     code: string;
     description: string | null;
     type: "amount" | "credit" | "percent";

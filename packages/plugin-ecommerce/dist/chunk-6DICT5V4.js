@@ -1,24 +1,26 @@
 import {
   GiftCardRefusal,
   readStoreSettings
-} from "./chunk-UZSS3RLA.js";
+} from "./chunk-HZYMV637.js";
 import {
   getReferralPolicy,
   referralTermsError
-} from "./chunk-JBDGJ7AR.js";
+} from "./chunk-IYLXVBBY.js";
 import {
   hasPurchaseHistory
-} from "./chunk-TOUOM5OZ.js";
+} from "./chunk-HYAFBBZB.js";
 import {
-  commerceDb
-} from "./chunk-7225YI7R.js";
+  commerceDb,
+  commitBatch
+} from "./chunk-P3TQBWDQ.js";
 import {
   customerAccounts,
+  discountCodeCreations,
   discountCodes,
   discountRedemptions,
   referralCodes,
   referralSettings
-} from "./chunk-2LKMD4JM.js";
+} from "./chunk-IITGXIBG.js";
 import {
   minimumChargeAmount
 } from "./chunk-2UYSCNNW.js";
@@ -168,16 +170,44 @@ async function saveReferralSettings(env, input) {
   await db.insert(referralSettings).values({ id: "default", ...values, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({ target: referralSettings.id, set: { ...values, updatedAt: /* @__PURE__ */ new Date() } });
   return getReferralPolicy(env);
 }
-async function createDiscountCode(env, input) {
+var creationKeySchema = z.string().uuid().transform((value) => value.toLowerCase());
+var creationActorSchema = z.string().trim().min(1).max(128);
+async function creationHash(value) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+async function createDiscountCode(env, input, actor) {
   const raw = input && typeof input === "object" ? input : {};
-  const generatedCode = raw.type === "credit" ? `GC-${Array.from(
-    crypto.getRandomValues(new Uint8Array(12)),
-    (byte) => byte.toString(16).padStart(2, "0")
-  ).join("").toUpperCase()}` : raw.code;
-  const values = discountCodeSchema.parse({ ...raw, code: generatedCode });
-  const now = /* @__PURE__ */ new Date();
+  const { requestKey: rawKey, ...fields } = raw;
+  const requestKey = rawKey === void 0 ? null : creationKeySchema.parse(rawKey);
+  const values = discountCodeSchema.parse({ ...fields, code: raw.type === "credit" ? `GC-${"0".repeat(24)}` : raw.code });
   const db = commerceDb(env);
-  await db.insert(discountCodes).values({
+  const creation = requestKey ? {
+    id: await creationHash(`promotion-create:${requestKey}`),
+    actor: creationActorSchema.parse(actor),
+    fingerprint: await creationHash(JSON.stringify({ ...values, code: values.type === "credit" ? null : values.code }))
+  } : null;
+  async function recover() {
+    if (!creation) return null;
+    const previous2 = await db.select().from(discountCodeCreations).where(eq(discountCodeCreations.id, creation.id)).get();
+    if (!previous2) return null;
+    if (previous2.actor !== creation.actor || previous2.fingerprint !== creation.fingerprint) {
+      throw new Error("This creation retry belongs to different promotion details or another administrator");
+    }
+    const code = await db.select().from(discountCodes).where(eq(discountCodes.code, previous2.code)).get();
+    if (!code) throw new Error("The created promotion is unavailable; review the existing codes");
+    return code;
+  }
+  const previous = await recover();
+  if (previous) return previous;
+  if (values.type === "credit") {
+    values.code = `GC-${Array.from(
+      crypto.getRandomValues(new Uint8Array(12)),
+      (byte) => byte.toString(16).padStart(2, "0")
+    ).join("").toUpperCase()}`;
+  }
+  const now = /* @__PURE__ */ new Date();
+  const insert = db.insert(discountCodes).values({
     ...values,
     remainingCents: values.type === "credit" ? values.value : null,
     startsAt: values.startsAt ? new Date(values.startsAt * 1e3) : null,
@@ -185,6 +215,17 @@ async function createDiscountCode(env, input) {
     createdAt: now,
     updatedAt: now
   });
+  try {
+    if (creation) await commitBatch(db, [
+      insert,
+      db.insert(discountCodeCreations).values({ ...creation, code: values.code, createdAt: now })
+    ]);
+    else await insert;
+  } catch (cause) {
+    const winner = await recover();
+    if (winner) return winner;
+    throw cause;
+  }
   return db.select().from(discountCodes).where(eq(discountCodes.code, values.code)).get();
 }
 async function updateDiscountCode(env, code, input) {

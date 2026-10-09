@@ -4089,6 +4089,94 @@ declare const discountCodes: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
     };
     dialect: "sqlite";
 }>;
+/** A private creation key records the original payload; replay never resets a code's current balance or terms. */
+declare const discountCodeCreations: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
+    name: "_ecommerce_discount_code_creations";
+    schema: undefined;
+    columns: {
+        id: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: string;
+            tableName: "_ecommerce_discount_code_creations";
+            dataType: "string";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: true;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}>;
+        code: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: string;
+            tableName: "_ecommerce_discount_code_creations";
+            dataType: "string";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}>;
+        fingerprint: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: string;
+            tableName: "_ecommerce_discount_code_creations";
+            dataType: "string";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}>;
+        actor: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: string;
+            tableName: "_ecommerce_discount_code_creations";
+            dataType: "string";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}>;
+        createdAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+            name: string;
+            tableName: "_ecommerce_discount_code_creations";
+            dataType: "object date";
+            data: Date;
+            driverParam: number;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}>;
+    };
+    dialect: "sqlite";
+}>;
 declare const REDEMPTION_STATUSES: readonly ["reserved", "confirmed", "cancelled", "refunded"];
 /** Pending orders reserve a use and, for credit vouchers, part of the balance. */
 declare const discountRedemptions: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
@@ -6984,6 +7072,10 @@ declare const relations: drizzle_orm.ExtractTablesWithRelations<{
     };
     discountCodes: {
         redemptions: drizzle_orm.Many<"discountRedemptions">;
+        creation: drizzle_orm.One<"discountCodeCreations", true>;
+    };
+    discountCodeCreations: {
+        discountCode: drizzle_orm.One<"discountCodes", false>;
     };
     discountRedemptions: {
         discountCode: drizzle_orm.One<"discountCodes", false>;
@@ -11122,6 +11214,93 @@ declare const relations: drizzle_orm.ExtractTablesWithRelations<{
         };
         dialect: "sqlite";
     }>;
+    discountCodeCreations: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
+        name: "_ecommerce_discount_code_creations";
+        schema: undefined;
+        columns: {
+            id: drizzle_orm_sqlite_core.SQLiteColumn<{
+                name: string;
+                tableName: "_ecommerce_discount_code_creations";
+                dataType: "string";
+                data: string;
+                driverParam: string;
+                notNull: true;
+                hasDefault: false;
+                isPrimaryKey: true;
+                isAutoincrement: false;
+                hasRuntimeDefault: false;
+                enumValues: [string, ...string[]];
+                baseColumn: never;
+                identity: undefined;
+                generated: undefined;
+            }, {}>;
+            code: drizzle_orm_sqlite_core.SQLiteColumn<{
+                name: string;
+                tableName: "_ecommerce_discount_code_creations";
+                dataType: "string";
+                data: string;
+                driverParam: string;
+                notNull: true;
+                hasDefault: false;
+                isPrimaryKey: false;
+                isAutoincrement: false;
+                hasRuntimeDefault: false;
+                enumValues: [string, ...string[]];
+                baseColumn: never;
+                identity: undefined;
+                generated: undefined;
+            }, {}>;
+            fingerprint: drizzle_orm_sqlite_core.SQLiteColumn<{
+                name: string;
+                tableName: "_ecommerce_discount_code_creations";
+                dataType: "string";
+                data: string;
+                driverParam: string;
+                notNull: true;
+                hasDefault: false;
+                isPrimaryKey: false;
+                isAutoincrement: false;
+                hasRuntimeDefault: false;
+                enumValues: [string, ...string[]];
+                baseColumn: never;
+                identity: undefined;
+                generated: undefined;
+            }, {}>;
+            actor: drizzle_orm_sqlite_core.SQLiteColumn<{
+                name: string;
+                tableName: "_ecommerce_discount_code_creations";
+                dataType: "string";
+                data: string;
+                driverParam: string;
+                notNull: true;
+                hasDefault: false;
+                isPrimaryKey: false;
+                isAutoincrement: false;
+                hasRuntimeDefault: false;
+                enumValues: [string, ...string[]];
+                baseColumn: never;
+                identity: undefined;
+                generated: undefined;
+            }, {}>;
+            createdAt: drizzle_orm_sqlite_core.SQLiteColumn<{
+                name: string;
+                tableName: "_ecommerce_discount_code_creations";
+                dataType: "object date";
+                data: Date;
+                driverParam: number;
+                notNull: true;
+                hasDefault: false;
+                isPrimaryKey: false;
+                isAutoincrement: false;
+                hasRuntimeDefault: false;
+                enumValues: undefined;
+                baseColumn: never;
+                identity: undefined;
+                generated: undefined;
+            }, {}>;
+        };
+        dialect: "sqlite";
+    }>;
     discountRedemptions: drizzle_orm_sqlite_core.SQLiteTableWithColumns<{
         name: "_ecommerce_discount_redemptions";
         schema: undefined;
@@ -14018,4 +14197,4 @@ declare const relations: drizzle_orm.ExtractTablesWithRelations<{
     }>;
 }>>;
 
-export { CREDIT_LEDGER_KINDS, CUSTOMER_SESSION_PURPOSES, DISCOUNT_CODE_TYPES, EMAIL_KINDS, EMAIL_STATUSES, FULFILLMENT_KINDS, FULFILLMENT_STATUSES, GIFT_CARD_LEDGER_KINDS, GIFT_CARD_PURCHASE_STATUSES, GIFT_CARD_REVIEW_OUTCOMES, GIFT_CARD_SOURCES, GIFT_CARD_STATUSES, PAYMENT_RETURNED_KINDS, PRODUCT_STATUSES, PRODUCT_TYPES, RECONCILE_DECISION_ACTIONS, REDEMPTION_STATUSES, REFERRAL_STATUSES, RESERVATION_TARGET_TYPES, RESTOCK_RESERVATION_TYPES, RESTOCK_TARGET_TYPES, SHOPPER_AUDIT_ACTIONS, TAX_BEHAVIORS, TAX_SYNC_ACTIONS, carts, categories, componentReservations, components, creditLedger, customerAccounts, customerSessions, customers, discountCodes, discountRedemptions, disputes, emailDeliveries, fulfillments, giftCardClaims, giftCardCodeReplacements, giftCardLedger, giftCardOrderRefunds, giftCardPurchases, giftCardRedemptions, giftCardRefunds, giftCardReviews, giftCards, inventoryReservations, orders, payments, productCategories, productTags, productVariantValues, productVariants, products, providerRefunds, rateLimits, reconcileDecisions, referralCodes, referralSettings, referrals, relations, restocks, shopperAudits, signInTokens, stocks, tags, taxReversals, taxSyncDecisions, variantComponents, variants };
+export { CREDIT_LEDGER_KINDS, CUSTOMER_SESSION_PURPOSES, DISCOUNT_CODE_TYPES, EMAIL_KINDS, EMAIL_STATUSES, FULFILLMENT_KINDS, FULFILLMENT_STATUSES, GIFT_CARD_LEDGER_KINDS, GIFT_CARD_PURCHASE_STATUSES, GIFT_CARD_REVIEW_OUTCOMES, GIFT_CARD_SOURCES, GIFT_CARD_STATUSES, PAYMENT_RETURNED_KINDS, PRODUCT_STATUSES, PRODUCT_TYPES, RECONCILE_DECISION_ACTIONS, REDEMPTION_STATUSES, REFERRAL_STATUSES, RESERVATION_TARGET_TYPES, RESTOCK_RESERVATION_TYPES, RESTOCK_TARGET_TYPES, SHOPPER_AUDIT_ACTIONS, TAX_BEHAVIORS, TAX_SYNC_ACTIONS, carts, categories, componentReservations, components, creditLedger, customerAccounts, customerSessions, customers, discountCodeCreations, discountCodes, discountRedemptions, disputes, emailDeliveries, fulfillments, giftCardClaims, giftCardCodeReplacements, giftCardLedger, giftCardOrderRefunds, giftCardPurchases, giftCardRedemptions, giftCardRefunds, giftCardReviews, giftCards, inventoryReservations, orders, payments, productCategories, productTags, productVariantValues, productVariants, products, providerRefunds, rateLimits, reconcileDecisions, referralCodes, referralSettings, referrals, relations, restocks, shopperAudits, signInTokens, stocks, tags, taxReversals, taxSyncDecisions, variantComponents, variants };
