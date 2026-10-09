@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Commerce adds Needs attention, Email recovery, and Stock overview screens. Attention shows exact operational counts and bounded oldest-first previews, excluding simulated orders; stock searches and pages effective sellable/component quantities on the server and links to registered stock editors.
+- Failed order and shipment notices support staff-reasoned, atomic and audited requeue requests. Stable retry keys recover lost responses without repeating queue resets; stale observations, active leases and undeliverable recipients are refused. A retry preserves original email dates and starts a fresh delivery window through the existing scheduled sender.
+- Two additive `daily_operations` / `email_recovery_guards` migrations add email retry metadata, recovery history, lookup indexes and append-only history guards. Apply them before the matching Worker; release remains an owner step.
+
 - Payment/tax review forms preserve interrupted drafts, prevent duplicate submissions, recover failed reads and distinguish confirmed decisions from refresh failures. The latest 50 recorded decisions include staff names and reasons even after the subject leaves review.
 - Order activity shows shipments, progress changes, restocking, actual gift-card/store-credit refund ledger entries, and email provider status with staff names and audit ids. Sent email means provider acceptance.
 - Promotion code and referral policy edits support optional version checks and HTTP 409 conflicts. The admin preserves stale drafts until an explicit reload; timestamps advance on every save, including within the same second. Legacy unversioned callers remain supported. The admin SDK's thrown errors now carry their HTTP status.
