@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Customers can attach a preferred physical catalog item to an owner-only exchange request. Staff review it, receive and inspect the original goods, then agree stock and payment/refund requirements before dispatch. Stable request recovery preserves the preference without reserving stock or charging money.
+- Order details include paginated replacement and exchange history with customer requests, parcel/inspection records, payment reviews and notice delivery status.
+- Operations reports and the new replacement/exchange CSV include dated activity, verified extra payments, confirmed cheaper-item refund allocations and current inspection/payment review work. Unknown provider-event amounts stay blank. Order-filtered stock exports now include replacement dispatch and restock movements.
+- Two additive customer-exchange migrations add immutable preferences and catalog/ownership guards; apply them before the matching Worker. Release and checkout remain on hold.
+
 - Replacement/exchange shipment, corrected-tracking and replacement-return notices now use the durable email queue and shopper-safe templates. Private reasons never enter mail or immutable stock history.
 - Returned replacement goods have separate guarded intake/inspection budgets and atomic frozen-recipe restocking, with pending work visible after case resolution and covered by privacy/export controls.
 - Different-price exchanges freeze the adjustment, verify separately collected Stripe upgrades or allocate exact confirmed cheaper-item refunds before dispatch. Provider refund/dispute changes reopen staff review work without changing original purchase totals. Two migrations add the audit records/guards and expand queued email kinds; release and checkout remain on hold.
