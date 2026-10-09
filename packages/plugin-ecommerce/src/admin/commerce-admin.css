@@ -52,3 +52,10 @@
 
 .ecom-admin__panel a { color: #a5b4fc; text-decoration: underline; text-underline-offset: 3px; }
 .ecom-admin__panel a:hover { color: #c7d2fe; }
+
+/* Native fieldsets otherwise impose their input's intrinsic width on narrow panels. */
+.ecom-admin__aftercare { min-width: 0; overflow-wrap: anywhere; }
+.ecom-admin__aftercare fieldset { min-inline-size: 0; }
+.ecom-admin__aftercare .ecom-admin__field { min-width: 0; }
+.ecom-admin__aftercare input, .ecom-admin__aftercare select { min-width: 0; max-width: 100%; box-sizing: border-box; }
+.ecom-admin__aftercare button { max-width: 100%; white-space: normal; }
