@@ -75,6 +75,9 @@ async function seed(sqlite) {
     VALUES ('m1', 'a.png', 'image/png', 10, '/api/media/m1', ?, ?)`).run(hourAgo, hourAgo);
   const saved = await call('PUT', '/collections/posts/entries/p2', { data: { title: 'Live', body: doc('Text') }, expectedRevisionId: null });
   assert.equal(saved.status, 200);
+  // Seed history must precede the scenario even when a run crosses a Unix-second boundary.
+  // Otherwise random generated IDs reorder tied revision numbers between identical runs.
+  sqlite.prepare('UPDATE galaxy_entry_revisions SET created_at = ?').run(hourAgo);
   return { revisionId: saved.body.latestRevisionId };
 }
 
