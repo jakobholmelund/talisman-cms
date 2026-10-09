@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Payment/tax review forms preserve interrupted drafts, prevent duplicate submissions, recover failed reads and distinguish confirmed decisions from refresh failures. The latest 50 recorded decisions include staff names and reasons even after the subject leaves review.
+- Order activity shows shipments, progress changes, restocking, actual gift-card/store-credit refund ledger entries, and email provider status with staff names and audit ids. Sent email means provider acceptance.
+- Promotion code and referral policy edits support optional version checks and HTTP 409 conflicts. The admin preserves stale drafts until an explicit reload; timestamps advance on every save, including within the same second. Legacy unversioned callers remain supported. The admin SDK's thrown errors now carry their HTTP status.
+- The additive `commerce_activity_indexes` migration indexes gift-card ledger order lookups and recent payment/tax decisions. Apply it before the matching Worker.
+
+
 ### Breaking changes
 
 - Astro live-loader reads now default to relationship depth 0 and collection pages of 50 entries (maximum 200 per query). Set `depth: 1` to retain relationship expansion and request successive `offset` pages for larger collections. Draft live-loader reads require `request: Astro.request` and a verified CMS editor/admin session, including loaders configured with `version: 'draft'`. Build-time content sync is unchanged.

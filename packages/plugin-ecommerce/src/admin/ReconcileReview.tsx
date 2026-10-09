@@ -34,7 +34,7 @@ function age(value: string) {
  * Pending orders and gift card purchases whose payment check failed in a way another attempt cannot
  * change. Reconciliation leaves them until an administrator retries or releases them, with a reason
  * that is recorded with their user id. The list reloads whenever `refreshKey` changes, such as after the
- * orders screen checks pending payments. It shows nothing while no record is parked.
+ * orders screen checks pending payments. Recent decisions stay visible after their reviews are resolved.
  */
 export default function ReconcileReview({ refreshKey }: { refreshKey?: unknown }) {
   const [list, setList] = useState<ParkedList | null>(null);
