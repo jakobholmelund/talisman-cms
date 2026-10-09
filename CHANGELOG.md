@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Replacement/exchange shipment, corrected-tracking and replacement-return notices now use the durable email queue and shopper-safe templates. Private reasons never enter mail or immutable stock history.
+- Returned replacement goods have separate guarded intake/inspection budgets and atomic frozen-recipe restocking, with pending work visible after case resolution and covered by privacy/export controls.
+- Different-price exchanges freeze the adjustment, verify separately collected Stripe upgrades or allocate exact confirmed cheaper-item refunds before dispatch. Provider refund/dispute changes reopen staff review work without changing original purchase totals. Two migrations add the audit records/guards and expand queued email kinds; release and checkout remain on hold.
+
 - **Parcels & exchanges** records lost/damaged original or replacement parcels, guarded partial replacement shipments, tracking corrections and immutable staff follow-up. Original parcel quantities and purchase totals stay intact.
 - Same-price exchanges link inspected returned units to an active equal-price physical catalog choice, require a recorded no-refund outcome and deduct the chosen stock only when shipped. Open cases appear in Needs attention and current operations reporting.
 - Owner-only tracking shows replacement and exchange parcels without staff notes or stock recipes. Open recovery obligations block shopper erasure; resolved notes redact through the audited privacy path. Two additive migrations add the case, shipment and event records and their guards. Release and checkout remain on hold.
