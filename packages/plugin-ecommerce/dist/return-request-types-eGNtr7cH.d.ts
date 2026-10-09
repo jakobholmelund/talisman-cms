@@ -4,6 +4,29 @@ type RequestRow = typeof returnRequests.$inferSelect;
 type EventRow = typeof returnRequestEvents.$inferSelect;
 type LinkRow = typeof returnRequestReceipts.$inferSelect;
 type Status = EventRow['status'];
+interface CustomerExchangeProgress {
+    stages: Array<{
+        label: string;
+        quantity: number;
+        nextAction: string;
+    }>;
+    cases: Array<{
+        id: string;
+        name: string;
+        quantity: number;
+        shipped: number;
+        label: string;
+        nextAction: string;
+        parcels: Array<{
+            quantity: number;
+            returned: number;
+            awaitingInspection: number;
+            carrier: string | null;
+            trackingNumber: string | null;
+            createdAt: string;
+        }>;
+    }>;
+}
 /** Public projection: no staff identity, internal reason, fingerprint or stock recipe. */
 interface CustomerReturns {
     orderId: RequestRow['orderId'];
@@ -27,6 +50,7 @@ interface CustomerReturns {
         available: number;
     }>;
     requests: Array<Pick<RequestRow, 'id' | 'reason'> & {
+        exchangeProgress: CustomerExchangeProgress | null;
         exchangePreference: ({
             lineIndex: number;
         } & ReturnExchangePreference) | null;
@@ -76,7 +100,7 @@ type AdminReturnRequest = Pick<RequestRow, 'id' | 'orderId' | 'reason'> & {
         createdAt: string;
     }>;
 };
-type ReturnsQueueFilter = 'active' | 'pending' | 'approved' | 'inspection' | 'all';
+type ReturnsQueueFilter = 'active' | 'pending' | 'approved' | 'inspection' | 'waiting_goods' | 'arrange_exchange' | 'all';
 interface ReturnsQueue {
     filter: ReturnsQueueFilter;
     orderId: string;

@@ -1,5 +1,5 @@
-import { C as CustomerReturns, R as ReturnRequestReceipt, a as ReturnDecisionReceipt } from './return-request-types-CDblNHPy.js';
-import { R as ReturnOwner } from './return-requests-BRcbgxIS.js';
+import { C as CustomerReturns, R as ReturnRequestReceipt, a as ReturnDecisionReceipt } from './return-request-types-eGNtr7cH.js';
+import { R as ReturnOwner } from './return-requests-9ofJvWbS.js';
 import { a as CommerceApiOptions } from './commerce-context-DMvZFbwj.js';
 import { TalismanEnv } from 'talisman-cms/client';
 import { a as CommerceEmailResult } from './email-deliveries-CyzibTug.js';
@@ -1201,9 +1201,6 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
     webhooks: {
         handleStripe: (payload: string, signature: string, secret?: string) => Promise<{
             success: boolean;
-            recoveryPayment: boolean;
-        } | {
-            success: boolean;
             purchaseId: string;
             duplicate: boolean;
         } | {
@@ -1230,6 +1227,9 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
             orderId: string;
             duplicate: boolean;
             status?: undefined;
+        } | {
+            success: boolean;
+            recoveryPayment: boolean;
         } | {
             success: boolean;
             event: string;

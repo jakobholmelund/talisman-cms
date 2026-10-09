@@ -1,6 +1,6 @@
 import {
   readBoundedJson
-} from "../chunk-5HFIIT5Q.js";
+} from "../chunk-366NLRUF.js";
 import {
   OperationsExportLimit,
   exportCommerceOperations,
@@ -23,7 +23,7 @@ import {
   reportSupplierIssue,
   savePurchaseOrder,
   saveSupplier
-} from "../chunk-PA4PG2A2.js";
+} from "../chunk-ZP5NXIBT.js";
 import {
   createRecoveryCase,
   decideReturnRequest,
@@ -32,6 +32,7 @@ import {
   listReplenishment,
   listReturnsQueue,
   planReplenishmentDelivery,
+  readExchangeHandoff,
   readRecoveryCase,
   readRecoveryOrder,
   readReplenishment,
@@ -41,7 +42,7 @@ import {
   saveReplenishmentPolicy,
   shipRecoveryCase,
   verifyExchangeCharge
-} from "../chunk-PYEHVINE.js";
+} from "../chunk-YKKPVPTL.js";
 import "../chunk-BVMDOVSS.js";
 import "../chunk-AVWDMCNG.js";
 import "../chunk-IN4CG7W7.js";
@@ -59,10 +60,10 @@ import {
   recordStockMovement,
   recordStocktake,
   retryCommerceEmail
-} from "../chunk-3SF7AMPH.js";
+} from "../chunk-GFXT6MBK.js";
 import {
   ShopperError
-} from "../chunk-L63XGUKQ.js";
+} from "../chunk-MBWSY2KP.js";
 import "../chunk-IC3XDWQU.js";
 import "../chunk-GNU6N22K.js";
 import "../chunk-PMYARYOQ.js";
@@ -117,6 +118,7 @@ var ALL = async ({ request }) => {
       return new Response(result.csv, { headers: { ...headers, "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${result.filename}"`, "X-Content-Type-Options": "nosniff", "X-Export-Rows": String(result.rows) } });
     }
     if (body?.action === "orderRecoveryHistory") return Response.json(await readOrderRecoveryHistory(runtimeEnv, body.data), { headers });
+    if (body?.action === "exchangeHandoff") return Response.json(await readExchangeHandoff(runtimeEnv, body.data), { headers });
     if (body?.action === "recoveryRead") return Response.json(await readRecoveryCase(runtimeEnv, body.data), { headers });
     if (body?.action === "recoveryOrderRead") return Response.json(await readRecoveryOrder(runtimeEnv, body.data), { headers });
     if (body?.action === "exchangeChoices") return Response.json(await listExchangeChoices(runtimeEnv, body.data), { headers });

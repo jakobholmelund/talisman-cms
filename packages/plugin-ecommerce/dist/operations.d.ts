@@ -1,10 +1,10 @@
 import { TalismanEnv } from 'talisman-cms/client';
-import { StocktakeLine, ParcelItem, InspectedItem, ReturnedItem, RETURN_REFUND_STATUSES, returnRefundDecisions, REFUND_SOURCE_KINDS, RESTOCK_TARGET_TYPES, replenishmentPolicies, replenishmentDeliveries, SupplierSnapshot, PurchaseLine, RETURN_REASON_CODES, SUPPLIER_ISSUE_KINDS, SUPPLIER_ISSUE_STATUSES, RECOVERY_KINDS } from './schema.js';
+import { StocktakeLine, ParcelItem, InspectedItem, ReturnedItem, RETURN_REFUND_STATUSES, returnRefundDecisions, REFUND_SOURCE_KINDS, RESTOCK_TARGET_TYPES, replenishmentPolicies, replenishmentDeliveries, SupplierSnapshot, PurchaseLine, RETURN_REASON_CODES, SUPPLIER_ISSUE_KINDS, SUPPLIER_ISSUE_STATUSES, ReturnExchangePreference } from './schema.js';
 import * as drizzle_orm_sqlite_core from 'drizzle-orm/sqlite-core';
-export { d as decideReturnRequest, l as listReturnsQueue, r as readReturnRequestAdmin } from './return-requests-BRcbgxIS.js';
+export { d as decideReturnRequest, l as listReturnsQueue, r as readReturnRequestAdmin } from './return-requests-9ofJvWbS.js';
 import { P as PaymentProviderAdapter } from './payments-DiMqRHdo.js';
 import 'drizzle-orm';
-import './return-request-types-CDblNHPy.js';
+import './return-request-types-eGNtr7cH.js';
 
 type AttentionKind = 'payment_review' | 'older_payments' | 'tax_review' | 'email' | 'gift_hold' | 'shipment' | 'dispute' | 'return_request' | 'inspection' | 'refund' | 'incoming' | 'supplier_issue' | 'parcel_recovery';
 /** A read-only snapshot. Exact counts include every matching record; each category shows its ten
@@ -1331,6 +1331,9 @@ declare function readSupplierIssue(env: TalismanEnv, input: unknown): Promise<{
     }[];
 }>;
 
+declare const RECOVERY_NEXT_ACTIONS: readonly ["inspection", "review", "refund", "payment", "stock", "dispatch", "follow_up", "complete"];
+type RecoveryNextAction = typeof RECOVERY_NEXT_ACTIONS[number];
+
 /** Immutable incidents and exchange choices; no reservation, payment or original-order mutation. */
 declare function createRecoveryCase(env: TalismanEnv, input: unknown, actor: string): Promise<{
     caseId: string;
@@ -1353,21 +1356,26 @@ declare function shipRecoveryCase(env: TalismanEnv, input: unknown, actor: strin
 declare function listRecoveryCases(env: TalismanEnv, input?: unknown): Promise<{
     total: number;
     rows: {
+        nextActionLabel: string;
         createdAt: string;
         id: string;
+        lineIndex: number;
         orderId: string;
-        kind: (typeof RECOVERY_KINDS)[number];
+        receiptId: string | null;
+        kind: "lost" | "damaged" | "exchange";
         quantity: number;
         shipped: number;
         awaitingInspection: number;
         awaitingPaymentReview: number;
         name: string;
         status: "open" | "resolved";
+        nextAction: RecoveryNextAction;
     }[];
     orderId: string;
     kind: "lost" | "damaged" | "exchange" | "all";
     offset: number;
     filter: "open" | "resolved" | "all";
+    nextAction: "stock" | "complete" | "review" | "payment" | "inspection" | "all" | "refund" | "dispatch" | "follow_up";
 }>;
 declare function readRecoveryCase(env: TalismanEnv, input: unknown): Promise<{
     adjustment: {
@@ -1573,6 +1581,32 @@ declare function listExchangeChoices(env: TalismanEnv, input: unknown): Promise<
     offset: number;
     allowPriceDifference: boolean;
 }>;
+/** A request's immutable receipt links provide exchange provenance, including older recorded cases. */
+declare function readExchangeHandoff(env: TalismanEnv, input: unknown): Promise<{
+    requestId: string;
+    orderId: string;
+    lineIndex: number;
+    status: "closed" | "cancelled" | "pending" | "approved" | "declined";
+    preference: ReturnExchangePreference;
+    choice: {
+        productId: string;
+        variantId: string | null;
+        name: string;
+        sku: string | null;
+        price: number;
+    } | null;
+    currency: string;
+    canArrange: boolean;
+    blockedReason: string | null;
+    receipts: {
+        receiptId: string;
+        received: number;
+        refundStatus: "needed" | "not_needed" | "settled";
+        awaitingInspection: number;
+        available: number;
+        caseIds: string[];
+    }[];
+}>;
 
 /** Receipt acknowledges physical goods only; it never promises a refund or restores stock. */
 declare function receiveReplacementReturn(env: TalismanEnv, input: unknown, actor: string): Promise<{
@@ -1633,4 +1667,4 @@ declare function readOrderRecoveryHistory(env: TalismanEnv, input: unknown): Pro
     offset: number;
 }>;
 
-export { type AttentionKind, CommerceOperationsConflict, type StockOverviewRow, createRecoveryCase, exportCommerceOperations, inspectOrderReturn, inspectReplacementReturn, listEmailRecovery, listExchangeChoices, listPurchaseOrders, listRecoveryCases, listRefundFollowUp, listReplenishment, listStockLocations, listStocktakes, listSupplierIssues, listSuppliers, planReplenishmentDelivery, readCommerceAttention, readOperationsReport, readOrderRecoveryHistory, readOrderWarehouse, readPurchaseOrder, readRecoveryCase, readRecoveryOrder, readRefundCase, readReplenishment, readStockHistory, readStockOverview, readStocktakeTargets, readSupplierIssue, receiveOrderReturn, receiveReplacementReturn, recordParcelContents, recordPurchaseOrder, recordRecoveryEvent, recordRefundFollowUp, recordReplenishmentDelivery, recordStockMovement, recordStocktake, recordSupplierIssue, reportSupplierIssue, retryCommerceEmail, savePurchaseOrder, saveReplenishmentPolicy, saveSupplier, shipRecoveryCase, verifyExchangeCharge };
+export { type AttentionKind, CommerceOperationsConflict, type StockOverviewRow, createRecoveryCase, exportCommerceOperations, inspectOrderReturn, inspectReplacementReturn, listEmailRecovery, listExchangeChoices, listPurchaseOrders, listRecoveryCases, listRefundFollowUp, listReplenishment, listStockLocations, listStocktakes, listSupplierIssues, listSuppliers, planReplenishmentDelivery, readCommerceAttention, readExchangeHandoff, readOperationsReport, readOrderRecoveryHistory, readOrderWarehouse, readPurchaseOrder, readRecoveryCase, readRecoveryOrder, readRefundCase, readReplenishment, readStockHistory, readStockOverview, readStocktakeTargets, readSupplierIssue, receiveOrderReturn, receiveReplacementReturn, recordParcelContents, recordPurchaseOrder, recordRecoveryEvent, recordRefundFollowUp, recordReplenishmentDelivery, recordStockMovement, recordStocktake, recordSupplierIssue, reportSupplierIssue, retryCommerceEmail, savePurchaseOrder, saveReplenishmentPolicy, saveSupplier, shipRecoveryCase, verifyExchangeCharge };

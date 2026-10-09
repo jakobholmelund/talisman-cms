@@ -24,6 +24,7 @@ import {
   quoteCart,
   readCustomerExchangeChoices,
   readCustomerReturns,
+  readOrderTracking,
   recordMissingTaxTransactions,
   recordProviderRefund,
   recordRecoveryPaymentEvent,
@@ -37,19 +38,18 @@ import {
   updateCartItems,
   updateOrderStatus,
   withCountryCode
-} from "./chunk-PYEHVINE.js";
+} from "./chunk-YKKPVPTL.js";
 import {
   INVENTORY_COLUMNS,
   fullRefundStatements
 } from "./chunk-BVMDOVSS.js";
 import {
   evaluateDiscountCode
-} from "./chunk-2WXNU27Y.js";
+} from "./chunk-OGYT5JJJ.js";
 import {
   adminActorNames,
-  deliverPendingCommerceEmails,
-  describeOrderItems
-} from "./chunk-3SF7AMPH.js";
+  deliverPendingCommerceEmails
+} from "./chunk-GFXT6MBK.js";
 import {
   RECONCILE_FAILURE_MESSAGES,
   RECONCILE_TABLES,
@@ -80,7 +80,7 @@ import {
   recordGiftCardPurchaseRefund,
   sessionLookupFailure,
   uncheckedSessionRefusal
-} from "./chunk-L63XGUKQ.js";
+} from "./chunk-MBWSY2KP.js";
 import {
   canonicalEmail,
   canonicalEmails,
@@ -123,55 +123,6 @@ import {
 import {
   minimumChargeAmount
 } from "./chunk-2UYSCNNW.js";
-
-// src/order-tracking.ts
-async function readOrderTracking(ctx, orderId, sessionToken, customerId, orderAccessToken) {
-  const authorized = await findOrderForSession(ctx, orderId, sessionToken, customerId, orderAccessToken);
-  if (!authorized || authorized.paymentProvider === "admin_test") return null;
-  const order = await ctx.db.query.orders.findFirst({ where: { id: orderId }, columns: { id: true, items: true }, with: {
-    fulfillments: { columns: { id: true, kind: true, correctsId: true, carrier: true, trackingNumber: true, createdAt: true }, orderBy: (_t, { sql: sql6 }) => sql6`rowid`, with: { contents: { columns: { items: true } } } },
-    recoveryCases: { columns: { id: true, kind: true, lineIndex: true, quantity: true, target: true, createdAt: true }, with: { payments: { columns: { amountMinor: true }, orderBy: (_t, { sql: sql6 }) => sql6`rowid DESC`, limit: 1, with: { events: { columns: { kind: true }, orderBy: (_t, { sql: sql6 }) => sql6`rowid` } } }, receipt: { with: { refundDecisions: { columns: { status: true, amountMinor: true }, orderBy: (_t, { sql: sql6 }) => sql6`rowid DESC`, limit: 1 } } }, shipments: { columns: { id: true, quantity: true, carrier: true, trackingNumber: true, createdAt: true }, with: { receipts: { columns: { quantity: true }, with: { inspections: { columns: { quantity: true, disposition: true, restock: true } } } } }, orderBy: (_t, { sql: sql6 }) => sql6`rowid` }, events: { columns: { kind: true, status: true, shipmentId: true, carrier: true, trackingNumber: true }, orderBy: (_t, { sql: sql6 }) => sql6`rowid` } } },
-    returnReceipts: { columns: { id: true, items: true, createdAt: true }, with: { inspections: { columns: { items: true } } } }
-  } });
-  if (!order) return null;
-  const descriptions = await describeOrderItems(ctx.env, order.items);
-  const label = (lineIndex) => {
-    const line = descriptions[lineIndex];
-    return { lineIndex, name: [line?.productName || "Ordered item", line?.variantLabel].filter(Boolean).join(" / "), sku: line?.sku ?? null };
-  };
-  const parcels = order.fulfillments.filter((f) => f.kind === "shipment").map((f) => {
-    const correction = order.fulfillments.filter((c) => c.kind === "correction" && c.correctsId === f.id).at(-1);
-    return {
-      id: f.id,
-      shippedAt: f.createdAt.toISOString(),
-      carrier: correction ? correction.carrier : f.carrier,
-      trackingNumber: correction ? correction.trackingNumber : f.trackingNumber,
-      items: f.contents ? f.contents.items.map((i) => ({ ...label(i.lineIndex), quantity: i.quantity })) : null
-    };
-  });
-  const unknown = parcels.some((p) => p.items === null);
-  const received = (lineIndex) => order.returnReceipts.reduce((n, r) => n + (r.items.find((i) => i.lineIndex === lineIndex)?.quantity ?? 0), 0);
-  const returns = order.returnReceipts.map((r) => ({ receivedAt: r.createdAt.toISOString(), items: r.items.map((i) => {
-    const reviewed = i.condition === "inspection" ? r.inspections.reduce((n, d) => n + (d.items.find((j) => j.lineIndex === i.lineIndex)?.quantity ?? 0), 0) : i.quantity;
-    return { ...label(i.lineIndex), quantity: i.quantity, awaitingInspection: Math.max(0, i.quantity - reviewed) };
-  }) }));
-  return { orderId, lines: descriptions.map((line, lineIndex) => {
-    const shipped = parcels.reduce((n, p) => n + (p.items?.find((i) => i.lineIndex === lineIndex)?.quantity ?? 0), 0);
-    return { ...label(lineIndex), ordered: line.quantity, shipped, remaining: unknown ? null : Math.max(0, line.quantity - shipped), received: received(lineIndex) };
-  }), parcels, returns, recoveries: order.recoveryCases.map((c) => ({
-    id: c.id,
-    kind: c.kind,
-    quantity: c.quantity,
-    name: c.target.name,
-    sku: c.target.sku,
-    adjustment: { amountMinor: c.kind === "exchange" ? c.target.adjustmentMinor ?? 0 : 0, currency: authorized.currency, status: c.kind !== "exchange" || !c.target.adjustmentMinor ? "not_needed" : c.target.adjustmentMinor > 0 ? c.payments[0] && !c.payments[0].events.some((e) => ["refunded", "lost"].includes(e.kind)) && c.payments[0].events.filter((e) => ["disputed", "won"].includes(e.kind)).at(-1)?.kind !== "disputed" ? "paid" : "payment_needed" : c.receipt?.refundDecisions[0]?.status === "settled" ? "refunded" : "refund_needed" },
-    status: c.events.at(-1)?.status ?? "open",
-    shipments: c.shipments.map((s) => {
-      const corrected = c.events.filter((e) => e.kind === "tracking" && e.shipmentId === s.id).at(-1);
-      return { id: s.id, quantity: s.quantity, returned: s.receipts.reduce((n, r) => n + r.quantity, 0), awaitingInspection: s.receipts.reduce((n, r) => n + r.quantity - r.inspections.reduce((n2, i) => n2 + i.quantity, 0), 0), shippedAt: s.createdAt.toISOString(), carrier: corrected ? corrected.carrier : s.carrier, trackingNumber: corrected ? corrected.trackingNumber : s.trackingNumber };
-    })
-  })) };
-}
 
 // src/checkout.ts
 import { and, eq, isNull, lt, notExists, sql } from "drizzle-orm";

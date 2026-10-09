@@ -19,7 +19,7 @@ import {
   reportSupplierIssue,
   savePurchaseOrder,
   saveSupplier
-} from "./chunk-PA4PG2A2.js";
+} from "./chunk-ZP5NXIBT.js";
 import {
   createRecoveryCase,
   decideReturnRequest,
@@ -28,6 +28,7 @@ import {
   listReplenishment,
   listReturnsQueue,
   planReplenishmentDelivery,
+  readExchangeHandoff,
   readRecoveryCase,
   readRecoveryOrder,
   readReplenishment,
@@ -37,7 +38,7 @@ import {
   saveReplenishmentPolicy,
   shipRecoveryCase,
   verifyExchangeCharge
-} from "./chunk-PYEHVINE.js";
+} from "./chunk-YKKPVPTL.js";
 import "./chunk-BVMDOVSS.js";
 import "./chunk-AVWDMCNG.js";
 import "./chunk-IN4CG7W7.js";
@@ -55,8 +56,8 @@ import {
   recordStockMovement,
   recordStocktake,
   retryCommerceEmail
-} from "./chunk-3SF7AMPH.js";
-import "./chunk-L63XGUKQ.js";
+} from "./chunk-GFXT6MBK.js";
+import "./chunk-MBWSY2KP.js";
 import "./chunk-IC3XDWQU.js";
 import "./chunk-GNU6N22K.js";
 import "./chunk-PMYARYOQ.js";
@@ -85,6 +86,7 @@ export {
   listSuppliers,
   planReplenishmentDelivery,
   readCommerceAttention,
+  readExchangeHandoff,
   readOperationsReport,
   readOrderRecoveryHistory,
   readOrderWarehouse,
