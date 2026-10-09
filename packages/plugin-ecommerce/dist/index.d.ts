@@ -131,7 +131,7 @@ interface EcommercePluginConfig {
      * such as `extensions/orders`, or an absolute path on the site, such as `/orders`. The integration
      * refuses anything that is not a path on the site, such as a full URL, at config time.
      */
-    adminPages?: Partial<Record<'orders' | 'promotions' | 'giftCards' | 'testCheckout', string>>;
+    adminPages?: Partial<Record<'orders' | 'promotions' | 'giftCards' | 'testCheckout' | 'attention' | 'emails' | 'stock', string>>;
     /**
      * Adds the admin-only Test checkout screen and `/admin/api/ecommerce/test-checkout`, which place
      * orders through the simulated `admin_test` payment provider. When false, neither is injected and

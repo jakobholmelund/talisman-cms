@@ -36,6 +36,7 @@ import {
   discountRedemptions,
   disputes,
   emailDeliveries,
+  emailRecoveryDecisions,
   fulfillments,
   giftCardClaims,
   giftCardCodeReplacements,
@@ -70,7 +71,7 @@ import {
   taxSyncDecisions,
   variantComponents,
   variants
-} from "./chunk-3XLIJPB2.js";
+} from "./chunk-7YP7VGC3.js";
 export {
   CREDIT_LEDGER_KINDS,
   CUSTOMER_SESSION_PURPOSES,
@@ -109,6 +110,7 @@ export {
   discountRedemptions,
   disputes,
   emailDeliveries,
+  emailRecoveryDecisions,
   fulfillments,
   giftCardClaims,
   giftCardCodeReplacements,

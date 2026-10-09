@@ -11,28 +11,29 @@ import {
   bindCommerceApi,
   reconcileCommerce,
   shippingOptionsFor
-} from "./chunk-XWCAAKPV.js";
-import "./chunk-VFNKIRVX.js";
-import "./chunk-XXEE54YQ.js";
+} from "./chunk-V4AFX4JI.js";
+import "./chunk-4IG6PUVV.js";
+import "./chunk-CQTWJTOM.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
 import {
   deliverPendingCommerceEmails
-} from "./chunk-AGIIDIRO.js";
+} from "./chunk-34DQPQAD.js";
+import "./chunk-HQYYNOMX.js";
 import {
   COUNTRY_CODES,
   StoreSettingsError,
   isCountryCode,
   readStoreCurrency,
   readStoreSettings
-} from "./chunk-K7KINC5L.js";
-import "./chunk-OSTMSMQZ.js";
+} from "./chunk-FXE7QHWH.js";
+import "./chunk-QVXNRCNA.js";
 import "./chunk-GNU6N22K.js";
-import "./chunk-JHEPRJVB.js";
+import "./chunk-MCHSKWPD.js";
 import {
   commerceDb
-} from "./chunk-HZZSX5TT.js";
+} from "./chunk-S5M56U3H.js";
 import {
   carts,
   categories,
@@ -46,6 +47,7 @@ import {
   discountRedemptions,
   disputes,
   emailDeliveries,
+  emailRecoveryDecisions,
   giftCardClaims,
   giftCardCodeReplacements,
   giftCardLedger,
@@ -70,7 +72,7 @@ import {
   tags,
   variantComponents,
   variants
-} from "./chunk-3XLIJPB2.js";
+} from "./chunk-7YP7VGC3.js";
 import "./chunk-NQUBOBQT.js";
 import "./chunk-NMGICNSV.js";
 import {
@@ -233,9 +235,13 @@ var ecommercePlugin = (config) => {
   const giftCardsEndpointPath = resolveGiftCardsEndpointPath();
   const adminGiftCardsEndpointPath = resolveAdminGiftCardsEndpointPath();
   const adminPromotionsEndpointPath = resolveAdminPromotionsEndpointPath();
+  const adminOperationsEndpointPath = resolveRouteEntrypoint("ecommerce-admin-operations");
   const webhookEndpointPath = resolveWebhookEndpointPath();
   const blocks = createEcommerceLayoutBlocks(productsSlug);
   const adminPageDefinitions = [
+    { key: "attention", path: "commerce-attention", component: "Attention", label: "Needs attention", description: "Find payment reviews, email failures, held cards, and orders waiting to ship." },
+    { key: "emails", path: "commerce-emails", component: "EmailRecovery", label: "Email recovery", description: "Review failed notices and request an audited retry." },
+    { key: "stock", path: "commerce-stock", component: "StockOverview", label: "Stock overview", description: "Find unavailable choices and low shared component stock." },
     { key: "orders", path: "commerce-orders", component: "Orders", label: "Orders & fulfillment", description: "Review paid orders and record shipments." },
     { key: "promotions", path: "commerce-promotions", component: "Promotions", label: "Promotions & referrals", description: "Create discounts and manage referral rewards." },
     { key: "giftCards", path: "commerce-gift-cards", component: "GiftCards", label: "Gift cards", description: "Issue cards, check balances, and manage refunds." },
@@ -842,6 +848,15 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "emailDeliveries", idColumn: "id" }
         });
         collections.push({
+          name: "Email Recovery History",
+          slug: "_ecommerce_email_recovery_decisions",
+          description: "Staff requests to retry a failed order or shipment notice, with its earlier error and attempt count.",
+          adminSection: "commerce",
+          readOnly: true,
+          fields: nativeFields(emailRecoveryDecisions, ["id", "emailId", "actor", "reason", "priorAttempts", "priorError", "createdAt"]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "emailRecoveryDecisions", idColumn: "id" }
+        });
+        collections.push({
           name: "Product Tags",
           slug: "_ecommerce_tags",
           description: "Custom tags for grouping products",
@@ -953,6 +968,7 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
       };
     },
     endpoints: [
+      { path: "/ecommerce/operations", entrypoint: adminOperationsEndpointPath },
       {
         path: "/ecommerce/account",
         entrypoint: accountEndpointPath,

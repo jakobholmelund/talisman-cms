@@ -1,4 +1,7 @@
 import {
+  adminActorNames
+} from "./chunk-HQYYNOMX.js";
+import {
   COMMERCE_EMAIL_LEASE_SECONDS,
   COMMERCE_EMAIL_MAX_AGE_SECONDS,
   applyEmailTemplate,
@@ -11,13 +14,13 @@ import {
   sendCommerceEmailNow,
   unclaimedAt,
   waitingEmailsResult
-} from "./chunk-K7KINC5L.js";
+} from "./chunk-FXE7QHWH.js";
 import {
   batchGroups,
   chunked,
   commerceDb,
   errorText
-} from "./chunk-HZZSX5TT.js";
+} from "./chunk-S5M56U3H.js";
 import {
   creditLedger,
   emailDeliveries,
@@ -25,7 +28,7 @@ import {
   giftCardLedger,
   orders,
   restocks
-} from "./chunk-3XLIJPB2.js";
+} from "./chunk-7YP7VGC3.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
@@ -35,29 +38,18 @@ import {
 } from "./chunk-NMGICNSV.js";
 
 // src/order-activity.ts
-import { and, eq, inArray as inArray2 } from "drizzle-orm";
-
-// src/admin-actors.ts
-import { inArray } from "drizzle-orm";
-import { user } from "talisman-cms/auth/local-schema";
-async function adminActorNames(env, actorIds) {
-  const db = commerceDb(env);
-  const { users } = await batchGroups(db, { users: chunked([...new Set(actorIds)]).map((ids) => db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, ids))) });
-  return new Map(users.map((row) => [row.id, row.name?.trim() || row.id]));
-}
-
-// src/order-activity.ts
+import { and, eq, inArray } from "drizzle-orm";
 async function loadOrderActivity(env, orderIds) {
   const db = commerceDb(env);
   const groups = chunked(orderIds);
   const { stock, gift, credit, parcels, confirmations } = await batchGroups(db, {
-    stock: groups.map((ids) => db.select().from(restocks).where(inArray2(restocks.orderId, ids))),
-    gift: groups.map((ids) => db.select().from(giftCardLedger).where(and(inArray2(giftCardLedger.orderId, ids), eq(giftCardLedger.kind, "refund_restore")))),
-    credit: groups.map((ids) => db.select().from(creditLedger).where(and(inArray2(creditLedger.orderId, ids), eq(creditLedger.kind, "purchase_credit_refund")))),
-    parcels: groups.map((ids) => db.select().from(fulfillments).where(inArray2(fulfillments.orderId, ids))),
-    confirmations: groups.map((ids) => db.select().from(emailDeliveries).where(and(inArray2(emailDeliveries.subjectId, ids), eq(emailDeliveries.kind, "order_confirmation"))))
+    stock: groups.map((ids) => db.select().from(restocks).where(inArray(restocks.orderId, ids))),
+    gift: groups.map((ids) => db.select().from(giftCardLedger).where(and(inArray(giftCardLedger.orderId, ids), eq(giftCardLedger.kind, "refund_restore")))),
+    credit: groups.map((ids) => db.select().from(creditLedger).where(and(inArray(creditLedger.orderId, ids), eq(creditLedger.kind, "purchase_credit_refund")))),
+    parcels: groups.map((ids) => db.select().from(fulfillments).where(inArray(fulfillments.orderId, ids))),
+    confirmations: groups.map((ids) => db.select().from(emailDeliveries).where(and(inArray(emailDeliveries.subjectId, ids), eq(emailDeliveries.kind, "order_confirmation"))))
   });
-  const { notices } = await batchGroups(db, { notices: chunked(parcels.map((row) => row.id)).map((ids) => db.select().from(emailDeliveries).where(and(inArray2(emailDeliveries.subjectId, ids), inArray2(emailDeliveries.kind, ["shipment", "shipment_update"])))) });
+  const { notices } = await batchGroups(db, { notices: chunked(parcels.map((row) => row.id)).map((ids) => db.select().from(emailDeliveries).where(and(inArray(emailDeliveries.subjectId, ids), inArray(emailDeliveries.kind, ["shipment", "shipment_update"])))) });
   const names = await adminActorNames(env, [...stock, ...parcels].map((row) => row.adminActor));
   const parcelOrders = new Map(parcels.map((row) => [row.id, row.orderId]));
   const activity = /* @__PURE__ */ new Map();
@@ -183,7 +175,7 @@ async function describeOrderItems(env, items) {
 }
 
 // src/commerce-emails.ts
-import { and as and2, eq as eq2, inArray as inArray3, lt, lte, sql } from "drizzle-orm";
+import { and as and2, eq as eq2, inArray as inArray2, lte, sql } from "drizzle-orm";
 var at = (seconds) => new Date(seconds * 1e3);
 var storedItems = (items) => Array.isArray(items) ? items.filter((item) => typeof item?.productId === "string") : [];
 var orderOfFulfillment = (db, fulfillmentId) => db.select({ orderId: fulfillments.orderId }).from(fulfillments).where(eq2(fulfillments.id, fulfillmentId));
@@ -294,8 +286,8 @@ async function deliverPendingCommerceEmails(options, { limit = 10, now: givenNow
   const results = [];
   const db = commerceDb(env);
   const pending = sql`${emailDeliveries.status} = 'pending'`;
-  const oldest = db.select({ id: emailDeliveries.id }).from(emailDeliveries).where(and2(pending, lt(emailDeliveries.createdAt, at(now - COMMERCE_EMAIL_MAX_AGE_SECONDS)), unclaimedAt(now))).orderBy(emailDeliveries.createdAt).limit(count2);
-  const expired = await db.update(emailDeliveries).set({ status: "failed", lastError: "expired", claimedAt: null }).where(inArray3(emailDeliveries.id, oldest)).returning({ kind: emailDeliveries.kind, subjectId: emailDeliveries.subjectId });
+  const oldest = db.select({ id: emailDeliveries.id }).from(emailDeliveries).where(and2(pending, sql`COALESCE(${emailDeliveries.retryRequestedAt}, ${emailDeliveries.createdAt}) < ${now - COMMERCE_EMAIL_MAX_AGE_SECONDS}`, unclaimedAt(now))).orderBy(emailDeliveries.createdAt).limit(count2);
+  const expired = await db.update(emailDeliveries).set({ status: "failed", lastError: "expired", claimedAt: null }).where(inArray2(emailDeliveries.id, oldest)).returning({ kind: emailDeliveries.kind, subjectId: emailDeliveries.subjectId });
   for (const row of expired) {
     results.push({ id: `${row.kind}:${row.subjectId}`, status: "error", error: "Email was not sent within 7 days and was given up" });
   }
@@ -657,7 +649,6 @@ async function adjustCommerceFulfillment(env, actor, input) {
 export {
   deliverCommerceEmail,
   deliverPendingCommerceEmails,
-  adminActorNames,
   ORDERS_PAGE_SIZE,
   ORDERS_PAGE_MAX,
   FulfillmentInputError,
