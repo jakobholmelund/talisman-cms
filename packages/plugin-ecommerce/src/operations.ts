@@ -12,3 +12,5 @@ export { listReplenishment, readReplenishment, saveReplenishmentPolicy, planRepl
 
 export { listSuppliers, saveSupplier, listPurchaseOrders, readPurchaseOrder, savePurchaseOrder, recordPurchaseOrder } from './purchasing';
 export { readOperationsReport } from './operations-report';
+
+export { listSupplierIssues, readSupplierIssue, reportSupplierIssue, recordSupplierIssue } from './supplier-issues';

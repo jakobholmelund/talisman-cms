@@ -7,6 +7,7 @@ import { CommerceOperationsConflict } from './email-recovery';
 import { suppliers, supplierRevisions, purchaseOrders, purchaseOrderEvents, purchaseOrderLines, replenishmentDeliveries, replenishmentDeliveryEvents, RESTOCK_TARGET_TYPES, type PurchaseLine } from './schema';
 import { physicalStockLocations } from './replenishment';
 import { adminActorNames } from './admin-actors';
+import { openSupplierIssue } from './supplier-issues';
 const id = z.string().trim().min(1).max(128), key = id.min(8), reason = z.string().trim().min(8).max(500);
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(v => !Number.isNaN(Date.parse(`${v}T00:00:00Z`)) && new Date(`${v}T00:00:00Z`).toISOString().slice(0,10) === v);
 const lineInput = z.object({ targetType: z.enum(RESTOCK_TARGET_TYPES), targetId: id, quantity: z.number().int().min(1).max(1000000) }).strict();
@@ -75,12 +76,13 @@ export async function recordPurchaseOrder(env:TalismanEnv,input:unknown,actor:st
   const failure=await conflict(()=>commitBatch(db,statements),replay);return failure??{purchaseOrderId:order.id,eventId:ident.id};
 }
 const queueCte=sql`WITH latest AS (SELECT p.id,p.supplier_id AS supplierId,p.created_at AS createdAt,e.id AS version,e.status,e.reference,e.expected_date AS expectedDate,json_extract(e.supplier,'$.name') AS supplier,
+ (SELECT count(*) FROM _ecommerce_supplier_issues i JOIN _ecommerce_purchase_order_lines l ON l.id=i.purchase_line_id WHERE l.purchase_order_id=p.id AND ${openSupplierIssue}) AS openIssues,
  COALESCE((SELECT sum(MAX(0,d.quantity-COALESCE((SELECT sum(m.delta) FROM _ecommerce_replenishment_delivery_events x JOIN _ecommerce_stock_movements m ON m.id=x.movement_id WHERE x.delivery_id=d.id),0))) FROM _ecommerce_purchase_order_lines l JOIN _ecommerce_replenishment_deliveries d ON d.id=l.delivery_id WHERE l.purchase_order_id=p.id AND NOT EXISTS(SELECT 1 FROM _ecommerce_replenishment_delivery_events x WHERE x.delivery_id=d.id AND x.kind='cancelled')),0) AS outstanding
  FROM _ecommerce_purchase_orders p JOIN _ecommerce_purchase_order_events e ON e.id=(SELECT id FROM _ecommerce_purchase_order_events WHERE purchase_order_id=p.id ORDER BY rowid DESC LIMIT 1))`;
 export async function listPurchaseOrders(env:TalismanEnv,input:unknown={}) {
   const v=z.object({offset:z.coerce.number().int().min(0).max(1000000).default(0),filter:z.enum(['open','draft','ordered','completed','cancelled','all']).default('open'),search:z.string().trim().max(100).default('')}).strict().parse(input),db=commerceDb(env);
-  const pattern=`%${v.search.replace(/[\\%_]/g,c=>`\\${c}`)}%`,where=sql`(reference LIKE ${pattern} ESCAPE '\\' OR supplier LIKE ${pattern} ESCAPE '\\') AND (${v.filter}='all' OR (${v.filter}='open' AND (status='draft' OR (status='ordered' AND outstanding>0))) OR (${v.filter}='completed' AND status='ordered' AND outstanding=0) OR (${v.filter} IN ('draft','ordered','cancelled') AND status=${v.filter}))`;
-  const [rows,count]=await db.batch([db.all<{id:string;supplierId:string;createdAt:number;version:string;status:'draft'|'ordered'|'cancelled';reference:string;expectedDate:string;supplier:string;outstanding:number}>(sql`${queueCte} SELECT * FROM latest WHERE ${where} ORDER BY createdAt DESC,id LIMIT 50 OFFSET ${v.offset}`),db.all<{n:number}>(sql`${queueCte} SELECT count(*) n FROM latest WHERE ${where}`)]);
+  const pattern=`%${v.search.replace(/[\\%_]/g,c=>`\\${c}`)}%`,where=sql`(reference LIKE ${pattern} ESCAPE '\\' OR supplier LIKE ${pattern} ESCAPE '\\') AND (${v.filter}='all' OR (${v.filter}='open' AND (status='draft' OR (status='ordered' AND outstanding>0) OR openIssues>0)) OR (${v.filter}='completed' AND status='ordered' AND outstanding=0) OR (${v.filter} IN ('draft','ordered','cancelled') AND status=${v.filter}))`;
+  const [rows,count]=await db.batch([db.all<{id:string;supplierId:string;createdAt:number;version:string;status:'draft'|'ordered'|'cancelled';reference:string;expectedDate:string;supplier:string;outstanding:number;openIssues:number}>(sql`${queueCte} SELECT * FROM latest WHERE ${where} ORDER BY createdAt DESC,id LIMIT 50 OFFSET ${v.offset}`),db.all<{n:number}>(sql`${queueCte} SELECT count(*) n FROM latest WHERE ${where}`)]);
   return {...v,total:count[0]?.n??0,rows:rows.map(r=>({...r,createdAt:new Date(r.createdAt*1000).toISOString()}))};
 }
 export async function readPurchaseOrder(env:TalismanEnv,input:unknown) {
@@ -90,7 +92,8 @@ export async function readPurchaseOrder(env:TalismanEnv,input:unknown) {
   if(!order||!latest)throw new CommerceOperationsConflict('Purchase order not found.');
   const names=await adminActorNames(env,order.events.map(e=>e.actor)),current=await latestSupplier(env,order.supplierId);
   const deliveries=await Promise.all(order.lines.map(async l=>{const d=l.delivery,stock=await db.get<{type:typeof RESTOCK_TARGET_TYPES[number];id:string;name:string;sku:string|null;quantity:number;updated:number}>(sql`WITH physical AS (${physicalStockLocations}) SELECT * FROM physical WHERE type=${d.targetType} AND id=${d.targetId}`),received=d.events.reduce((n,e)=>n+(e.movement?.delta??0),0),cancelled=d.events.some(e=>e.kind==='cancelled');
-    return {lineIndex:l.lineIndex,deliveryId:d.id,version:d.events.at(-1)?.id??d.id,received,remaining:cancelled?0:d.quantity-received,cancelled,location:stock?{type:stock.type,id:stock.id,name:stock.name,sku:stock.sku,quantity:stock.quantity,updatedAt:new Date(stock.updated*1000).toISOString()}:null};}));
+    const activeIssues=await db.get<{units:number}>(sql`SELECT COALESCE(sum(quantity),0) AS units FROM _ecommerce_supplier_issues i WHERE purchase_line_id=${l.id} AND ${openSupplierIssue}`);
+    return {purchaseLineId:l.id,issueAllowance:cancelled?0:Math.max(0,d.quantity-received-(activeIssues?.units??0)),lineIndex:l.lineIndex,deliveryId:d.id,version:d.events.at(-1)?.id??d.id,received,remaining:cancelled?0:d.quantity-received,cancelled,location:stock?{type:stock.type,id:stock.id,name:stock.name,sku:stock.sku,quantity:stock.quantity,updatedAt:new Date(stock.updated*1000).toISOString()}:null};}));
   return {id:order.id,supplierId:order.supplierId,currentSupplier:current?{...supplierSnapshot(current),active:current.active}:null,version:latest.id,status:latest.status,reference:latest.reference,expectedDate:latest.expectedDate,supplier:latest.supplier,lines:latest.lines,deliveries,
     history:[...order.events].reverse().map(e=>({id:e.id,status:e.status,reference:e.reference,expectedDate:e.expectedDate,lines:e.lines,actorName:names.get(e.actor)??e.actor,reason:e.reason,createdAt:e.createdAt.toISOString()})),historyTruncated:order.events.length===200};
 }

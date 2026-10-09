@@ -23,6 +23,12 @@ const tables = [pluginSchema, coreSchema, authSchema].flatMap((module) => Object
 
 /** The commerce triggers, with the table each one is on. */
 const TRIGGERS = [
+  '_ecommerce_supplier_issues_immutable_update ON _ecommerce_supplier_issues',
+  '_ecommerce_supplier_issues_immutable_delete ON _ecommerce_supplier_issues',
+  '_ecommerce_supplier_issue_events_immutable_update ON _ecommerce_supplier_issue_events',
+  '_ecommerce_supplier_issue_events_immutable_delete ON _ecommerce_supplier_issue_events',
+  '_ecommerce_supplier_issue_report_guard ON _ecommerce_supplier_issues',
+  '_ecommerce_supplier_issue_event_guard ON _ecommerce_supplier_issue_events',
   '_ecommerce_suppliers_immutable_update ON _ecommerce_suppliers',
   '_ecommerce_suppliers_immutable_delete ON _ecommerce_suppliers',
   '_ecommerce_supplier_revisions_immutable_update ON _ecommerce_supplier_revisions',

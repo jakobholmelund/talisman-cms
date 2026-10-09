@@ -776,6 +776,16 @@ export const ecommercePlugin = (
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'purchaseOrderLines', idColumn: 'id' }
         });
         collections.push({
+          name: 'Supplier Delivery Issues', slug: '_ecommerce_supplier_issues', readOnly: true, adminSection: 'commerce',
+          fields: nativeFields(schema.supplierIssues, ['id', 'purchaseLineId', 'kind', 'quantity', 'expectedPurchaseVersion', 'expectedDeliveryVersion', 'actor', 'reason', 'fingerprint', 'createdAt']),
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'supplierIssues', idColumn: 'id' }
+        });
+        collections.push({
+          name: 'Supplier Issue History', slug: '_ecommerce_supplier_issue_events', readOnly: true, adminSection: 'commerce',
+          fields: nativeFields(schema.supplierIssueEvents, ['id', 'issueId', 'expectedVersion', 'status', 'actor', 'reason', 'fingerprint', 'createdAt']),
+          nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'supplierIssueEvents', idColumn: 'id' }
+        });
+        collections.push({
           name: 'Return Categories', slug: '_ecommerce_return_request_reasons', readOnly: true, adminSection: 'commerce',
           fields: nativeFields(schema.returnRequestReasons, ['requestId', 'code']),
           nativeSchemaMapping: { schemaPath: '@talisman-cms/plugin-ecommerce/schema', exportName: 'returnRequestReasons', idColumn: 'requestId' }
