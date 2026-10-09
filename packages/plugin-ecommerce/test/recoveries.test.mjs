@@ -271,3 +271,20 @@ test('upgrade payment reports preserve verified amounts and unknown later refund
  const report=await readOperationsReport(env);assert.equal(report.exchangeMoney.find(r=>r.kind==='upgrade_verified').amountMinor,500);assert.equal(report.exchangeMoney.find(r=>r.kind==='upgrade_refunded').amountMinor,null);assert.equal(report.recoveryWork.paymentReviews,1);assert.equal(s.prepare("SELECT total_amount FROM _ecommerce_orders WHERE id='order'").get().total_amount,4000);assert.doesNotMatch(JSON.stringify(report),/pi_exchange|evt_journal|Private/);
  const csv=await exportCommerceOperations(env,{kind:'recoveries',...journalRange()});assert.equal(csv.rows,history.total);assert.doesNotMatch(csv.csv,/pi_exchange_upgrade/);
 });
+
+test('next-action queues separate payment, stock, dispatch, follow-up and replacement inspection',async()=>{
+ const {s,env}=fixture();let c=await variableCase(env);const stage=async action=>(await listRecoveryCases(env,{nextAction:action})).rows.map(r=>r.id);
+ assert.deepEqual(await stage('payment'),[c.id]);assert.deepEqual(await stage('dispatch'),[]);
+ await verifyExchangeCharge(env,paymentInput(c),'staff',verifiedAdapter(c.id));assert.deepEqual(await stage('dispatch'),[c.id]);
+ s.exec("UPDATE _ecommerce_products SET inventory_quantity=0 WHERE id='expensive'");assert.deepEqual(await stage('stock'),[c.id]);assert.deepEqual(await stage('dispatch'),[]);s.exec("UPDATE _ecommerce_products SET inventory_quantity=20 WHERE id='expensive'");
+ c=await readRecoveryCase(env,{caseId:c.id});await shipRecoveryCase(env,dispatch(c),'staff',verifiedAdapter(c.id));assert.deepEqual(await stage('follow_up'),[c.id]);
+ c=await readRecoveryCase(env,{caseId:c.id});const r=await receiveReplacementReturn(env,{shipmentId:c.shipments[0].id,quantity:1,reason,requestKey:key()},'staff');assert.deepEqual(await stage('inspection'),[c.id]);assert.deepEqual(await stage('follow_up'),[]);
+ c=await readRecoveryCase(env,{caseId:c.id});await inspectReplacementReturn(env,inspectReplacement(c,r.receiptId,{restock:false,stock:[]}),'staff');c=await readRecoveryCase(env,{caseId:c.id});await recordRecoveryEvent(env,follow(c,{kind:'resolve'}),'staff');assert.equal((await listRecoveryCases(env,{filter:'resolved',nextAction:'complete'})).total,1);s.close();
+});
+
+test('next-action queue paging counts the complete filtered set and blocks missing stock or disputed orders',async()=>{
+ const {s,env,recorded}=fixture({quantity:60});for(let i=0;i<55;i++)await open(env,issue({quantity:1}));
+ const first=await listRecoveryCases(env,{nextAction:'dispatch'}),last=await listRecoveryCases(env,{nextAction:'dispatch',offset:50});assert.equal(first.total,55);assert.equal(first.rows.length,50);assert.equal(last.rows.length,5);assert.equal(new Set([...first.rows,...last.rows].map(r=>r.id)).size,55);
+ s.exec("UPDATE _ecommerce_orders SET status='disputed' WHERE id='order'");assert.equal((await listRecoveryCases(env,{nextAction:'review'})).total,55);assert.equal((await listRecoveryCases(env,{nextAction:'dispatch'})).total,0);
+ s.exec("UPDATE _ecommerce_orders SET status='paid' WHERE id='order';DELETE FROM _ecommerce_products WHERE id='original'");assert.equal((await listRecoveryCases(env,{nextAction:'stock'})).total,55);assert.equal((await listRecoveryCases(env,{nextAction:'dispatch'})).total,0);assert.ok(recorded.every(([,p])=>p.length<=100));s.close();
+});

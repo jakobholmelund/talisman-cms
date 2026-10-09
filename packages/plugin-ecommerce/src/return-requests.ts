@@ -1,3 +1,5 @@
+import { readOrderTracking } from './order-tracking';
+import { recoveryProgressQuery, type RecoveryProgressRow, type RecoveryNextAction } from './recovery-progress';
 import { listExchangeChoices } from './recoveries';
 import { loadBasketCatalog, requireVariantChoice, resolveSelectedVariant } from './basket';
 import { readStoreCurrency } from './store-settings';
@@ -14,7 +16,7 @@ import { hashOrderAccess } from './cookies';
 import { adminActorNames } from './admin-actors';
 import { CommerceOperationsConflict } from './email-recovery';
 import { returnRequests, returnRequestEvents, returnRequestReasons, returnExchangePreferences, RETURN_REASON_CODES, REFUND_SOURCE_KINDS, RETURN_REQUEST_STATUSES } from './schema';
-import type { CustomerReturns, ReturnRequestReceipt, ReturnDecisionReceipt, AdminReturnRequest, ReturnsQueue } from './return-request-types';
+import type { CustomerReturns, ReturnRequestReceipt, ReturnDecisionReceipt, AdminReturnRequest, ReturnsQueue, CustomerExchangeProgress } from './return-request-types';
 export type { CustomerReturns } from './return-request-types';
 
 const id = z.string().trim().min(1).max(128), key = id.min(8);
@@ -34,7 +36,7 @@ async function owned(ctx:CommerceContext,orderId:string,owner:ReturnOwner) {
 }
 async function requestsForOrder(env:TalismanEnv,orderId:string) {
   return commerceDb(env).query.returnRequests.findMany({where:{orderId},orderBy:{createdAt:'asc'},with:{
-    exchangePreference:true, reasonCategory:true, events:{orderBy:(_t,{sql})=>sql`rowid`},receipts:{with:{receipt:{columns:{items:true,createdAt:true}}}}
+    exchangePreference:true, reasonCategory:true, events:{orderBy:(_t,{sql})=>sql`rowid`},receipts:{with:{receipt:{columns:{items:true,createdAt:true},with:{inspections:true}}}}
   }});
 }
 /** Caller supplies verified credentials, exactly as for private order tracking. */
@@ -42,6 +44,8 @@ export async function readCustomerReturns(ctx:CommerceContext,orderId:string,own
   if(!await owned(ctx,orderId,owner)) return null;
   const order=await ctx.db.query.orders.findFirst({where:{id:orderId},with:{parcelContents:true,fulfillments:{columns:{id:true,kind:true}},returnReceipts:{with:{refundDecisions:{orderBy:(_t,{sql})=>sql`rowid DESC`,limit:1}}}}});
   if(!order)return null;
+  const progress=await ctx.db.all<Pick<RecoveryProgressRow,'id'|'receiptId'|'lineIndex'|'nextAction'>>(sql`${recoveryProgressQuery} SELECT id,receiptId,lineIndex,nextAction FROM cases WHERE orderId=${orderId} AND kind='exchange'`);
+  const tracking=progress.length?await readOrderTracking(ctx,orderId,owner.sessionToken,owner.customerId,owner.orderAccessToken):null;
   const requests=await requestsForOrder(ctx.env,orderId), described=await describeOrderItems(ctx.env,order.items);
   const unknown=order.fulfillments.some(f=>f.kind==='shipment'&&!order.parcelContents.some(p=>p.fulfillmentId===f.id));
   const confirmed=['paid','partially_refunded','refunded','disputed'].includes(order.status);
@@ -57,6 +61,28 @@ export async function readCustomerReturns(ctx:CommerceContext,orderId:string,own
     if(d?.status==='settled')for(const a of d.allocations)sums.set(a.kind,(sums.get(a.kind)??0)+a.amountMinor);
     return {receiptId:r.id,receivedAt:r.createdAt.toISOString(),status:d?.status??'review',amountMinor:d?.amountMinor??0,currency:order.currency,updatedAt:(d?.createdAt??r.createdAt).toISOString(),tenders:[...sums].map(([kind,amountMinor])=>({kind,amountMinor}))};
   }),requests:requests.map(r=>({
+    exchangeProgress:(()=>{
+      const linked=progress.filter(c=>r.receipts.some(l=>l.receiptId===c.receiptId)), cases=linked.flatMap(c=>{const t=tracking?.recoveries.find(t=>t.id===c.id);return t?[{id:t.id,name:t.name,quantity:t.quantity,shipped:t.shipments.reduce((n,s)=>n+s.quantity,0),...customerRecoveryAction(c.nextAction),parcels:t.shipments.map(s=>({quantity:s.quantity,returned:s.returned,awaitingInspection:s.awaitingInspection,carrier:s.carrier,trackingNumber:s.trackingNumber,createdAt:s.shippedAt}))}]:[];});
+      if(!r.exchangePreference&&!cases.length)return null;
+      const lineIndices=new Set(r.exchangePreference?[r.exchangePreference.lineIndex]:linked.map(c=>c.lineIndex));
+      const requested=r.items.reduce((n,i)=>n+(lineIndices.has(i.lineIndex)?i.quantity:0),0),received=[...lineIndices].reduce((n,i)=>n+receiptQuantity(r,i),0);
+      const inspected=r.receipts.reduce((n,l)=>n+l.receipt.items.filter(i=>lineIndices.has(i.lineIndex)).reduce((n,i)=>n+(i.condition==='inspection'?l.receipt.inspections.reduce((n,d)=>n+(d.items.find(j=>j.lineIndex===i.lineIndex)?.quantity??0),0):i.quantity),0),0);
+      const stages:CustomerExchangeProgress['stages']=[],status=statusOf(r.events);
+      if(status==='pending')stages.push({label:'Awaiting exchange review',quantity:requested,nextAction:'Wait for the store’s approval and return instructions.'});
+      if(['declined','cancelled'].includes(status))stages.push({label:status==='declined'?'Exchange request declined':'Exchange request cancelled',quantity:requested,nextAction:'Contact the store if you need help with this decision.'});
+      if(status==='approved'&&requested>received)stages.push({label:'Waiting for your returned goods',quantity:requested-received,nextAction:'Follow the store’s return instructions below.'});
+      if(received>inspected)stages.push({label:'Returned goods awaiting inspection',quantity:received-inspected,nextAction:'The store will inspect these goods. No action is needed from you.'});
+      const arranged=cases.reduce((n,c)=>n+c.quantity,0);
+      if(inspected>arranged)stages.push({label:'Exchange being arranged',quantity:inspected-arranged,nextAction:'The store will confirm replacement goods and any price adjustment with you.'});
+      const add=(label:string,quantity:number,nextAction:string)=>{if(!quantity)return;const found=stages.find(s=>s.label===label);if(found)found.quantity+=quantity;else stages.push({label,quantity,nextAction});};
+      for(const c of cases){const stage=linked.find(l=>l.id===c.id)!.nextAction;
+        const quantity=stage==='inspection'?c.parcels.reduce((n,p)=>n+p.awaitingInspection,0):stage==='complete'||stage==='review'?c.quantity:stage==='follow_up'?c.shipped:Math.max(0,c.quantity-c.shipped);
+        add(c.label,quantity,c.nextAction);
+        if(c.shipped&&stage!=='follow_up'&&stage!=='complete')add('Replacement dispatched',c.shipped,'Use the parcel details below. Contact the store if there is a delivery problem.');
+      }
+      if(!stages.length)stages.push({label:'Request closed',quantity:received,nextAction:'Contact the store if you need further help.'});
+      return {stages,cases};
+    })(),
     exchangePreference:r.exchangePreference?{lineIndex:r.exchangePreference.lineIndex,...r.exchangePreference.target}:null,
     id:r.id,reasonCode:r.reasonCategory?.code??'unspecified',status:statusOf(r.events),version:r.events.at(-1)?.id??r.id,reason:r.reason,createdAt:r.createdAt.toISOString(),
     items:r.items.map(i=>({...i,name:lines[i.lineIndex]?.name??'Ordered item',received:receiptQuantity(r,i.lineIndex)})),
@@ -116,18 +142,23 @@ export async function readReturnRequestAdmin(env:TalismanEnv,input:unknown):Prom
 }
 /** Flat, bounded queue; a pending inspection appears even when intake had no customer request. */
 export async function listReturnsQueue(env:TalismanEnv,input:unknown={}):Promise<ReturnsQueue> {
-  const v=z.object({filter:z.enum(['active','pending','approved','inspection','all']).default('active'),orderId:z.string().trim().max(128).default(''),offset:z.coerce.number().int().min(0).max(1000000).default(0)}).strict().parse(input);
+  const v=z.object({filter:z.enum(['active','pending','approved','inspection','waiting_goods','arrange_exchange','all']).default('active'),orderId:z.string().trim().max(128).default(''),offset:z.coerce.number().int().min(0).max(1000000).default(0)}).strict().parse(input);
   const queue=sql`WITH requests AS (
     SELECT 'request' AS kind,r.id,r.order_id AS orderId,COALESCE((SELECT status FROM _ecommerce_return_request_events e WHERE e.request_id=r.id ORDER BY rowid DESC LIMIT 1),'pending') AS status,r.created_at AS createdAt,r.reason,
     MAX(0,(SELECT sum(json_extract(value,'$.quantity')) FROM json_each(r.items))-COALESCE((SELECT sum(json_extract(i.value,'$.quantity')) FROM _ecommerce_return_request_receipts l JOIN _ecommerce_return_receipts x ON x.id=l.receipt_id,json_each(x.items) i WHERE l.request_id=r.id),0)) AS pendingUnits
+    ,EXISTS(SELECT 1 FROM _ecommerce_return_exchange_preferences p JOIN _ecommerce_return_request_receipts l ON l.request_id=p.request_id JOIN _ecommerce_return_receipts x ON x.id=l.receipt_id,json_each(x.items) i
+      WHERE p.request_id=r.id AND json_extract(i.value,'$.lineIndex')=p.line_index AND
+      (CASE WHEN json_extract(i.value,'$.condition')='inspection' THEN COALESCE((SELECT sum(json_extract(j.value,'$.quantity')) FROM _ecommerce_return_inspections d,json_each(d.items) j WHERE d.receipt_id=x.id AND json_extract(j.value,'$.lineIndex')=p.line_index),0) ELSE json_extract(i.value,'$.quantity') END)>
+      COALESCE((SELECT sum(quantity) FROM _ecommerce_recovery_cases c WHERE c.receipt_id=x.id AND c.line_index=p.line_index),0)) AS arrangeExchange
     FROM _ecommerce_return_requests r JOIN _ecommerce_orders o ON o.id=r.order_id WHERE COALESCE(o.payment_provider,'stripe')<>'admin_test'
   ), inspections AS (
     SELECT 'inspection' AS kind,r.id,r.order_id AS orderId,'inspection' AS status,r.created_at AS createdAt,r.reason,
     (SELECT COALESCE(sum(json_extract(value,'$.quantity')),0) FROM json_each(r.items) WHERE json_extract(value,'$.condition')='inspection')-
     COALESCE((SELECT sum(json_extract(i.value,'$.quantity')) FROM _ecommerce_return_inspections d,json_each(d.items) i WHERE d.receipt_id=r.id),0) AS pendingUnits
+    ,0 AS arrangeExchange
     FROM _ecommerce_return_receipts r JOIN _ecommerce_orders o ON o.id=r.order_id WHERE COALESCE(o.payment_provider,'stripe')<>'admin_test'
   ), queue AS (SELECT * FROM requests UNION ALL SELECT * FROM inspections WHERE pendingUnits>0)`;
-  const filter=v.filter==='all'?sql`1=1`:v.filter==='active'?sql`(status='pending' OR status='approved' OR kind='inspection')`:sql`status=${v.filter}`;
+  const filter=v.filter==='waiting_goods'?sql`kind='request' AND status='approved' AND pendingUnits>0`:v.filter==='arrange_exchange'?sql`kind='request' AND status IN ('approved','closed') AND arrangeExchange=1`:v.filter==='all'?sql`1=1`:v.filter==='active'?sql`(status='pending' OR status='approved' OR kind='inspection')`:sql`status=${v.filter}`;
   const where=sql`${filter} AND (${v.orderId}='' OR orderId=${v.orderId})`,db=commerceDb(env);
   const [rows,total]=await db.batch([db.all<{kind:'request'|'inspection';id:string;orderId:string;status:string;createdAt:number;reason:string;pendingUnits:number}>(sql`${queue} SELECT * FROM queue WHERE ${where} ORDER BY createdAt,id LIMIT 50 OFFSET ${v.offset}`),db.all<{n:number}>(sql`${queue} SELECT count(*) n FROM queue WHERE ${where}`)]);
   return {...v,total:total[0]?.n??0,rows:rows.map(r=>({...r,createdAt:new Date(r.createdAt*1000).toISOString()}))};
@@ -140,4 +171,10 @@ export async function readCustomerExchangeChoices(ctx:CommerceContext,input:unkn
  if(!returns.lines.some(l=>l.lineIndex===v.lineIndex&&l.available>0))throw new CommerceOperationsConflict('No received quantities are available for this exchange request.');
  const choices=await listExchangeChoices(ctx.env,{...v,allowPriceDifference:true});
  return {rows:choices.rows,total:choices.total,offset:choices.offset,currency:choices.currency,originalUnitPrice:choices.price};
+}
+
+function customerRecoveryAction(stage:RecoveryNextAction):{label:string;nextAction:string}{
+ const labels:Record<RecoveryNextAction,string>={inspection:'Returned replacement awaiting inspection',review:'Exchange needs store review',refund:'Exchange refund being reviewed',payment:'Upgrade payment to confirm',stock:'Waiting for replacement stock',dispatch:'Replacement ready to pack',follow_up:'Replacement dispatched — follow-up open',complete:'Exchange case resolved'};
+ const actions:Partial<Record<RecoveryNextAction,string>>={payment:'Contact the store to agree and confirm the price difference. This page does not collect payment.',follow_up:'Use the parcel details below. Contact the store if there is a delivery problem.',complete:'The store recorded the agreed outcome. This does not confirm delivery.'};
+ return {label:labels[stage],nextAction:actions[stage]??'The store is handling this stage. No action is needed from you unless they contact you.'};
 }

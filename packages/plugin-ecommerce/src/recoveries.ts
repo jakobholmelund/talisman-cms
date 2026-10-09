@@ -1,3 +1,4 @@
+import { recoveryProgressQuery, RECOVERY_NEXT_ACTIONS, recoveryActionLabels, type RecoveryProgressRow } from './recovery-progress';
 import { checkExchangeCharge } from './recovery-payments';
 import type { PaymentProviderAdapter } from './payments';
 import { eq, sql } from 'drizzle-orm';
@@ -18,7 +19,7 @@ const id = z.string().trim().min(1).max(128), reason = z.string().trim().min(8).
 const line = z.number().int().min(0).max(199);
 const timestamp = z.string().refine(s => Number.isSafeInteger(Date.parse(s)) && Date.parse(s)%1000===0, 'Reload the stock version');
 const report = z.object({ orderId:id, kind:z.enum(RECOVERY_KINDS), fulfillmentId:id.nullable().default(null), sourceShipmentId:id.nullable().default(null), receiptId:id.nullable().default(null),
- lineIndex:line, quantity:units, allowPriceDifference:z.boolean().default(false), productId:id.optional(), variantId:id.nullable().optional(), requestKey:id.min(8), reason }).strict();
+ lineIndex:line, quantity:units, expectedUnitPrice:z.number().int().min(1).max(1000000000).optional(), allowPriceDifference:z.boolean().default(false), productId:id.optional(), variantId:id.nullable().optional(), requestKey:id.min(8), reason }).strict();
 export const openRecoveryCase = sql`COALESCE((SELECT status FROM _ecommerce_recovery_events WHERE case_id=c.id ORDER BY rowid DESC LIMIT 1),'open')='open' OR (COALESCE((SELECT max(rowid) FROM _ecommerce_recovery_events WHERE case_id=c.id AND actor='payment_provider'),0)>COALESCE((SELECT max(rowid) FROM _ecommerce_recovery_events WHERE case_id=c.id AND kind='resolve'),0)) OR EXISTS(SELECT 1 FROM _ecommerce_recovery_receipts r JOIN _ecommerce_recovery_shipments s ON s.id=r.shipment_id WHERE s.case_id=c.id AND r.quantity>COALESCE((SELECT sum(quantity) FROM _ecommerce_recovery_inspections WHERE receipt_id=r.id),0))`;
 const actorRequired = (actor:string) => { if(!actor.trim())throw new CommerceOperationsConflict('An authenticated staff member is required.'); };
 function targets(target:RecoveryTarget):RecoveryTarget {
@@ -45,13 +46,13 @@ export async function createRecoveryCase(env:TalismanEnv,input:unknown,actor:str
   const catalog=await loadBasketCatalog(commerceContext({env}),[{productId:v.productId,variantId:v.variantId}]),product=catalog.products.get(v.productId);
   if(!product||product.status!=='active'||!product.isPhysical||product.type!=='standard')throw new CommerceOperationsConflict('Choose an active physical stock item.');
   requireVariantChoice(catalog,product,v.variantId??undefined);const selected=v.variantId?resolveSelectedVariant(catalog,product,v.variantId):null;
-  const price=selected?.price??product.basePrice;if(!v.allowPriceDifference&&price!==original.priceAtPurchase)throw new CommerceOperationsConflict('The replacement must match the original unit price.');
+  const price=selected?.price??product.basePrice;if(v.expectedUnitPrice!==undefined&&price!==v.expectedUnitPrice)throw new CommerceOperationsConflict('The replacement price changed. Refresh the choice and agree the adjustment before continuing.');if(!v.allowPriceDifference&&price!==original.priceAtPurchase)throw new CommerceOperationsConflict('The replacement must match the original unit price.');
   const described=(await describeOrderItems(env,[{productId:product.id,variantId:v.variantId}]))[0];
   target={adjustmentMinor:(price-original.priceAtPurchase)*v.quantity,productId:product.id,variantId:v.variantId??null,name:selected?.name??product.name,sku:described.sku,priceAtPurchase:price,
    stockTargets:selected?.components.length?selected.components.map(t=>({type:'component',id:t.id,units:t.quantity})):selected?.inventoryTarget?[{...selected.inventoryTarget,units:1}]:[{type:'product',id:product.id,units:1}]};
   if(order.status!=='paid'&&price>=original.priceAtPurchase)throw new CommerceOperationsConflict('Only a cheaper exchange with a recorded refund may use a partially refunded order.');
  }else{
-  if(order.status!=='paid'||v.allowPriceDifference)throw new CommerceOperationsConflict('Parcel replacements require a paid order.');
+  if(order.status!=='paid'||v.allowPriceDifference||v.expectedUnitPrice!==undefined)throw new CommerceOperationsConflict('Parcel replacements require a paid order.');
   if(v.receiptId||v.productId!==undefined||v.variantId!==undefined||!!v.fulfillmentId===!!v.sourceShipmentId)throw new CommerceOperationsConflict('Choose one recorded original or replacement parcel.');
   if(v.sourceShipmentId){const source=await db.query.recoveryShipments.findFirst({where:{id:v.sourceShipmentId},with:{case:true}});if(!source||source.case.orderId!==v.orderId||source.case.lineIndex!==v.lineIndex)throw new CommerceOperationsConflict('Replacement parcel not found.');target=source.case.target;}
   else{if(!Array.isArray(original.stockTargets))throw new CommerceOperationsConflict('This older order has no frozen stock mapping for a safe replacement.');const d=(await describeOrderItems(env,[original]))[0];target={productId:original.productId,variantId:original.variantId??null,name:[d.productName||'Ordered item',d.variantLabel].filter(Boolean).join(' / '),sku:d.sku,priceAtPurchase:original.priceAtPurchase,stockTargets:original.stockTargets};}
@@ -79,15 +80,11 @@ export async function shipRecoveryCase(env:TalismanEnv,input:unknown,actor:strin
  const stock=v.stock.map(t=>{const target=c.target.stockTargets.find(s=>s.type===t.targetType&&s.id===t.targetId);if(!target)throw new CommerceOperationsConflict('The replacement stock mapping changed.');const required=target.units*v.quantity;if(!Number.isSafeInteger(required)||required>1000000)throw new CommerceOperationsConflict('This stock deduction is too large.');return {...t,units:required,expectedUpdatedSeconds:Date.parse(t.expectedUpdatedAt)/1000};}).map(({expectedUpdatedAt,...t})=>t);
  const result=await write(()=>db.insert(recoveryShipments).values({id:shipmentId,caseId:c.id,expectedVersion:v.expectedVersion,quantity:v.quantity,stock,carrier:v.carrier||null,trackingNumber:v.trackingNumber||null,actor,reason:v.reason,fingerprint,createdAt:new Date()}),replay);return result??{shipmentId};
 }
-const queue=sql`WITH cases AS (SELECT c.id,c.order_id AS orderId,c.kind,c.quantity,c.created_at AS createdAt,json_extract(c.target,'$.name') AS name,
- COALESCE((SELECT status FROM _ecommerce_recovery_events WHERE case_id=c.id ORDER BY rowid DESC LIMIT 1),'open') AS status,
- (COALESCE((SELECT max(rowid) FROM _ecommerce_recovery_events WHERE case_id=c.id AND actor='payment_provider'),0)>COALESCE((SELECT max(rowid) FROM _ecommerce_recovery_events WHERE case_id=c.id AND kind='resolve'),0)) AS awaitingPaymentReview,
- EXISTS(SELECT 1 FROM _ecommerce_recovery_receipts r JOIN _ecommerce_recovery_shipments s ON s.id=r.shipment_id WHERE s.case_id=c.id AND r.quantity>COALESCE((SELECT sum(quantity) FROM _ecommerce_recovery_inspections WHERE receipt_id=r.id),0)) AS awaitingInspection,
- COALESCE((SELECT sum(quantity) FROM _ecommerce_recovery_shipments WHERE case_id=c.id),0) AS shipped FROM _ecommerce_recovery_cases c)`;
 export async function listRecoveryCases(env:TalismanEnv,input:unknown={}){
- const v=z.object({filter:z.enum(['open','resolved','all']).default('open'),kind:z.enum(['all',...RECOVERY_KINDS]).default('all'),offset:z.coerce.number().int().min(0).max(1000000).default(0),orderId:z.string().trim().max(128).default('')}).strict().parse(input),db=commerceDb(env);
- const where=sql`(${v.filter}='all' OR (${v.filter}='open' AND (status='open' OR awaitingInspection=1 OR awaitingPaymentReview=1)) OR (${v.filter}='resolved' AND status='resolved' AND awaitingInspection=0 AND awaitingPaymentReview=0)) AND (${v.kind}='all' OR kind=${v.kind}) AND (${v.orderId}='' OR orderId=${v.orderId})`;
- const [rows,count]=await db.batch([db.all<{id:string;orderId:string;kind:typeof RECOVERY_KINDS[number];quantity:number;shipped:number;awaitingInspection:number;awaitingPaymentReview:number;name:string;status:'open'|'resolved';createdAt:number}>(sql`${queue} SELECT * FROM cases WHERE ${where} ORDER BY createdAt,id LIMIT 50 OFFSET ${v.offset}`),db.all<{n:number}>(sql`${queue} SELECT count(*) n FROM cases WHERE ${where}`)]);return {...v,total:count[0]?.n??0,rows:rows.map(r=>({...r,createdAt:new Date(r.createdAt*1000).toISOString()}))};
+ const v=z.object({filter:z.enum(['open','resolved','all']).default('open'),kind:z.enum(['all',...RECOVERY_KINDS]).default('all'),nextAction:z.enum(['all',...RECOVERY_NEXT_ACTIONS]).default('all'),offset:z.coerce.number().int().min(0).max(1000000).default(0),orderId:z.string().trim().max(128).default('')}).strict().parse(input),db=commerceDb(env);
+ const where=sql`(${v.filter}='all' OR (${v.filter}='open' AND (status='open' OR awaitingInspection=1 OR awaitingPaymentReview=1)) OR (${v.filter}='resolved' AND status='resolved' AND awaitingInspection=0 AND awaitingPaymentReview=0)) AND (${v.kind}='all' OR kind=${v.kind}) AND (${v.orderId}='' OR orderId=${v.orderId}) AND (${v.nextAction}='all' OR nextAction=${v.nextAction})`;
+ const [rows,count]=await db.batch([db.all<RecoveryProgressRow>(sql`${recoveryProgressQuery} SELECT id,orderId,receiptId,lineIndex,kind,quantity,shipped,awaitingInspection,awaitingPaymentReview,name,status,createdAt,nextAction FROM cases WHERE ${where} ORDER BY createdAt,id LIMIT 50 OFFSET ${v.offset}`),db.all<{n:number}>(sql`${recoveryProgressQuery} SELECT count(*) n FROM cases WHERE ${where}`)]);
+ return {...v,total:count[0]?.n??0,rows:rows.map(r=>({...r,nextActionLabel:recoveryActionLabels[r.nextAction],createdAt:new Date(r.createdAt*1000).toISOString()}))};
 }
 export async function readRecoveryCase(env:TalismanEnv,input:unknown){
  const {caseId}=z.object({caseId:id}).strict().parse(input),db=commerceDb(env);
@@ -122,4 +119,31 @@ export async function listExchangeChoices(env:TalismanEnv,input:unknown){
  UNION ALL SELECT p.id,v.id,p.name||' / '||g.name||': '||v.value,COALESCE(v.sku,g.sku,p.sku),COALESCE(v.price_override,g.price_override,p.base_price) FROM _ecommerce_product_variant_values v JOIN _ecommerce_product_variants g ON g.id=v.product_variant_id JOIN _ecommerce_products p ON p.id=g.product_id WHERE p.status='active' AND p.is_physical=1 AND p.type='standard')`;
  const pattern=`%${v.search.replace(/[\\%_]/g,c=>`\\${c}`)}%`,where=sql`price>0 AND (${v.allowPriceDifference?1:0}=1 OR price=${item.priceAtPurchase}) AND name LIKE ${pattern} ESCAPE '\\'`;
  const [rows,count]=await db.batch([db.all<{productId:string;variantId:string|null;name:string;sku:string|null;price:number}>(sql`${cte} SELECT * FROM choices WHERE ${where} ORDER BY name,productId,variantId LIMIT 50 OFFSET ${v.offset}`),db.all<{n:number}>(sql`${cte} SELECT count(*) n FROM choices WHERE ${where}`)]);return {...v,currency:o.currency,price:item.priceAtPurchase,total:count[0]?.n??0,rows};
+}
+
+/** A request's immutable receipt links provide exchange provenance, including older recorded cases. */
+export async function readExchangeHandoff(env:TalismanEnv,input:unknown){
+ const {requestId}=z.object({requestId:id}).strict().parse(input),db=commerceDb(env);
+ const r=await db.query.returnRequests.findFirst({where:{id:requestId},with:{exchangePreference:true,events:{orderBy:(_t,{sql})=>sql`rowid DESC`,limit:1},order:{columns:{items:true,currency:true,status:true,paymentProvider:true,shippingAddress:true}},receipts:{with:{receipt:{with:{inspections:true,refundDecisions:{columns:{status:true},orderBy:(_t,{sql})=>sql`rowid DESC`,limit:1},recoveryCases:{columns:{id:true,lineIndex:true,quantity:true}}}}}}}});
+ if(!r||r.redactedAt||!r.exchangePreference||r.order.paymentProvider==='admin_test')throw new CommerceOperationsConflict('This exchange request is unavailable.');
+ const preference=r.exchangePreference, lineIndex=preference.lineIndex, status=r.events[0]?.status??'pending';
+ let choice:{productId:string;variantId:string|null;name:string;sku:string|null;price:number}|null=null;
+ if(r.order.currency===readStoreCurrency(env)){
+  const catalog=await loadBasketCatalog(commerceContext({env}),[preference.target]),p=catalog.products.get(preference.target.productId);
+  if(p?.status==='active'&&p.type==='standard'&&p.isPhysical){
+   let variant:ReturnType<typeof resolveSelectedVariant>|null=null,valid=true;
+   try{requireVariantChoice(catalog,p,preference.target.variantId??undefined);variant=preference.target.variantId?resolveSelectedVariant(catalog,p,preference.target.variantId):null;}catch{valid=false;}
+   const price=variant?.price??p.basePrice;
+   if(valid&&Number.isSafeInteger(price)&&price>0&&price<=1000000000){const d=(await describeOrderItems(env,[preference.target]))[0];choice={productId:p.id,variantId:preference.target.variantId,name:variant?.name??p.name,sku:d.sku,price};}
+  }
+ }
+ const claimed=await db.get<{n:number}>(sql`SELECT COALESCE(sum(quantity),0) n FROM _ecommerce_recovery_cases WHERE order_id=${r.orderId} AND line_index=${lineIndex} AND source_shipment_id IS NULL`);
+ const remaining=Math.max(0,(r.order.items[lineIndex]?.quantity??0)-(claimed?.n??0));
+ return {requestId,orderId:r.orderId,lineIndex,status,preference:preference.target,choice,currency:r.order.currency,
+  canArrange:['approved','closed'].includes(status)&&['paid','partially_refunded'].includes(r.order.status)&&!!r.order.shippingAddress,
+  blockedReason:!['approved','closed'].includes(status)?'Approve the request and receive its goods before arranging an exchange.':!r.order.shippingAddress?'The order needs a shipping address before an exchange can be recorded.':!['paid','partially_refunded'].includes(r.order.status)?'Review the order payment before arranging an exchange.':null,
+  receipts:r.receipts.map(l=>{const item=l.receipt.items.find(i=>i.lineIndex===lineIndex),received=item?.quantity??0,inspected=item?.condition==='inspection'?l.receipt.inspections.reduce((n,d)=>n+(d.items.find(i=>i.lineIndex===lineIndex)?.quantity??0),0):received;
+   const cases=l.receipt.recoveryCases.filter(c=>c.lineIndex===lineIndex),used=cases.reduce((n,c)=>n+c.quantity,0);
+   return {receiptId:l.receiptId,received,refundStatus:l.receipt.refundDecisions[0]?.status??'review',awaitingInspection:Math.max(0,received-inspected),available:Math.min(remaining,Math.max(0,inspected-used)),caseIds:cases.map(c=>c.id)};
+  })};
 }

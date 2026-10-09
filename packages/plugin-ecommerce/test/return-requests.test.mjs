@@ -57,12 +57,12 @@ function database() {
 
 const NOW = Math.floor(Date.now() / 1000);
 const ORDER = 'ord_11111111-1111-4111-8111-111111111111';
-function fixture({legacy=false,parts=false,status='paid',units=4}={}) {
+function fixture({legacy=false,parts=false,status='paid',units=4,multipleLines=false}={}) {
   const db=database(), s=db.sqlite;
   s.prepare(`INSERT INTO _ecommerce_products(id,name,slug,base_price,inventory_quantity,status,created_at,updated_at) VALUES ('case','Travel case','case',1000,10,'active',?,?)`).run(NOW,NOW);
   s.prepare(`INSERT INTO _ecommerce_components(id,name,sku,quantity,created_at,updated_at) VALUES ('part','Shared part','PART',20,?,?)`).run(NOW,NOW);
   const line={productId:'case',quantity:units,priceAtPurchase:1000,...(legacy?{}:{stockTargets:[{type:parts?'component':'product',id:parts?'part':'case',units:parts?2:1}]})};
-  s.prepare(`INSERT INTO _ecommerce_orders(id,status,payment_provider,items,subtotal_amount,total_amount,customer_email,created_at,updated_at) VALUES (?,?, 'stripe',?,?,?,'buyer@example.test',?,?)`).run(ORDER,status,JSON.stringify([line]),units*1000,units*1000,NOW,NOW);
+  s.prepare(`INSERT INTO _ecommerce_orders(id,status,payment_provider,items,subtotal_amount,total_amount,customer_email,created_at,updated_at) VALUES (?,?, 'stripe',?,?,?,'buyer@example.test',?,?)`).run(ORDER,status,JSON.stringify(multipleLines?[{...line,quantity:units/2},{...line,quantity:units/2}]:[line]),units*1000,units*1000,NOW,NOW);
   if(parts) s.prepare(`INSERT INTO _ecommerce_component_reservations(id,order_id,component_id,quantity) VALUES ('hold',?,'part',?)`).run(ORDER,units*2);
   else s.prepare(`INSERT INTO _ecommerce_inventory_reservations(id,order_id,target_type,target_id,quantity) VALUES ('hold',?,'product','case',?)`).run(ORDER,units);
   return {...db,env:{DB:db.DB}};
@@ -205,4 +205,49 @@ test('shopper export includes the preference, and closed requests erase private 
  const {sqlite:s,env,api}=await setup();s.exec("INSERT INTO _ecommerce_customer_accounts(id,email,email_normalized,created_at,updated_at) VALUES('buyer','buyer@example.test','buyer@example.test',1,1)");s.prepare('UPDATE _ecommerce_orders SET user_id=? WHERE id=?').run('buyer',ORDER);const r=await api.returns.request(preference(),{customerId:'buyer'});
  const exported=await manageShopperData(env,'staff',{accountId:'buyer',action:'export',reason:'Customer requested their stored data'});assert.equal(exported.orders[0].operations.returnRequests[0].exchangePreference.target.productId,'case');assert.doesNotMatch(JSON.stringify(exported.orders[0].operations.returnRequests),/fingerprint|Internal approval/);
  const event=await decideReturnRequest(env,decision(r),'staff');await decideReturnRequest(env,decision(r,{status:'closed',expectedVersion:event.eventId}),'staff');await manageShopperData(env,'staff',{accountId:'buyer',action:'anonymize',reason:'Customer requested data removal'});assert.equal(s.prepare('SELECT reason FROM _ecommerce_return_requests').get().reason,'[redacted]');assert.equal(count(s,'_ecommerce_return_exchange_preferences'),1);s.close();
+});
+
+test('guided exchange handoff refreshes the catalog, follows immutable receipts, and does not reserve goods',async()=>{
+ const {sqlite:s,api,owner,env,recorded}=await setup();
+ s.exec(`UPDATE _ecommerce_orders SET shipping_address='{"name":"Local buyer","line1":"Test road","city":"City","postalCode":"000","country":"US"}'`);
+ const {readExchangeHandoff,createRecoveryCase,recordRefundFollowUp}=await import('../dist/operations.js');
+ const r=await api.returns.request(preference({items:[{lineIndex:0,quantity:2}]}),owner);
+ let handoff=await readExchangeHandoff(env,{requestId:r.requestId});assert.equal(handoff.canArrange,false);assert.equal(handoff.receipts.length,0);
+ await decideReturnRequest(env,decision(r),'staff');assert.equal((await listReturnsQueue(env,{filter:'waiting_goods'})).total,1);
+ const receipt=await receiveOrderReturn(env,{orderId:ORDER,returnRequestId:r.requestId,items:[{lineIndex:0,quantity:1,condition:'inspection',restock:false}],reason:'Returned item received for inspection',requestKey:crypto.randomUUID()},'staff');
+ handoff=await readExchangeHandoff(env,{requestId:r.requestId});assert.equal(handoff.receipts[0].awaitingInspection,1);assert.equal(handoff.receipts[0].available,0);assert.equal((await listReturnsQueue(env,{filter:'arrange_exchange'})).total,0);
+ await inspectOrderReturn(env,{orderId:ORDER,receiptId:receipt.receiptId,items:[{lineIndex:0,quantity:1,disposition:'sellable',restock:false}],reason:'Returned item inspected as sellable',requestKey:crypto.randomUUID()},'staff');
+ assert.equal((await listReturnsQueue(env,{filter:'arrange_exchange'})).total,1);assert.equal((await listReturnsQueue(env,{filter:'waiting_goods'})).total,1);
+ s.exec("UPDATE _ecommerce_products SET base_price=1200 WHERE id='case'");handoff=await readExchangeHandoff(env,{requestId:r.requestId});assert.equal(handoff.choice.price,1200);assert.equal(handoff.preference.priceMinor,1000);assert.equal(handoff.receipts[0].available,1);assert.equal(qty(s),10);await assert.rejects(createRecoveryCase(env,{orderId:ORDER,kind:'exchange',receiptId:receipt.receiptId,lineIndex:0,quantity:1,productId:'case',expectedUnitPrice:1000,allowPriceDifference:true,reason:'Agreed choice before catalog price changed',requestKey:crypto.randomUUID()},'staff'),/replacement price changed/);assert.equal(count(s,'_ecommerce_recovery_cases'),0);
+ s.exec("UPDATE _ecommerce_products SET status='archived' WHERE id='case'");assert.equal((await readExchangeHandoff(env,{requestId:r.requestId})).choice,null);s.exec("UPDATE _ecommerce_products SET status='active',base_price=1000 WHERE id='case'");
+ await recordRefundFollowUp(env,{receiptId:receipt.receiptId,expectedVersion:receipt.receiptId,status:'not_needed',amountMinor:0,reason:'Same price exchange agreed after inspection',requestKey:crypto.randomUUID()},'staff');
+ const c=await createRecoveryCase(env,{orderId:ORDER,kind:'exchange',receiptId:receipt.receiptId,lineIndex:0,quantity:1,productId:'case',variantId:null,reason:'Preferred item agreed after inspection',requestKey:crypto.randomUUID()},'staff');
+ handoff=await readExchangeHandoff(env,{requestId:r.requestId});assert.deepEqual(handoff.receipts[0].caseIds,[c.caseId]);assert.equal(handoff.receipts[0].available,0);assert.equal((await listReturnsQueue(env,{filter:'arrange_exchange'})).total,0);assert.equal(qty(s),10);
+ const staff=await readReturnRequestAdmin(env,{requestId:r.requestId});await decideReturnRequest(env,decision(r,{status:'closed',expectedVersion:staff.version}),'staff');handoff=await readExchangeHandoff(env,{requestId:r.requestId});assert.equal(handoff.canArrange,true);assert.deepEqual(handoff.receipts[0].caseIds,[c.caseId]);assert.ok(!(await api.returns.read(ORDER,owner)).requests[0].exchangeProgress.stages.some(s=>s.label==='Waiting for your returned goods'));
+ assert.ok(recorded.every(([,params])=>params.length<=100));s.close();
+});
+
+test('customer exchange progress keeps mixed quantities, corrected parcels and private details consistent',async()=>{
+ const {sqlite:s,api,owner,env}=await setup();const {createRecoveryCase,readRecoveryCase,shipRecoveryCase,recordRecoveryEvent,recordRefundFollowUp}=await import('../dist/operations.js');
+ s.exec(`UPDATE _ecommerce_orders SET shipping_address='{"name":"Local buyer","line1":"Test road","city":"City","postalCode":"000","country":"US"}'`);
+ const r=await api.returns.request(preference({items:[{lineIndex:0,quantity:3}]}),owner);await decideReturnRequest(env,decision(r),'staff');
+ let progress=(await api.returns.read(ORDER,owner)).requests[0].exchangeProgress;assert.equal(progress.stages[0].quantity,3);assert.match(progress.stages[0].label,/Waiting/);
+ const receipt=await receiveOrderReturn(env,{orderId:ORDER,returnRequestId:r.requestId,items:[{lineIndex:0,quantity:2,condition:'sellable',restock:false}],reason:'Approved original goods inspected and received',requestKey:crypto.randomUUID()},'staff');
+ await recordRefundFollowUp(env,{receiptId:receipt.receiptId,expectedVersion:receipt.receiptId,status:'not_needed',amountMinor:0,reason:'Same price exchange agreed after inspection',requestKey:crypto.randomUUID()},'staff');
+ const c=await createRecoveryCase(env,{orderId:ORDER,kind:'exchange',receiptId:receipt.receiptId,lineIndex:0,quantity:2,productId:'case',reason:'Internal exchange choice private staff note',requestKey:crypto.randomUUID()},'staff');
+ progress=(await api.returns.read(ORDER,owner)).requests[0].exchangeProgress;assert.equal(progress.stages.find(s=>s.label.includes('Waiting for your')).quantity,1);assert.equal(progress.stages.find(s=>s.label.includes('ready to pack')).quantity,2);
+ const detail=await readRecoveryCase(env,{caseId:c.caseId}),shipment=await shipRecoveryCase(env,{caseId:c.caseId,expectedVersion:detail.version,quantity:1,carrier:'Local carrier',trackingNumber:'OLD',stock:detail.stock.map(t=>({targetType:t.type,targetId:t.id,expectedQuantity:t.quantity,expectedUpdatedAt:t.updatedAt})),reason:'Private packing note should remain private',requestKey:crypto.randomUUID()},'staff');
+ await recordRecoveryEvent(env,{caseId:c.caseId,expectedVersion:shipment.shipmentId,kind:'tracking',shipmentId:shipment.shipmentId,carrier:'Corrected carrier',trackingNumber:'CORRECTED',reason:'Private tracking correction',requestKey:crypto.randomUUID()},'staff');
+ progress=(await api.returns.read(ORDER,owner)).requests[0].exchangeProgress;assert.equal(progress.stages.find(s=>s.label.includes('ready to pack')).quantity,1);assert.equal(progress.stages.find(s=>s.label==='Replacement dispatched').quantity,1);assert.equal(progress.cases[0].parcels[0].trackingNumber,'CORRECTED');assert.equal(progress.cases[0].shipped,1);
+ assert.doesNotMatch(JSON.stringify(progress),/Private|Internal|fingerprint|stockTargets|paymentId|shippingAddress|staff/);assert.equal(await api.returns.read(ORDER,{}),null);s.close();
+});
+
+test('an older multi-line return keeps unrelated return quantities out of its linked exchange progress',async()=>{
+ const {sqlite:s,env}=fixture({multipleLines:true});const {createRecoveryCase,recordRefundFollowUp}=await import('../dist/operations.js');
+ s.prepare(`UPDATE _ecommerce_orders SET shipping_address='{"name":"Buyer","line1":"Road","city":"City","postalCode":"000","country":"US"}',guest_access_token_hash=? WHERE id=?`).run(await hashOrderAccess('guest-access'),ORDER);
+ await fulfillCommerceOrder(env,'staff',parcel(2,{items:[{lineIndex:0,quantity:2},{lineIndex:1,quantity:2}]}));const api=bindCommerceApi({env}),owner={orderAccessToken:'guest-access'};
+ const r=await api.returns.request(request(1,{items:[{lineIndex:0,quantity:1},{lineIndex:1,quantity:1}]}),owner);await decideReturnRequest(env,decision(r),'staff');
+ const receipt=await receiveOrderReturn(env,intake(1,{returnRequestId:r.requestId,items:[{lineIndex:1,quantity:1,condition:'sellable',restock:false}]}),'staff');await recordRefundFollowUp(env,{receiptId:receipt.receiptId,expectedVersion:receipt.receiptId,status:'not_needed',amountMinor:0,reason:'Same price exchange agreed for the second line',requestKey:crypto.randomUUID()},'staff');
+ await createRecoveryCase(env,{orderId:ORDER,kind:'exchange',receiptId:receipt.receiptId,lineIndex:1,quantity:1,productId:'case',reason:'Agreed exchange for the second original line',requestKey:crypto.randomUUID()},'staff');
+ const customer=(await api.returns.read(ORDER,owner)).requests[0];assert.equal(customer.exchangePreference,null);assert.equal(customer.items[0].received,0);assert.equal(customer.exchangeProgress.stages.find(s=>s.label.includes('ready to pack')).quantity,1);assert.ok(!customer.exchangeProgress.stages.some(s=>s.label.includes('Waiting for your')));s.close();
 });
