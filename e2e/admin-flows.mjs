@@ -29,6 +29,7 @@
 import { chromium } from 'playwright-core';
 import { ordersFlow } from './orders-flow.mjs';
 import { giftCardFlow } from './gift-card-flow.mjs';
+import { commerceDailyFlow } from './commerce-daily-flow.mjs';
 import { commerceOpsFlow } from './commerce-ops-flow.mjs';
 import { promotionsFlow } from './promotions-flow.mjs';
 import { deflateSync } from 'node:zlib';
@@ -504,6 +505,7 @@ const steps = {
 
   'promotions-workflow': ctx => promotionsFlow(ctx, { fail, expectVisible, expectHidden, expectValue, expectNoAlert, waitUntil }),
 
+  'commerce-daily': ctx => commerceDailyFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'commerce-operations': ctx => commerceOpsFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'orders-workflow': ctx => ordersFlow(ctx, { fail, expectVisible, expectHidden, expectValue, expectNoAlert, waitUntil }),
 
