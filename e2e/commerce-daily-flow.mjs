@@ -27,6 +27,7 @@ export async function commerceDailyFlow(ctx, { fail, expectVisible, expectHidden
     await page.route('**/api/ecommerce/operations?*', async route => {
       const request = route.request();
       const query = new URL(request.url()).searchParams;
+      if (query.get('view') === 'stockLocations' || query.get('view') === 'stockHistory') return route.continue();
       if (query.get('view') === 'stock') { payloads.push(query); return route.continue(); }
       if (failRead) return json(route, { error: 'Read unavailable' }, 503);
       if (failRefresh) { failRefresh = false; return json(route, { error: 'Refresh unavailable' }, 503); }

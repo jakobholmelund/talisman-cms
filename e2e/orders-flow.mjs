@@ -9,9 +9,9 @@ export async function ordersFlow(ctx, { fail, expectVisible, expectHidden, expec
     id: `ord_browser_${String(index).padStart(3, '0')}`, paymentProvider: 'stripe', status: 'paid',
     fulfillmentStatus: 'unfulfilled', customerEmail: `shopper${index}@example.com`, currency: 'usd',
     createdAt: '2026-01-01T12:00:00.000Z', shippingAddress: null, canShip: true,
-    items: [{ productId: 'fixture', variantId: null, quantity: 1, lineTotal: 1200, productName: 'Browser fixture', variantLabel: null, sku: 'FIXTURE' }],
+    items: [{ productId: 'fixture', variantId: null, quantity: 4, lineTotal: 1200, productName: 'Browser fixture', variantLabel: null, sku: 'FIXTURE' }],
     activity: [{ id: 'activity-'+index, kind: 'restock', createdAt: '2026-01-02T12:00:00Z', detail: 'Returned one parcel', actor: 'staff', actorName: 'Alex', amountCents: null, email: null }],
-    amounts: [{ key: 'total', label: 'Total', cents: 1200 }], shipments: [], fulfillmentEvents: [],
+    amounts: [{ key: 'total', label: 'Total', cents: 1200 }], shipments: [], parcels: [], fulfillmentEvents: [],
   }));
   let failRead = true;
   let failWrite = false;
@@ -42,6 +42,14 @@ export async function ordersFlow(ctx, { fail, expectVisible, expectHidden, expec
     if (!Array.isArray(real.orders) || real.orders.some(row => row.paymentProvider === 'admin_test')) fail('orders list included admin test orders');
     await page.route('**/api/ecommerce/reconcile', route => json(route, { tax: [], storeMode: 'test', parkedCount: 0, parked: [] }));
     await page.route('**/api/ecommerce/orders-admin', route => json(route, { orders: {} }));
+    await page.route('**/api/ecommerce/operations', route => {
+      const body = route.request().postDataJSON(), item = orders.find(row => row.id === body.data?.orderId);
+      if (body.action !== 'warehouseRead' || !item) return route.continue();
+      const shipped = item.parcels.reduce((n, p) => n + p.items[0].quantity, 0);
+      return json(route, { orderId: item.id, status: item.status, fulfillmentStatus: item.fulfillmentStatus,
+        lines: [{ lineIndex: 0, quantity: 4, name: 'Browser fixture', sku: 'FIXTURE', shipped, received: 0, remaining: 4 - shipped, returnable: shipped, restockMapped: true }],
+        unrecorded: [], parcels: item.parcels, returns: [], shippingAddress: null, canReceive: true });
+    });
     await page.route(endpoint, async route => {
       const request = route.request();
       const body = request.postDataJSON();
@@ -60,9 +68,12 @@ export async function ordersFlow(ctx, { fail, expectVisible, expectHidden, expec
       if (holdNextWrite) { holdNextWrite = false; pendingWrite = route; return; }
       if (failWrite) { failWrite = false; return json(route, { error: 'Shipment confirmation unavailable' }, 503); }
       if (body.action === 'ship') {
+        const shipped = order.parcels.reduce((n, p) => n + p.items[0].quantity, 0) + body.items[0].quantity;
+        body.completesOrder = shipped === 4;
         order.shipments.push({ id: `shipment_${order.shipments.length}`, createdAt: order.createdAt, adminActor: 'browser-admin',
           carrier: body.carrier, trackingNumber: body.trackingNumber, note: body.note, completesOrder: body.completesOrder,
           recorded: { carrier: body.carrier, trackingNumber: body.trackingNumber }, corrections: [] });
+        order.parcels.push({ id: 'parcel_'+order.parcels.length, fulfillmentId: order.shipments.at(-1).id, items: body.items, actor: 'browser-admin', actorName: 'Alex', reason: body.note, createdAt: order.createdAt });
         order.canShip = !body.completesOrder;
         order.fulfillmentStatus = body.completesOrder ? 'fulfilled' : 'partially_fulfilled';
       } else if (body.action === 'correct') {
@@ -70,7 +81,7 @@ export async function ordersFlow(ctx, { fail, expectVisible, expectHidden, expec
         shipment.carrier = body.carrier; shipment.trackingNumber = body.trackingNumber;
         shipment.corrections.push({ id: 'correction_1', createdAt: order.createdAt, adminActor: 'browser-admin', ...body });
       }
-      return json(route, { result: {} });
+      return json(route, { result: { fulfillmentId: order.shipments.at(-1)?.id || 'correction' } });
     });
     await page.goto('/admin/extensions/commerce-orders');
     await expectVisible(page.getByRole('alert').filter({ hasText: 'Orders temporarily unavailable' }), 'initial orders failure');
@@ -86,12 +97,13 @@ export async function ordersFlow(ctx, { fail, expectVisible, expectHidden, expec
     await page.getByRole('button', { name: 'Load 50 more', exact: true }).click();
     await expectVisible(page.getByRole('alert').filter({ hasText: 'Orders temporarily unavailable' }), 'failed orders next page');
     await expectValue(form().getByLabel('Shipment note', { exact: true }), 'Keep this draft parcel', 'draft after failed pagination');
-    if (await form().getByRole('button', { name: 'Record shipment', exact: true }).getAttribute('aria-disabled') !== 'true') fail('failed reads allowed a shipment');
+    if (await form().getByRole('button', { name: 'Record shipment', exact: true }).isDisabled() !== true) fail('failed reads allowed a shipment');
     await page.getByRole('button', { name: 'Retry loading orders', exact: true }).click();
     await expectVisible(card(orders[50].id), 'retried next page'); await settle();
     if (!await page.getByRole('status').filter({ hasText: 'Showing 51 orders' }).evaluate(node => node === document.activeElement)) fail('orders pagination lost focus');
     if (reads.at(-1).cursor !== 'next-page' || await page.getByRole('region', { name: /^Order ord_browser_/ }).count() !== 51) fail('next-page retry lost its cursor or duplicated rows');
     await expectValue(form().getByLabel('Shipment note', { exact: true }), 'Keep this draft parcel', 'draft after successful pagination');
+    acceptDialog = true;
     // An older failing search cannot overwrite a newer, successful one.
     await search('slow@example.com');
     await waitUntil('slow order request should be held', async () => Boolean(pendingRead));
@@ -107,24 +119,24 @@ export async function ordersFlow(ctx, { fail, expectVisible, expectHidden, expec
     await form().getByLabel('Carrier', { exact: true }).fill('Fixture carrier');
     await form().getByLabel('Tracking number', { exact: true }).fill('FIRST-PARCEL');
     await form().getByLabel('Shipment note', { exact: true }).fill('First parcel dispatched');
-    await form().getByRole('checkbox').uncheck();
+    await form().getByRole('spinbutton').fill('1');
     holdNextWrite = true;
     await form().evaluate(node => { node.requestSubmit(); node.requestSubmit(); });
     await waitUntil('shipment write should be held', async () => Boolean(pendingWrite));
     if (writes.length !== 1) fail('duplicate submit sent more than one shipment');
-    if (!await form().getByLabel('Shipment note', { exact: true }).evaluate(node => node.readOnly)) fail('pending write allowed details to change');
+    if (!await form().getByLabel('Shipment note', { exact: true }).isDisabled()) fail('pending write allowed details to change');
     await json(pendingWrite, { error: 'Shipment confirmation unavailable' }, 503); pendingWrite = null;
     await expectVisible(page.getByRole('alert').filter({ hasText: 'Shipment confirmation unavailable' }), 'unconfirmed shipment');
     await expectValue(form().getByLabel('Tracking number', { exact: true }), 'FIRST-PARCEL', 'tracking after failed shipment');
     const readCount = reads.length;
-    await form().getByRole('button', { name: 'Record shipment', exact: true }).click();
-    await expectVisible(page.getByRole('status').filter({ hasText: 'Partial shipment recorded' }), 'retried partial shipment');
+    await card(order.id).getByRole('button', { name: 'Recover same request', exact: true }).click();
+    await expectVisible(page.getByRole('status').filter({ hasText: 'Parcel and its item quantities recorded' }), 'retried partial shipment');
     if (writes[0].requestKey !== writes[1].requestKey || !writes[1].requestKey) fail('shipment retry changed its replay key');
     if (reads.length !== readCount + 1) fail('shipment success did not refresh once');
     await expectVisible(card(order.id).getByText('Partial shipment: Fixture carrier · FIRST-PARCEL', { exact: true }), 'partial parcel history');
     await expectValue(form().getByLabel('Shipment note', { exact: true }), '', 'successful shipment cleared its note');
     await card(order.id).getByText('Correct carrier or tracking number', { exact: true }).click();
-    const correction = card(order.id).locator('details form');
+    const correction = card(order.id).locator('details form').filter({ has: page.getByLabel('Reason for the correction', {exact:true}) });
     await correction.getByLabel('Tracking number', { exact: true }).fill('CORRECTED-PARCEL');
     await correction.getByLabel('Reason for the correction', { exact: true }).fill('Fixed the tracking typo');
     failWrite = true;
@@ -134,17 +146,15 @@ export async function ordersFlow(ctx, { fail, expectVisible, expectHidden, expec
     await correction.getByRole('button', { name: 'Record correction', exact: true }).click();
     await expectVisible(card(order.id).getByText('First recorded as Fixture carrier · FIRST-PARCEL', { exact: true }), 'original parcel retained');
     await expectVisible(card(order.id).getByText(/Reason: Fixed the tracking typo/), 'correction audit reason');
-    // A final parcel requires confirmation on a split shipment; cancellation records nothing.
+    // Quantities complete a split order automatically. A saved parcel remains confirmed when the list refresh fails.
     await form().getByLabel('Shipment note', { exact: true }).fill('Final parcel dispatched');
-    await form().getByRole('checkbox').check();
+    await form().getByRole('spinbutton').fill('3');
     const beforeFinal = writes.length;
+    failRefresh = true;
     await form().getByRole('button', { name: 'Record shipment', exact: true }).click();
-    if (confirmations !== 1 || writes.length !== beforeFinal) fail('cancelled final-parcel confirmation recorded a shipment');
-    acceptDialog = true; failRefresh = true;
-    await form().getByRole('button', { name: 'Record shipment', exact: true }).click();
-    await expectVisible(page.getByRole('alert').filter({ hasText: 'has shipped in full. The orders list could not refresh' }), 'saved shipment with failed refresh');
-    await form().evaluate(node => node.requestSubmit());
-    if (writes.length !== beforeFinal + 1) fail('failed post-save refresh allowed another write');
+    await expectVisible(page.getByRole('alert').filter({ hasText: 'Orders temporarily unavailable' }), 'saved shipment with failed refresh');
+    await expectVisible(card(order.id).getByRole('status').filter({ hasText: 'Parcel and its item quantities recorded' }), 'saved parcel receipt');
+    if (writes.length !== beforeFinal + 1) fail('final parcel was recorded more than once');
     await page.getByRole('button', { name: 'Retry loading orders', exact: true }).click();
     await expectVisible(page.getByRole('heading', { name: 'No matching orders', exact: true }), 'completed order left queue');
     await page.getByRole('combobox', { name: 'View', exact: true }).selectOption('recent');
