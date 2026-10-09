@@ -1,11 +1,11 @@
 import { TalismanEnv } from 'talisman-cms/client';
-import { StocktakeLine, ParcelItem, InspectedItem, ReturnedItem, RETURN_REFUND_STATUSES, returnRefundDecisions, REFUND_SOURCE_KINDS, RESTOCK_TARGET_TYPES, replenishmentPolicies, replenishmentDeliveries, SupplierSnapshot, PurchaseLine, RETURN_REASON_CODES } from './schema.js';
+import { StocktakeLine, ParcelItem, InspectedItem, ReturnedItem, RETURN_REFUND_STATUSES, returnRefundDecisions, REFUND_SOURCE_KINDS, RESTOCK_TARGET_TYPES, replenishmentPolicies, replenishmentDeliveries, SupplierSnapshot, PurchaseLine, RETURN_REASON_CODES, SUPPLIER_ISSUE_KINDS, SUPPLIER_ISSUE_STATUSES } from './schema.js';
 import * as drizzle_orm_sqlite_core from 'drizzle-orm/sqlite-core';
 export { d as decideReturnRequest, l as listReturnsQueue, r as readReturnRequestAdmin } from './return-requests-Ca2cC1Ih.js';
 import 'drizzle-orm';
 import './return-request-types-CaKc6AaH.js';
 
-type AttentionKind = 'payment_review' | 'older_payments' | 'tax_review' | 'email' | 'gift_hold' | 'shipment' | 'dispute' | 'return_request' | 'inspection' | 'refund' | 'incoming';
+type AttentionKind = 'payment_review' | 'older_payments' | 'tax_review' | 'email' | 'gift_hold' | 'shipment' | 'dispute' | 'return_request' | 'inspection' | 'refund' | 'incoming' | 'supplier_issue';
 /** A read-only snapshot. Exact counts include every matching record; each category shows its ten
  * oldest records. No buyer addresses, provider credentials or gift card codes leave this query. */
 declare function readCommerceAttention(env: TalismanEnv, now?: number): Promise<{
@@ -1161,10 +1161,11 @@ declare function listPurchaseOrders(env: TalismanEnv, input?: unknown): Promise<
         expectedDate: string;
         supplier: string;
         outstanding: number;
+        openIssues: number;
     }[];
     search: string;
     offset: number;
-    filter: "draft" | "ordered" | "cancelled" | "all" | "open" | "completed";
+    filter: "draft" | "ordered" | "cancelled" | "open" | "all" | "completed";
 }>;
 declare function readPurchaseOrder(env: TalismanEnv, input: unknown): Promise<{
     id: string;
@@ -1183,6 +1184,8 @@ declare function readPurchaseOrder(env: TalismanEnv, input: unknown): Promise<{
     supplier: SupplierSnapshot;
     lines: PurchaseLine[];
     deliveries: {
+        purchaseLineId: string;
+        issueAllowance: number;
         lineIndex: number;
         deliveryId: string;
         version: string;
@@ -1241,7 +1244,7 @@ declare function readOperationsReport(env: TalismanEnv, input?: unknown): Promis
         oldestDate: string | null;
     };
     backlog: {
-        kind: "shipping" | "returns" | "refund";
+        kind: "supplier" | "shipping" | "returns" | "refund";
         count: number;
         oldestAt: string | null;
         oldestHours: number | null;
@@ -1250,4 +1253,63 @@ declare function readOperationsReport(env: TalismanEnv, input?: unknown): Promis
     end: string;
 }>;
 
-export { type AttentionKind, CommerceOperationsConflict, type StockOverviewRow, exportCommerceOperations, inspectOrderReturn, listEmailRecovery, listPurchaseOrders, listRefundFollowUp, listReplenishment, listStockLocations, listStocktakes, listSuppliers, planReplenishmentDelivery, readCommerceAttention, readOperationsReport, readOrderWarehouse, readPurchaseOrder, readRefundCase, readReplenishment, readStockHistory, readStockOverview, readStocktakeTargets, receiveOrderReturn, recordParcelContents, recordPurchaseOrder, recordRefundFollowUp, recordReplenishmentDelivery, recordStockMovement, recordStocktake, retryCommerceEmail, savePurchaseOrder, saveReplenishmentPolicy, saveSupplier };
+declare function reportSupplierIssue(env: TalismanEnv, input: unknown, actor: string): Promise<{
+    issueId: string;
+    duplicate: boolean;
+} | {
+    issueId: string;
+}>;
+declare function recordSupplierIssue(env: TalismanEnv, input: unknown, actor: string): Promise<{
+    issueId: string;
+    eventId: string;
+    duplicate: boolean;
+} | {
+    issueId: string;
+    eventId: string;
+}>;
+declare function listSupplierIssues(env: TalismanEnv, input?: unknown): Promise<{
+    total: number;
+    rows: {
+        createdAt: string;
+        id: string;
+        purchaseLineId: string;
+        kind: (typeof SUPPLIER_ISSUE_KINDS)[number];
+        quantity: number;
+        version: string;
+        status: (typeof SUPPLIER_ISSUE_STATUSES)[number];
+        purchaseOrderId: string;
+        deliveryId: string;
+        lineIndex: number;
+        reference: string;
+        supplier: string;
+        name: string;
+    }[];
+    offset: number;
+    filter: "open" | "resolved" | "all";
+    purchaseOrderId?: string | undefined;
+}>;
+declare function readSupplierIssue(env: TalismanEnv, input: unknown): Promise<{
+    id: string;
+    purchaseLineId: string;
+    purchaseOrderId: string;
+    kind: "short" | "damaged" | "incorrect";
+    quantity: number;
+    reason: string;
+    createdAt: string;
+    actorName: string;
+    version: string;
+    status: "open" | "resolved";
+    reference: string;
+    name: string;
+    supplier: string;
+    historyTruncated: boolean;
+    history: {
+        id: string;
+        status: "open" | "resolved";
+        reason: string;
+        actorName: string;
+        createdAt: string;
+    }[];
+}>;
+
+export { type AttentionKind, CommerceOperationsConflict, type StockOverviewRow, exportCommerceOperations, inspectOrderReturn, listEmailRecovery, listPurchaseOrders, listRefundFollowUp, listReplenishment, listStockLocations, listStocktakes, listSupplierIssues, listSuppliers, planReplenishmentDelivery, readCommerceAttention, readOperationsReport, readOrderWarehouse, readPurchaseOrder, readRefundCase, readReplenishment, readStockHistory, readStockOverview, readStocktakeTargets, readSupplierIssue, receiveOrderReturn, recordParcelContents, recordPurchaseOrder, recordRefundFollowUp, recordReplenishmentDelivery, recordStockMovement, recordStocktake, recordSupplierIssue, reportSupplierIssue, retryCommerceEmail, savePurchaseOrder, saveReplenishmentPolicy, saveSupplier };

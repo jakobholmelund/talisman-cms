@@ -1163,12 +1163,52 @@ var purchaseOrderLines = sqliteTable("_ecommerce_purchase_order_lines", {
   uniqueIndex("_ecommerce_purchase_order_delivery_unique").on(t.deliveryId),
   check("purchase_order_line_index", sql`${t.lineIndex} BETWEEN 0 AND 19`)
 ]);
+var SUPPLIER_ISSUE_KINDS = ["short", "damaged", "incorrect"];
+var SUPPLIER_ISSUE_STATUSES = ["open", "resolved"];
+var supplierIssues = sqliteTable("_ecommerce_supplier_issues", {
+  id: text("id").primaryKey(),
+  purchaseLineId: text("purchase_line_id").notNull().references(() => purchaseOrderLines.id),
+  kind: text("kind", { enum: SUPPLIER_ISSUE_KINDS }).notNull(),
+  quantity: integer("quantity").notNull(),
+  expectedPurchaseVersion: text("expected_purchase_version").notNull(),
+  expectedDeliveryVersion: text("expected_delivery_version").notNull(),
+  actor: text("actor").notNull(),
+  reason: text("reason").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+}, (t) => [
+  index("_ecommerce_supplier_issue_line_idx").on(t.purchaseLineId),
+  index("_ecommerce_supplier_issue_date_idx").on(t.createdAt, t.id),
+  check("supplier_issue_kind", oneOf(t.kind, SUPPLIER_ISSUE_KINDS)),
+  check("supplier_issue_quantity", sql`${t.quantity} BETWEEN 1 AND 1000000`),
+  check("supplier_issue_actor", filled(t.actor)),
+  check("supplier_issue_reason", trimmed(t.reason, 8)),
+  check("supplier_issue_reason_length", sql`length(${t.reason}) <= 500`)
+]);
+var supplierIssueEvents = sqliteTable("_ecommerce_supplier_issue_events", {
+  id: text("id").primaryKey(),
+  issueId: text("issue_id").notNull().references(() => supplierIssues.id),
+  expectedVersion: text("expected_version").notNull(),
+  status: text("status", { enum: SUPPLIER_ISSUE_STATUSES }).notNull(),
+  actor: text("actor").notNull(),
+  reason: text("reason").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+}, (t) => [
+  index("_ecommerce_supplier_issue_event_issue_idx").on(t.issueId),
+  check("supplier_issue_event_status", oneOf(t.status, SUPPLIER_ISSUE_STATUSES)),
+  check("supplier_issue_event_actor", filled(t.actor)),
+  check("supplier_issue_event_reason", trimmed(t.reason, 8)),
+  check("supplier_issue_event_reason_length", sql`length(${t.reason}) <= 500`)
+]);
 var tables = {
   suppliers,
   supplierRevisions,
   purchaseOrders,
   purchaseOrderEvents,
   purchaseOrderLines,
+  supplierIssues,
+  supplierIssueEvents,
   returnRequestReasons,
   returnRefundDecisions,
   replenishmentPolicies,
@@ -1238,7 +1278,9 @@ var relations = defineRelations(tables, (r) => ({
   supplierRevisions: { supplier: r.one.suppliers({ from: r.supplierRevisions.supplierId, to: r.suppliers.id, optional: false }) },
   purchaseOrders: { supplier: r.one.suppliers({ from: r.purchaseOrders.supplierId, to: r.suppliers.id, optional: false }), events: r.many.purchaseOrderEvents(), lines: r.many.purchaseOrderLines() },
   purchaseOrderEvents: { purchaseOrder: r.one.purchaseOrders({ from: r.purchaseOrderEvents.purchaseOrderId, to: r.purchaseOrders.id, optional: false }) },
-  purchaseOrderLines: { purchaseOrder: r.one.purchaseOrders({ from: r.purchaseOrderLines.purchaseOrderId, to: r.purchaseOrders.id, optional: false }), delivery: r.one.replenishmentDeliveries({ from: r.purchaseOrderLines.deliveryId, to: r.replenishmentDeliveries.id, optional: false }) },
+  purchaseOrderLines: { issues: r.many.supplierIssues(), purchaseOrder: r.one.purchaseOrders({ from: r.purchaseOrderLines.purchaseOrderId, to: r.purchaseOrders.id, optional: false }), delivery: r.one.replenishmentDeliveries({ from: r.purchaseOrderLines.deliveryId, to: r.replenishmentDeliveries.id, optional: false }) },
+  supplierIssues: { line: r.one.purchaseOrderLines({ from: r.supplierIssues.purchaseLineId, to: r.purchaseOrderLines.id, optional: false }), events: r.many.supplierIssueEvents() },
+  supplierIssueEvents: { issue: r.one.supplierIssues({ from: r.supplierIssueEvents.issueId, to: r.supplierIssues.id, optional: false }) },
   returnRequestReasons: { request: r.one.returnRequests({ from: r.returnRequestReasons.requestId, to: r.returnRequests.id, optional: false }) },
   returnRefundDecisions: { receipt: r.one.returnReceipts({ from: r.returnRefundDecisions.receiptId, to: r.returnReceipts.id, optional: false }) },
   stockMovements: { deliveries: r.many.replenishmentDeliveryEvents() },
@@ -1625,5 +1667,9 @@ export {
   purchaseOrders,
   purchaseOrderEvents,
   purchaseOrderLines,
+  SUPPLIER_ISSUE_KINDS,
+  SUPPLIER_ISSUE_STATUSES,
+  supplierIssues,
+  supplierIssueEvents,
   relations
 };

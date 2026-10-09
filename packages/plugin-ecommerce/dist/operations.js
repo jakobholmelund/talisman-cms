@@ -3,6 +3,7 @@ import {
   listPurchaseOrders,
   listRefundFollowUp,
   listReplenishment,
+  listSupplierIssues,
   listSuppliers,
   planReplenishmentDelivery,
   readCommerceAttention,
@@ -11,19 +12,22 @@ import {
   readRefundCase,
   readReplenishment,
   readStockOverview,
+  readSupplierIssue,
   recordPurchaseOrder,
   recordRefundFollowUp,
   recordReplenishmentDelivery,
+  recordSupplierIssue,
+  reportSupplierIssue,
   savePurchaseOrder,
   saveReplenishmentPolicy,
   saveSupplier
-} from "./chunk-JNWGJT2X.js";
+} from "./chunk-HAPBCTRZ.js";
 import {
   decideReturnRequest,
   listReturnsQueue,
   readReturnRequestAdmin
-} from "./chunk-RIONC7RV.js";
-import "./chunk-POZUPQDU.js";
+} from "./chunk-DWZTDVHN.js";
+import "./chunk-2SPT4KWO.js";
 import "./chunk-BGDJXEM5.js";
 import {
   CommerceOperationsConflict,
@@ -39,13 +43,13 @@ import {
   recordStockMovement,
   recordStocktake,
   retryCommerceEmail
-} from "./chunk-7V3IKGLW.js";
-import "./chunk-KRCC4OBZ.js";
-import "./chunk-7YQJMR2T.js";
+} from "./chunk-XHAJX7QQ.js";
+import "./chunk-U3FNGZWH.js";
+import "./chunk-UD6L5VAO.js";
 import "./chunk-GNU6N22K.js";
-import "./chunk-YGPEQZYU.js";
-import "./chunk-5VVOAOAK.js";
-import "./chunk-KPJJ2U3F.js";
+import "./chunk-6IAWWO32.js";
+import "./chunk-WGLFN46D.js";
+import "./chunk-YCXJGHVY.js";
 import "./chunk-NQUBOBQT.js";
 import "./chunk-QVPX4QWC.js";
 import "./chunk-2UYSCNNW.js";
@@ -61,6 +65,7 @@ export {
   listReturnsQueue,
   listStockLocations,
   listStocktakes,
+  listSupplierIssues,
   listSuppliers,
   planReplenishmentDelivery,
   readCommerceAttention,
@@ -73,6 +78,7 @@ export {
   readStockHistory,
   readStockOverview,
   readStocktakeTargets,
+  readSupplierIssue,
   receiveOrderReturn,
   recordParcelContents,
   recordPurchaseOrder,
@@ -80,6 +86,8 @@ export {
   recordReplenishmentDelivery,
   recordStockMovement,
   recordStocktake,
+  recordSupplierIssue,
+  reportSupplierIssue,
   retryCommerceEmail,
   savePurchaseOrder,
   saveReplenishmentPolicy,

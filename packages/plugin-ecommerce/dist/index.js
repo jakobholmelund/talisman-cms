@@ -10,31 +10,31 @@ import {
   bindCommerceApi,
   reconcileCommerce,
   shippingOptionsFor
-} from "./chunk-5DE3NGJU.js";
+} from "./chunk-NQXG7R3A.js";
 import {
   TaxCalculationError
-} from "./chunk-RIONC7RV.js";
-import "./chunk-POZUPQDU.js";
-import "./chunk-OH67LHUT.js";
+} from "./chunk-DWZTDVHN.js";
+import "./chunk-2SPT4KWO.js";
+import "./chunk-4MKR5MKL.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
 import {
   deliverPendingCommerceEmails
-} from "./chunk-7V3IKGLW.js";
+} from "./chunk-XHAJX7QQ.js";
 import {
   COUNTRY_CODES,
   StoreSettingsError,
   isCountryCode,
   readStoreCurrency,
   readStoreSettings
-} from "./chunk-KRCC4OBZ.js";
-import "./chunk-7YQJMR2T.js";
+} from "./chunk-U3FNGZWH.js";
+import "./chunk-UD6L5VAO.js";
 import "./chunk-GNU6N22K.js";
-import "./chunk-YGPEQZYU.js";
+import "./chunk-6IAWWO32.js";
 import {
   commerceDb
-} from "./chunk-5VVOAOAK.js";
+} from "./chunk-WGLFN46D.js";
 import {
   carts,
   categories,
@@ -88,12 +88,14 @@ import {
   stockMovements,
   stocks,
   stocktakes,
+  supplierIssueEvents,
+  supplierIssues,
   supplierRevisions,
   suppliers,
   tags,
   variantComponents,
   variants
-} from "./chunk-KPJJ2U3F.js";
+} from "./chunk-YCXJGHVY.js";
 import "./chunk-NQUBOBQT.js";
 import "./chunk-QVPX4QWC.js";
 import {
@@ -896,6 +898,22 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
           adminSection: "commerce",
           fields: nativeFields(purchaseOrderLines, ["id", "purchaseOrderId", "lineIndex", "deliveryId"]),
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "purchaseOrderLines", idColumn: "id" }
+        });
+        collections.push({
+          name: "Supplier Delivery Issues",
+          slug: "_ecommerce_supplier_issues",
+          readOnly: true,
+          adminSection: "commerce",
+          fields: nativeFields(supplierIssues, ["id", "purchaseLineId", "kind", "quantity", "expectedPurchaseVersion", "expectedDeliveryVersion", "actor", "reason", "fingerprint", "createdAt"]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "supplierIssues", idColumn: "id" }
+        });
+        collections.push({
+          name: "Supplier Issue History",
+          slug: "_ecommerce_supplier_issue_events",
+          readOnly: true,
+          adminSection: "commerce",
+          fields: nativeFields(supplierIssueEvents, ["id", "issueId", "expectedVersion", "status", "actor", "reason", "fingerprint", "createdAt"]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "supplierIssueEvents", idColumn: "id" }
         });
         collections.push({
           name: "Return Categories",

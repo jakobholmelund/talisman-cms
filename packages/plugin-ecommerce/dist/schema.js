@@ -32,6 +32,8 @@ import {
   RETURN_REQUEST_STATUSES,
   SHOPPER_AUDIT_ACTIONS,
   STOCK_MOVEMENT_KINDS,
+  SUPPLIER_ISSUE_KINDS,
+  SUPPLIER_ISSUE_STATUSES,
   TAX_BEHAVIORS,
   TAX_SYNC_ACTIONS,
   carts,
@@ -95,6 +97,8 @@ import {
   stockMovements,
   stocks,
   stocktakes,
+  supplierIssueEvents,
+  supplierIssues,
   supplierRevisions,
   suppliers,
   tags,
@@ -102,7 +106,7 @@ import {
   taxSyncDecisions,
   variantComponents,
   variants
-} from "./chunk-KPJJ2U3F.js";
+} from "./chunk-YCXJGHVY.js";
 export {
   CREDIT_LEDGER_KINDS,
   CUSTOMER_SESSION_PURPOSES,
@@ -137,6 +141,8 @@ export {
   RETURN_REQUEST_STATUSES,
   SHOPPER_AUDIT_ACTIONS,
   STOCK_MOVEMENT_KINDS,
+  SUPPLIER_ISSUE_KINDS,
+  SUPPLIER_ISSUE_STATUSES,
   TAX_BEHAVIORS,
   TAX_SYNC_ACTIONS,
   carts,
@@ -200,6 +206,8 @@ export {
   stockMovements,
   stocks,
   stocktakes,
+  supplierIssueEvents,
+  supplierIssues,
   supplierRevisions,
   suppliers,
   tags,
