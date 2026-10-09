@@ -11,14 +11,14 @@ import {
   sendCommerceEmailNow,
   unclaimedAt,
   waitingEmailsResult
-} from "./chunk-U3FNGZWH.js";
+} from "./chunk-6OI6C5UV.js";
 import {
   batchGroups,
   chunked,
   commerceDb,
   commitBatch,
   errorText
-} from "./chunk-WGLFN46D.js";
+} from "./chunk-7BTUQQDZ.js";
 import {
   creditLedger,
   emailDeliveries,
@@ -35,7 +35,7 @@ import {
   returnStock,
   stockMovements,
   stocktakes
-} from "./chunk-YCXJGHVY.js";
+} from "./chunk-KLQ2VU7R.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
@@ -1233,6 +1233,7 @@ export {
   CommerceOperationsConflict,
   listEmailRecovery,
   retryCommerceEmail,
+  warehouseFingerprint,
   recordParcelContents,
   receiveOrderReturn,
   readOrderWarehouse,

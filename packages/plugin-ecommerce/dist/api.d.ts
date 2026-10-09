@@ -1,6 +1,6 @@
 import { C as CustomerReturns, R as ReturnRequestReceipt, a as ReturnDecisionReceipt } from './return-request-types-CaKc6AaH.js';
 import { R as ReturnOwner } from './return-requests-Ca2cC1Ih.js';
-import { a as CommerceApiOptions } from './commerce-context-CY_5E3gf.js';
+import { a as CommerceApiOptions } from './commerce-context-o8Ob_RVh.js';
 import { TalismanEnv } from 'talisman-cms/client';
 import { a as CommerceEmailResult } from './email-deliveries-CyzibTug.js';
 import { P as PaymentProviderAdapter } from './payments-C3gqo5tp.js';
@@ -330,6 +330,21 @@ declare function bindCommerceApi(options: CommerceApiOptions): {
                     lineIndex: number;
                     name: string;
                     sku: string | null;
+                }[];
+            }[];
+            recoveries: {
+                id: string;
+                kind: "lost" | "damaged" | "exchange";
+                quantity: number;
+                name: string;
+                sku: string | null;
+                status: "open" | "resolved";
+                shipments: {
+                    id: string;
+                    quantity: number;
+                    shippedAt: string;
+                    carrier: string | null;
+                    trackingNumber: string | null;
                 }[];
             }[];
         } | null>;

@@ -1,7 +1,7 @@
 import {
   INVENTORY_COLUMNS,
   fullRefundStatements
-} from "./chunk-2SPT4KWO.js";
+} from "./chunk-PD7I5B62.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
@@ -11,7 +11,7 @@ import {
   deliverCommerceEmail,
   describeOrderItems,
   fulfillCommerceOrder
-} from "./chunk-XHAJX7QQ.js";
+} from "./chunk-J7AA22HC.js";
 import {
   ReconcileFailure,
   ShopperError,
@@ -26,23 +26,25 @@ import {
   readStoreSettings,
   reconcileFailure,
   uncheckedSessionRefusal
-} from "./chunk-U3FNGZWH.js";
+} from "./chunk-6OI6C5UV.js";
 import {
   canonicalEmail,
   canonicalEmails,
   canonicalPurchase,
   getReferralPolicy,
   referralReversalStatements
-} from "./chunk-UD6L5VAO.js";
+} from "./chunk-GB3RDLKI.js";
 import {
   PURCHASED_ORDER_STATUSES,
   claimInterval
-} from "./chunk-6IAWWO32.js";
+} from "./chunk-WPNOY6AW.js";
 import {
+  batchGroups,
+  chunked,
   commerceDb,
   commitBatch,
   errorText
-} from "./chunk-WGLFN46D.js";
+} from "./chunk-7BTUQQDZ.js";
 import {
   RETURN_REASON_CODES,
   carts,
@@ -52,13 +54,16 @@ import {
   giftCardRedemptions,
   inventoryReservations,
   orders,
+  productVariantValues,
+  productVariants,
+  products,
   referralCodes,
   returnRequestEvents,
   returnRequestReasons,
   returnRequests,
   taxReversals,
   taxSyncDecisions
-} from "./chunk-YCXJGHVY.js";
+} from "./chunk-KLQ2VU7R.js";
 import {
   hashOrderAccess
 } from "./chunk-NQUBOBQT.js";
@@ -859,13 +864,13 @@ async function owned(ctx, orderId, owner) {
 async function requestsForOrder(env, orderId) {
   return commerceDb(env).query.returnRequests.findMany({ where: { orderId }, orderBy: { createdAt: "asc" }, with: {
     reasonCategory: true,
-    events: { orderBy: (_t, { sql: sql4 }) => sql4`rowid` },
+    events: { orderBy: (_t, { sql: sql5 }) => sql5`rowid` },
     receipts: { with: { receipt: { columns: { items: true, createdAt: true } } } }
   } });
 }
 async function readCustomerReturns(ctx, orderId, owner = {}) {
   if (!await owned(ctx, orderId, owner)) return null;
-  const order = await ctx.db.query.orders.findFirst({ where: { id: orderId }, with: { parcelContents: true, fulfillments: { columns: { id: true, kind: true } }, returnReceipts: { with: { refundDecisions: { orderBy: (_t, { sql: sql4 }) => sql4`rowid DESC`, limit: 1 } } } } });
+  const order = await ctx.db.query.orders.findFirst({ where: { id: orderId }, with: { parcelContents: true, fulfillments: { columns: { id: true, kind: true } }, returnReceipts: { with: { refundDecisions: { orderBy: (_t, { sql: sql5 }) => sql5`rowid DESC`, limit: 1 } } } } });
   if (!order) return null;
   const requests = await requestsForOrder(ctx.env, orderId), described = await describeOrderItems(ctx.env, order.items);
   const unknown = order.fulfillments.some((f) => f.kind === "shipment" && !order.parcelContents.some((p) => p.fulfillmentId === f.id));
@@ -949,7 +954,7 @@ async function cancelCustomerReturn(ctx, input, owner = {}) {
 }
 async function readReturnRequestAdmin(env, input) {
   const v = z3.object({ requestId: id }).strict().parse(input), db = commerceDb(env);
-  const request = await db.query.returnRequests.findFirst({ where: { id: v.requestId }, with: { order: { columns: { id: true, items: true, status: true } }, events: { orderBy: (_t, { sql: sql4 }) => sql4`rowid` }, receipts: { with: { receipt: { with: { inspections: true } } } } } });
+  const request = await db.query.returnRequests.findFirst({ where: { id: v.requestId }, with: { order: { columns: { id: true, items: true, status: true } }, events: { orderBy: (_t, { sql: sql5 }) => sql5`rowid` }, receipts: { with: { receipt: { with: { inspections: true } } } } } });
   if (!request) throw new CommerceOperationsConflict("Return request not found.");
   const names = await adminActorNames(env, request.events.filter((e) => e.actorKind === "staff").map((e) => e.actor));
   const described = await describeOrderItems(env, request.order.items);
@@ -988,6 +993,361 @@ async function listReturnsQueue(env, input = {}) {
   return { ...v, total: total[0]?.n ?? 0, rows: rows.map((r) => ({ ...r, createdAt: new Date(r.createdAt * 1e3).toISOString() })) };
 }
 
+// src/commerce-context.ts
+function commerceContext(options) {
+  return { env: options.env, db: commerceDb(options.env), adapters: options.paymentAdapters ?? [] };
+}
+
+// src/basket.ts
+import { and as and3, eq as eq4, inArray as inArray2, isNotNull as isNotNull2, isNull as isNull3, sql as sql4 } from "drizzle-orm";
+var CART_MAX_LINES = 50;
+var CART_MAX_LINE_QUANTITY = 99;
+var CART_ID_MAX_LENGTH = 128;
+var cartItemKey = (item) => `${item.productId}\0${item.variantId || ""}`;
+function assertCartItems(items2) {
+  if (!Array.isArray(items2)) throw new ShopperError("basket_conflict", "Cart items must be an array", 409);
+  if (items2.length > CART_MAX_LINES) throw new ShopperError("basket_conflict", `Cart items must not exceed ${CART_MAX_LINES} lines`, 409);
+  if (items2.some(
+    (item) => !item || typeof item.productId !== "string" || !item.productId.trim() || item.productId.length > CART_ID_MAX_LENGTH || !Number.isSafeInteger(item.quantity) || item.quantity <= 0 || item.quantity > CART_MAX_LINE_QUANTITY || item.variantId !== void 0 && (typeof item.variantId !== "string" || item.variantId.length > CART_ID_MAX_LENGTH)
+  )) {
+    throw new ShopperError("basket_conflict", `Cart items must have a product and a whole-number quantity from 1 to ${CART_MAX_LINE_QUANTITY}`, 409);
+  }
+  const itemKeys = items2.map(cartItemKey);
+  if (new Set(itemKeys).size !== itemKeys.length) {
+    throw new ShopperError("basket_conflict", "Duplicate cart items are not allowed", 409);
+  }
+}
+function aggregateComponentDemand(items2) {
+  const demand = /* @__PURE__ */ new Map();
+  for (const item of items2) {
+    for (const component of item.components) {
+      const current = demand.get(component.id);
+      demand.set(component.id, {
+        name: component.name,
+        quantity: (current?.quantity ?? 0) + item.quantity * component.quantity,
+        available: component.available
+      });
+    }
+  }
+  return demand;
+}
+async function loadBasketCatalog(ctx, items2) {
+  const { db } = ctx;
+  const productIds = [...new Set(items2.map((item) => String(item.productId)))];
+  const variantIds = [...new Set(items2.flatMap((item) => item.variantId ? [String(item.variantId)] : []))];
+  const rows = await batchGroups(db, {
+    // Each product with its variant groups, and each group with the name of its definition.
+    products: chunked(productIds).map((ids) => db.query.products.findMany({
+      columns: { id: true, name: true, status: true, type: true, basePrice: true, inventoryQuantity: true, isPhysical: true },
+      where: { id: { in: ids } },
+      with: { variants: {
+        columns: { id: true, productId: true, name: true, priceOverride: true, inventoryQuantity: true },
+        with: { variant: { columns: { name: true } } }
+      } }
+    })),
+    // Each value with its stock row and its bill of materials, in component id order.
+    values: chunked(variantIds).map((ids) => db.query.productVariantValues.findMany({
+      columns: { id: true, productVariantId: true, value: true, priceOverride: true },
+      where: { id: { in: ids } },
+      with: {
+        stock: { columns: { id: true, quantity: true } },
+        requirements: {
+          columns: { componentId: true, quantity: true },
+          orderBy: { componentId: "asc" },
+          with: { component: { columns: { id: true, name: true, quantity: true } } }
+        }
+      }
+    })),
+    // A line's variant id may name a legacy group instead of a value; such a group must have no values.
+    groupsWithValues: chunked(variantIds).map((ids) => db.query.productVariants.findMany({
+      columns: { id: true },
+      where: { id: { in: ids }, values: true }
+    }))
+  });
+  const catalog = {
+    products: /* @__PURE__ */ new Map(),
+    groups: /* @__PURE__ */ new Map(),
+    productsWithGroups: /* @__PURE__ */ new Set(),
+    groupsWithValues: /* @__PURE__ */ new Set(),
+    values: /* @__PURE__ */ new Map(),
+    requirements: /* @__PURE__ */ new Map()
+  };
+  for (const product of rows.products) {
+    catalog.products.set(product.id, {
+      id: product.id,
+      name: product.name,
+      status: product.status,
+      type: product.type,
+      basePrice: product.basePrice,
+      inventoryQuantity: product.inventoryQuantity,
+      isPhysical: product.isPhysical
+    });
+    for (const group of product.variants) {
+      catalog.groups.set(group.id, {
+        id: group.id,
+        productId: group.productId,
+        name: group.name,
+        definitionName: group.variant?.name ?? null,
+        priceOverride: group.priceOverride,
+        inventoryQuantity: group.inventoryQuantity
+      });
+      catalog.productsWithGroups.add(group.productId);
+    }
+  }
+  for (const value of rows.values) {
+    catalog.values.set(value.id, {
+      id: value.id,
+      groupId: value.productVariantId,
+      value: value.value,
+      priceOverride: value.priceOverride,
+      stock: value.stock && { id: value.stock.id, quantity: value.stock.quantity }
+    });
+    catalog.requirements.set(value.id, value.requirements.map((requirement) => ({
+      componentId: requirement.componentId,
+      quantity: requirement.quantity,
+      component: requirement.component
+    })));
+  }
+  for (const group of rows.groupsWithValues) catalog.groupsWithValues.add(group.id);
+  return catalog;
+}
+function resolveSelectedVariant(catalog, product, variantId) {
+  const variantValue = catalog.values.get(String(variantId));
+  if (variantValue) {
+    const productVariant = catalog.groups.get(variantValue.groupId);
+    if (!productVariant || productVariant.productId !== product.id) {
+      throw new ShopperError("basket_conflict", `Variant value not found or mismatch: ${variantId}`, 409);
+    }
+    const stock = variantValue.stock;
+    const components = [];
+    for (const requirement of catalog.requirements.get(variantValue.id) ?? []) {
+      const component = requirement.component;
+      if (!component) throw new ShopperError("basket_conflict", `Component not found: ${requirement.componentId}`, 409);
+      components.push({
+        id: component.id,
+        name: component.name,
+        quantity: requirement.quantity,
+        available: component.quantity
+      });
+    }
+    return {
+      price: variantValue.priceOverride ?? productVariant.priceOverride ?? product.basePrice,
+      name: `${product.name} - ${productVariant.definitionName ?? productVariant.name}: ${variantValue.value}`,
+      availableQuantity: components.length ? Math.min(...components.map((component) => Math.floor(component.available / component.quantity))) : stock?.quantity ?? productVariant.inventoryQuantity,
+      inventoryTarget: components.length ? null : stock ? { type: "stock", id: stock.id } : { type: "variant", id: productVariant.id },
+      components
+    };
+  }
+  const legacyVariant = catalog.groups.get(String(variantId));
+  if (!legacyVariant || legacyVariant.productId !== product.id) {
+    throw new ShopperError("basket_conflict", `Variant not found or mismatch: ${variantId}`, 409);
+  }
+  if (catalog.groupsWithValues.has(legacyVariant.id)) throw new ShopperError("basket_conflict", `Select an option for ${product.name}`, 409);
+  return {
+    price: legacyVariant.priceOverride ?? product.basePrice,
+    name: `${product.name} - ${legacyVariant.name}`,
+    availableQuantity: legacyVariant.inventoryQuantity,
+    inventoryTarget: { type: "variant", id: legacyVariant.id },
+    components: []
+  };
+}
+function requireVariantChoice(catalog, product, variantId) {
+  if (variantId) return;
+  if (catalog.productsWithGroups.has(product.id)) throw new ShopperError("basket_conflict", `Select an option for ${product.name}`, 409);
+}
+async function checkCartItems(ctx, items2, current = []) {
+  const { db } = ctx;
+  assertCartItems(items2);
+  const currentKeys = new Set(current.map(cartItemKey));
+  const added = items2.filter((item) => !currentKeys.has(cartItemKey(item)));
+  const productIds = [...new Set(added.map((item) => item.productId))];
+  const available = new Set(productIds.length ? (await db.select({ id: products.id, status: products.status }).from(products).where(inArray2(products.id, productIds))).filter((product) => product.status !== "archived").map((product) => product.id) : []);
+  const unknownProduct = added.find((item) => !available.has(item.productId));
+  if (unknownProduct) throw new ShopperError("basket_conflict", `Cart items must be catalog products; ${unknownProduct.productId} is not available`, 409);
+  const variantIds = [...new Set(added.flatMap((item) => item.variantId ? [item.variantId] : []))];
+  if (variantIds.length) {
+    const groups = await db.select({ id: productVariants.id, productId: productVariants.productId }).from(productVariants).where(inArray2(productVariants.id, variantIds));
+    const groupsWithValues = new Set(groups.length ? (await db.selectDistinct({ id: productVariantValues.productVariantId }).from(productVariantValues).where(inArray2(productVariantValues.productVariantId, groups.map((group) => group.id)))).map((value) => value.id) : []);
+    const owners = new Map(groups.filter((group) => !groupsWithValues.has(group.id)).map((group) => [group.id, group.productId]));
+    const choices = new Map(groups.filter((group) => groupsWithValues.has(group.id)).map((group) => [group.id, group.productId]));
+    for (const value of await db.select({ id: productVariantValues.id, productId: productVariants.productId }).from(productVariantValues).innerJoin(productVariants, eq4(productVariants.id, productVariantValues.productVariantId)).where(inArray2(productVariantValues.id, variantIds))) {
+      owners.set(value.id, value.productId);
+    }
+    const unchosenGroup = added.find((item) => item.variantId && choices.get(item.variantId) === item.productId);
+    if (unchosenGroup) throw new ShopperError("basket_conflict", `Cart items must choose one of the variants of ${unchosenGroup.productId}`, 409);
+    const unknownVariant = added.find((item) => item.variantId && owners.get(item.variantId) !== item.productId);
+    if (unknownVariant) throw new ShopperError("basket_conflict", `Cart items must use a variant of their product; ${unknownVariant.variantId} is not available`, 409);
+  }
+  const withoutVariant = [...new Set(added.flatMap((item) => item.variantId ? [] : [item.productId]))];
+  if (withoutVariant.length) {
+    const withGroups = new Set((await db.selectDistinct({ productId: productVariants.productId }).from(productVariants).where(inArray2(productVariants.productId, withoutVariant))).map((variant) => variant.productId));
+    const unchosen = added.find((item) => !item.variantId && withGroups.has(item.productId));
+    if (unchosen) throw new ShopperError("basket_conflict", `Cart items must choose one of the variants of ${unchosen.productId}`, 409);
+  }
+  return items2.map(({ productId, variantId, quantity }) => variantId ? { productId, variantId, quantity } : { productId, quantity });
+}
+async function quoteCart(ctx, cartId) {
+  const { env, db } = ctx;
+  const { currency } = readStoreSettings(env);
+  const cart = await db.select().from(carts).where(eq4(carts.id, cartId)).get();
+  if (!cart) throw new ShopperError("basket_conflict", "Cart not found", 409);
+  const catalog = await loadBasketCatalog(ctx, cart.items);
+  const lines = [];
+  let totalAmount = 0;
+  let requiresShipping = false;
+  const componentItems = [];
+  for (const item of cart.items) {
+    const product = catalog.products.get(String(item.productId));
+    if (!product || product.status !== "active") throw new ShopperError("basket_conflict", `Product is not available: ${item.productId}`, 409);
+    requireVariantChoice(catalog, product, item.variantId);
+    const variant = item.variantId ? resolveSelectedVariant(catalog, product, item.variantId) : null;
+    const unitAmount = variant?.price ?? product.basePrice;
+    const name = variant?.name ?? product.name;
+    if (!Number.isSafeInteger(unitAmount) || unitAmount <= 0) {
+      throw new ShopperError("basket_conflict", `A positive price is required for ${name}`, 409);
+    }
+    if (product.type === "standard" && (variant?.availableQuantity ?? product.inventoryQuantity) < item.quantity) {
+      throw new ShopperError("basket_conflict", `Insufficient stock for ${name}`, 409);
+    }
+    if (product.type === "standard" && variant?.components.length) {
+      componentItems.push({ quantity: item.quantity, components: variant.components });
+    }
+    const lineTotal = unitAmount * item.quantity;
+    totalAmount += lineTotal;
+    requiresShipping ||= product.isPhysical;
+    lines.push({ productId: item.productId, variantId: item.variantId, name, quantity: item.quantity, unitAmount, lineTotal });
+  }
+  for (const demand of aggregateComponentDemand(componentItems).values()) {
+    if (demand.available < demand.quantity) throw new ShopperError("basket_conflict", `Insufficient stock for component ${demand.name}`, 409);
+  }
+  if (!Number.isSafeInteger(totalAmount)) throw new ShopperError("basket_conflict", "Order total is too large", 409);
+  return { lines, totalAmount, currency, requiresShipping, locked: Boolean(cart.checkoutSessionId) };
+}
+async function findCart(ctx, sessionToken, userId) {
+  const { db } = ctx;
+  if (!sessionToken && !userId) return null;
+  const conditions = [eq4(carts.closed, false)];
+  if (userId) {
+    conditions.push(eq4(carts.userId, userId));
+  } else if (sessionToken) {
+    conditions.push(eq4(carts.sessionToken, sessionToken));
+    conditions.push(isNull3(carts.userId));
+  }
+  return await db.select().from(carts).where(and3(...conditions)).get();
+}
+async function claimCart(ctx, sessionToken, userId, choice) {
+  const { db } = ctx;
+  const account = await db.select({ id: customerAccounts.id }).from(customerAccounts).where(eq4(customerAccounts.id, userId)).get();
+  if (!account) throw new ShopperError("basket_conflict", "Customer account not found", 409);
+  let guest = await db.select().from(carts).where(and3(eq4(carts.sessionToken, sessionToken), eq4(carts.closed, false))).get();
+  const owned2 = await db.select().from(carts).where(and3(eq4(carts.userId, userId), eq4(carts.closed, false))).get();
+  if (guest?.userId === userId) return guest;
+  if (guest?.userId) {
+    const released = await db.update(carts).set({ sessionToken: null, version: sql4`${carts.version} + 1` }).where(and3(
+      eq4(carts.id, guest.id),
+      eq4(carts.version, guest.version),
+      eq4(carts.sessionToken, sessionToken)
+    )).returning({ id: carts.id });
+    if (!released.length) throw new ShopperError("basket_changed", "Basket changed; reload and try again", 409);
+    guest = void 0;
+  }
+  if (guest?.checkoutSessionId) throw new ShopperError("basket_conflict", "Checkout already started for this cart", 409);
+  if (guest && owned2 && guest.id !== owned2.id) {
+    if (guest.items.length && owned2.items.length) {
+      if (!choice) throw new ShopperError("basket_conflict", "Both baskets have items; choose which basket to keep before linking this session", 409);
+    }
+    if (owned2.checkoutSessionId) throw new ShopperError("basket_conflict", "Checkout already started for this cart", 409);
+    if (guest.items.length && choice !== "account") {
+      const released = await db.update(carts).set({ userId: null, updatedAt: /* @__PURE__ */ new Date() }).where(and3(
+        eq4(carts.id, owned2.id),
+        eq4(carts.userId, userId),
+        eq4(carts.version, owned2.version),
+        eq4(carts.closed, false)
+      )).returning({ id: carts.id });
+      if (!released.length) throw new ShopperError("basket_conflict", "Basket changed during account upgrade; reload and try again", 409);
+    } else {
+      const released = await db.update(carts).set({ sessionToken: null, updatedAt: /* @__PURE__ */ new Date() }).where(and3(
+        eq4(carts.id, guest.id),
+        eq4(carts.sessionToken, sessionToken),
+        eq4(carts.version, guest.version),
+        eq4(carts.closed, false)
+      )).returning({ id: carts.id });
+      if (!released.length) throw new ShopperError("basket_conflict", "Basket changed during account upgrade; reload and try again", 409);
+    }
+  }
+  const target = choice === "account" && owned2 ? owned2 : guest?.items.length ? guest : owned2 ?? guest;
+  if (target) {
+    if (!guest) {
+      await db.update(carts).set({ sessionToken: null }).where(and3(eq4(carts.sessionToken, sessionToken), eq4(carts.closed, true)));
+    }
+    const updated = await db.update(carts).set({ userId, sessionToken, updatedAt: /* @__PURE__ */ new Date(), version: sql4`${carts.version} + 1` }).where(and3(
+      eq4(carts.id, target.id),
+      eq4(carts.closed, false),
+      isNull3(carts.checkoutSessionId),
+      eq4(carts.version, target.version)
+    )).returning({ id: carts.id });
+    if (!updated.length) throw new ShopperError("basket_conflict", "Basket changed during account upgrade; reload and try again", 409);
+    return await db.select().from(carts).where(eq4(carts.id, target.id)).get();
+  }
+  return null;
+}
+async function getOrCreateCart(ctx, sessionToken, userId) {
+  const { db } = ctx;
+  if (userId) {
+    const claimed = await claimCart(ctx, sessionToken, userId);
+    if (claimed) return claimed;
+  }
+  let cart = await findCart(ctx, sessionToken, userId);
+  if (!cart) {
+    if (!userId) {
+      await db.update(carts).set({ sessionToken: null }).where(and3(
+        eq4(carts.sessionToken, sessionToken),
+        eq4(carts.closed, false),
+        isNotNull2(carts.userId)
+      ));
+    }
+    await db.update(carts).set({ sessionToken: null }).where(and3(eq4(carts.sessionToken, sessionToken), eq4(carts.closed, true)));
+    const cartId = `cart_${crypto.randomUUID()}`;
+    const now = /* @__PURE__ */ new Date();
+    await db.insert(carts).values({
+      id: cartId,
+      sessionToken,
+      userId,
+      checkoutSessionId: null,
+      items: [],
+      closed: false,
+      closedAt: null,
+      createdAt: now,
+      updatedAt: now
+    });
+    cart = await findCart(ctx, sessionToken, userId);
+  }
+  return cart;
+}
+async function updateCartItems(ctx, cartId, items2) {
+  const { db } = ctx;
+  assertCartItems(items2);
+  const cart = await db.select().from(carts).where(eq4(carts.id, cartId)).get();
+  if (!cart) {
+    throw new ShopperError("basket_conflict", "Cart not found", 409);
+  }
+  if (cart.closed) {
+    throw new ShopperError("basket_conflict", "Cart is closed", 409);
+  }
+  if (cart.checkoutSessionId) {
+    throw new ShopperError("basket_conflict", "Checkout already started for this cart", 409);
+  }
+  const checked = await checkCartItems(ctx, items2, cart.items);
+  const updated = await db.update(carts).set({ items: checked, updatedAt: /* @__PURE__ */ new Date(), version: sql4`${carts.version} + 1` }).where(and3(
+    eq4(carts.id, cartId),
+    eq4(carts.closed, false),
+    isNull3(carts.checkoutSessionId),
+    eq4(carts.version, cart.version)
+  )).returning({ id: carts.id });
+  if (!updated.length) throw new ShopperError("basket_conflict", "Basket changed or checkout already started; reload and try again", 409);
+  return await db.select().from(carts).where(eq4(carts.id, cartId)).get();
+}
+
 export {
   PROVIDER_CHECK_MIN_ORDER_AGE_SECONDS,
   PROVIDER_CHECK_RETRY_MESSAGE,
@@ -1024,5 +1384,18 @@ export {
   decideReturnRequest,
   cancelCustomerReturn,
   readReturnRequestAdmin,
-  listReturnsQueue
+  listReturnsQueue,
+  commerceContext,
+  CART_MAX_LINES,
+  CART_MAX_LINE_QUANTITY,
+  aggregateComponentDemand,
+  loadBasketCatalog,
+  resolveSelectedVariant,
+  requireVariantChoice,
+  checkCartItems,
+  quoteCart,
+  findCart,
+  claimCart,
+  getOrCreateCart,
+  updateCartItems
 };

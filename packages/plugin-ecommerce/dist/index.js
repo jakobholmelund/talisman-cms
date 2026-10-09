@@ -5,36 +5,36 @@ import {
   StripePaymentAdapter
 } from "./chunk-DR67UJVQ.js";
 import {
-  CART_MAX_LINES,
-  CART_MAX_LINE_QUANTITY,
   bindCommerceApi,
   reconcileCommerce,
   shippingOptionsFor
-} from "./chunk-NQXG7R3A.js";
+} from "./chunk-35CXWIDR.js";
 import {
+  CART_MAX_LINES,
+  CART_MAX_LINE_QUANTITY,
   TaxCalculationError
-} from "./chunk-DWZTDVHN.js";
-import "./chunk-2SPT4KWO.js";
-import "./chunk-4MKR5MKL.js";
+} from "./chunk-NXQCYUOX.js";
+import "./chunk-PD7I5B62.js";
+import "./chunk-IT7W6TQQ.js";
 import {
   TaxAddressError
 } from "./chunk-BGDJXEM5.js";
 import {
   deliverPendingCommerceEmails
-} from "./chunk-XHAJX7QQ.js";
+} from "./chunk-J7AA22HC.js";
 import {
   COUNTRY_CODES,
   StoreSettingsError,
   isCountryCode,
   readStoreCurrency,
   readStoreSettings
-} from "./chunk-U3FNGZWH.js";
-import "./chunk-UD6L5VAO.js";
+} from "./chunk-6OI6C5UV.js";
+import "./chunk-GB3RDLKI.js";
 import "./chunk-GNU6N22K.js";
-import "./chunk-6IAWWO32.js";
+import "./chunk-WPNOY6AW.js";
 import {
   commerceDb
-} from "./chunk-WGLFN46D.js";
+} from "./chunk-7BTUQQDZ.js";
 import {
   carts,
   categories,
@@ -69,6 +69,9 @@ import {
   purchaseOrderLines,
   purchaseOrders,
   reconcileDecisions,
+  recoveryCases,
+  recoveryEvents,
+  recoveryShipments,
   referralCodes,
   referralSettings,
   referrals,
@@ -95,7 +98,7 @@ import {
   tags,
   variantComponents,
   variants
-} from "./chunk-YCXJGHVY.js";
+} from "./chunk-KLQ2VU7R.js";
 import "./chunk-NQUBOBQT.js";
 import "./chunk-QVPX4QWC.js";
 import {
@@ -266,6 +269,7 @@ var ecommercePlugin = (config) => {
     { key: "emails", path: "commerce-emails", component: "EmailRecovery", label: "Email recovery", description: "Review failed notices and request an audited retry." },
     { key: "stock", path: "commerce-stock", component: "StockOverview", label: "Stock overview", description: "Find unavailable choices and low shared component stock." },
     { key: "returns", path: "commerce-returns", component: "Returns", label: "Returns", description: "Review customer return requests and pending inspections." },
+    { key: "recoveries", path: "commerce-recoveries", component: "Recoveries", label: "Parcels & exchanges", description: "Resolve lost or damaged parcels, send replacements and arrange equal-price exchanges." },
     { key: "refunds", path: "commerce-refunds", component: "RefundFollowUp", label: "Refund follow-up", description: "Resolve received returns against confirmed refund records." },
     { key: "replenishment", path: "commerce-replenishment", component: "Replenishment", label: "Replenishment", description: "Set stock targets and track expected supplier deliveries." },
     { key: "purchasing", path: "commerce-purchasing", component: "PurchaseOrders", label: "Purchase orders", description: "Manage suppliers, purchase stock and receive partial deliveries." },
@@ -898,6 +902,30 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
           adminSection: "commerce",
           fields: nativeFields(purchaseOrderLines, ["id", "purchaseOrderId", "lineIndex", "deliveryId"]),
           nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "purchaseOrderLines", idColumn: "id" }
+        });
+        collections.push({
+          name: "Parcel and Exchange Cases",
+          slug: "_ecommerce_recovery_cases",
+          readOnly: true,
+          adminSection: "commerce",
+          fields: nativeFields(recoveryCases, ["id", "orderId", "kind", "fulfillmentId", "sourceShipmentId", "receiptId", "lineIndex", "quantity", "target", "actor", "reason", "fingerprint", "createdAt", "redactedAt"]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "recoveryCases", idColumn: "id" }
+        });
+        collections.push({
+          name: "Replacement Shipments",
+          slug: "_ecommerce_recovery_shipments",
+          readOnly: true,
+          adminSection: "commerce",
+          fields: nativeFields(recoveryShipments, ["id", "caseId", "expectedVersion", "quantity", "stock", "carrier", "trackingNumber", "actor", "reason", "fingerprint", "createdAt", "redactedAt"]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "recoveryShipments", idColumn: "id" }
+        });
+        collections.push({
+          name: "Parcel and Exchange History",
+          slug: "_ecommerce_recovery_events",
+          readOnly: true,
+          adminSection: "commerce",
+          fields: nativeFields(recoveryEvents, ["id", "caseId", "expectedVersion", "kind", "status", "shipmentId", "carrier", "trackingNumber", "actor", "reason", "fingerprint", "createdAt", "redactedAt"]),
+          nativeSchemaMapping: { schemaPath: "@talisman-cms/plugin-ecommerce/schema", exportName: "recoveryEvents", idColumn: "id" }
         });
         collections.push({
           name: "Supplier Delivery Issues",

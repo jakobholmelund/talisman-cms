@@ -1201,7 +1201,92 @@ var supplierIssueEvents = sqliteTable("_ecommerce_supplier_issue_events", {
   check("supplier_issue_event_reason", trimmed(t.reason, 8)),
   check("supplier_issue_event_reason_length", sql`length(${t.reason}) <= 500`)
 ]);
+var RECOVERY_KINDS = ["lost", "damaged", "exchange"];
+var RECOVERY_STATUSES = ["open", "resolved"];
+var RECOVERY_EVENT_KINDS = ["note", "resolve", "reopen", "shipment", "tracking"];
+var recoveryCases = sqliteTable("_ecommerce_recovery_cases", {
+  id: text("id").primaryKey(),
+  orderId: text("order_id").notNull().references(() => orders.id),
+  kind: text("kind", { enum: RECOVERY_KINDS }).notNull(),
+  fulfillmentId: text("fulfillment_id").references(() => fulfillments.id),
+  sourceShipmentId: text("source_shipment_id").references(() => recoveryShipments.id),
+  receiptId: text("receipt_id").references(() => returnReceipts.id),
+  lineIndex: integer("line_index").notNull(),
+  quantity: integer("quantity").notNull(),
+  target: text("target", { mode: "json" }).$type().notNull(),
+  actor: text("actor").notNull(),
+  reason: text("reason").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  redactedAt: integer("redacted_at", { mode: "timestamp" })
+}, (t) => [
+  index("_ecommerce_recovery_case_order_idx").on(t.orderId),
+  index("_ecommerce_recovery_case_date_idx").on(t.createdAt, t.id),
+  index("_ecommerce_recovery_case_fulfillment_idx").on(t.fulfillmentId),
+  index("_ecommerce_recovery_case_source_idx").on(t.sourceShipmentId),
+  index("_ecommerce_recovery_case_receipt_idx").on(t.receiptId),
+  check("recovery_case_kind", oneOf(t.kind, RECOVERY_KINDS)),
+  check("recovery_case_line", sql`${t.lineIndex} BETWEEN 0 AND 199`),
+  check("recovery_case_quantity", sql`${t.quantity} BETWEEN 1 AND 1000000`),
+  check("recovery_case_source", sql`(${t.kind} = 'exchange' AND ${t.receiptId} IS NOT NULL AND ${t.fulfillmentId} IS NULL AND ${t.sourceShipmentId} IS NULL) OR (${t.kind} <> 'exchange' AND ${t.receiptId} IS NULL AND ((${t.fulfillmentId} IS NOT NULL AND ${t.sourceShipmentId} IS NULL) OR (${t.fulfillmentId} IS NULL AND ${t.sourceShipmentId} IS NOT NULL)))`),
+  check("recovery_case_target", sql`json_valid(${t.target}) AND json_type(${t.target}) = 'object' AND json_type(${t.target}, '$.stockTargets') = 'array' AND json_array_length(${t.target}, '$.stockTargets') <= 50`),
+  check("recovery_case_actor", filled(t.actor)),
+  check("recovery_case_reason", trimmed(t.reason, 8)),
+  check("recovery_case_reason_length", sql`length(${t.reason}) <= 500`)
+]);
+var recoveryShipments = sqliteTable("_ecommerce_recovery_shipments", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull().references(() => recoveryCases.id),
+  expectedVersion: text("expected_version").notNull(),
+  quantity: integer("quantity").notNull(),
+  stock: text("stock", { mode: "json" }).$type().notNull(),
+  carrier: text("carrier"),
+  trackingNumber: text("tracking_number"),
+  actor: text("actor").notNull(),
+  reason: text("reason").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  redactedAt: integer("redacted_at", { mode: "timestamp" })
+}, (t) => [
+  index("_ecommerce_recovery_shipment_case_idx").on(t.caseId),
+  check("recovery_shipment_quantity", sql`${t.quantity} BETWEEN 1 AND 1000000`),
+  check("recovery_shipment_stock", sql`json_valid(${t.stock}) AND json_type(${t.stock}) = 'array' AND json_array_length(${t.stock}) <= 50`),
+  check("recovery_shipment_actor", filled(t.actor)),
+  check("recovery_shipment_reason", trimmed(t.reason, 8)),
+  check("recovery_shipment_reason_length", sql`length(${t.reason}) <= 500`),
+  check("recovery_shipment_carrier_length", sql`${t.carrier} IS NULL OR length(${t.carrier}) <= 100`),
+  check("recovery_shipment_tracking_length", sql`${t.trackingNumber} IS NULL OR length(${t.trackingNumber}) <= 150`)
+]);
+var recoveryEvents = sqliteTable("_ecommerce_recovery_events", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull().references(() => recoveryCases.id),
+  expectedVersion: text("expected_version").notNull(),
+  kind: text("kind", { enum: RECOVERY_EVENT_KINDS }).notNull(),
+  status: text("status", { enum: RECOVERY_STATUSES }).notNull(),
+  shipmentId: text("shipment_id").references(() => recoveryShipments.id),
+  carrier: text("carrier"),
+  trackingNumber: text("tracking_number"),
+  actor: text("actor").notNull(),
+  reason: text("reason").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  redactedAt: integer("redacted_at", { mode: "timestamp" })
+}, (t) => [
+  index("_ecommerce_recovery_event_case_idx").on(t.caseId),
+  index("_ecommerce_recovery_event_shipment_idx").on(t.shipmentId),
+  check("recovery_event_kind", oneOf(t.kind, RECOVERY_EVENT_KINDS)),
+  check("recovery_event_status", oneOf(t.status, RECOVERY_STATUSES)),
+  check("recovery_event_shipment", sql`(${t.kind} IN ('shipment','tracking') AND ${t.shipmentId} IS NOT NULL) OR (${t.kind} NOT IN ('shipment','tracking') AND ${t.shipmentId} IS NULL AND ${t.carrier} IS NULL AND ${t.trackingNumber} IS NULL)`),
+  check("recovery_event_actor", filled(t.actor)),
+  check("recovery_event_reason", trimmed(t.reason, 8)),
+  check("recovery_event_reason_length", sql`length(${t.reason}) <= 500`),
+  check("recovery_event_carrier_length", sql`${t.carrier} IS NULL OR length(${t.carrier}) <= 100`),
+  check("recovery_event_tracking_length", sql`${t.trackingNumber} IS NULL OR length(${t.trackingNumber}) <= 150`)
+]);
 var tables = {
+  recoveryCases,
+  recoveryShipments,
+  recoveryEvents,
   suppliers,
   supplierRevisions,
   purchaseOrders,
@@ -1274,6 +1359,23 @@ var tables = {
   cmsUsers
 };
 var relations = defineRelations(tables, (r) => ({
+  recoveryCases: {
+    order: r.one.orders({ from: r.recoveryCases.orderId, to: r.orders.id, optional: false }),
+    fulfillment: r.one.fulfillments({ from: r.recoveryCases.fulfillmentId, to: r.fulfillments.id }),
+    sourceShipment: r.one.recoveryShipments({ from: r.recoveryCases.sourceShipmentId, to: r.recoveryShipments.id, alias: "recovery_source" }),
+    receipt: r.one.returnReceipts({ from: r.recoveryCases.receiptId, to: r.returnReceipts.id }),
+    events: r.many.recoveryEvents(),
+    shipments: r.many.recoveryShipments({ alias: "recovery_dispatch" })
+  },
+  recoveryShipments: {
+    case: r.one.recoveryCases({ from: r.recoveryShipments.caseId, to: r.recoveryCases.id, optional: false, alias: "recovery_dispatch" }),
+    problems: r.many.recoveryCases({ alias: "recovery_source" }),
+    events: r.many.recoveryEvents()
+  },
+  recoveryEvents: {
+    case: r.one.recoveryCases({ from: r.recoveryEvents.caseId, to: r.recoveryCases.id, optional: false }),
+    shipment: r.one.recoveryShipments({ from: r.recoveryEvents.shipmentId, to: r.recoveryShipments.id })
+  },
   suppliers: { revisions: r.many.supplierRevisions(), purchaseOrders: r.many.purchaseOrders() },
   supplierRevisions: { supplier: r.one.suppliers({ from: r.supplierRevisions.supplierId, to: r.suppliers.id, optional: false }) },
   purchaseOrders: { supplier: r.one.suppliers({ from: r.purchaseOrders.supplierId, to: r.suppliers.id, optional: false }), events: r.many.purchaseOrderEvents(), lines: r.many.purchaseOrderLines() },
@@ -1297,6 +1399,7 @@ var relations = defineRelations(tables, (r) => ({
     order: r.one.orders({ from: r.carts.id, to: r.orders.cartId })
   },
   orders: {
+    recoveryCases: r.many.recoveryCases(),
     cart: r.one.carts({ from: r.orders.cartId, to: r.carts.id }),
     /** The shopper account that placed the order (`userId`); null for a guest order. */
     account: r.one.customerAccounts({ from: r.orders.userId, to: r.customerAccounts.id }),
@@ -1444,7 +1547,7 @@ var relations = defineRelations(tables, (r) => ({
   },
   returnRequestEvents: { request: r.one.returnRequests({ from: r.returnRequestEvents.requestId, to: r.returnRequests.id, optional: false }) },
   returnRequestReceipts: { request: r.one.returnRequests({ from: r.returnRequestReceipts.requestId, to: r.returnRequests.id, optional: false }), receipt: r.one.returnReceipts({ from: r.returnRequestReceipts.receiptId, to: r.returnReceipts.id, optional: false }) },
-  returnReceipts: { refundDecisions: r.many.returnRefundDecisions(), requestLinks: r.many.returnRequestReceipts(), order: r.one.orders({ from: r.returnReceipts.orderId, to: r.orders.id, optional: false }), stock: r.many.returnStock(), inspections: r.many.returnInspections() },
+  returnReceipts: { recoveryCases: r.many.recoveryCases(), refundDecisions: r.many.returnRefundDecisions(), requestLinks: r.many.returnRequestReceipts(), order: r.one.orders({ from: r.returnReceipts.orderId, to: r.orders.id, optional: false }), stock: r.many.returnStock(), inspections: r.many.returnInspections() },
   returnInspections: {
     receipt: r.one.returnReceipts({ from: r.returnInspections.receiptId, to: r.returnReceipts.id, optional: false }),
     order: r.one.orders({ from: r.returnInspections.orderId, to: r.orders.id, optional: false }),
@@ -1459,6 +1562,7 @@ var relations = defineRelations(tables, (r) => ({
     order: r.one.orders({ from: r.returnStock.orderId, to: r.orders.id, optional: false })
   },
   fulfillments: {
+    recoveryCases: r.many.recoveryCases(),
     contents: r.one.parcelContents(),
     order: r.one.orders({ from: r.fulfillments.orderId, to: r.orders.id, optional: false }),
     /** The shipment a correction restates. */
@@ -1671,5 +1775,11 @@ export {
   SUPPLIER_ISSUE_STATUSES,
   supplierIssues,
   supplierIssueEvents,
+  RECOVERY_KINDS,
+  RECOVERY_STATUSES,
+  RECOVERY_EVENT_KINDS,
+  recoveryCases,
+  recoveryShipments,
+  recoveryEvents,
   relations
 };

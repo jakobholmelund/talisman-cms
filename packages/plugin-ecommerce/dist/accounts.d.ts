@@ -68,24 +68,44 @@ declare function manageShopperData(env: TalismanEnv, actor: string, input: unkno
         createdAt: Date;
         operations: {
             id: string;
-            returnRequests: {
+            recoveryCases: {
                 id: string;
                 createdAt: Date;
-                reason: string;
-                items: ParcelItem[];
+                kind: "lost" | "damaged" | "exchange";
+                lineIndex: number;
+                quantity: number;
                 events: {
                     createdAt: Date;
-                    status: "cancelled" | "closed" | "pending" | "approved" | "declined";
+                    status: "open" | "resolved";
+                    kind: "note" | "shipment" | "reopen" | "resolve" | "tracking";
+                    carrier: string | null;
+                    trackingNumber: string | null;
+                }[];
+                shipments: {
+                    createdAt: Date;
+                    carrier: string | null;
+                    trackingNumber: string | null;
+                    quantity: number;
+                }[];
+            }[];
+            returnRequests: {
+                id: string;
+                items: ParcelItem[];
+                createdAt: Date;
+                reason: string;
+                events: {
+                    createdAt: Date;
+                    status: "closed" | "cancelled" | "pending" | "approved" | "declined";
                     customerMessage: string;
                 }[];
                 reasonCategory: {
-                    code: "size_fit" | "damaged" | "wrong_item" | "changed_mind" | "other" | "unspecified";
+                    code: "damaged" | "size_fit" | "wrong_item" | "changed_mind" | "other" | "unspecified";
                 } | null;
             }[];
             returnReceipts: {
                 id: string;
-                createdAt: Date;
                 items: ReturnedItem[];
+                createdAt: Date;
                 refundDecisions: {
                     createdAt: Date;
                     status: "needed" | "not_needed" | "settled";
@@ -98,7 +118,7 @@ declare function manageShopperData(env: TalismanEnv, actor: string, input: unkno
             }[];
             fulfillments: {
                 createdAt: Date;
-                kind: "correction" | "shipment" | "reopen" | "complete";
+                kind: "shipment" | "correction" | "reopen" | "complete";
                 carrier: string | null;
                 trackingNumber: string | null;
             }[];

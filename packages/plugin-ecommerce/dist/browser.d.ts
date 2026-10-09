@@ -1,5 +1,5 @@
 import { C as CustomerReturns } from './return-request-types-CaKc6AaH.js';
-import { C as CommerceContext } from './commerce-context-CY_5E3gf.js';
+import { C as CommerceContext } from './commerce-context-o8Ob_RVh.js';
 import './schema.js';
 import 'drizzle-orm';
 import 'drizzle-orm/sqlite-core';
@@ -39,6 +39,21 @@ declare function readOrderTracking(ctx: CommerceContext, orderId: string, sessio
             lineIndex: number;
             name: string;
             sku: string | null;
+        }[];
+    }[];
+    recoveries: {
+        id: string;
+        kind: "lost" | "damaged" | "exchange";
+        quantity: number;
+        name: string;
+        sku: string | null;
+        status: "open" | "resolved";
+        shipments: {
+            id: string;
+            quantity: number;
+            shippedAt: string;
+            carrier: string | null;
+            trackingNumber: string | null;
         }[];
     }[];
 } | null>;
