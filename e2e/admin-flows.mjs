@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { commerceTriageFlow } from './commerce-triage-flow.mjs';
 // Browser checks for the admin SPA. Drives Google Chrome through playwright-core against a running
 // playground build (astro preview / wrangler dev) and writes a JSON report. No test runner: every step
 // is a function below, steps run in order, a failure does not stop the run, and the process exits
@@ -519,6 +520,7 @@ const steps = {
   'commerce-aftercare': ctx => commerceAftercareFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'commerce-returns': ctx => returnsFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'warehouse-lifecycle': ctx => warehouseLifecycleFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
+  'commerce-triage': ctx => commerceTriageFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'commerce-daily': ctx => commerceDailyFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'commerce-operations': ctx => commerceOpsFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'orders-workflow': ctx => ordersFlow(ctx, { fail, expectVisible, expectHidden, expectValue, expectNoAlert, waitUntil }),

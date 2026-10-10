@@ -1,4 +1,4 @@
-import React, { type ReactNode } from 'react';
+import React, { useEffect, useRef, type ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 import { adminRequest as requestAdminApi } from 'talisman-cms/ui/sdk';
 import { adminTestCheckout } from 'virtual:talisman-cms/ecommerce-admin';
@@ -60,13 +60,23 @@ const tools: Array<{ key: CommerceTool; label: string }> = [
 ];
 
 export function CommerceAdmin({ current, children }: { current: CommerceTool; children: ReactNode }) {
+  const primary = new Set<CommerceTool>(['attention', 'orders', 'stock', 'returns']);
+  const toolLink = (tool: typeof tools[number]) => <Link key={tool.key} to="/extensions/$extensionPath" params={{ extensionPath: `commerce-${tool.key}` }} aria-current={current === tool.key ? 'page' : undefined}>{tool.label}</Link>;
   return <div className="ecom-admin">
     <nav className="ecom-admin__nav" aria-label="Commerce tools">
       <Link to="/commerce">Commerce workspace</Link>
-      {tools.map(tool => <Link key={tool.key} to="/extensions/$extensionPath" params={{ extensionPath: `commerce-${tool.key}` }} aria-current={current === tool.key ? 'page' : undefined}>{tool.label}</Link>)}
+      {tools.filter(tool => primary.has(tool.key)).map(toolLink)}
+      <details key={current} className="ecom-admin__more-tools" open={!primary.has(current)}><summary>More commerce tools</summary><div>{tools.filter(tool => !primary.has(tool.key)).map(toolLink)}</div></details>
     </nav>
     {children}
   </div>;
+}
+
+/** Opening a case should bring its details into view, even below a long queue. */
+export function SelectedCase({ children }: { children: ReactNode }) {
+  const element = useRef<HTMLDivElement>(null);
+  useEffect(() => { element.current?.focus({ preventScroll: true }); element.current?.scrollIntoView({ block: 'start' }); }, []);
+  return <div ref={element} tabIndex={-1} className="ecom-admin__aftercare ecom-admin__selected-case">{children}</div>;
 }
 
 export function Feedback({ message, error = false }: { message: string; error?: boolean }) {

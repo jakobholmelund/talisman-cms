@@ -1,6 +1,7 @@
+import {useAttentionTarget} from './attention-target';
 import React, { useEffect, useRef, useState } from 'react';
 import type { listRecoveryCases, readRecoveryCase, readRecoveryOrder, listExchangeChoices, readExchangeHandoff } from '@talisman-cms/plugin-ecommerce/operations';
-import { CommerceAdmin, Field, Panel, money } from './common';
+import { CommerceAdmin,SelectedCase, Field, Panel, money } from './common';
 import { useOperationsRead, OperationsReadStatus, OperationsPagination, dateTime } from './operations-common';
 import { useAftercareRead } from './aftercare-read';
 import { useWarehouseWrite } from './warehouse-write';
@@ -84,12 +85,15 @@ function CaseDetail({caseId,blocked,refresh,dirtyChanged}:{caseId:string;blocked
 export default function Recoveries(){
  const [filter,setFilter]=useState('open'),[nextAction,setNextAction]=useState('all'),[offset,setOffset]=useState(0),[selected,setSelected]=useState(''),[orderId,setOrderId]=useState(''),[orderRefresh,setOrderRefresh]=useState(0),[createDirty,setCreateDirty]=useState(false),[caseDirty,setCaseDirty]=useState(false),dirty=createDirty||caseDirty;
  const read=useOperationsRead<Queue>(new URLSearchParams({view:'recoveries',filter,nextAction,offset:String(offset)}).toString(),queueOk);
+ const {hash,target}=useAttentionTarget();
+ useEffect(()=>{if(target?.kind==='recovery')setSelected(target.id);else if(!hash)setSelected('');},[hash]);
  return <CommerceAdmin current="recoveries"><div className="ecom-admin__aftercare"><p>Record lost or damaged parcels, arrange exchanges and track replacement shipments. Original purchase totals and shipping history remain intact.</p>
+{selected&&<SelectedCase key={selected}><CaseDetail key={selected} caseId={selected} blocked={createDirty} dirtyChanged={setCaseDirty} refresh={async()=>{await read.load();setOrderRefresh(n=>n+1);}}/></SelectedCase>}
  <Panel title="Find the affected order" label="Find recovery order"><form onSubmit={e=>{e.preventDefault();if(dirty)return;setOrderId(String(new FormData(e.currentTarget).get('orderId')).trim());}}><Field label="Recovery order ID"><input aria-label="Recovery order ID" name="orderId" required maxLength={128} disabled={dirty}/></Field><button disabled={dirty}>Load recovery order</button></form></Panel>
  {orderId&&<NewCase key={orderId} orderId={orderId} blocked={caseDirty} dirtyChanged={setCreateDirty} refresh={read.load} reloadKey={orderRefresh}/>}
  <Panel title="Parcel problems and exchanges" label="Recovery cases"><form onSubmit={e=>{e.preventDefault();if(dirty)return;setFilter(String(new FormData(e.currentTarget).get('filter')));setNextAction(String(new FormData(e.currentTarget).get('nextAction')));setOffset(0);setSelected('');}}><Field label="Recovery case view"><select aria-label="Recovery case view" name="filter" disabled={dirty}><option value="open">Open cases</option><option value="resolved">Resolved cases</option><option value="all">All cases</option></select></Field><Field label="Next recovery action"><select aria-label="Next recovery action" name="nextAction" disabled={dirty}><option value="all">All next actions</option><option value="inspection">Inspect returned replacements</option><option value="payment">Confirm upgrade payment</option><option value="refund">Review or confirm refund</option><option value="stock">Replenish stock</option><option value="dispatch">Pack and dispatch</option><option value="review">Review case or payment</option><option value="follow_up">Confirm agreed outcome</option><option value="complete">Resolved</option></select></Field><button disabled={dirty||read.loading}>Find recovery cases</button></form><OperationsReadStatus loading={read.loading} error={read.error} reload={()=>void read.load()}/>
  {read.data&&<><ul>{read.data.rows.map(c=><li key={c.id}>{labels[c.kind]} · {c.name} · {c.quantity} affected · {c.shipped} replaced · {c.status} · Next: {c.nextActionLabel}{c.awaitingInspection?' · Replacement inspection needed':''}{c.awaitingPaymentReview?' · Upgrade payment review needed':''} <button disabled={dirty||read.loading} onClick={()=>setSelected(c.id)}>Review recovery · {c.id}</button></li>)}</ul>{!read.data.total&&<p>No recovery cases match this view.</p>}<OperationsPagination offset={read.data.offset} total={read.data.total} loading={dirty||read.loading} change={n=>{setOffset(n);setSelected('');}}/></>}
- </Panel>{selected&&<CaseDetail key={selected} caseId={selected} blocked={createDirty} dirtyChanged={setCaseDirty} refresh={async()=>{await read.load();setOrderRefresh(n=>n+1);}}/>}</div></CommerceAdmin>;
+ </Panel></div></CommerceAdmin>;
 }
 
 export function ExchangeHandoff({requestId,blocked,refresh,dirtyChanged,reloadKey}:{requestId:string;reloadKey:string;blocked:boolean;refresh:()=>Promise<unknown>;dirtyChanged:(v:boolean)=>void}){

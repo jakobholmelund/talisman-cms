@@ -66,3 +66,42 @@
 .ecom-admin__recovery-history ul { list-style: none; padding: 0; }
 .ecom-admin__recovery-history li { padding: 16px 0; border-top: 1px solid #3f3f46; }
 .ecom-admin__recovery-history li p { margin: 6px 0; }
+
+.ecom-admin .ecom-admin__more-tools { margin: 0; flex-basis: 100%; }
+.ecom-admin__more-tools summary { width: fit-content; padding: 8px 12px; color: #c7d2fe; border-radius: 8px; }
+.ecom-admin__more-tools > div { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 8px; }
+.ecom-admin__more-tools > div a:first-child { margin-right: 0; }
+.ecom-admin__selected-case { scroll-margin-top: 24px; }
+.ecom-admin__attention { min-width: 0; }
+.ecom-admin__attention-header { display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: 20px; }
+.ecom-admin__attention-header > div { min-width: 0; }
+.ecom-admin__attention-header > div:first-child { flex: 1 1 420px; }
+.ecom-admin__attention-header h1 { font-size: clamp(26px, 5vw, 36px); font-weight: 650; margin: 8px 0 14px; color: #fff; }
+.ecom-admin__eyebrow { color: #c7d2fe; text-transform: uppercase; letter-spacing: .12em; font-size: 11px; font-weight: 600; }
+.ecom-admin__attention-header small { display: block; margin-top: 10px; color: #a1a1aa; }
+.ecom-admin__attention-areas { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+.ecom-admin__attention-areas button { width: 100%; min-width: 0; text-align: left; padding: 18px; border-color: #3f3f46; background: #18181b; }
+.ecom-admin__attention-areas button[aria-pressed="true"] { border-color: #a5b4fc; background: #312e81; }
+.ecom-admin__attention-areas button:hover { border-color: #818cf8; }
+.ecom-admin__attention-areas span, .ecom-admin__attention-areas small { display: block; }
+.ecom-admin__attention-areas strong { display: block; font-size: 30px; margin: 8px 0; font-variant-numeric: tabular-nums; }
+.ecom-admin__attention-areas small { font-weight: 400; color: #d4d4d8; }
+.ecom-admin__attention-options { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 28px 0 12px; }
+.ecom-admin__attention-options h2 { margin: 0; font-size: 20px; font-weight: 600; color: #fff; }
+.ecom-admin__attention .ecom-admin__panel { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.ecom-admin__attention .ecom-admin__grid { margin-top: 16px; align-items: start; }
+.ecom-admin__attention-records { list-style: none; padding: 0; }
+.ecom-admin__attention-records li { border-top: 1px solid #3f3f46; padding-top: 16px; margin: 16px 0 0; }
+.ecom-admin__attention-records code, .ecom-admin__attention-records small, .ecom-admin__attention-records a { display: block; margin-top: 8px; }
+.ecom-admin__attention-records small { color: #a1a1aa; }
+.ecom-admin__attention-record-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.ecom-admin__badge { display: inline-block; background: #27272a; color: #d4d4d8; border: 1px solid #52525b; border-radius: 20px; padding: 4px 8px; font-size: 11px; }
+.ecom-admin__badge[data-aged="true"] { background: #422006; color: #fde68a; border-color: #92400e; }
+.ecom-admin :is(a, button, summary, input):focus-visible { outline: 2px solid #c7d2fe; outline-offset: 3px; }
+@media (max-width: 700px) {
+  .ecom-admin__attention-areas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ecom-admin__attention-areas button { padding: 12px; }
+  .ecom-admin__attention .ecom-admin__panel { padding: 16px; }
+  .ecom-admin__more-tools > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ecom-admin__more-tools > div a { min-width: 0; }
+}
