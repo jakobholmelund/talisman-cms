@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Needs attention** becomes a daily work dashboard with work-area counts, oldest-first queues, age badges, expandable previews and an option to show clear queues. Counts describe tasks rather than unique orders, and failed or incomplete refreshes keep a visibly stale snapshot.
+- Return requests, inspections, return refunds and parcel/exchange cases open directly from attention previews through fresh protected reads. Selected details appear above the queue and receive focus; existing draft and interrupted-write protections remain in place.
+- Commerce navigation keeps everyday tools visible and puts the remaining tools in an expandable menu, including mobile layouts. This admin-only change needs no migrations or settings; release and checkout remain on hold.
+
 - Approved exchange requests now open a prefilled staff handoff with the recorded return receipt, inspected quantity and current preferred catalog choice. Existing exchange cases can be resumed from the request, interrupted case writes recover with the same key, and a changed catalog price refuses the draft before repricing it.
 - Returns and replacement queues filter by the next action: waiting for goods, inspection, arranging an exchange, refund/payment confirmation, stock, dispatch or outcome review, with complete filtered totals and pagination.
 - Customer return requests include one exchange progress view with partial quantities, replacement parcels, current tracking and the next customer action. Staff notes, stock recipes and payment references remain private.
