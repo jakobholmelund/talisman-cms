@@ -13,7 +13,7 @@ export const ALL:APIRoute=async({request,cookies})=>{
   if(!['GET','POST'].includes(request.method))return Response.json({error:'Method not allowed'},{status:405,headers:{...headers,Allow:'GET, POST'}});
   if(request.method==='POST'&&request.headers.get('origin')!==new URL(request.url).origin)return Response.json({error:'Same-origin request required'},{status:403,headers});
   try {
-    const body=request.method==='POST'?z.object({action:z.enum(['request','cancel','exchangeChoices']),data:z.record(z.unknown())}).strict().parse(await readBoundedJson(request,32768)):null;
+    const body=request.method==='POST'?z.object({action:z.enum(['request','cancel','exchangeChoices']),data:z.record(z.string(), z.unknown())}).strict().parse(await readBoundedJson(request,32768)):null;
     const orderId=id.parse(body?body.data.orderId:new URL(request.url).searchParams.get('order'));
     const {env}=await import('cloudflare:workers');const runtimeEnv=env as unknown as TalismanEnv;
     const customer=await findCustomerSession(runtimeEnv,cookies.get(CUSTOMER_SESSION_COOKIE)?.value);

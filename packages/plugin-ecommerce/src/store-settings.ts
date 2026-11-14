@@ -195,10 +195,12 @@ function readShippingRates(env: object, deliveryCountries: string[] | null): Shi
   if (list.length > MAX_SHIPPING_RATES) {
     throw new StoreSettingsError(`${name} must list at most ${MAX_SHIPPING_RATES} rates, not ${list.length}`);
   }
-  const parsed = shippingRatesSchema.safeParse(list);
+  const parsed = shippingRatesSchema.safeParse(list, {
+    error: (issue) => issue.code === 'invalid_type' && issue.input === undefined ? 'Required' : undefined,
+  });
   if (!parsed.success) {
     throw new StoreSettingsError(parsed.error.issues.map((issue) => `${name}${issue.path
-      .map((key) => typeof key === 'number' ? `[${key}]` : `.${key}`).join('')}: ${issue.message}`).join('; '));
+      .map((key) => typeof key === 'number' ? `[${key}]` : `.${String(key)}`).join('')}: ${issue.message}`).join('; '));
   }
   return parsed.data.map((rate, index) => {
     const countries = rate.countries ? [...new Set(rate.countries.map((entry) => entry.trim().toUpperCase()))] : null;

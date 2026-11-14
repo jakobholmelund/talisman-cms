@@ -995,11 +995,15 @@ export function isEmptyRichText(value: unknown): boolean {
 const REQUIRED_MESSAGE = 'Required';
 const isBlankString = (value: unknown) => typeof value === 'string' && value.trim() === '';
 
-/** A required scalar also rejects blank text; missing and null values already fail its type check. */
+/** Required values get a stable message before Zod's type-specific validation. */
 function requireValue(field: FieldDefinition, schema: z.ZodTypeAny): z.ZodTypeAny {
   if (field.type === 'richtext') {
     return schema.refine((value) => !isEmptyRichText(value), { message: REQUIRED_MESSAGE });
   }
+
+  // Zod 4 no longer includes `received` in invalid_type issues. Validate absence explicitly
+  // so both API field errors and nested editor errors keep the same "Required" message.
+  schema = z.custom((value) => value !== null && value !== undefined, { message: REQUIRED_MESSAGE }).pipe(schema);
 
   if (['group', 'array', 'blocks', 'number', 'boolean'].includes(field.type) ||
       (isRelationshipFieldType(field.type) && (field.hasMany || isPolymorphicRelationField(field)))) {

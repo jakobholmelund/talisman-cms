@@ -22,6 +22,27 @@ import {
   versioning,
 } from './helpers/handler-harness.mjs';
 
+test('required fields retain actionable messages with Zod 4 and accept zero and false', { skip }, () => {
+  const fields = [
+    { name: 'count', type: 'number' }, { name: 'enabled', type: 'boolean' },
+    { name: 'title', type: 'text' }, { name: 'choice', type: 'select', options: ['one'] },
+    { name: 'group', type: 'group', fields: [{ name: 'nested', type: 'text', required: true }] },
+    { name: 'items', type: 'array', fields: [] },
+  ].map(field => ({ ...field, label: field.name, required: true }));
+  const schema = types.buildZodSchemaForFields(fields);
+  for (const missing of [undefined, null]) {
+    const result = schema.safeParse(Object.fromEntries(fields.map(field => [field.name, missing])));
+    assert.equal(result.success, false);
+    assert.deepEqual(types.formatValidationIssues(result.error.issues).fieldErrors,
+      Object.fromEntries(fields.map(field => [field.name, ['Required']])));
+  }
+  const valid = { count: 0, enabled: false, title: 'Title', choice: 'one', group: { nested: 'Value' }, items: [] };
+  assert.deepEqual(schema.parse(valid), valid);
+  const nested = schema.safeParse({ ...valid, group: {} });
+  assert.deepEqual(types.formatValidationIssues(nested.error.issues).fieldErrors, { 'group.nested': ['Required'] });
+  assert.equal(schema.safeParse({ ...valid, count: 'zero' }).success, false);
+});
+
 test('entries seeded without revisions can be saved; entries with revisions still need the latest id', { skip }, async () => {
   const sqlite = database();
   try {

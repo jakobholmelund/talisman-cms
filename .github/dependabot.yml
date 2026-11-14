@@ -1,0 +1,23 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      authentication:
+        patterns: ["better-auth", "@better-auth/*", "@better-fetch/*"]
+      astro-cloudflare:
+        patterns: ["astro", "@astrojs/*", "wrangler", "@cloudflare/*", "vite"]
+      tanstack:
+        patterns: ["@tanstack/*"]
+    # Drizzle follows the deliberately selected rc tag; migration to stable is a separate task.
+    ignore:
+      - dependency-name: drizzle-orm
+      - dependency-name: drizzle-kit
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

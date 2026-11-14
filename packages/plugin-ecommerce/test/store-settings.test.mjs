@@ -113,8 +113,8 @@ test('invalid shipping rates throw StoreSettingsError naming the setting and the
     [[{ ...standard, maxDays: 366 }], /\[0\]\.maxDays: /],
     [[{ ...standard, minDays: 10, maxDays: 5 }], `${name}[0].minDays: must not be more than maxDays`],
     // A misspelt field is refused rather than ignored.
-    [[{ ...standard, free_over: 10000 }], `${name}[0]: Unrecognized key(s) in object: 'free_over'`],
-    [['standard'], /\[0\]: Expected object/],
+    [[{ ...standard, free_over: 10000 }], `${name}[0]: Unrecognized key: "free_over"`],
+    [['standard'], /\[0\]: Invalid input: expected object/],
   ];
   for (const [value, message] of cases) {
     assert.throws(() => readStoreSettings({ TALISMAN_COMMERCE_SHIPPING_RATES: value }), (error) => {

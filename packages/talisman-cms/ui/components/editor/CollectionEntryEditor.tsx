@@ -780,7 +780,7 @@ export function CollectionEntryEditor({
       if (!presetValidation.success) {
         const errors: ServerFieldErrors = {};
         for (const issue of presetValidation.issues) {
-          const path = issue.path.reduce((result: string, part: string | number) => typeof part === 'number' ? `${result}[${part}]` : result ? `${result}.${part}` : part, '');
+          const path = issue.path.reduce<string>((result, part) => typeof part === 'number' ? `${result}[${part}]` : result ? `${result}.${String(part)}` : String(part), '');
           errors[path] = [...(errors[path] || []), issue.message];
         }
         throw new EditorRequestError('Some preset fields need attention.', 400, errors);

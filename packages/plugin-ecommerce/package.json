@@ -28,7 +28,7 @@
   },
   "author": "Jakob Holmelund",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.23.4"
   },
   "type": "module",
   "exports": {
@@ -162,7 +162,7 @@
   },
   "dependencies": {
     "stripe": "^22.6.2",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "peerDependencies": {
     "@tanstack/react-router": "^1.170.38",
@@ -172,10 +172,10 @@
     "talisman-cms": "workspace:^"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260921.1",
-    "@tanstack/react-router": "^1.170.38",
+    "@cloudflare/workers-types": "^5.20261113.1",
+    "@tanstack/react-router": "^1.170.46",
     "@types/react": "^19.3.0",
-    "astro": "^7.3.3",
+    "astro": "^7.4.12",
     "drizzle-kit": "rc",
     "drizzle-orm": "rc",
     "kysely": "0.29.6",
