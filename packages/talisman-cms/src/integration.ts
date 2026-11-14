@@ -3,7 +3,7 @@ import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
 import { isAbsolute, join, relative, resolve } from 'path';
 import tailwindcss from '@tailwindcss/vite';
-import { TanStackRouterVite } from '@tanstack/router-vite-plugin';
+import { adminRouterPlugins } from './admin-router';
 import type { TalismanAuthAdapter } from './auth/types';
 import { buildEmailVirtualModule } from './email/index';
 import { registerAuthAdapter } from './runtime-config';
@@ -899,12 +899,7 @@ export default function talismanCms(options?: TalismanCmsOptions): AstroIntegrat
             plugins: [
               ...userVitePlugins,
               tailwindcss() as any,
-              TanStackRouterVite({
-                routesDirectory: fileURLToPath(new URL('../ui/routes', import.meta.url)),
-                generatedRouteTree: fileURLToPath(new URL('../ui/routeTree.gen.ts', import.meta.url)),
-                // Each route's component becomes its own chunk, loaded when the route is first opened.
-                autoCodeSplitting: true,
-              }),
+              adminRouterPlugins(fileURLToPath(new URL('../ui', import.meta.url))),
               {
                 name: 'vite-plugin-talisman-cms-auth',
                 resolveId(id) {

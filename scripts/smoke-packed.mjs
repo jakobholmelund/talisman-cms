@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHmac, randomBytes } from 'node:crypto';
-import { copyFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -440,6 +440,19 @@ async function smokeProject(project, port, packages, browserReady) {
   });
   if (!installed) return;
 
+  // Both package managers expose the direct dependency here (pnpm uses a symlink).
+  // The core is ESM-only, so CommonJS require.resolve cannot resolve its root export.
+  const adminDirectory = join(dir, 'node_modules', 'talisman-cms', 'ui');
+  const snapshotAdmin = () => Object.fromEntries(readdirSync(adminDirectory, { recursive: true })
+    .sort().filter((name) => statSync(join(adminDirectory, name)).isFile())
+    .map((name) => [name, {
+      content: readFileSync(join(adminDirectory, name), 'base64'),
+      modified: statSync(join(adminDirectory, name), { bigint: true }).mtimeNs.toString(),
+    }]));
+  const installedAdmin = snapshotAdmin();
+  const assertAdminUnchanged = () => assert.deepEqual(snapshotAdmin(), installedAdmin,
+    'Astro must not rewrite installed admin routes or the shipped route tree');
+
   await step('one copy each of talisman-cms, react and react-dom', async () => {
     const duplicated = ['talisman-cms', 'react', 'react-dom']
       .map((name) => [name, copies(project, dir, name)])
@@ -455,6 +468,7 @@ async function smokeProject(project, port, packages, browserReady) {
   // The integration writes the migrations folder that the README's wrangler.toml names on every
   // config setup, so a site runs `astro sync` (or a build) before applying migrations.
   await step('astro sync writes the migrations folder', () => run(localBin(dir, 'astro'), ['sync'], { cwd: dir, log, timeout: 120_000 }));
+  await step('astro sync leaves installed admin files unchanged', assertAdminUnchanged);
   await step('wrangler d1 migrations apply DB --local', () =>
     run(localBin(dir, 'wrangler'), ['d1', 'migrations', 'apply', 'DB', '--local'], { cwd: dir, log, env: { ...childEnv, CI: 'true' } }));
 
@@ -477,6 +491,7 @@ async function smokeProject(project, port, packages, browserReady) {
   });
 
   await step('astro build', () => run(localBin(dir, 'astro'), ['build'], { cwd: dir, log }));
+  await step('astro dev/build leave installed admin files unchanged', assertAdminUnchanged);
 }
 
 const started = Date.now();
