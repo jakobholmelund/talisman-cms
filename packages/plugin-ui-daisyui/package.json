@@ -38,6 +38,7 @@
       "import": "./dist/generator.js"
     },
     "./admin/*": "./src/admin/*",
+    "./admin/ThemeBuilder": "./src/admin/ThemeBuilder.tsx",
     "./routes/*": "./src/routes/*",
     "./renderers/*": "./src/renderers/*",
     "./components/*": "./src/components/*"

@@ -30,7 +30,11 @@
   "exports": {
     ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
     "./beacon": "./src/Beacon.astro",
-    "./admin/*": "./src/admin/*"
+    "./admin/*": "./src/admin/*",
+    "./admin/Analytics": "./src/admin/Analytics.tsx",
+    "./admin/AskAnalytics": "./src/admin/AskAnalytics.tsx",
+    "./admin/CommerceAnalytics": "./src/admin/CommerceAnalytics.tsx",
+    "./admin/common": "./src/admin/common.tsx"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

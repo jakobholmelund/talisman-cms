@@ -24,6 +24,7 @@ export function analyticsPlugin(options: AnalyticsPluginOptions = {}): Plugin {
   const askEndpoint = { path: '/analytics/ask', entrypoint: routeEntrypoint('analytics-ask') };
   const plugin: Plugin = {
     name: '@talisman-cms/plugin-analytics',
+    adminStyleSources: [fileURLToPath(new URL('../src/admin', import.meta.url))],
     adminUi: [overview],
     adminLinks: [],
     endpoints: [baseEndpoint],

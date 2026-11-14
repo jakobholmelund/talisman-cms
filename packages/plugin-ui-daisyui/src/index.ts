@@ -33,6 +33,7 @@ export function daisyUiPlugin(): Plugin {
   
   return {
     ...base,
+    adminStyleSources: [...(base.adminStyleSources || []), fileURLToPath(new URL('../src/admin', import.meta.url))],
     onInit: (config) => {
       // Allow base plugin to initialize if needed
       const updatedConfig = base.onInit?.(config) ?? config;
