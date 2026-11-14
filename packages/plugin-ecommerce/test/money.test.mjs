@@ -13,6 +13,7 @@ test('amounts are scaled by the minor units of their currency', () => {
     ['EUR', 2, 1250, '€12.50', 12.5],
     ['jpy', 0, 1250, '¥1,250', 1250],
     ['kwd', 3, 1250, 'KWD 1.250', 1.25],
+    ['huf', 2, 1250, 'HUF 12.50', 12.5],
   ];
   for (const [currency, digits, amount, text, major] of cases) {
     assert.equal(currencyMinorUnits(currency), digits, currency);
@@ -21,6 +22,7 @@ test('amounts are scaled by the minor units of their currency', () => {
     assert.equal(toMinorUnits(major, currency), amount, currency);
   }
   assert.equal(formatted(1250, 'eur', 'de-DE'), '12,50 €');
+  assert.equal(formatted(1250, 'HUF', 'hu-HU'), '12,50 Ft');
   // Admin inputs are rounded to whole minor units, whatever the floating-point error.
   assert.equal(toMinorUnits(19.99, 'usd'), 1999);
   assert.equal(toMinorUnits(12.345, 'kwd'), 12345);

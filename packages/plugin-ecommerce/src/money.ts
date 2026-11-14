@@ -3,14 +3,19 @@
  * JPY, fils for KWD. This module has no imports, so storefront and admin bundles can use it.
  */
 
-/** Digits after the decimal point, as Intl formats the currency: 2 for USD, 0 for JPY, 3 for KWD. */
+/** Stripe charge precision for store currencies; Intl precision for other display-only currencies. */
 export function currencyMinorUnits(currency: string): number {
+  // Locale data changes independently of payment contracts (newer ICU displays HUF with no
+  // decimals, while Stripe still charges hundredths). Never let that change stored money's scale.
+  if (isSupportedCurrency(currency)) return currency.toLowerCase() === 'jpy' ? 0 : 2;
   return new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits ?? 2;
 }
 
 /** An amount in minor units as text: formatMoney(1250, 'usd') is "$12.50". */
 export function formatMoney(amount: number, currency: string, locale = 'en-US'): string {
-  return new Intl.NumberFormat(locale, { style: 'currency', currency: currency.toUpperCase() })
+  const digits = currencyMinorUnits(currency);
+  return new Intl.NumberFormat(locale, { style: 'currency', currency: currency.toUpperCase(),
+    minimumFractionDigits: digits, maximumFractionDigits: digits })
     .format(fromMinorUnits(amount, currency));
 }
 
@@ -26,9 +31,9 @@ export function fromMinorUnits(amount: number, currency: string): number {
 
 // Stripe's minimum charge per currency, in minor units:
 // https://docs.stripe.com/currencies#minimum-and-maximum-charge-amounts
-// These are also the only store currencies: each has a known minimum, and Intl and Stripe agree on its
-// minor units. Some others differ (Stripe counts ISK in hundredths while Intl shows none) and would
-// be charged at the wrong scale.
+// These are also the only store currencies: each has a known minimum and a verified Stripe charge
+// precision (JPY: zero decimals; the others: two). Other currencies need explicit verification before
+// being enabled; Intl display rules alone do not establish their payment contract.
 const MINIMUM_CHARGES = new Map<string, number>([
   ['usd', 50], ['aed', 200], ['aud', 50], ['bgn', 100], ['brl', 50], ['cad', 50], ['chf', 50],
   ['czk', 1500], ['dkk', 250], ['eur', 50], ['gbp', 30], ['hkd', 400], ['huf', 17500], ['inr', 50],
