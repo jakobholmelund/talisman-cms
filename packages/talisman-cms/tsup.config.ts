@@ -7,6 +7,7 @@ export default defineConfig({
   format: ['esm'],
   dts: true,
   clean: !watchMode,
+  sourcemap: process.env.TALISMAN_COVERAGE === '1',
   external: [
     'astro',
     'astro/toolbar',

@@ -14,7 +14,8 @@
     "release:check:archives": "node scripts/check-package-archives.mjs",
     "release:smoke": "node scripts/smoke-packed.mjs",
     "release:verify": "node scripts/verify-release.mjs",
-    "release:publish": "node scripts/publish-packages.mjs"
+    "release:publish": "node scripts/publish-packages.mjs",
+    "test:coverage": "node scripts/test-coverage.mjs"
   },
   "keywords": [],
   "author": "",
@@ -31,6 +32,7 @@
     "playwright-core": "^1.63.0",
     "ts-node": "^10.9.2",
     "type-fest": "^5.10.0",
-    "wrangler": "^4.146.0"
+    "wrangler": "^4.146.0",
+    "c8": "10.1.3"
   }
 }

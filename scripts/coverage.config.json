@@ -1,0 +1,12 @@
+{
+  "all": true,
+  "src": ["packages/talisman-cms/src", "packages/plugin-ecommerce/src"],
+  "include": [
+    "packages/{talisman-cms,plugin-ecommerce}/{src,dist}/**"
+  ],
+  "exclude": ["**/*.d.ts", "**/types.ts", "**/local-schema.ts"],
+  "exclude-after-remap": false,
+  "reporter": ["text", "json", "json-summary", "html", "lcov"],
+  "reports-dir": "coverage",
+  "check-coverage": false
+}

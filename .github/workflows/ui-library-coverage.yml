@@ -10,6 +10,38 @@ permissions:
   contents: read
 
 jobs:
+  source-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Separate job: source-map builds must never become release archives or committed dist/.
+      - run: pnpm test:coverage
+      - name: Upload source coverage reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: source-coverage
+          path: |
+            coverage/index.html
+            coverage/**/*.html
+            coverage/**/*.css
+            coverage/**/*.js
+            coverage/**/*.png
+            coverage/coverage-final.json
+            coverage/coverage-summary.json
+            coverage/lcov.info
+          retention-days: 14
+
   manifests:
     runs-on: ubuntu-latest
 
@@ -64,6 +96,10 @@ jobs:
           pnpm --filter playground build
           pnpm --filter talisman-cms db:migrate:local
           pnpm --filter talisman-cms db:seed:ecommerce:local
+          # The real commerce browser flows require these synthetic paid-order fixtures.
+          for fixture in commerce-aftercare commerce-purchasing commerce-recoveries commerce-returns; do
+            pnpm exec wrangler d1 execute DB --local --config playground/wrangler.toml --file "e2e/fixtures/$fixture.sql"
+          done
           pnpm --filter playground exec astro preview --host 127.0.0.1 --port 8787
           for _ in $(seq 1 90); do
             [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8787/admin)" = 200 ] && break
@@ -71,6 +107,8 @@ jobs:
           done
           status=0
           export TALISMAN_CHROME_PATH="$(command -v google-chrome || command -v chromium)"
+          export TALISMAN_E2E_AFTERCARE_ORDER_ID=ord_99999999-9999-4999-8999-999999999999
+          export TALISMAN_E2E_RETURNS_ORDER_ID=ord_77777777-7777-4777-8777-777777777777
           TALISMAN_E2E_SETUP_TOKEN="$TOKEN" node e2e/admin-flows.mjs --base-url http://127.0.0.1:8787 --dist playground/dist --report e2e-report.json || status=$?
           if [ "$status" = 0 ]; then
             TALISMAN_UI_BROWSER=1 pnpm --filter @talisman-cms/plugin-ui-daisyui exec node --test --test-concurrency=1 ./test/renderers.test.mjs ./test/theme-builder.browser.mjs || status=$?

@@ -35,6 +35,8 @@ test('development auth grants access only under the Vite dev server and on local
   // relative chunk imports are pointed at dist.
   const moduleUrl = new URL('../dist/auth/dev.js', import.meta.url);
   const source = readFileSync(moduleUrl, 'utf8')
+    // A data URL has no directory against which Node can resolve an external source map.
+    .replace(/^\/\/# sourceMappingURL=.*$/gm, '')
     .replace(/(["'])(\.\.?\/[^"']+)\1/g, (_, quote, specifier) => `${quote}${new URL(specifier, moduleUrl).href}${quote}`);
   assert.match(source, /import\.meta\.env\.DEV/);
   const underVite = async (dev) => (await import(`data:text/javascript,${encodeURIComponent(
