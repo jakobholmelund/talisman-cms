@@ -19,6 +19,14 @@ Talisman CMS is at release candidate validation. Publish only after the gates be
 
    Do not use `npm publish`; each package's `prepublishOnly` script stops it. pnpm rewrites each plugin's `workspace:` ranges to the core version in the workspace and adds the repository's `LICENSE.md` to every package; npm does neither, which leaves the plugins uninstallable and every package without the license text. The recursive command publishes `talisman-cms` before the plugins that depend on it and skips versions already on npm; the filter leaves out the playground. If you publish packages one at a time, run `pnpm publish` in `packages/talisman-cms` first, then in each plugin directory, and run `node scripts/check-dist-drift.mjs` from the repository root before each `pnpm publish`. pnpm's git checks expect a clean checkout of `main` that is not behind its remote. Push the release commit to `main` before publishing: the published core README links to `packages/talisman-cms/docs/admin-coverage.md` on GitHub's `main` branch, since the `docs` folder is not in the package.
 
+## Source coverage and local browser fixtures
+
+The current Astro toolchain requires Node.js 22.23.4 or later. The core declares `@emnapi/runtime` 1.11.3 as a development peer for Astro's checker: its WASM core uses the 1.x interface, while an unconstrained peer install can select an incompatible 2.0 prerelease.
+
+Run `pnpm test:coverage` in the sanitized verification clone. It rebuilds core and ecommerce with source maps, runs their Node suites, writes HTML/LCOV/JSON reports under `coverage/` and enforces the authentication and commerce thresholds in `scripts/check-coverage.mjs`. Missing executable source measurements fail. CI uploads the report separately from release artifacts. Run the normal release build afterward: coverage builds are not the package output to publish or commit.
+
+Before the full admin browser rehearsal, apply `e2e/fixtures/commerce-aftercare.sql`, `commerce-purchasing.sql`, `commerce-recoveries.sql` and `commerce-returns.sql` to the fresh disposable local playground database, after migrations and the product seed. Use `pnpm exec wrangler d1 execute DB --local --config playground/wrangler.toml --file <fixture>` from the repository root. Set `TALISMAN_E2E_AFTERCARE_ORDER_ID=ord_99999999-9999-4999-8999-999999999999` and `TALISMAN_E2E_RETURNS_ORDER_ID=ord_77777777-7777-4777-8777-777777777777` for the browser run. These synthetic fixtures are single-use and must never be applied to a real store. The hybrid-editor rehearsal still requires its documented opt-in fixture. CI loads all four commerce fixtures, including the previously skipped customer-return flow.
+
 ## Deployment gate
 
 Review sites using Astro live collections: reads now default to 50 entries and depth 0. Set explicit depth where related data is rendered, page larger collections with `limit`/`offset`, and pass `Astro.request` to draft queries. Draft previews require a verified CMS editor/admin and must send private, no-store responses. No migration or new binding is needed for these loader changes.
@@ -158,3 +166,21 @@ The admin dashboard/navigation change adds work-area counts, oldest-first queue 
 A sanitized clone passed `TALISMAN_SMOKE=0 CI=true pnpm release:verify`: 1,129 automated tests, schema/snapshot checks, package/admin type checks, playground checks/build and archive checks. The complete disposable local browser rehearsal passed 43 flows with no failures or known gaps; the hybrid-auth-only flow was skipped. The new `commerce-triage` flow covers exact versus preview counts, work-area and clear-queue filters, oldest-first ages, stale/malformed refresh recovery, actual receipt/refund reads, refused request/case reads, zero writes on opening cases, dirty navigation protection and narrow layout/navigation. A targeted follow-up also checked the dashboard's inner mobile width. The linked consumer passed checks, 52 tests and build. The main rebuild and independently built clone both matched committed package output after declaration-order normalization; this admin-source change required no generated-output commit.
 
 Packed registry consumer smoke was skipped and must run before publication. Live provider/email and owner deployment gates remain outstanding. Release and public checkout remain on hold.
+
+## Local hardening verification: 15 November 2026
+
+The dependency and packaging changes were verified in sanitized disposable checkouts with Node.js 22.23.4 and pnpm 10.28.0. The machine's default Node 22.20.0 is below the new Astro minimum; use Node 22.23.4 or later before installing or building this revision. The verification runtime was isolated and did not change the machine's global Node selection.
+
+| Check | Result |
+| --- | --- |
+| Package and script tests | 1,135 passed. Required-field validation retains its messages after Zod 4; supported payment currency precision remains stable across ICU versions. |
+| Source coverage | 1,008 core/commerce tests passed. Authentication: 94.83% lines, 98.68% branches, 90.48% functions. Selected commerce money paths: 97.22%, 88.02%, 100%. |
+| Release verification | `TALISMAN_SMOKE=0 CI=true pnpm release:verify` passed end to end. Includes schema/snapshot checks, core/admin/plugin type checks, playground check/build, six package archives and UI catalog accounting. Packed consumers run separately below. |
+| Admin browser flows | 43 passed, no failures or known gaps; the separate hybrid-auth-only flow was skipped. Fresh local D1 used all four synthetic commerce fixtures. |
+| daisyUI browser checks | All three renderer and Theme Builder checks passed. |
+| Linked consumer | Checks, 52 tests and production build passed against the updated packages. |
+| Committed package output | All 260 output files matched the independent build, allowing declaration-member ordering only; the dist-drift check passed after the dedicated rebuild commit. |
+| Production dependency audit | Zero critical/high/moderate findings; two low findings for the same esbuild development-server advisory through Vite and tsx. No dependency overrides were added. |
+| Packed npm/pnpm consumers | Gate remains incomplete. Both pnpm consumers passed import/deduplication, sync, browser, build and installed-route immutability checks across the runs; the full consumer also passed signed webhook checks. Online npm attempts timed out; the offline retry lacked the native `@cloudflare/workerd-darwin-arm64@1.20261110.1` tarball. A local migration command timed out on the offline retry after passing in the online run. Repeat the complete `pnpm release:smoke` with registry access before publishing. |
+
+The automated accessibility sample is recorded in `packages/talisman-cms/docs/admin-coverage.md`; broader contrast checks and a manual screen-reader rehearsal remain. These local checks do not publish packages, deploy Workers, apply remote migrations, or enable checkout. Provider-backed payment/email rehearsals and the existing owner release gates still apply.

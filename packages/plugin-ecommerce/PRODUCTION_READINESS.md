@@ -66,7 +66,7 @@ Before deployment, apply the five 2 October migrations listed in the package REA
 
 - Gift cards and their purchases are kept in USD only (migration `0015`), so a store with another currency cannot issue, sell or redeem them until those tables are rebuilt.
 - Store credit, referral terms, discount values and voucher balances carry no currency. Changing `TALISMAN_COMMERCE_CURRENCY` after they exist reads them in the new currency.
-- The store currency must be one of `SUPPORTED_CURRENCIES`: currencies with a known Stripe minimum charge whose minor units `Intl` and Stripe agree on. Any other code closes checkout.
+- The store currency must be one of `SUPPORTED_CURRENCIES`: currencies with a known Stripe minimum charge and verified charge precision independent of runtime locale data. Any other code closes checkout.
 - The discount preview has no destination, so its credit and amount to pay leave out shipping and tax and can differ from checkout's.
 - Stripe keeps idempotency keys for 24 hours and tax calculations for 90 days. A tax transaction or reversal that Stripe completed but whose id was not stored is refused as a duplicate reference when it is retried more than 24 hours later, and a transaction cannot be recorded once its calculation has expired. Permanent provider failures now park for audited recovery: attach a verified existing provider record or correct the cause and retry. An expired calculation with no existing record still requires a merchant/tax-adviser decision; no automatic write-off is implemented.
 - A lost dispute returns the gift card and store credit tender of the order to the shopper, as a full refund does.

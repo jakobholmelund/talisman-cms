@@ -4,7 +4,7 @@ Notes for Claude sessions in this repository. The README describes the product; 
 
 ## Layout
 
-- pnpm workspace (`pnpm@10.28.0`, Node 22.12 or later). Packages in `packages/`:
+- pnpm workspace (`pnpm@10.28.0`, Node 22.23.4 or later). Packages in `packages/`:
   - `talisman-cms`: the core. `src/` holds the integration, API handler, auth adapters, client and SEO and rich-text helpers. `ui/` holds the admin SPA, which ships as source. `src/db/schema.ts` and `src/auth/local-schema.ts` are the Drizzle schema files, `drizzle/` holds the migrations drizzle-kit generates from them (`drizzle.config.ts`), `seeds/` the demo seed, `test/` the node tests.
   - `plugin-ecommerce`, `plugin-stripe`, `plugin-analytics`, `plugin-ui-daisyui`, `plugin-ui-starwind`. `plugin-ecommerce` also holds `src/schema.ts`, the commerce schema with its `relations`, `src/db.ts`, the plugin's Drizzle client with the batch helpers, `src/api.ts`, which composes the commerce API over `src/basket.ts`, `src/checkout.ts`, `src/orders.ts` and `src/stripe-events.ts` (each module's header comment says what it holds; `src/reconcile-job.ts` is the scheduled pass and `src/retention.ts` the purge), `drizzle/`, its generated migrations and the hand-written trigger migration, and `src/admin/`, the Commerce admin section, its workspace and the product editor's options panel.
 - `playground/`: a private Astro site with placeholder Wrangler resources, used by `pnpm release:verify`.

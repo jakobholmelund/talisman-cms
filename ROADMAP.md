@@ -72,6 +72,8 @@ Runtime deduplication is already merged before publish. Remaining installed-pack
 
 ### Keep the TanStack route generator out of installed packages
 
+**Status:** Implemented. Installed packages use the shipped route tree and a read-only route-ID map for the standalone code splitter; linked source checkouts retain generation. The router plugin is pinned exactly. Regression tests cover npm/pnpm layouts and workspace symlinks; packed consumer smoke checks that sync, dev and build leave installed admin files unchanged.
+
 **Why:** The integration always registers `TanStackRouterVite` with the generated route tree inside the package. In a site's `node_modules` that can rewrite an installed package, and the caret range on the generator lets its output change between installs.
 
 **Approach:** The route tree ships prebuilt. Disable generation (`enableRouteGeneration: false`, or skip the plugin) when the package is inside `node_modules`, and pin the generator version exactly.
@@ -100,7 +102,7 @@ Before a store opens checkout, its owner decides where it sells, in which curren
 
 **Why:** A store sells in its own currency, to the countries it serves, and charges the tax and shipping its business needs, so these have to be settings rather than code, and every amount has to be scaled by its currency's minor units instead of divided by 100.
 
-**Approach:** Add store settings (or plugin options) for the currency, the allowed delivery countries, the tax mode (Stripe Tax, or none) and shipping rates. Use the configured currency everywhere an order or gift card is created, checked or redeemed. Pass the settings to the payment session, check the country against the allowlist on the server, and record tax and shipping on the order. Format and scale money by each currency's minor units (`Intl.NumberFormat(...).resolvedOptions().maximumFractionDigits`) in analytics, the admin and the storefront components.
+**Approach:** Add store settings (or plugin options) for the currency, the allowed delivery countries, the tax mode (Stripe Tax, or none) and shipping rates. Use the configured currency everywhere an order or gift card is created, checked or redeemed. Pass the settings to the payment session, check the country against the allowlist on the server, and record tax and shipping on the order. Format and scale money by the payment contract's minor units in analytics, the admin and the storefront components; locale data must not decide payment precision.
 
 **Audit refs:** `commerce-checkout/no-tax-or-shipping-in-totals`, `analytics-plugin/money-assumes-two-decimals`
 
@@ -590,6 +592,8 @@ Depends on the service layer merge.
 
 #### Ship compiled admin components and their styles
 
+**Status:** The source-shipping option is implemented: first-party admin components have explicit `.tsx` export targets, the commerce describer has an explicit `.ts` target, and analytics and daisyUI now register their admin stylesheet sources alongside ecommerce. Existing wildcard exports remain compatible. Package archive validation checks every explicit export.
+
 **Why:** `./admin/*` exports map to extensionless raw TSX that only Vite's extension probing resolves, and the admin stylesheet scans only the core's `ui/` folder, so Tailwind classes used only in plugin screens are never generated.
 
 **Approach:** Compile plugin admin components to `dist/admin/*.js` with `.d.ts` files (or map explicit `.tsx` paths), and let plugins register `@source` paths or ship their own admin CSS.
@@ -688,7 +692,7 @@ The release stabilization in `82c16b3`/`1984b94` replaces Overview placeholders,
 
 #### Accessibility of the editing flows
 
-**Status:** done on `main` before the 0.1 publish. A static audit of the editors, the page builder, the pickers, the media and users screens and the sign-in panel found 29 gaps; 27 were fixed (one had gone with the shared renderer, one was not a gap). Busy controls keep focus (`aria-disabled`, `aria-busy`, a mounted `sr-only` status line and a handler guard instead of `disabled`); success, progress and error messages are live regions that stay mounted; the conflict panel is a focused region announced by a separate alert; the error summary's field names focus their fields; repeated buttons name their record, field or revision; the variant editor's validation marks its inputs; styled text became headings; the rich text toolbar is one tab stop with arrow keys; read-only records are a disabled fieldset; the Users screen confirms a role change from a "Change role" button; the shell has a skip link and moves focus to the main landmark on navigation; and `useModalDialog` can make the rest of the page inert. The duplicate builder labels, media loading focus and nested inspector/preset error focus are fixed on `main` in `1984b94`, with browser regressions. Remaining: comprehensive colour-contrast measurement and a screen-reader rehearsal.
+**Status:** done on `main` before the 0.1 publish. A static audit of the editors, the page builder, the pickers, the media and users screens and the sign-in panel found 29 gaps; 27 were fixed (one had gone with the shared renderer, one was not a gap). Busy controls keep focus (`aria-disabled`, `aria-busy`, a mounted `sr-only` status line and a handler guard instead of `disabled`); success, progress and error messages are live regions that stay mounted; the conflict panel is a focused region announced by a separate alert; the error summary's field names focus their fields; repeated buttons name their record, field or revision; the variant editor's validation marks its inputs; styled text became headings; the rich text toolbar is one tab stop with arrow keys; read-only records are a disabled fieldset; the Users screen confirms a role change from a "Change role" button; the shell has a skip link and moves focus to the main landmark on navigation; and `useModalDialog` can make the rest of the page inert. The duplicate builder labels, media loading focus and nested inspector/preset error focus are fixed on `main` in `1984b94`, with browser regressions. An axe-core WCAG A/AA scan of seven local admin views on 15 November 2026 found no violations in six views; the Theme Builder's faithful theme preview exposed one secondary-button contrast failure (3.03:1 against 4.5:1). Remaining: other themes/states, comprehensive colour-contrast measurement and a screen-reader rehearsal.
 
 **Why:** Keyboard and screen reader users lost focus on every busy button, heard no outcome of a save or publish, and could edit read-only records that the mouse could not.
 
@@ -700,7 +704,7 @@ The release stabilization in `82c16b3`/`1984b94` replaces Overview placeholders,
 
 #### Load only one product's rows in the product editor
 
-**Status:** done for the product editor. The Options & stock panel reads one product's rows with `where[productId]=`, `where[productVariantId][in]=` and `where[productVariantValueId][in]=` (`packages/plugin-ecommerce/src/admin/product-rows.ts`, ids chunked under the query's parameter cap, a refused read shown as an error rather than an empty product), and the commerce describer no longer makes the editor load the flow tables for the products collection. The relation pickers still load a target in full: there is no server-side text search operator yet (`contains` works on arrays only), so a bounded picker would hide options.
+**Status:** done for the product editor. The Options & stock panel reads one product's rows with `where[productId]=`, `where[productVariantId][in]=` and `where[productVariantValueId][in]=` (`packages/plugin-ecommerce/src/admin/product-rows.ts`, ids chunked under the query's parameter cap, a refused read shown as an error rather than an empty product), and the commerce describer no longer makes the editor load the flow tables for the products collection. Relationship pickers now search bounded server pages and fetch selected labels independently; the earlier full-collection limitation is resolved.
 
 **Why:** Opening a product pages through every row of the variant, value, stock and component collections.
 
@@ -798,7 +802,7 @@ Smaller fixes that fit no workstream. Take them in any order.
 
 #### Quiet build logs and tidy the playground
 
-**Status:** Route-injection logging is at debug level on `main` in `86b063b`. Scratch-page cleanup remains open.
+**Status:** Route-injection logging is at debug level on `main` in `86b063b`. The three obsolete scratch pages are removed; supported examples remain in the normal page, blog and storefront routes. The removed globals scratch page previously wrote site settings on a GET request.
 
 **Why:** Every build prints "Injecting admin route/plugin route/page" with absolute paths, and the playground still has scratch pages (`test-globals`, `test-sdk`, `live-test`).
 
@@ -1006,6 +1010,8 @@ Smaller fixes that fit no workstream. Take them in any order.
 
 #### Measure test coverage
 
+**Status:** Implemented with `pnpm test:coverage`, disposable source-map builds, HTML/LCOV/JSON reports and a separate CI job. Authentication gates require 94% lines, 90% branches and 85% functions; the selected commerce money paths require 95%, 85% and 95%. Missing files or unmapped functions fail the gate. V8 bundle coverage is remapped before applying the critical-source thresholds; filtering individual sources during remapping can discard functions in multi-source chunks.
+
 **Why:** Tests import tsup bundles without source maps, so there is no coverage signal for the critical paths.
 
 **Approach:** Build test bundles with source maps (or test `src` directly), add c8 with thresholds for `src/auth` and the ecommerce money modules, and publish the report in CI.
@@ -1016,7 +1022,7 @@ Smaller fixes that fit no workstream. Take them in any order.
 
 #### Dependency hygiene
 
-**Status:** The two high undici production advisories are resolved by compatible Cloudflare tooling updates, with no override. The scoped production audit reports zero high/critical advisories and two low advisories. Dependency pruning and ongoing update automation remain separate work.
+**Status:** Updated Better Auth and its adapter to 1.7.7, migrated direct Zod usage to 4.6.7, aligned Astro 7.4.12 with the Cloudflare adapter/runtime, and refreshed compatible transitive dependencies without overrides. The 15 November 2026 production audit reports zero critical/high/moderate advisories and two low esbuild findings (one development-server advisory through Vite and tsx). Weekly Dependabot groups cover authentication, Astro/Cloudflare, TanStack and Actions; Drizzle's deliberate release-candidate selection remains manual. Dependency pruning remains separate work.
 
 **Why:** Transitive versions and unused declarations need regular review as dependencies change.
 

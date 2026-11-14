@@ -8,6 +8,8 @@ Talisman CMS and its plugins are licensed under [Apache-2.0](LICENSE.md).
 
 ---
 
+Development and builds require Node.js 22.23.4 or later and pnpm 10.28.0.
+
 ## ✨ Key Features
 
 ### 🚀 Deep Astro Native Integration

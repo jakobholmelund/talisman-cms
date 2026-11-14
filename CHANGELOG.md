@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Store currency precision now follows the payment contract instead of runtime locale data. HUF conversions and formatting retain hundredths on newer ICU releases, preventing a runtime upgrade from changing the scale or hiding fractional amounts.
+
+- Updated Better Auth, Astro/Cloudflare tooling and compatible transitive dependencies; migrated direct Zod usage to 4.6.7 while preserving required-field errors. Added grouped weekly Dependabot checks. The patched Astro toolchain requires Node.js 22.23.4 or later. No dependency overrides or migrations were added.
+
+- Installed packages use the prebuilt admin route tree without rewriting files in `node_modules`, while preserving lazy route components. Source checkouts still regenerate routes; the router plugin version is pinned.
+- First-party admin components have explicit source export paths. Analytics and daisyUI register their Tailwind source directories so plugin-only styles are generated.
+- Added source-mapped authentication and commerce coverage gates and CI reports, plus the missing synthetic commerce fixtures in the admin browser workflow.
+- Removed obsolete playground scratch pages, including the globals example that wrote data on GET. Reconciled stale roadmap entries for relationship search and plugin packaging.
+
 - **Needs attention** becomes a daily work dashboard with work-area counts, oldest-first queues, age badges, expandable previews and an option to show clear queues. Counts describe tasks rather than unique orders, and failed or incomplete refreshes keep a visibly stale snapshot.
 - Return requests, inspections, return refunds and parcel/exchange cases open directly from attention previews through fresh protected reads. Selected details appear above the queue and receive focus; existing draft and interrupted-write protections remain in place.
 - Commerce navigation keeps everyday tools visible and puts the remaining tools in an expandable menu, including mobile layouts. This admin-only change needs no migrations or settings; release and checkout remain on hold.
