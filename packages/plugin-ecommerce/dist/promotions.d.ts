@@ -6,104 +6,32 @@ import 'drizzle-orm';
 import './payments-DiMqRHdo.js';
 import 'drizzle-orm/sqlite-core';
 
-declare const discountCodeSchema: z.ZodEffects<z.ZodObject<{
+declare const discountCodeSchema: z.ZodObject<{
     code: z.ZodString;
     description: z.ZodNullable<z.ZodString>;
-    type: z.ZodEnum<["credit", "amount", "percent"]>;
+    type: z.ZodEnum<{
+        amount: "amount";
+        credit: "credit";
+        percent: "percent";
+    }>;
     value: z.ZodNumber;
     maxDiscountCents: z.ZodNullable<z.ZodNumber>;
     minOrderCents: z.ZodNumber;
-    eligibleProductIds: z.ZodArray<z.ZodString, "many">;
+    eligibleProductIds: z.ZodArray<z.ZodString>;
     maxUses: z.ZodNullable<z.ZodNumber>;
     maxUsesPerCustomer: z.ZodNullable<z.ZodNumber>;
     firstOrderOnly: z.ZodBoolean;
     startsAt: z.ZodNullable<z.ZodNumber>;
     expiresAt: z.ZodNullable<z.ZodNumber>;
     active: z.ZodBoolean;
-}, "strict", z.ZodTypeAny, {
-    value: number;
-    code: string;
-    type: "amount" | "credit" | "percent";
-    active: boolean;
-    description: string | null;
-    expiresAt: number | null;
-    minOrderCents: number;
-    maxDiscountCents: number | null;
-    eligibleProductIds: string[];
-    maxUses: number | null;
-    maxUsesPerCustomer: number | null;
-    firstOrderOnly: boolean;
-    startsAt: number | null;
-}, {
-    value: number;
-    code: string;
-    type: "amount" | "credit" | "percent";
-    active: boolean;
-    description: string | null;
-    expiresAt: number | null;
-    minOrderCents: number;
-    maxDiscountCents: number | null;
-    eligibleProductIds: string[];
-    maxUses: number | null;
-    maxUsesPerCustomer: number | null;
-    firstOrderOnly: boolean;
-    startsAt: number | null;
-}>, {
-    value: number;
-    code: string;
-    type: "amount" | "credit" | "percent";
-    active: boolean;
-    description: string | null;
-    expiresAt: number | null;
-    minOrderCents: number;
-    maxDiscountCents: number | null;
-    eligibleProductIds: string[];
-    maxUses: number | null;
-    maxUsesPerCustomer: number | null;
-    firstOrderOnly: boolean;
-    startsAt: number | null;
-}, {
-    value: number;
-    code: string;
-    type: "amount" | "credit" | "percent";
-    active: boolean;
-    description: string | null;
-    expiresAt: number | null;
-    minOrderCents: number;
-    maxDiscountCents: number | null;
-    eligibleProductIds: string[];
-    maxUses: number | null;
-    maxUsesPerCustomer: number | null;
-    firstOrderOnly: boolean;
-    startsAt: number | null;
-}>;
+}, z.core.$strict>;
 type DiscountCodeInput = z.infer<typeof discountCodeSchema>;
-declare const referralSettingsSchema: z.ZodEffects<z.ZodObject<{
+declare const referralSettingsSchema: z.ZodObject<{
     enabled: z.ZodBoolean;
     rewardCents: z.ZodNumber;
     minOrderCents: z.ZodNumber;
     attributionDays: z.ZodNumber;
-}, "strict", z.ZodTypeAny, {
-    enabled: boolean;
-    rewardCents: number;
-    minOrderCents: number;
-    attributionDays: number;
-}, {
-    enabled: boolean;
-    rewardCents: number;
-    minOrderCents: number;
-    attributionDays: number;
-}>, {
-    enabled: boolean;
-    rewardCents: number;
-    minOrderCents: number;
-    attributionDays: number;
-}, {
-    enabled: boolean;
-    rewardCents: number;
-    minOrderCents: number;
-    attributionDays: number;
-}>;
+}, z.core.$strict>;
 declare function discountAmountForLines(code: Pick<typeof discountCodes.$inferSelect, 'type' | 'value' | 'remainingCents' | 'maxDiscountCents' | 'minOrderCents' | 'eligibleProductIds'>, lines: Array<{
     productId: string;
     quantity: number;
@@ -214,13 +142,13 @@ declare function createDiscountCode(env: TalismanEnv, input: unknown, actor?: st
     updatedAt: Date;
 } | undefined>;
 declare function updateDiscountCode(env: TalismanEnv, code: string, input: unknown): Promise<{
-    value: number;
-    code: string;
-    type: "amount" | "credit" | "percent";
-    active: boolean;
     createdAt: Date;
     updatedAt: Date;
+    active: boolean;
+    code: string;
     description: string | null;
+    type: "amount" | "credit" | "percent";
+    value: number;
     expiresAt: Date | null;
     minOrderCents: number;
     remainingCents: number | null;

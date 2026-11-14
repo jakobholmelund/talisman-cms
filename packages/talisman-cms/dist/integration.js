@@ -13,15 +13,47 @@ import {
 import {
   getPluginUiLibraryMetadata,
   resolveFieldDefinitions
-} from "./chunk-LQQ27M3S.js";
+} from "./chunk-I2M5IE4P.js";
 import "./chunk-MLKGABMK.js";
 
 // src/integration.ts
 import { fileURLToPath } from "url";
-import { existsSync, readFileSync, realpathSync, statSync } from "fs";
-import { isAbsolute, join, relative, resolve } from "path";
+import { existsSync, readFileSync as readFileSync2, realpathSync as realpathSync2, statSync } from "fs";
+import { isAbsolute, join as join2, relative, resolve } from "path";
 import tailwindcss from "@tailwindcss/vite";
-import { TanStackRouterVite } from "@tanstack/router-vite-plugin";
+
+// src/admin-router.ts
+import { readFileSync, readdirSync, realpathSync } from "fs";
+import { join } from "path";
+import { TanStackRouterVite, tanStackRouterCodeSplitter } from "@tanstack/router-vite-plugin";
+function adminRouterPlugins(uiDirectory) {
+  const ui = realpathSync(uiDirectory);
+  const routesDirectory = join(ui, "routes");
+  const options = {
+    routesDirectory,
+    generatedRouteTree: join(ui, "routeTree.gen.ts"),
+    autoCodeSplitting: true
+  };
+  if (!ui.split(/[\\/]/).includes("node_modules")) return TanStackRouterVite(options);
+  const routesByFile = /* @__PURE__ */ new Map();
+  function readRoutes(directory) {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) readRoutes(path);
+      else if (entry.name === "__root.tsx") routesByFile.set(path.replace(/\\/g, "/"), { routeId: "/__root" });
+      else if (entry.name.endsWith(".tsx")) {
+        const source = readFileSync(path, "utf8");
+        const route = source.match(/export\s+const\s+Route\s*=\s*createFileRoute\(\s*(['"])([^'"\r\n]+)\1\s*\)/);
+        if (!route) throw new Error(`Talisman CMS: missing generated route ID in ${path}. Rebuild the package before publishing.`);
+        routesByFile.set(path.replace(/\\/g, "/"), { routeId: route[2] });
+      }
+    }
+  }
+  readRoutes(routesDirectory);
+  return tanStackRouterCodeSplitter(options, { routesByFile });
+}
+
+// src/integration.ts
 function normalizeAdminPath(adminPath) {
   const trimmed = adminPath?.trim();
   if (!trimmed) return "/admin";
@@ -484,18 +516,18 @@ var DEFAULT_MIGRATIONS_DIR = "node_modules/.talisman-cms/migrations";
 var WRANGLER_CONFIG_FILES = ["wrangler.toml", "wrangler.json", "wrangler.jsonc"];
 var coreMigrationsDir = fileURLToPath(new URL("../drizzle/", import.meta.url));
 function samePath(a, b) {
-  const real = (path) => existsSync(path) ? realpathSync(path) : resolve(path);
+  const real = (path) => existsSync(path) ? realpathSync2(path) : resolve(path);
   return real(a) === real(b);
 }
 function readWranglerConfig(configPath, isToml) {
-  const raw = readFileSync(configPath, "utf8");
+  const raw = readFileSync2(configPath, "utf8");
   return isToml ? raw.replace(/^\s*#.*$/gm, "") : raw.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
 }
 function checkWranglerCronTrigger(projectRoot, plugins) {
   const names = plugins.filter((plugin) => plugin.scheduled).map((plugin) => plugin.name);
   if (!names.length) return;
   for (const fileName of WRANGLER_CONFIG_FILES) {
-    const configPath = join(projectRoot, fileName);
+    const configPath = join2(projectRoot, fileName);
     if (!existsSync(configPath)) continue;
     const isToml = fileName.endsWith(".toml");
     const text = readWranglerConfig(configPath, isToml);
@@ -507,7 +539,7 @@ function checkWranglerMigrationsDir(projectRoot, outDir, displayDir, pluginsShip
   const found = [];
   let pointsAtAssembled = false;
   for (const fileName of WRANGLER_CONFIG_FILES) {
-    const configPath = join(projectRoot, fileName);
+    const configPath = join2(projectRoot, fileName);
     if (!existsSync(configPath)) continue;
     const isToml = fileName.endsWith(".toml");
     const text = readWranglerConfig(configPath, isToml);
@@ -712,12 +744,7 @@ function talismanCms(options) {
             plugins: [
               ...userVitePlugins,
               tailwindcss(),
-              TanStackRouterVite({
-                routesDirectory: fileURLToPath(new URL("../ui/routes", import.meta.url)),
-                generatedRouteTree: fileURLToPath(new URL("../ui/routeTree.gen.ts", import.meta.url)),
-                // Each route's component becomes its own chunk, loaded when the route is first opened.
-                autoCodeSplitting: true
-              }),
+              adminRouterPlugins(fileURLToPath(new URL("../ui", import.meta.url))),
               {
                 name: "vite-plugin-talisman-cms-auth",
                 resolveId(id) {
@@ -888,7 +915,7 @@ function talismanCms(options) {
                 load(id) {
                   if (adminStyleSources.length === 0 || id.split("?")[0] !== adminStylesheetPath) return;
                   const sources = adminStyleSources.map((dir) => `@source ${JSON.stringify(dir)};`).join("\n");
-                  return `${readFileSync(adminStylesheetPath, "utf8")}
+                  return `${readFileSync2(adminStylesheetPath, "utf8")}
 ${sources}
 `;
                 }

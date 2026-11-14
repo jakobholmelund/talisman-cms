@@ -1,9 +1,16 @@
 // src/money.ts
 function currencyMinorUnits(currency) {
+  if (isSupportedCurrency(currency)) return currency.toLowerCase() === "jpy" ? 0 : 2;
   return new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions().maximumFractionDigits ?? 2;
 }
 function formatMoney(amount, currency, locale = "en-US") {
-  return new Intl.NumberFormat(locale, { style: "currency", currency: currency.toUpperCase() }).format(fromMinorUnits(amount, currency));
+  const digits = currencyMinorUnits(currency);
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency: currency.toUpperCase(),
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits
+  }).format(fromMinorUnits(amount, currency));
 }
 function toMinorUnits(major, currency) {
   return Math.round(major * 10 ** currencyMinorUnits(currency));

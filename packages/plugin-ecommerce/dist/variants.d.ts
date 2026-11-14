@@ -18,161 +18,42 @@ declare const saveValueInput: z.ZodObject<{
     groupId: z.ZodString;
     value: z.ZodObject<{
         id: z.ZodOptional<z.ZodString>;
-        expectedUpdatedAt: z.ZodOptional<z.ZodUnion<[z.ZodString, z.ZodNumber]>>;
+        expectedUpdatedAt: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodNumber]>>;
         value: z.ZodString;
-        sku: z.ZodEffects<z.ZodNullable<z.ZodString>, string | null, string | null>;
-        image: z.ZodEffects<z.ZodNullable<z.ZodString>, string | null, string | null>;
+        sku: z.ZodPipe<z.ZodNullable<z.ZodString>, z.ZodTransform<string | null, string | null>>;
+        image: z.ZodPipe<z.ZodNullable<z.ZodString>, z.ZodTransform<string | null, string | null>>;
         priceOverride: z.ZodNullable<z.ZodNumber>;
-    }, "strict", z.ZodTypeAny, {
-        sku: string | null;
-        priceOverride: number | null;
-        value: string;
-        image: string | null;
-        id?: string | undefined;
-        expectedUpdatedAt?: string | number | undefined;
-    }, {
-        sku: string | null;
-        priceOverride: number | null;
-        value: string;
-        image: string | null;
-        id?: string | undefined;
-        expectedUpdatedAt?: string | number | undefined;
-    }>;
+    }, z.core.$strict>;
     stock: z.ZodOptional<z.ZodObject<{
         id: z.ZodOptional<z.ZodString>;
-        expectedUpdatedAt: z.ZodOptional<z.ZodUnion<[z.ZodString, z.ZodNumber]>>;
+        expectedUpdatedAt: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodNumber]>>;
         quantity: z.ZodNumber;
-    }, "strict", z.ZodTypeAny, {
-        quantity: number;
-        id?: string | undefined;
-        expectedUpdatedAt?: string | number | undefined;
-    }, {
-        quantity: number;
-        id?: string | undefined;
-        expectedUpdatedAt?: string | number | undefined;
-    }>>;
-}, "strict", z.ZodTypeAny, {
-    value: {
-        sku: string | null;
-        priceOverride: number | null;
-        value: string;
-        image: string | null;
-        id?: string | undefined;
-        expectedUpdatedAt?: string | number | undefined;
-    };
-    groupId: string;
-    stock?: {
-        quantity: number;
-        id?: string | undefined;
-        expectedUpdatedAt?: string | number | undefined;
-    } | undefined;
-}, {
-    value: {
-        sku: string | null;
-        priceOverride: number | null;
-        value: string;
-        image: string | null;
-        id?: string | undefined;
-        expectedUpdatedAt?: string | number | undefined;
-    };
-    groupId: string;
-    stock?: {
-        quantity: number;
-        id?: string | undefined;
-        expectedUpdatedAt?: string | number | undefined;
-    } | undefined;
-}>;
+    }, z.core.$strict>>;
+}, z.core.$strict>;
 /** A request to the admin variants endpoint. */
-declare const variantChangeSchema: z.ZodDiscriminatedUnion<"action", [z.ZodObject<{
+declare const variantChangeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     groupId: z.ZodString;
     value: z.ZodObject<{
         id: z.ZodOptional<z.ZodString>;
-        expectedUpdatedAt: z.ZodOptional<z.ZodUnion<[z.ZodString, z.ZodNumber]>>;
+        expectedUpdatedAt: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodNumber]>>;
         value: z.ZodString;
-        sku: z.ZodEffects<z.ZodNullable<z.ZodString>, string | null, string | null>;
-        image: z.ZodEffects<z.ZodNullable<z.ZodString>, string | null, string | null>;
+        sku: z.ZodPipe<z.ZodNullable<z.ZodString>, z.ZodTransform<string | null, string | null>>;
+        image: z.ZodPipe<z.ZodNullable<z.ZodString>, z.ZodTransform<string | null, string | null>>;
         priceOverride: z.ZodNullable<z.ZodNumber>;
-    }, "strict", z.ZodTypeAny, {
-        sku: string | null;
-        priceOverride: number | null;
-        value: string;
-        image: string | null;
-        id?: string | undefined;
-        expectedUpdatedAt?: string | number | undefined;
-    }, {
-        sku: string | null;
-        priceOverride: number | null;
-        value: string;
-        image: string | null;
-        id?: string | undefined;
-        expectedUpdatedAt?: string | number | undefined;
-    }>;
+    }, z.core.$strict>;
     stock: z.ZodOptional<z.ZodObject<{
         id: z.ZodOptional<z.ZodString>;
-        expectedUpdatedAt: z.ZodOptional<z.ZodUnion<[z.ZodString, z.ZodNumber]>>;
+        expectedUpdatedAt: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodNumber]>>;
         quantity: z.ZodNumber;
-    }, "strict", z.ZodTypeAny, {
-        quantity: number;
-        id?: string | undefined;
-        expectedUpdatedAt?: string | number | undefined;
-    }, {
-        quantity: number;
-        id?: string | undefined;
-        expectedUpdatedAt?: string | number | undefined;
-    }>>;
-} & {
+    }, z.core.$strict>>;
     action: z.ZodLiteral<"saveValue">;
-}, "strict", z.ZodTypeAny, {
-    value: {
-        sku: string | null;
-        priceOverride: number | null;
-        value: string;
-        image: string | null;
-        id?: string | undefined;
-        expectedUpdatedAt?: string | number | undefined;
-    };
-    action: "saveValue";
-    groupId: string;
-    stock?: {
-        quantity: number;
-        id?: string | undefined;
-        expectedUpdatedAt?: string | number | undefined;
-    } | undefined;
-}, {
-    value: {
-        sku: string | null;
-        priceOverride: number | null;
-        value: string;
-        image: string | null;
-        id?: string | undefined;
-        expectedUpdatedAt?: string | number | undefined;
-    };
-    action: "saveValue";
-    groupId: string;
-    stock?: {
-        quantity: number;
-        id?: string | undefined;
-        expectedUpdatedAt?: string | number | undefined;
-    } | undefined;
-}>, z.ZodObject<{
+}, z.core.$strict>, z.ZodObject<{
     action: z.ZodLiteral<"deleteValue">;
     valueId: z.ZodString;
-}, "strict", z.ZodTypeAny, {
-    action: "deleteValue";
-    valueId: string;
-}, {
-    action: "deleteValue";
-    valueId: string;
-}>, z.ZodObject<{
+}, z.core.$strict>, z.ZodObject<{
     action: z.ZodLiteral<"deleteGroup">;
     groupId: z.ZodString;
-}, "strict", z.ZodTypeAny, {
-    action: "deleteGroup";
-    groupId: string;
-}, {
-    action: "deleteGroup";
-    groupId: string;
-}>]>;
+}, z.core.$strict>], "action">;
 type SaveVariantValueInput = z.input<typeof saveValueInput>;
 /**
  * Create a value with its stock row, or update a value and, when the input has `stock`, its stock

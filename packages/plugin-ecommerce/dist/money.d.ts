@@ -2,7 +2,7 @@
  * Money helpers. Every amount is an integer in the currency's minor units: cents for USD, yen for
  * JPY, fils for KWD. This module has no imports, so storefront and admin bundles can use it.
  */
-/** Digits after the decimal point, as Intl formats the currency: 2 for USD, 0 for JPY, 3 for KWD. */
+/** Stripe charge precision for store currencies; Intl precision for other display-only currencies. */
 declare function currencyMinorUnits(currency: string): number;
 /** An amount in minor units as text: formatMoney(1250, 'usd') is "$12.50". */
 declare function formatMoney(amount: number, currency: string, locale?: string): string;

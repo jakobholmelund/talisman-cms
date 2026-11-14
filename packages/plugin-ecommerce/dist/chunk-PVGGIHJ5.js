@@ -27,12 +27,12 @@ import {
 import {
   emailLink,
   giftCardClaimEmail
-} from "./chunk-R2NISKMY.js";
+} from "./chunk-AQNK3BKB.js";
 import {
   SUPPORTED_CURRENCIES,
   isSupportedCurrency,
   minimumChargeAmount
-} from "./chunk-2UYSCNNW.js";
+} from "./chunk-HNDRZISR.js";
 
 // src/gift-cards.ts
 import { and as and3, count, eq as eq3, exists, gt, inArray, isNull as isNull3, lt, ne, not, or as or2, sql as sql3 } from "drizzle-orm";
@@ -405,9 +405,11 @@ function readShippingRates(env, deliveryCountries) {
   if (list.length > MAX_SHIPPING_RATES) {
     throw new StoreSettingsError(`${name} must list at most ${MAX_SHIPPING_RATES} rates, not ${list.length}`);
   }
-  const parsed = shippingRatesSchema.safeParse(list);
+  const parsed = shippingRatesSchema.safeParse(list, {
+    error: (issue) => issue.code === "invalid_type" && issue.input === void 0 ? "Required" : void 0
+  });
   if (!parsed.success) {
-    throw new StoreSettingsError(parsed.error.issues.map((issue) => `${name}${issue.path.map((key) => typeof key === "number" ? `[${key}]` : `.${key}`).join("")}: ${issue.message}`).join("; "));
+    throw new StoreSettingsError(parsed.error.issues.map((issue) => `${name}${issue.path.map((key) => typeof key === "number" ? `[${key}]` : `.${String(key)}`).join("")}: ${issue.message}`).join("; "));
   }
   return parsed.data.map((rate, index) => {
     const countries = rate.countries ? [...new Set(rate.countries.map((entry) => entry.trim().toUpperCase()))] : null;

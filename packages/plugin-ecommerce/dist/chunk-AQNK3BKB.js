@@ -1,6 +1,6 @@
 import {
   formatMoney
-} from "./chunk-2UYSCNNW.js";
+} from "./chunk-HNDRZISR.js";
 
 // src/emails.ts
 import { escapeHtml, renderTransactionalEmail } from "talisman-cms/email";

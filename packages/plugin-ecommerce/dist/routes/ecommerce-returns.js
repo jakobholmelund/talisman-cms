@@ -1,20 +1,20 @@
 import {
   readBoundedJson
-} from "../chunk-366NLRUF.js";
+} from "../chunk-6KSBZ7AT.js";
 import {
   bindCommerceApi
-} from "../chunk-MS2V2E45.js";
-import "../chunk-YKKPVPTL.js";
+} from "../chunk-5UT54SKW.js";
+import "../chunk-PDZF27EW.js";
 import "../chunk-BVMDOVSS.js";
-import "../chunk-OGYT5JJJ.js";
+import "../chunk-MPH2QR5Y.js";
 import "../chunk-AVWDMCNG.js";
 import "../chunk-IN4CG7W7.js";
 import {
   CommerceOperationsConflict
-} from "../chunk-GFXT6MBK.js";
+} from "../chunk-GLO65VCM.js";
 import {
   ShopperError
-} from "../chunk-MBWSY2KP.js";
+} from "../chunk-PVGGIHJ5.js";
 import "../chunk-IC3XDWQU.js";
 import "../chunk-GNU6N22K.js";
 import {
@@ -27,8 +27,8 @@ import {
   readCartSessionToken,
   readOrderAccess
 } from "../chunk-NQUBOBQT.js";
-import "../chunk-R2NISKMY.js";
-import "../chunk-2UYSCNNW.js";
+import "../chunk-AQNK3BKB.js";
+import "../chunk-HNDRZISR.js";
 
 // src/routes/ecommerce-returns.ts
 import { z, ZodError } from "zod";
@@ -38,7 +38,7 @@ var ALL = async ({ request, cookies }) => {
   if (!["GET", "POST"].includes(request.method)) return Response.json({ error: "Method not allowed" }, { status: 405, headers: { ...headers, Allow: "GET, POST" } });
   if (request.method === "POST" && request.headers.get("origin") !== new URL(request.url).origin) return Response.json({ error: "Same-origin request required" }, { status: 403, headers });
   try {
-    const body = request.method === "POST" ? z.object({ action: z.enum(["request", "cancel", "exchangeChoices"]), data: z.record(z.unknown()) }).strict().parse(await readBoundedJson(request, 32768)) : null;
+    const body = request.method === "POST" ? z.object({ action: z.enum(["request", "cancel", "exchangeChoices"]), data: z.record(z.string(), z.unknown()) }).strict().parse(await readBoundedJson(request, 32768)) : null;
     const orderId = id.parse(body ? body.data.orderId : new URL(request.url).searchParams.get("order"));
     const { env } = await import("cloudflare:workers");
     const runtimeEnv = env;

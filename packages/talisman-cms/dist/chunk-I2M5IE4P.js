@@ -448,6 +448,7 @@ function requireValue(field, schema) {
   if (field.type === "richtext") {
     return schema.refine((value) => !isEmptyRichText(value), { message: REQUIRED_MESSAGE });
   }
+  schema = z.custom((value) => value !== null && value !== void 0, { message: REQUIRED_MESSAGE }).pipe(schema);
   if (["group", "array", "blocks", "number", "boolean"].includes(field.type) || isRelationshipFieldType(field.type) && (field.hasMany || isPolymorphicRelationField(field))) {
     return schema;
   }

@@ -1510,6 +1510,7 @@ function daisyUiPlugin2() {
   const base = daisyUiPlugin();
   return {
     ...base,
+    adminStyleSources: [...base.adminStyleSources || [], fileURLToPath(new URL("../src/admin", import.meta.url))],
     onInit: (config) => {
       const updatedConfig = base.onInit?.(config) ?? config;
       const themeGlobal = {

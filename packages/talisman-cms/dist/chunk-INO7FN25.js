@@ -49,7 +49,7 @@ import {
   nextNativeUpdatedAt,
   normalizeBlankNativeValues,
   pickConfiguredNativeFields
-} from "./chunk-LQQ27M3S.js";
+} from "./chunk-I2M5IE4P.js";
 
 // src/service/config.ts
 function configFromModules(modules) {

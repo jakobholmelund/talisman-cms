@@ -44,14 +44,14 @@ var saveValueInput = z.object({
     value: z.string().trim().min(1, "Variant value label is required").max(200, "Variant value label must be at most 200 characters"),
     sku: optionalText(200, "SKU"),
     image: optionalText(2048, "Variant image"),
-    priceOverride: z.number({ invalid_type_error: "Price override must be a whole number in the smallest currency unit" }).int("Price override must be a whole number in the smallest currency unit").positive("Price override must be more than zero").max(Number.MAX_SAFE_INTEGER, "Price override is too large").nullable()
+    priceOverride: z.number({ error: "Price override must be a whole number in the smallest currency unit" }).int("Price override must be a whole number in the smallest currency unit").positive("Price override must be more than zero").max(Number.MAX_SAFE_INTEGER, "Price override is too large").nullable()
   }).strict(),
   // Left out, a saved value's stock is not written: checkout reserves stock in place, so writing back
   // the quantity loaded with the page would undo reservations made since.
   stock: z.object({
     id: recordId.optional(),
     expectedUpdatedAt: loadedToken.optional(),
-    quantity: z.number({ invalid_type_error: "Stock must be a whole number" }).int("Stock must be a whole number").nonnegative("Stock cannot be negative").max(Number.MAX_SAFE_INTEGER, "Stock is too large")
+    quantity: z.number({ error: "Stock must be a whole number" }).int("Stock must be a whole number").nonnegative("Stock cannot be negative").max(Number.MAX_SAFE_INTEGER, "Stock is too large")
   }).strict().optional()
 }).strict();
 var variantChangeSchema = z.discriminatedUnion("action", [
