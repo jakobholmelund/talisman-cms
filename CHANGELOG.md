@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The Theme Builder warns about low-contrast text/background pairs in light and dark previews, including transparent foregrounds, while preserving the palette and allowing saves.
+- A dedicated hybrid-auth browser CI job now verifies local editor sign-in, repeated draft saves, denied publish/archive/delete requests and sign-out. Packed-install failures print their details immediately.
+
 - Store currency precision now follows the payment contract instead of runtime locale data. HUF conversions and formatting retain hundredths on newer ICU releases, preventing a runtime upgrade from changing the scale or hiding fractional amounts.
 
 - Updated Better Auth, Astro/Cloudflare tooling and compatible transitive dependencies; migrated direct Zod usage to 4.6.7 while preserving required-field errors. Added grouped weekly Dependabot checks. The patched Astro toolchain requires Node.js 22.23.4 or later. No dependency overrides or migrations were added.
