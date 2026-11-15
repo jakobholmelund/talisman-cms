@@ -490,6 +490,8 @@ const steps = {
     const response = await page.request.get(apiPath('/auth/session'));
     const session = await response.json();
     if (!session.isHybridAuth || session.user?.role !== 'editor') fail('hybrid fixture must use HybridAuthAdapter and a local editor account');
+    const setup = await page.request.get(apiPath('/auth/setup'));
+    if (!setup.ok() || (await setup.json()).required !== false) fail('hybrid mode must not offer first-admin setup');
     await openEntry(page, 'posts', 'new');
     await labelled(page, 'Title').fill(`Hybrid editor draft ${ctx.runId}`);
     await labelled(page, 'Slug (Optional)').fill(`hybrid-editor-${ctx.runId}`);
@@ -501,6 +503,12 @@ const steps = {
     if (await page.getByRole('button', { name: /^(Publish|Archive|Delete entry)$/ }).count()) fail('hybrid editor sees an admin-only action');
     const forbidden = await page.request.delete(apiPath(`/collections/posts/entries/${entry.id}`));
     if (forbidden.status() !== 403) fail(`hybrid editor delete answered ${forbidden.status()} instead of 403`);
+    for (const action of ['publish', 'archive']) {
+      const refused = await page.request.post(apiPath(`/collections/posts/entries/${entry.id}/${action}`), {
+        data: { expectedRevisionId: entry.latestRevisionId }, headers: { Origin: ctx.options.baseUrl },
+      });
+      if (refused.status() !== 403) fail(`hybrid editor ${action} answered ${refused.status()} instead of 403`);
+    }
     await labelled(page, 'Title').fill(`Hybrid editor updated ${ctx.runId}`);
     await saveEntry(page, 'posts', entry.id, 'hybrid editor second draft save');
     if (await page.getByRole('button', { name: 'Sign out of CMS and Cloudflare' }).count()) fail('local hybrid editor sign-out should not end a Cloudflare session');

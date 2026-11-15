@@ -17,7 +17,7 @@ import cloudflare from '@astrojs/cloudflare';
 import tailwindcss from '@tailwindcss/vite';
 
 // https://astro.build/config
-export default defineConfig({
+export const playgroundConfig = (auth = LocalAuthAdapter()) => defineConfig({
   output: 'server',
   adapter: cloudflare({
     imageService: 'cloudflare',
@@ -58,7 +58,7 @@ export default defineConfig({
     plugins: [tailwindcss()]
   },
   integrations: [talismanCms({
-    auth: LocalAuthAdapter(),
+    auth,
     publishing: {
       workflowBinding: 'TALISMAN_PUBLISH_WORKFLOW'
     },
@@ -255,3 +255,4 @@ export default defineConfig({
     ]
   })]
 });
+export default playgroundConfig();
