@@ -187,3 +187,12 @@ The automated accessibility sample is recorded in `packages/talisman-cms/docs/ad
 
 
 The follow-up also passed the dedicated hybrid-editor browser rehearsal (sign-in and editor flow), including direct HTTP 403 checks for publish, archive and delete. The new CI job runs this separately from the local-admin suite against a synthetic editor in disposable local D1. Theme Builder browser checks now cover contrast warnings, transparent foregrounds, unknown backgrounds, recovery and switching modes. The clean frozen-lockfile installation passed both local and hybrid Astro checks with zero diagnostics, plugin type checks, 28 daisyUI unit tests, all three daisyUI browser checks and 16 release-script tests. The normal playground build, all six package archives and committed-output drift checks also passed. These changes add no migrations or runtime settings.
+
+
+## Combined release and accessibility verification: 15 November 2026
+
+Commit `5e56433fb912855debb063139cd969a0d46c6f74` was verified from a clean, sanitized checkout with Node.js 22.23.4 and pnpm 10.28.0. `CI=true pnpm release:verify` passed without skipping packed consumers: 1,135 package/script tests, schema checks, core/admin/plugin types, Astro diagnostics, production build, six package archives and all four npm/pnpm consumers. Packed installation, deduplication, public imports, local migrations, browser loading, signed webhook behavior and installed-admin immutability checks passed. Committed-output drift checks passed in both the verification clone and working checkout, with declaration ordering normalized.
+
+The complete local admin browser suite passed 44 flows, including 17 axe/keyboard states with zero reported violations. Inconclusive contrast checks remain explicitly recorded for manual review. The separate hybrid-auth browser rehearsal passed both sign-in and editor checks, and all three daisyUI browser checks passed. The production dependency audit passed its high-severity gate with two low findings and no moderate, high or critical findings.
+
+The new accessibility checks found and fixed validation lists losing their list semantics under an alert role and the unnamed role of the commerce work-area group. Live provider/payment/email/SSO rehearsals, manual contrast and screen-reader review, and owner publishing/deployment gates remain. Public checkout stays disabled.
