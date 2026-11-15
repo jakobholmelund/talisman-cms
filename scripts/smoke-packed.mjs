@@ -399,7 +399,7 @@ async function smokeProject(project, port, packages, browserReady) {
       return true;
     } catch (error) {
       failures.push({ project: project.name, check: label, detail: error.message });
-      report(`${label}: FAILED (${seconds(started)})`);
+      report(`${label}: FAILED (${seconds(started)})\n${error.message}`);
       return false;
     }
   };
