@@ -48,6 +48,27 @@ createRoot(document.getElementById('root')!).render(<RouterProvider router={rout
     });
     await page.route('**/cms/api/daisyui/layouts', (route) => route.fulfill({ json: { layouts: [] } }));
     await page.goto(base);
+    // Browser CSS parsing covers all supported theme formats, not just the hex picker.
+    const ratios = await page.evaluate(async () => {
+      const { themeContrastRatio: ratio } = await import('/src/admin/theme-contrast.ts');
+      return [ratio('#000', '#fff'), ratio('white', 'white'), ratio('oklch(0% 0 0)', 'hsl(0 0% 100%)'),
+        ratio('rgb(0 0 0 / 50%)', '#fff'), ratio('white', 'transparent'), ratio('currentColor', 'white'), ratio('invalid', 'white')];
+    });
+    assert.deepEqual(ratios.slice(0, 3), [21, 1, 21]);
+    assert.ok(ratios[3] > 3.9 && ratios[3] < 4.1, 'foreground alpha is composited before measuring');
+    assert.deepEqual(ratios.slice(4), [null, null, null]);
+    await page.locator('#daisyui-light-primary').fill('#fff');
+    await page.locator('#daisyui-light-primary-content').fill('#fff');
+    const contrast = page.getByRole('region', { name: 'light theme contrast', exact: true });
+    await contrast.getByText('primary-content on primary: 1.00:1 (below 4.5:1).', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Save Theme', exact: true }).isEnabled(), true);
+    await page.locator('#daisyui-light-primary-content').fill('#000');
+    await contrast.getByText(/^primary-content on primary:/).waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Dark', exact: true }).click();
+    await page.getByRole('region', { name: 'dark theme contrast', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Light', exact: true }).click();
+    await page.locator('#daisyui-light-primary').fill('');
+    await page.locator('#daisyui-light-primary-content').fill('');
     await page.getByLabel('Dark Theme', { exact: true }).selectOption('business');
     stored = { lightTheme: 'cupcake', darkTheme: 'dark', version: 2 };
     await page.getByRole('button', { name: 'Save Theme', exact: true }).click();

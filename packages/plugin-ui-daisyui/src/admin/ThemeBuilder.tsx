@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import ThemeContrast from './ThemeContrast';
 import { useBlocker } from '@tanstack/react-router';
 import { adminApiUrl, adminUrl } from 'talisman-cms/ui/sdk';
 import { DAISYUI_THEME_DEFAULTS } from './themeDefaults';
@@ -436,6 +437,7 @@ export default function ThemeBuilder() {
       </fieldset>
 
       <div className="w-full lg:w-96 shrink-0 space-y-4">
+        <ThemeContrast mode={previewMode} colors={Object.fromEntries(DAISYUI_THEME_COLORS.map(({ key }) => [key, previewColor(key)]))} />
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">Mini Preview</h3>
           <div className="flex bg-black/30 p-1 rounded border border-white/10">
