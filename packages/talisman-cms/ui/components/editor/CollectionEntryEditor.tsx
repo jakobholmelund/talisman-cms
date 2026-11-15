@@ -627,7 +627,7 @@ export function CollectionEntryEditor({
   // changes what it offers, and the Save button when the panel or the pending box closes.
   const saveButtonRef = useRef<HTMLButtonElement | null>(null);
   const conflictPanelRef = useRef<HTMLDivElement | null>(null);
-  const errorSummaryRef = useRef<HTMLUListElement | null>(null);
+  const errorSummaryRef = useRef<HTMLDivElement | null>(null);
   const globalErrorRef = useRef<HTMLParagraphElement | null>(null);
   useEffect(() => {
     if (Object.keys(serverFieldErrors).length) errorSummaryRef.current?.focus();
@@ -1265,14 +1265,16 @@ export function CollectionEntryEditor({
                       <form.Subscribe
                         selector={(state: any) => state.values}
                         children={(values: Record<string, any>) => (
-                          <ul ref={errorSummaryRef} tabIndex={-1} role="alert" className="mt-3 space-y-1 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-                            {Object.entries(serverFieldErrors).map(([fieldPath, messages]) => (
-                              <li key={fieldPath || 'entry'}>
-                                {/* The field's name leads to the field itself, when it is on the page. */}
-                                <button type="button" onClick={() => focusFieldControl(fieldPath)} className="font-medium rounded-sm hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60">{describeFieldPath(fieldPath, collection.fields || [], values)}</button>: {messages.join(', ')}
-                              </li>
-                            ))}
-                          </ul>
+                          <div ref={errorSummaryRef} tabIndex={-1} role="alert" aria-label="Validation errors" className="mt-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                            <ul className="space-y-1">
+                              {Object.entries(serverFieldErrors).map(([fieldPath, messages]) => (
+                                <li key={fieldPath || 'entry'}>
+                                  {/* The field's name leads to the field itself, when it is on the page. */}
+                                  <button type="button" onClick={() => focusFieldControl(fieldPath)} className="font-medium rounded-sm hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60">{describeFieldPath(fieldPath, collection.fields || [], values)}</button>: {messages.join(', ')}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
                         )}
                       />
                     )}

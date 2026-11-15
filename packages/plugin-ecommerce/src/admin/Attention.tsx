@@ -70,7 +70,7 @@ export default function Attention() {
   return <CommerceAdmin current="attention"><div className="ecom-admin__attention">
     <header className="ecom-admin__attention-header"><div><p className="ecom-admin__eyebrow">Daily store work</p><h1>Needs attention</h1><p className="ecom-admin__intro">Choose a work area, then start with its oldest tasks. Counts cover the full queues; previews show up to ten records each.</p></div><div><OperationsReadStatus loading={loading} error={error} reload={() => void load()} />{data && <small>Snapshot checked {dateTime(data.checkedAt)}</small>}</div></header>
     {data && <>
-      <div className="ecom-admin__attention-areas" aria-label="Work areas">
+      <div className="ecom-admin__attention-areas" role="group" aria-label="Work areas">
         <button type="button" aria-pressed={area === 'all'} onClick={() => setArea('all')}><span>All work</span><strong>{total.toLocaleString()}</strong><small>queue tasks</small></button>
         {areas.map(a => <button key={a.key} type="button" aria-pressed={area === a.key} onClick={() => setArea(a.key)}><span>{a.label}</span><strong>{count(a.kinds).toLocaleString()}</strong><small>queue tasks</small></button>)}
       </div>

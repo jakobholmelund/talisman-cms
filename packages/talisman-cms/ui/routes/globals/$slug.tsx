@@ -462,14 +462,16 @@ function GlobalEditorRoute() {
             </div>
           ) : null}
           {Object.keys(fieldErrors).length > 0 ? (
-            <ul role="alert" className="space-y-1 text-sm text-red-400">
-              {Object.entries(fieldErrors).map(([name, messages]) => (
-                <li key={name}>
-                  {/* The field's name leads to the field itself. */}
-                  <button type="button" onClick={() => focusFieldControl(name)} className="font-medium rounded-sm hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60">{getFieldErrorLabel(schemaFields, name)}</button>: {formatFieldErrors(messages)}
-                </li>
-              ))}
-            </ul>
+            <div role="alert" aria-label="Validation errors" className="text-sm text-red-400">
+              <ul className="space-y-1">
+                {Object.entries(fieldErrors).map(([name, messages]) => (
+                  <li key={name}>
+                    {/* The field's name leads to the field itself. */}
+                    <button type="button" onClick={() => focusFieldControl(name)} className="font-medium rounded-sm hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60">{getFieldErrorLabel(schemaFields, name)}</button>: {formatFieldErrors(messages)}
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : null}
 
           <div className="grid gap-3 text-xs text-zinc-500 sm:grid-cols-2">

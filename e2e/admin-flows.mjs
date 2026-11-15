@@ -13,7 +13,7 @@ import { commerceTriageFlow } from './commerce-triage-flow.mjs';
 //   --setup-token <token>    TALISMAN_E2E_SETUP_TOKEN     used only while the first admin has to be created
 //   --admin-email <email>    TALISMAN_E2E_ADMIN_EMAIL     default e2e-admin@example.com
 //   --admin-password <pw>    TALISMAN_E2E_ADMIN_PASSWORD  default: a fixed 23-character test password
-//   --report <path>          TALISMAN_E2E_REPORT          JSON report (steps, chunks, startup samples, startedAt, baseUrl)
+//   --report <path>          TALISMAN_E2E_REPORT          JSON report (steps, chunks, startup, accessibility, startedAt, baseUrl)
 //   --dist <dir>             TALISMAN_E2E_DIST            playground dist dir: every .js file with its size
 //   --artifacts <dir>        TALISMAN_E2E_ARTIFACTS       screenshots of failed steps
 //   --only <step,...>                                     run these steps (sign-in always runs first)
@@ -23,11 +23,14 @@ import { commerceTriageFlow } from './commerce-triage-flow.mjs';
 //
 // The gift-card workflow needs a fresh throwaway TALISMAN_COMMERCE_GIFT_CARD_KEY (64 hex characters)
 // in the local playground bindings. CI creates it alongside the temporary auth secrets.
+// --only accessibility runs the WCAG scans and keyboard checks. Inconclusive axe results remain
+// in the report for manual review. TALISMAN_CHROME_PATH selects a non-default Chrome executable.
 //
 // Steps listed in KNOWN_GAPS are reported with status "fail" and knownGap: true and do not affect
 // the exit code; they are printed as GAP.
 
 import { chromium } from 'playwright-core';
+import { accessibilityFlow } from './accessibility-flow.mjs';
 import { customerExchangeFlow } from './customer-exchange-flow.mjs';
 import { commerceRecoveryFlow } from './commerce-recovery-flow.mjs';
 import { commercePurchasingFlow } from './commerce-purchasing-flow.mjs';
@@ -983,7 +986,7 @@ const steps = {
     } }) : route.continue());
     try {
       await page.getByRole('button', { name: 'Save Draft', exact: true }).click();
-      const summary = page.locator('ul[role="alert"]');
+      const summary = page.getByRole('alert', { name: 'Validation errors', exact: true });
       await expectVisible(summary, 'nested error summary');
       if (!(await summary.evaluate((node) => node === document.activeElement))) fail('nested error summary did not take focus');
       await summary.getByRole('button').first().click();
@@ -1017,7 +1020,7 @@ const steps = {
     } }) : route.continue());
     try {
       await saveButton(page).click();
-      const summary = page.locator('ul[role="alert"]');
+      const summary = page.getByRole('alert', { name: 'Validation errors', exact: true });
       await expectVisible(summary, 'preset error summary');
       await summary.getByRole('button').click();
       if (!(await labelled(page, 'Title').evaluate((node) => node === document.activeElement))) fail('preset summary did not focus its rendered prop');
@@ -2240,6 +2243,10 @@ const steps = {
     return 'form/raw drafts and held edits protected on leave/reload; read failures and invalid JSON recover; explicit choices retain post-load edits and other writers; repeated If-Match saves';
   },
 
+  async accessibility(ctx) {
+    return accessibilityFlow(ctx, { newSession, signInOnPage, labelled });
+  },
+
   async 'mobile-nav'(ctx) {
     const page = await ctx.admin.context.newPage();
     try {
@@ -2327,6 +2334,7 @@ async function main() {
     await printHelp();
     return 0;
   }
+  if (options.artifacts) await fs.mkdir(options.artifacts, { recursive: true });
   const allNames = Object.keys(steps);
   if (options.only) {
     const unknown = options.only.filter((name) => !allNames.includes(name));
@@ -2346,7 +2354,7 @@ async function main() {
   const ctx = {
     options,
     runId: Math.random().toString(36).slice(2, 8),
-    browser: await chromium.launch({ channel: 'chrome', headless: !options.headed, slowMo: options.headed ? 150 : 0 }),
+    browser: await chromium.launch({ ...(process.env.TALISMAN_CHROME_PATH ? { executablePath: process.env.TALISMAN_CHROME_PATH } : { channel: 'chrome' }), headless: !options.headed, slowMo: options.headed ? 150 : 0 }),
     sessions: [],
     admin: null,
     state: {},
@@ -2381,6 +2389,7 @@ async function main() {
 
   const failures = report.steps.filter((step) => step.status === 'fail' && !step.knownGap);
   report.startup = ctx.state.startup || null;
+  report.accessibility = ctx.state.accessibility || null;
   const gaps = report.steps.filter((step) => step.status === 'fail' && step.knownGap);
   report.exitCode = failures.length > 0 ? 1 : 0;
 

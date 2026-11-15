@@ -109,12 +109,21 @@ jobs:
           export TALISMAN_CHROME_PATH="$(command -v google-chrome || command -v chromium)"
           export TALISMAN_E2E_AFTERCARE_ORDER_ID=ord_99999999-9999-4999-8999-999999999999
           export TALISMAN_E2E_RETURNS_ORDER_ID=ord_77777777-7777-4777-8777-777777777777
-          TALISMAN_E2E_SETUP_TOKEN="$TOKEN" node e2e/admin-flows.mjs --base-url http://127.0.0.1:8787 --dist playground/dist --report e2e-report.json || status=$?
+          TALISMAN_E2E_SETUP_TOKEN="$TOKEN" node e2e/admin-flows.mjs --base-url http://127.0.0.1:8787 --dist playground/dist --report e2e-report.json --artifacts e2e-artifacts || status=$?
           if [ "$status" = 0 ]; then
             TALISMAN_UI_BROWSER=1 pnpm --filter @talisman-cms/plugin-ui-daisyui exec node --test --test-concurrency=1 ./test/renderers.test.mjs ./test/theme-builder.browser.mjs || status=$?
           fi
           cat e2e-report.json
           exit "$status"
+      - name: Upload admin and accessibility results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: admin-browser
+          path: |
+            e2e-report.json
+            e2e-artifacts/
+          retention-days: 14
 
   hybrid-browser:
     runs-on: ubuntu-latest
