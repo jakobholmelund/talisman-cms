@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Accessibility CI now scans 17 desktop/mobile states with axe-core, including validation, confirmation dialogs and light/dark theme previews. Keyboard checks cover skip navigation, error links, focus trapping and restoration; JSON reports retain inconclusive checks and CI uploads failure screenshots.
+- Entry and globals validation summaries preserve native list semantics inside their alert regions. Commerce work-area filters now expose a named group.
+
 - The Theme Builder warns about low-contrast text/background pairs in light and dark previews, including transparent foregrounds, while preserving the palette and allowing saves.
 - A dedicated hybrid-auth browser CI job now verifies local editor sign-in, repeated draft saves, denied publish/archive/delete requests and sign-out. Packed-install failures print their details immediately.
 
