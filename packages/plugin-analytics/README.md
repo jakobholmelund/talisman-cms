@@ -1,5 +1,95 @@
 # Talisman Analytics
 
+## Event tracking
+
+The package also provides a provider-independent event API, opt-in consent controls, a local inspector and a Google Analytics 4 adapter. This is separate from the Cloudflare traffic and D1 commerce reports below. No tracking destination is enabled by registering `analyticsPlugin()`.
+
+Add the optional component once in your public layout:
+
+```astro
+---
+import Tracking from '@talisman-cms/plugin-analytics/tracking-ui';
+---
+<Tracking measurementId="G-YOURSTREAMID" privacyHref="/privacy" />
+```
+
+For local development use `<Tracking measurementId="G-LOCALPREVIEW" preview inspect />`. Preview maps events without loading Google, creating analytics cookies or making provider requests. The inspector holds at most 100 sanitized records in page memory. Do not enable `inspect` in production; it is an explicit server prop, never a query-string switch. Omit the measurement ID to disable the destination. Malformed IDs, including secret-looking values, are not rendered.
+
+Instrument completed actions explicitly:
+
+```ts
+import { track, onTrackingReady } from '@talisman-cms/plugin-analytics/tracking/browser';
+
+onTrackingReady(() => track('product_viewed', {
+  productId: 'frame-1', variantId: 'amber',
+}));
+
+// After the basket API confirms the addition:
+track('basket_item_added', { productId: 'frame-1', variantId: 'amber', quantity: 1 });
+```
+
+`track()` never waits on a provider or throws into the application. Calls before initialization are no-ops; `onTrackingReady()` handles initial-page instrumentation regardless of script order. No automatic click, input, form, account-identity, or DOM-content capture is installed.
+
+| Event | Properties | Google mapping |
+| --- | --- | --- |
+| `page_viewed` | `path` | `page_view` |
+| `product_viewed` | `productId`, optional `variantId` | `view_item` |
+| `product_option_selected` | `optionId`, `valueId`, optional `productId` | custom event with the same name |
+| `basket_item_added` / `basket_item_removed` | `productId`, optional `variantId`, positive `quantity` | `add_to_cart` / `remove_from_cart` |
+| `basket_quantity_changed` | product/variant, `previousQuantity`, new `quantity` (zero allowed) | add/remove with the quantity difference; no event if unchanged |
+| `checkout_started` | nonempty `items`, optional `currency` and `valueMinor` | `begin_checkout` |
+| `purchase_confirmed` | `transactionId`, `items`, `currency`, `valueMinor`, optional `shippingMinor` / `taxMinor` | `purchase` |
+| `refund_completed` | `transactionId`, `refundId`, `items`, `currency`, `valueMinor` | `refund` |
+
+An item has `productId`, optional `variantId`, positive `quantity` and optional `unitAmountMinor`. Monetary values are nonnegative integer minor units; the adapter converts using the currency's decimal places (including JPY and KWD). Provide currency with any monetary value. Purchase value means merchandise after discounts, excluding shipping and tax; it is not the payment-provider charge after gift cards/store credit. Unknown event names/properties and invalid quantities/IDs are rejected, including from untyped JavaScript. Use catalog IDs, never names, emails, credentials or free-form user input as identifiers. Validation cannot determine whether an otherwise valid identifier represents private data.
+
+The schemas and mapping support purchase/refund events, but this release does **not** automatically instrument payment webhooks or provide a durable server outbox. Only emit those events from an integration backed by verified payment/refund state. Do not count checkout redirects or success-page visits as purchases. Keep the order transaction ID stable; retry-safe server delivery and consent-linked attribution require a separate server integration. Commerce's D1 reports remain the authoritative sales totals.
+
+### Consent and privacy
+
+- Default is unknown/off. Google code loads only after permission. Events before permission are dropped, not buffered or replayed. Granting permission creates a fresh current-page view.
+- Allow/decline choices are saved under `talisman:analytics-consent:v1` in local storage for 180 days. No preference is written before a choice. Missing, invalid, expired or inaccessible records grant no permission. Blocked storage gives a page-only choice, with visible feedback.
+- Withdrawal aborts pending tag initialization, disables new dispatch and the Google destination, and removes this integration's `talisman_ga` / `talisman_ga_<stream>` cookies. It cannot retract already transmitted events. Changes synchronize across tabs; expiry is checked while the page is open and before tracking calls.
+- The adapter sets advertising consent to denied, disables Google signals/ad personalization, disables automatic config pageviews, uses a separate data layer and cookie prefix, and sends sanitized paths without query strings/fragments. It suppresses page titles and referrers in favor of the sanitized path and an empty referrer. Cookie expiry is 180 days without refreshing on every visit.
+- The component excludes `/admin`, the configured `adminPath`, `/api`, `/account`, `/r`, checkout success/cancel and gift-card child routes. Do not mount the integration on other sensitive routes. Components with an already loaded tag must use full navigation when entering private pages; SPA navigation integrations must dispose/disable the tracker themselves.
+- This consent control governs these event destinations. It cannot control separately installed tags or a platform-injected Cloudflare beacon. Update the site's privacy/cookie notices and configure external tags consistently before enabling live tracking.
+
+### Google setup and verification
+
+Use a dedicated GA4 web stream. **Turn off all Enhanced Measurement** in that stream, including form interactions and history-based pageviews, so Google does not add automatic collection outside the explicit event contract. Do not also install this stream through another snippet, Tag Manager or an automatic platform integration. Keep Google signals, advertising features and cross-domain linking off. Choose and publish the property's event-data retention before launch; our cookie lifetime does not configure Google's server retention.
+
+The integration uses basic consent behavior: no tag is loaded while permission is absent. If the site's CSP restricts scripts/connections, allow the required Google endpoints deliberately. A blocked tag is reported as `failed` without interrupting shopping; a later consented event can retry initialization. A consent grant alone does not prove that Google accepted data.
+
+The inspector distinguishes `blocked-consent`, `invalid`, `disabled`, `dispatching`, `preview`, `handed-off`, `cancelled`, `failed`, `unsupported`, and `busy`. `handed-off` means the SDK command was accepted, **not** a confirmed network delivery or report row. Validate a real stream using browser network requests and GA DebugView/Realtime before launch. Tests use an injected Google runtime and local preview; no Google credentials or account are needed.
+
+Reference: [Google consent setup](https://developers.google.com/tag-platform/security/guides/consent), [GA4 event contracts](https://developers.google.com/analytics/devguides/collection/ga4/reference/events), [manual pageviews](https://developers.google.com/analytics/devguides/collection/ga4/views), [privacy controls](https://developers.google.com/tag-platform/security/guides/privacy), [cookie configuration](https://developers.google.com/tag-platform/security/guides/customize-cookies).
+
+### Adding another provider or your own consent UI
+
+```ts
+import { createTracker, type TrackingAdapter } from '@talisman-cms/plugin-analytics/tracking';
+
+const destination: TrackingAdapter = {
+  name: 'My analytics provider',
+  async send(event, signal) {
+    if (signal.aborted) throw new Error('Cancelled');
+    // Lazily initialize the SDK, map the typed event, and respect cancellation.
+    // Replace this placeholder with the provider call; return 'handed-off'
+    // only after SDK acceptance, without claiming ingestion.
+    return { status: 'unsupported' };
+  },
+  disable() { /* synchronously stop dispatch, abort initialization, clear owned identifiers */ },
+};
+const tracker = createTracker({ adapters: [destination] });
+// Call from your consent manager; tracker starts with consent unknown.
+tracker.setConsent('granted');
+await tracker.track('product_viewed', { productId: 'frame-1' });
+```
+
+`createTracker()` has no DOM, storage or provider dependencies. Adapters must have unique names and are isolated from each other's failures. `initializeTracking()` from `/tracking/browser` adds preference persistence/expiry and cross-tab synchronization for a custom UI; it takes `adapters`, `pagePath`, and optional `inspect`, and returns `choose()`, `tracker`, `subscribe()`, and `dispose()`. `googleAnalytics()` from `/tracking/ga4` is the first adapter. Importing any of these modules has no tracking side effects. Keep provider-specific SDK initialization inside `send()` and honor its abort signal. The event contract is version 1; adding a destination does not require changing instrumented pages.
+
+## Reporting
+
 `@talisman-cms/plugin-analytics` adds a Cloudflare Web Analytics screen to Talisman CMS. When `@talisman-cms/plugin-ecommerce` is also registered, it adds a Commerce analytics screen using confirmed D1 orders. No analytics database migration is needed; the Commerce reports read the ecommerce order tables, including the order table's shipping and tax columns, so apply the CMS migrations first.
 
 ```ts

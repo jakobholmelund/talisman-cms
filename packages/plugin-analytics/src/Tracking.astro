@@ -1,0 +1,69 @@
+---
+import { safePagePath } from '@talisman-cms/plugin-analytics/tracking';
+import { isGA4MeasurementId } from '@talisman-cms/plugin-analytics/tracking/ga4';
+interface Props {
+  measurementId?: string;
+  /** Preview maps events locally; it never loads Google or sends requests. */
+  preview?: boolean;
+  /** Render in trusted development environments only; no URL flag enables the inspector. */
+  inspect?: boolean;
+  adminPath?: string;
+  privacyHref?: string;
+}
+const { measurementId = '', preview = false, inspect = false, adminPath = '/admin', privacyHref = '/privacy' } = Astro.props;
+const path = safePagePath(Astro.url.pathname);
+const base = adminPath.replace(/\/$/, '');
+const allowed = path && path !== base && !path.startsWith(base + '/');
+const configured = isGA4MeasurementId(measurementId);
+const enabled = allowed && (configured || inspect);
+---
+{enabled && <div class="talisman-tracking" data-talisman-tracking data-page-path={path} data-measurement-id={configured ? measurementId : ''} data-preview={String(preview)} data-inspect={String(inspect)}>
+  <div class="tracking-preferences">
+    <button type="button" data-consent-open aria-expanded="false" aria-controls="talisman-analytics-preferences">Privacy settings</button>
+    <p role="status" aria-live="polite" data-consent-feedback></p>
+  </div>
+  <section class="consent-panel" data-consent-panel id="talisman-analytics-preferences" aria-labelledby="talisman-consent-title" hidden>
+    <h2 id="talisman-consent-title" tabindex="-1">Optional analytics</h2>
+    <p>Allow Google Analytics to help us understand which pages and products people use. Essential shopping features work either way. You can change your choice here at any time.</p>
+    {preview && <p><strong>Local preview:</strong> no data is sent to Google.</p>}
+    <p data-consent-state></p>
+    <p data-consent-storage hidden>Your browser blocks preference storage. This choice applies to this page only.</p>
+    <div class="consent-actions">
+      <button type="button" data-consent-choice="denied">Decline analytics</button>
+      <button type="button" data-consent-choice="granted" disabled={!configured}>Allow analytics</button>
+      <button type="button" data-consent-close>Close settings</button>
+    </div>
+    <a href={privacyHref}>Read our privacy notice</a>
+  </section>
+  {inspect && <details class="tracking-inspector">
+    <summary>Tracking inspector <span data-inspector-summary></span></summary>
+    <p>Local diagnostics only. Up to 100 records in memory; cleared on navigation. “Handed-off” means the Google SDK accepted the event, not that Google stored it. Blocked events are never replayed.</p>
+    <button type="button" data-inspector-clear>Clear events</button>
+    <p data-tracking-empty>No events recorded on this page.</p>
+    <ol data-tracking-records aria-label="Tracking events"></ol>
+  </details>}
+</div>}
+<script>
+  import { mountTracking } from '@talisman-cms/plugin-analytics/tracking/browser';
+  const root = document.querySelector<HTMLElement>('[data-talisman-tracking]');
+  if (root) mountTracking(root);
+</script>
+<style>
+  .talisman-tracking { font: 15px/1.6 system-ui, sans-serif; color: #20382d; }
+  .talisman-tracking [hidden] { display: none !important; }
+  .tracking-preferences { padding: 12px 5%; background: #eef1e9; }
+  .tracking-preferences p:empty { display: none; }
+  .talisman-tracking button { font: inherit; color: inherit; background: #fff; border: 1px solid #496052; border-radius: 8px; padding: 10px 15px; cursor: pointer; }
+  .talisman-tracking button:disabled { opacity: .5; cursor: default; }
+  .talisman-tracking :is(button,a,summary):focus-visible { outline: 3px solid #94683d; outline-offset: 3px; }
+  .consent-panel { position: fixed; z-index: 1100; bottom: 20px; left: 20px; right: 20px; max-width: 660px; max-height: 80vh; overflow: auto; padding: 24px; border: 1px solid #496052; border-radius: 16px; background: #f9faf6; box-shadow: 0 8px 40px #0003; }
+  .consent-panel h2 { font: 600 24px/1.3 system-ui, sans-serif; margin: 0 0 12px; }
+  .consent-panel p { margin: 12px 0; }
+  .consent-panel a { color: inherit; text-decoration: underline; }
+  .consent-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+  .tracking-inspector { padding: 16px 5%; background: #edf2f7; border-top: 1px solid #a8b7c3; }
+  .tracking-inspector summary { cursor: pointer; padding: 8px 0; }
+  .tracking-inspector ol { max-height: 380px; overflow: auto; padding-left: 24px; }
+  .tracking-inspector pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+  [data-inspector-summary] { margin-left: 12px; font-size: 13px; }
+</style>

@@ -6,6 +6,8 @@ Known hardening work for the preview plugins is tracked here as the rules the co
 
 ## Done
 
+Event tracking (17 November 2026): the analytics package now has a typed, provider-independent event API, opt-in consent controls, an optional local inspector and a GA4 adapter. Local and injected-runtime tests cover consent, withdrawal, mapping, errors and privacy exclusions. Live property configuration/ingestion still requires verification; automatic server purchase/refund dispatch and durable retries remain separate work.
+
 Since the last public commit (`0d1d72d`), `main` has gained `HybridAuthAdapter`, the shared CMS identity, which were added just before the pre-release audit and reviewed by it, and the fixes that followed the audit. Among other things, these changes:
 
 - made the packages installable outside the workspace (ESM-only builds, declared peers, a packed-tarball smoke test in `pnpm release:verify`, a pnpm-only publish script, `prepack` builds and a CI check that the committed `dist/` matches the source);
