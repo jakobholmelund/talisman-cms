@@ -3,6 +3,7 @@ import { StocktakeLine, ParcelItem, InspectedItem, ReturnedItem, RETURN_REFUND_S
 import * as drizzle_orm_sqlite_core from 'drizzle-orm/sqlite-core';
 export { d as decideReturnRequest, l as listReturnsQueue, r as readReturnRequestAdmin } from './return-requests-9ofJvWbS.js';
 import { P as PaymentProviderAdapter } from './payments-DiMqRHdo.js';
+import { z } from 'zod';
 import 'drizzle-orm';
 import './return-request-types-eGNtr7cH.js';
 
@@ -768,14 +769,14 @@ declare function receiveOrderReturn(env: TalismanEnv, input: unknown, actor: str
     receiptId: string;
     orderId: string;
     restocked: {
-        orderId: string;
         id: string;
-        receiptId: string;
+        orderId: string;
         quantity: number;
         targetType: "product" | "variant" | "stock" | "component";
         targetId: string;
         reservationType: "component" | "inventory";
         reservationId: string;
+        receiptId: string;
     }[];
     duplicate: boolean;
 } | {
@@ -816,14 +817,14 @@ declare function readOrderWarehouse(env: TalismanEnv, input: unknown): Promise<{
     parcels: {
         actorName: string;
         createdAt: string;
-        orderId: string;
         id: string;
         items: ParcelItem[];
-        fulfillmentId: string;
-        actor: string;
-        reason: string;
+        orderId: string;
         fingerprint: string;
+        actor: string;
         source: "shipment" | "backfill";
+        reason: string;
+        fulfillmentId: string;
     }[];
     returns: {
         actorName: string;
@@ -835,16 +836,16 @@ declare function readOrderWarehouse(env: TalismanEnv, input: unknown): Promise<{
         inspections: {
             actorName: string;
             createdAt: string;
-            orderId: string;
             id: string;
             items: InspectedItem[];
+            orderId: string;
+            fingerprint: string;
             actor: string;
             reason: string;
-            fingerprint: string;
             receiptId: string;
             stock: {
-                orderId: string;
                 id: string;
+                orderId: string;
                 quantity: number;
                 targetType: "product" | "variant" | "stock" | "component";
                 targetId: string;
@@ -853,21 +854,21 @@ declare function readOrderWarehouse(env: TalismanEnv, input: unknown): Promise<{
                 inspectionId: string;
             }[];
         }[];
-        orderId: string;
         id: string;
         items: ReturnedItem[];
+        orderId: string;
+        fingerprint: string;
         actor: string;
         reason: string;
-        fingerprint: string;
         stock: {
-            orderId: string;
             id: string;
-            receiptId: string;
+            orderId: string;
             quantity: number;
             targetType: "product" | "variant" | "stock" | "component";
             targetId: string;
             reservationType: "component" | "inventory";
             reservationId: string;
+            receiptId: string;
         }[];
     }[];
     shippingAddress: {
@@ -930,8 +931,8 @@ declare function inspectOrderReturn(env: TalismanEnv, input: unknown, actor: str
     inspectionId: string;
     orderId: string;
     restocked: {
-        orderId: string;
         id: string;
+        orderId: string;
         quantity: number;
         targetType: "product" | "variant" | "stock" | "component";
         targetId: string;
@@ -1172,7 +1173,7 @@ declare function listPurchaseOrders(env: TalismanEnv, input?: unknown): Promise<
         openIssues: number;
     }[];
     offset: number;
-    filter: "draft" | "open" | "ordered" | "cancelled" | "all" | "completed";
+    filter: "draft" | "cancelled" | "ordered" | "open" | "all" | "completed";
     search: string;
 }>;
 declare function readPurchaseOrder(env: TalismanEnv, input: unknown): Promise<{
@@ -1186,7 +1187,7 @@ declare function readPurchaseOrder(env: TalismanEnv, input: unknown): Promise<{
         address: string;
     } | null;
     version: string;
-    status: "draft" | "ordered" | "cancelled";
+    status: "draft" | "cancelled" | "ordered";
     reference: string;
     expectedDate: string;
     supplier: SupplierSnapshot;
@@ -1211,7 +1212,7 @@ declare function readPurchaseOrder(env: TalismanEnv, input: unknown): Promise<{
     }[];
     history: {
         id: string;
-        status: "draft" | "ordered" | "cancelled";
+        status: "draft" | "cancelled" | "ordered";
         reference: string;
         expectedDate: string;
         lines: PurchaseLine[];
@@ -1379,8 +1380,8 @@ declare function listRecoveryCases(env: TalismanEnv, input?: unknown): Promise<{
         nextAction: RecoveryNextAction;
     }[];
     filter: "open" | "resolved" | "all";
-    kind: "lost" | "damaged" | "exchange" | "all";
-    nextAction: "stock" | "complete" | "review" | "payment" | "inspection" | "all" | "refund" | "dispatch" | "follow_up";
+    kind: "damaged" | "lost" | "exchange" | "all";
+    nextAction: "stock" | "complete" | "review" | "inspection" | "payment" | "all" | "refund" | "dispatch" | "follow_up";
     offset: number;
     orderId: string;
 }>;
@@ -1393,7 +1394,7 @@ declare function readRecoveryCase(env: TalismanEnv, input: unknown): Promise<{
     awaitingPaymentReview: boolean;
     id: string;
     orderId: string;
-    kind: "lost" | "damaged" | "exchange";
+    kind: "damaged" | "lost" | "exchange";
     lineIndex: number;
     quantity: number;
     target: {
@@ -1435,7 +1436,7 @@ declare function readRecoveryCase(env: TalismanEnv, input: unknown): Promise<{
     shipmentsTruncated: boolean;
     history: {
         id: string;
-        kind: "note" | "shipment" | "reopen" | "resolve" | "tracking";
+        kind: "shipment" | "reopen" | "note" | "resolve" | "tracking";
         status: "open" | "resolved";
         reason: string;
         actorName: string;
@@ -1453,7 +1454,7 @@ declare function readRecoveryCase(env: TalismanEnv, input: unknown): Promise<{
             inspections: {
                 id: string;
                 quantity: number;
-                disposition: "damaged" | "sellable" | "quarantine";
+                disposition: "sellable" | "damaged" | "quarantine";
                 restock: boolean;
                 createdAt: string;
             }[];
@@ -1487,12 +1488,12 @@ declare function readRecoveryOrder(env: TalismanEnv, input: unknown): Promise<{
     }[];
     cases: {
         id: string;
-        kind: "lost" | "damaged" | "exchange";
+        quantity: number;
+        kind: "damaged" | "lost" | "exchange";
         fulfillmentId: string | null;
-        sourceShipmentId: string | null;
         receiptId: string | null;
         lineIndex: number;
-        quantity: number;
+        sourceShipmentId: string | null;
     }[];
     orderId: string;
     status: string;
@@ -1505,14 +1506,14 @@ declare function readRecoveryOrder(env: TalismanEnv, input: unknown): Promise<{
     parcels: {
         actorName: string;
         createdAt: string;
-        orderId: string;
         id: string;
         items: ParcelItem[];
-        fulfillmentId: string;
-        actor: string;
-        reason: string;
+        orderId: string;
         fingerprint: string;
+        actor: string;
         source: "shipment" | "backfill";
+        reason: string;
+        fulfillmentId: string;
     }[];
     returns: {
         actorName: string;
@@ -1524,16 +1525,16 @@ declare function readRecoveryOrder(env: TalismanEnv, input: unknown): Promise<{
         inspections: {
             actorName: string;
             createdAt: string;
-            orderId: string;
             id: string;
             items: InspectedItem[];
+            orderId: string;
+            fingerprint: string;
             actor: string;
             reason: string;
-            fingerprint: string;
             receiptId: string;
             stock: {
-                orderId: string;
                 id: string;
+                orderId: string;
                 quantity: number;
                 targetType: "product" | "variant" | "stock" | "component";
                 targetId: string;
@@ -1542,21 +1543,21 @@ declare function readRecoveryOrder(env: TalismanEnv, input: unknown): Promise<{
                 inspectionId: string;
             }[];
         }[];
-        orderId: string;
         id: string;
         items: ReturnedItem[];
+        orderId: string;
+        fingerprint: string;
         actor: string;
         reason: string;
-        fingerprint: string;
         stock: {
-            orderId: string;
             id: string;
-            receiptId: string;
+            orderId: string;
             quantity: number;
             targetType: "product" | "variant" | "stock" | "component";
             targetId: string;
             reservationType: "component" | "inventory";
             reservationId: string;
+            receiptId: string;
         }[];
     }[];
     shippingAddress: {
@@ -1593,7 +1594,7 @@ declare function readExchangeHandoff(env: TalismanEnv, input: unknown): Promise<
     requestId: string;
     orderId: string;
     lineIndex: number;
-    status: "closed" | "cancelled" | "pending" | "approved" | "declined";
+    status: "closed" | "approved" | "cancelled" | "pending" | "declined";
     preference: ReturnExchangePreference;
     choice: {
         productId: string;
@@ -1674,6 +1675,32 @@ declare function readOrderRecoveryHistory(env: TalismanEnv, input: unknown): Pro
     offset: number;
 }>;
 
+declare const filtersSchema: z.ZodObject<{
+    search: z.ZodDefault<z.ZodString>;
+    status: z.ZodDefault<z.ZodEnum<{
+        "": "";
+        draft: "draft";
+        active: "active";
+        archived: "archived";
+    }>>;
+    category: z.ZodDefault<z.ZodString>;
+    attention: z.ZodDefault<z.ZodEnum<{
+        images: "images";
+        out: "out";
+        all: "all";
+        price: "price";
+        low: "low";
+    }>>;
+    threshold: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    sort: z.ZodDefault<z.ZodEnum<{
+        name: "name";
+        updated: "updated";
+        "price-asc": "price-asc";
+        "price-desc": "price-desc";
+    }>>;
+    page: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+}, z.core.$strict>;
+type CatalogueFilters = z.infer<typeof filtersSchema>;
 type CatalogueRow = {
     id: string;
     name: string;
@@ -1725,7 +1752,7 @@ declare function readAdminCatalogue(env: TalismanEnv, input?: unknown): Promise<
         search: string;
         status: "" | "draft" | "active" | "archived";
         category: string;
-        attention: "images" | "all" | "out" | "price" | "low";
+        attention: "images" | "out" | "all" | "price" | "low";
         threshold: number;
         sort: "name" | "updated" | "price-asc" | "price-desc";
     };
@@ -1744,4 +1771,4 @@ declare function updateCatalogue(env: TalismanEnv, input: unknown, _actor: strin
     count: number;
 }>;
 
-export { type AttentionKind, CommerceOperationsConflict, type StockOverviewRow, createRecoveryCase, exportCommerceOperations, inspectOrderReturn, inspectReplacementReturn, listEmailRecovery, listExchangeChoices, listPurchaseOrders, listRecoveryCases, listRefundFollowUp, listReplenishment, listStockLocations, listStocktakes, listSupplierIssues, listSuppliers, planReplenishmentDelivery, readAdminCatalogue, readCatalogueSelection, readCommerceAttention, readExchangeHandoff, readOperationsReport, readOrderRecoveryHistory, readOrderWarehouse, readPurchaseOrder, readRecoveryCase, readRecoveryOrder, readRefundCase, readReplenishment, readStockHistory, readStockOverview, readStocktakeTargets, readSupplierIssue, receiveOrderReturn, receiveReplacementReturn, recordParcelContents, recordPurchaseOrder, recordRecoveryEvent, recordRefundFollowUp, recordReplenishmentDelivery, recordStockMovement, recordStocktake, recordSupplierIssue, reportSupplierIssue, retryCommerceEmail, savePurchaseOrder, saveReplenishmentPolicy, saveSupplier, shipRecoveryCase, updateCatalogue, verifyExchangeCharge };
+export { type AttentionKind, type CatalogueFilters, type CatalogueRow, CommerceOperationsConflict, type StockOverviewRow, createRecoveryCase, exportCommerceOperations, inspectOrderReturn, inspectReplacementReturn, listEmailRecovery, listExchangeChoices, listPurchaseOrders, listRecoveryCases, listRefundFollowUp, listReplenishment, listStockLocations, listStocktakes, listSupplierIssues, listSuppliers, planReplenishmentDelivery, readAdminCatalogue, readCatalogueSelection, readCommerceAttention, readExchangeHandoff, readOperationsReport, readOrderRecoveryHistory, readOrderWarehouse, readPurchaseOrder, readRecoveryCase, readRecoveryOrder, readRefundCase, readReplenishment, readStockHistory, readStockOverview, readStocktakeTargets, readSupplierIssue, receiveOrderReturn, receiveReplacementReturn, recordParcelContents, recordPurchaseOrder, recordRecoveryEvent, recordRefundFollowUp, recordReplenishmentDelivery, recordStockMovement, recordStocktake, recordSupplierIssue, reportSupplierIssue, retryCommerceEmail, savePurchaseOrder, saveReplenishmentPolicy, saveSupplier, shipRecoveryCase, updateCatalogue, verifyExchangeCharge };
