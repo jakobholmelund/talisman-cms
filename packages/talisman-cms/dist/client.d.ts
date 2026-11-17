@@ -1,7 +1,7 @@
-import { C as CacheContext, T as TalismanEnv, E as EntriesPage, a as CreateEntryInput, U as UpdateEntryInput, S as SiteReadOptions, W as WriteExpectation, b as CreateGlobalInput, c as SaveGlobalOptions } from './client-D1zn08c5.js';
-export { d as ClientOptions, e as EntryStatusTarget, f as UpdateOptions, V as VersionMode, g as createDbClient, h as getClient, j as invalidateCollectionCache, i as invalidateEntryCache, k as invalidateGlobalCache } from './client-D1zn08c5.js';
+import { C as CacheContext, T as TalismanEnv, E as EntriesPage, a as CreateEntryInput, U as UpdateEntryInput, S as SiteReadOptions, W as WriteExpectation, b as CreateGlobalInput, c as SaveGlobalOptions } from './client-BnymGq0d.js';
+export { d as ClientOptions, e as EntryStatusTarget, f as UpdateOptions, V as VersionMode, g as createDbClient, h as getClient, j as invalidateCollectionCache, i as invalidateEntryCache, k as invalidateGlobalCache } from './client-BnymGq0d.js';
 export { EntryNotFoundError, PendingPublishWorkflow, RevisionConflictError, SlugConflictError } from './versioning.js';
-import { C as CollectionConfig, G as GlobalConfig, m as UiLibraryDefinition, e as CollectionHooks, p as FieldValidationIssue, d as CollectionHookArgs, F as FieldDefinition } from './fields-BNNcWDXj.js';
+import { C as CollectionConfig, G as GlobalConfig, m as UiLibraryDefinition, e as CollectionHooks, p as FieldValidationIssue, d as CollectionHookArgs, F as FieldDefinition } from './fields-BK8TPbdA.js';
 import { E as EntryQuery } from './query-DgmKqS5C.js';
 export { O as Operators, W as WhereClause } from './query-DgmKqS5C.js';
 import { collections } from './db/schema.js';
@@ -212,8 +212,8 @@ declare function createService(env: TalismanEnv, options: ServiceOptions): {
         }>;
         save(slug: string, data: unknown, options?: SaveGlobalOptions): Promise<{
             name: string;
-            data: unknown;
             slug: string;
+            data: unknown;
             description: string | null;
             id: string;
             createdAt: Date;
@@ -237,9 +237,9 @@ declare function createService(env: TalismanEnv, options: ServiceOptions): {
         get(slug: string, entryId: string, revisionId: string): Promise<{
             type: "publish" | "archive" | "restore" | "draft_save";
             data: unknown;
-            status: "draft" | "published" | "archived";
             id: string;
             createdAt: Date;
+            status: "draft" | "published" | "archived";
             collectionId: string;
             entryId: string;
             revisionNumber: number;
@@ -248,12 +248,12 @@ declare function createService(env: TalismanEnv, options: ServiceOptions): {
             expectedRevisionId?: unknown;
         }): Promise<{
             latestRevisionId: string;
-            data: unknown;
-            status: "draft" | "published" | "archived";
             slug: string;
+            data: unknown;
             id: string;
             createdAt: Date;
             updatedAt: Date;
+            status: "draft" | "published" | "archived";
             collectionId: string;
             draftSlug: string | null;
             publishedData: unknown;

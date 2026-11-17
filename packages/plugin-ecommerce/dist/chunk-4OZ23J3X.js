@@ -9,41 +9,47 @@ import {
   TaxAddressError
 } from "./chunk-IN4CG7W7.js";
 import {
+  TAX_ADDRESS_REQUIRED,
+  TAX_ADDRESS_UNUSABLE,
+  TAX_UNAVAILABLE
+} from "./chunk-YHTTKGNB.js";
+import {
   CommerceOperationsConflict,
   adminActorNames,
   deliverCommerceEmail,
-  describeOrderItems,
   fulfillCommerceOrder,
   readOrderWarehouse,
   warehouseFingerprint
-} from "./chunk-GLO65VCM.js";
+} from "./chunk-QVDRNSCF.js";
 import {
   ReconcileFailure,
-  ShopperError,
   WebhookMismatchError,
   backoff,
   commerceEmailStatement,
   completedCheckoutReturn,
   decisionInsert,
-  isCountryCode,
   isMissingSessionError,
   isOtherStripeModeSession,
-  readStoreCurrency,
-  readStoreSettings,
   reconcileFailure,
   uncheckedSessionRefusal
-} from "./chunk-PVGGIHJ5.js";
+} from "./chunk-7CFKBAUU.js";
 import {
   canonicalEmail,
   canonicalEmails,
   canonicalPurchase,
   getReferralPolicy,
   referralReversalStatements
-} from "./chunk-IC3XDWQU.js";
+} from "./chunk-LCILI57I.js";
 import {
   PURCHASED_ORDER_STATUSES,
-  claimInterval
-} from "./chunk-PMYARYOQ.js";
+  claimInterval,
+  describeOrderItems,
+  readStoreCurrency,
+  readStoreSettings
+} from "./chunk-WHUJCCDD.js";
+import {
+  ShopperError
+} from "./chunk-3MXMGN5I.js";
 import {
   batchGroups,
   chunked,
@@ -109,58 +115,9 @@ async function mayAskPaymentProvider(env, order, paymentAdapters, { minOrderAgeS
   return claimInterval(env, `order-status:${order.id}`, PROVIDER_CHECK_INTERVAL_SECONDS, now);
 }
 
-// src/checkout-input.ts
-import { z } from "zod/v4";
-var INVALID_COUNTRY = "Enter a valid country code";
-var UNDELIVERABLE_COUNTRY = "We do not deliver to this country";
-var SHIPPING_OPTION_UNAVAILABLE = "This shipping option is not available for your country";
-var TAX_ADDRESS_REQUIRED = "A billing address is required to calculate tax";
-var TAX_ADDRESS_UNUSABLE = "Tax cannot be calculated for this address. Check it and try again.";
-var TAX_UNAVAILABLE = "Tax could not be calculated. Please try again.";
-var correctableRefusals = /* @__PURE__ */ new Set([
-  INVALID_COUNTRY,
-  UNDELIVERABLE_COUNTRY,
-  SHIPPING_OPTION_UNAVAILABLE,
-  TAX_ADDRESS_REQUIRED,
-  TAX_ADDRESS_UNUSABLE
-]);
-function isCheckoutDetailsError(error) {
-  return error instanceof Error && correctableRefusals.has(error.message);
-}
-function withCountryCode(address) {
-  const country = address?.country;
-  if (country === void 0 || country === null) return address;
-  const code = typeof country === "string" ? country.trim().toUpperCase() : null;
-  if (code === null || code && !isCountryCode(code)) throw new ShopperError("invalid_country", INVALID_COUNTRY, 400);
-  return { ...address, country: code };
-}
-var addressSchema = z.object({
-  name: z.string().trim().max(200).optional(),
-  line1: z.string().trim().max(200).optional(),
-  line2: z.string().trim().max(200).optional(),
-  city: z.string().trim().max(100).optional(),
-  state: z.string().trim().max(100).optional(),
-  postalCode: z.string().trim().max(30).optional(),
-  // Any case. Only officially assigned codes pass, so a mistyped "UK" is refused rather than stored.
-  country: z.string().trim().toUpperCase().refine(isCountryCode, INVALID_COUNTRY).optional()
-}).strict();
-var checkoutSchema = z.object({
-  customerEmail: z.string().trim().email().max(254),
-  discountCode: z.string().trim().max(32).optional(),
-  giftCardCode: z.string().trim().max(37).optional(),
-  shippingAddress: addressSchema.optional(),
-  billingAddress: addressSchema.optional(),
-  // A rate id from the store's shipping rates. Left out or blank, checkout uses the first rate that
-  // serves the country.
-  shippingRateId: z.string().trim().max(40).optional()
-}).strict();
-function checkoutInputError(error) {
-  return error.issues.some((issue) => issue.path.at(-1) === "country") ? INVALID_COUNTRY : "Invalid checkout details";
-}
-
 // src/tax.ts
 import { and, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
-import { z as z2 } from "zod";
+import { z } from "zod";
 var SHIPPING_TAX_CODE = "txcd_92010001";
 var TaxCalculationError = class extends Error {
   constructor(options) {
@@ -464,12 +421,12 @@ async function listTaxSyncReview(env) {
     ...reversals.map((row) => ({ ...row, kind: "reversal" }))
   ];
 }
-var taxRecoverySchema = z2.object({
-  orderId: z2.string().min(1).max(128),
-  reversalId: z2.string().min(1).max(128).optional(),
-  outcome: z2.enum(["retry", "attach"]),
-  providerId: z2.string().regex(/^tax_[a-zA-Z0-9_]+$/).optional(),
-  reason: z2.string().trim().min(8).max(500)
+var taxRecoverySchema = z.object({
+  orderId: z.string().min(1).max(128),
+  reversalId: z.string().min(1).max(128).optional(),
+  outcome: z.enum(["retry", "attach"]),
+  providerId: z.string().regex(/^tax_[a-zA-Z0-9_]+$/).optional(),
+  reason: z.string().trim().min(8).max(500)
 }).strict();
 async function recoverTaxSync(env, adapters, actor, input) {
   const values = taxRecoverySchema.parse(input);
@@ -907,11 +864,11 @@ async function readOrderTracking(ctx, orderId, sessionToken, customerId, orderAc
 
 // src/replenishment.ts
 import { eq as eq3, sql as sql3 } from "drizzle-orm";
-import { z as z3 } from "zod";
-var id = z3.string().trim().min(1).max(128);
-var reason = z3.string().trim().min(8).max(500);
-var quantity = z3.number().int().min(0).max(1e6);
-var target = { targetType: z3.enum(RESTOCK_TARGET_TYPES), targetId: id };
+import { z as z2 } from "zod";
+var id = z2.string().trim().min(1).max(128);
+var reason = z2.string().trim().min(8).max(500);
+var quantity = z2.number().int().min(0).max(1e6);
+var target = { targetType: z2.enum(RESTOCK_TARGET_TYPES), targetId: id };
 var physicalStockLocations = sql3`SELECT 'product' AS type,id,name,sku,inventory_quantity AS quantity,updated_at AS updated FROM _ecommerce_products WHERE type='standard'
  UNION ALL SELECT 'variant',v.id,p.name||' / '||v.name,v.sku,v.inventory_quantity,v.updated_at FROM _ecommerce_product_variants v JOIN _ecommerce_products p ON p.id=v.product_id WHERE p.type='standard'
  UNION ALL SELECT 'stock',s.id,p.name||' / '||v.name||' / '||x.value,x.sku,s.quantity,s.updated_at FROM _ecommerce_stocks s JOIN _ecommerce_product_variant_values x ON x.id=s.product_variant_value_id JOIN _ecommerce_product_variants v ON v.id=x.product_variant_id JOIN _ecommerce_products p ON p.id=v.product_id
@@ -924,13 +881,13 @@ var cte = sql3`WITH physical AS (${physicalStockLocations}), locations AS (SELEC
 var effectiveDeliveryDate = sql3`COALESCE((SELECT e.expected_date FROM _ecommerce_purchase_order_lines l JOIN _ecommerce_purchase_order_events e ON e.purchase_order_id=l.purchase_order_id WHERE l.delivery_id=d.id ORDER BY e.rowid DESC LIMIT 1),d.expected_date)`;
 var location = (r) => ({ type: r.type, id: r.id, name: r.name, sku: r.sku, quantity: r.quantity, updatedAt: new Date(r.updated * 1e3).toISOString(), minimumQuantity: r.minimumQuantity, targetQuantity: r.targetQuantity, enabled: !!r.enabled, incoming: r.incoming, suggested: r.suggested, policyVersion: r.policyVersion });
 async function listReplenishment(env, input = {}) {
-  const v = z3.object({ offset: z3.coerce.number().int().min(0).max(1e6).default(0), search: z3.string().trim().max(100).default(""), filter: z3.enum(["suggested", "configured", "incoming", "all"]).default("suggested") }).strict().parse(input), db = commerceDb(env);
+  const v = z2.object({ offset: z2.coerce.number().int().min(0).max(1e6).default(0), search: z2.string().trim().max(100).default(""), filter: z2.enum(["suggested", "configured", "incoming", "all"]).default("suggested") }).strict().parse(input), db = commerceDb(env);
   const pattern = `%${v.search.replace(/[\\%_]/g, (c) => `\\${c}`)}%`, where = sql3`(name LIKE ${pattern} ESCAPE '\\' OR COALESCE(sku,'') LIKE ${pattern} ESCAPE '\\') AND (${v.filter}='all' OR (${v.filter}='incoming' AND incoming>0) OR (${v.filter}='configured' AND policyVersion IS NOT NULL) OR (${v.filter}='suggested' AND suggested>0))`;
   const [rows, count] = await db.batch([db.all(sql3`${cte} SELECT * FROM plans WHERE ${where} ORDER BY suggested DESC,name,type,id LIMIT 50 OFFSET ${v.offset}`), db.all(sql3`${cte} SELECT count(*) n FROM plans WHERE ${where}`)]);
   return { ...v, total: count[0]?.n ?? 0, rows: rows.map(location) };
 }
 async function readReplenishment(env, input) {
-  const v = z3.object({ ...target, deliveryOffset: z3.coerce.number().int().min(0).max(1e6).default(0) }).strict().parse(input), db = commerceDb(env);
+  const v = z2.object({ ...target, deliveryOffset: z2.coerce.number().int().min(0).max(1e6).default(0) }).strict().parse(input), db = commerceDb(env);
   const [row, policies, deliveries, deliveryCount] = await Promise.all([db.get(sql3`${cte} SELECT * FROM plans WHERE type=${v.targetType} AND id=${v.targetId}`), db.query.replenishmentPolicies.findMany({ where: { targetType: v.targetType, targetId: v.targetId }, orderBy: (_t, { sql: sql9 }) => sql9`rowid DESC`, limit: 50 }), db.query.replenishmentDeliveries.findMany({ where: { targetType: v.targetType, targetId: v.targetId }, orderBy: { createdAt: "desc", id: "desc" }, limit: 50, offset: v.deliveryOffset, with: { events: { orderBy: (_t, { sql: sql9 }) => sql9`rowid`, with: { movement: { columns: { delta: true } } } } } }), db.select({ n: sql3`count(*)`.mapWith(Number) }).from(replenishmentDeliveries).where(sql3`${replenishmentDeliveries.targetType}=${v.targetType} AND ${replenishmentDeliveries.targetId}=${v.targetId}`).get()]);
   const dates = await db.all(sql3`SELECT d.id,${effectiveDeliveryDate} AS expectedDate FROM _ecommerce_replenishment_deliveries d WHERE d.target_type=${v.targetType} AND d.target_id=${v.targetId} ORDER BY d.created_at DESC,d.id DESC LIMIT 50 OFFSET ${v.deliveryOffset}`);
   const effectiveDates = new Map(dates.map((d) => [d.id, d.expectedDate]));
@@ -940,9 +897,9 @@ async function readReplenishment(env, input) {
     return { ...d, expectedDate: effectiveDates.get(d.id) ?? d.expectedDate, createdAt: d.createdAt.toISOString(), actorName: names.get(d.actor) ?? d.actor, received, remaining: cancelled ? 0 : d.quantity - received, cancelled, version: events.at(-1)?.id ?? d.id, events: events.map((e) => ({ id: e.id, kind: e.kind, quantity: e.movement?.delta ?? 0, actorName: names.get(e.actor) ?? e.actor, reason: e.reason, createdAt: e.createdAt.toISOString() })) };
   }) };
 }
-var policySchema = z3.object({ ...target, requestKey: id.min(8), expectedVersion: id.nullable(), minimumQuantity: quantity, targetQuantity: quantity, enabled: z3.boolean(), reason }).strict().refine((v) => v.targetQuantity >= v.minimumQuantity);
-var planSchema = z3.object({ ...target, requestKey: id.min(8), quantity: quantity.min(1), supplier: z3.string().trim().min(1).max(200), reference: z3.string().trim().max(200), expectedDate: z3.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((v) => !Number.isNaN(Date.parse(`${v}T00:00:00Z`)) && (/* @__PURE__ */ new Date(`${v}T00:00:00Z`)).toISOString().slice(0, 10) === v), reason }).strict();
-var eventSchema = z3.object({ deliveryId: id, requestKey: id.min(8), expectedVersion: id, kind: z3.enum(["received", "cancelled"]), quantity: quantity.optional(), expectedQuantity: z3.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(), expectedUpdatedAt: z3.string().datetime({ offset: true }).optional(), reason }).strict().refine((v) => v.kind === "cancelled" ? v.quantity === void 0 && v.expectedQuantity === void 0 && v.expectedUpdatedAt === void 0 : !!v.quantity && v.expectedQuantity !== void 0 && !!v.expectedUpdatedAt);
+var policySchema = z2.object({ ...target, requestKey: id.min(8), expectedVersion: id.nullable(), minimumQuantity: quantity, targetQuantity: quantity, enabled: z2.boolean(), reason }).strict().refine((v) => v.targetQuantity >= v.minimumQuantity);
+var planSchema = z2.object({ ...target, requestKey: id.min(8), quantity: quantity.min(1), supplier: z2.string().trim().min(1).max(200), reference: z2.string().trim().max(200), expectedDate: z2.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((v) => !Number.isNaN(Date.parse(`${v}T00:00:00Z`)) && (/* @__PURE__ */ new Date(`${v}T00:00:00Z`)).toISOString().slice(0, 10) === v), reason }).strict();
+var eventSchema = z2.object({ deliveryId: id, requestKey: id.min(8), expectedVersion: id, kind: z2.enum(["received", "cancelled"]), quantity: quantity.optional(), expectedQuantity: z2.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(), expectedUpdatedAt: z2.string().datetime({ offset: true }).optional(), reason }).strict().refine((v) => v.kind === "cancelled" ? v.quantity === void 0 && v.expectedQuantity === void 0 && v.expectedUpdatedAt === void 0 : !!v.quantity && v.expectedQuantity !== void 0 && !!v.expectedUpdatedAt);
 async function identity(input, actor, prefix) {
   if (!actor.trim()) throw new CommerceOperationsConflict("An authenticated staff member is required.");
   const v = input;
@@ -1020,8 +977,8 @@ async function recordReplenishmentDelivery(env, input, actor) {
 
 // src/recovery-payments.ts
 import { eq as eq4, sql as sql4 } from "drizzle-orm";
-import { z as z4 } from "zod";
-var id2 = z4.string().trim().min(1).max(128);
+import { z as z3 } from "zod";
+var id2 = z3.string().trim().min(1).max(128);
 var recoveryPaymentHeld = sql4`EXISTS(SELECT 1 FROM _ecommerce_recovery_payment_events e WHERE e.payment_id=p.id AND e.kind IN ('refunded','lost')) OR COALESCE((SELECT kind FROM _ecommerce_recovery_payment_events e WHERE e.payment_id=p.id AND e.kind IN ('disputed','won') ORDER BY rowid DESC LIMIT 1),'won')='disputed'`;
 async function verify(env, caseId, paymentId, amountMinor, currency, adapters) {
   const adapter = (adapters ?? runtimePaymentAdapters(env)).find((a) => a.providerId === "stripe");
@@ -1032,7 +989,7 @@ async function verify(env, caseId, paymentId, amountMinor, currency, adapters) {
   return adapter;
 }
 async function verifyExchangeCharge(env, input, actor, adapters) {
-  const v = z4.object({ caseId: id2, expectedVersion: id2, paymentId: z4.string().regex(/^pi_[A-Za-z0-9_]+$/).max(128), reason: z4.string().trim().min(8).max(500), requestKey: id2.min(8) }).strict().parse(input);
+  const v = z3.object({ caseId: id2, expectedVersion: id2, paymentId: z3.string().regex(/^pi_[A-Za-z0-9_]+$/).max(128), reason: z3.string().trim().min(8).max(500), requestKey: id2.min(8) }).strict().parse(input);
   if (!actor.trim()) throw new CommerceOperationsConflict("An authenticated staff member is required.");
   const db = commerceDb(env), decisionId = `rcp_${await hashOrderAccess(`${v.caseId}:${v.requestKey}`)}`, fingerprint2 = await warehouseFingerprint(v, actor);
   const replay = async () => {
@@ -1467,22 +1424,22 @@ var recoveryProgressQuery = sql6`WITH physical AS (${physicalStockLocations}), f
 
 // src/recoveries.ts
 import { eq as eq6, sql as sql7 } from "drizzle-orm";
-import { z as z5 } from "zod";
-var id3 = z5.string().trim().min(1).max(128);
-var reason2 = z5.string().trim().min(8).max(500);
-var units = z5.number().int().min(1).max(1e6);
-var line = z5.number().int().min(0).max(199);
-var timestamp = z5.string().refine((s) => Number.isSafeInteger(Date.parse(s)) && Date.parse(s) % 1e3 === 0, "Reload the stock version");
-var report = z5.object({
+import { z as z4 } from "zod";
+var id3 = z4.string().trim().min(1).max(128);
+var reason2 = z4.string().trim().min(8).max(500);
+var units = z4.number().int().min(1).max(1e6);
+var line = z4.number().int().min(0).max(199);
+var timestamp = z4.string().refine((s) => Number.isSafeInteger(Date.parse(s)) && Date.parse(s) % 1e3 === 0, "Reload the stock version");
+var report = z4.object({
   orderId: id3,
-  kind: z5.enum(RECOVERY_KINDS),
+  kind: z4.enum(RECOVERY_KINDS),
   fulfillmentId: id3.nullable().default(null),
   sourceShipmentId: id3.nullable().default(null),
   receiptId: id3.nullable().default(null),
   lineIndex: line,
   quantity: units,
-  expectedUnitPrice: z5.number().int().min(1).max(1e9).optional(),
-  allowPriceDifference: z5.boolean().default(false),
+  expectedUnitPrice: z4.number().int().min(1).max(1e9).optional(),
+  allowPriceDifference: z4.boolean().default(false),
   productId: id3.optional(),
   variantId: id3.nullable().optional(),
   requestKey: id3.min(8),
@@ -1567,7 +1524,7 @@ async function createRecoveryCase(env, input, actor) {
   const result = await write(() => db.insert(recoveryCases).values({ id: caseId, orderId: v.orderId, kind: v.kind, fulfillmentId: v.fulfillmentId, sourceShipmentId: v.sourceShipmentId, receiptId: v.receiptId, lineIndex: v.lineIndex, quantity: v.quantity, target: targets(target2), actor, reason: v.reason, fingerprint: fingerprint2, createdAt: /* @__PURE__ */ new Date() }), replay);
   return result ?? { caseId };
 }
-var action = z5.object({ caseId: id3, expectedVersion: id3, kind: z5.enum(["note", "resolve", "reopen", "tracking"]), shipmentId: id3.optional(), carrier: z5.string().trim().max(100).nullable().optional(), trackingNumber: z5.string().trim().max(150).nullable().optional(), reason: reason2, requestKey: id3.min(8) }).strict();
+var action = z4.object({ caseId: id3, expectedVersion: id3, kind: z4.enum(["note", "resolve", "reopen", "tracking"]), shipmentId: id3.optional(), carrier: z4.string().trim().max(100).nullable().optional(), trackingNumber: z4.string().trim().max(150).nullable().optional(), reason: reason2, requestKey: id3.min(8) }).strict();
 async function recordRecoveryEvent(env, input, actor) {
   const v = action.parse(input);
   actorRequired(actor);
@@ -1587,15 +1544,15 @@ async function recordRecoveryEvent(env, input, actor) {
   const result = await write(() => db.insert(recoveryEvents).values({ id: eventId, caseId: v.caseId, expectedVersion: v.expectedVersion, kind: v.kind, status, shipmentId: v.shipmentId ?? null, carrier: v.carrier || null, trackingNumber: v.trackingNumber || null, actor, reason: v.reason, fingerprint: fingerprint2, createdAt: /* @__PURE__ */ new Date() }), replay);
   return result ?? { eventId };
 }
-var ship = z5.object({
+var ship = z4.object({
   caseId: id3,
   expectedVersion: id3,
   quantity: units,
   requestKey: id3.min(8),
   reason: reason2,
-  carrier: z5.string().trim().max(100).nullable().default(null),
-  trackingNumber: z5.string().trim().max(150).nullable().default(null),
-  stock: z5.array(z5.object({ targetType: z5.enum(RESTOCK_TARGET_TYPES), targetId: id3, expectedQuantity: z5.number().int().min(0).max(Number.MAX_SAFE_INTEGER), expectedUpdatedAt: timestamp }).strict()).max(50)
+  carrier: z4.string().trim().max(100).nullable().default(null),
+  trackingNumber: z4.string().trim().max(150).nullable().default(null),
+  stock: z4.array(z4.object({ targetType: z4.enum(RESTOCK_TARGET_TYPES), targetId: id3, expectedQuantity: z4.number().int().min(0).max(Number.MAX_SAFE_INTEGER), expectedUpdatedAt: timestamp }).strict()).max(50)
 }).strict();
 async function shipRecoveryCase(env, input, actor, adapters) {
   const v = ship.parse(input);
@@ -1624,13 +1581,13 @@ async function shipRecoveryCase(env, input, actor, adapters) {
   return result ?? { shipmentId };
 }
 async function listRecoveryCases(env, input = {}) {
-  const v = z5.object({ filter: z5.enum(["open", "resolved", "all"]).default("open"), kind: z5.enum(["all", ...RECOVERY_KINDS]).default("all"), nextAction: z5.enum(["all", ...RECOVERY_NEXT_ACTIONS]).default("all"), offset: z5.coerce.number().int().min(0).max(1e6).default(0), orderId: z5.string().trim().max(128).default("") }).strict().parse(input), db = commerceDb(env);
+  const v = z4.object({ filter: z4.enum(["open", "resolved", "all"]).default("open"), kind: z4.enum(["all", ...RECOVERY_KINDS]).default("all"), nextAction: z4.enum(["all", ...RECOVERY_NEXT_ACTIONS]).default("all"), offset: z4.coerce.number().int().min(0).max(1e6).default(0), orderId: z4.string().trim().max(128).default("") }).strict().parse(input), db = commerceDb(env);
   const where = sql7`(${v.filter}='all' OR (${v.filter}='open' AND (status='open' OR awaitingInspection=1 OR awaitingPaymentReview=1)) OR (${v.filter}='resolved' AND status='resolved' AND awaitingInspection=0 AND awaitingPaymentReview=0)) AND (${v.kind}='all' OR kind=${v.kind}) AND (${v.orderId}='' OR orderId=${v.orderId}) AND (${v.nextAction}='all' OR nextAction=${v.nextAction})`;
   const [rows, count] = await db.batch([db.all(sql7`${recoveryProgressQuery} SELECT id,orderId,receiptId,lineIndex,kind,quantity,shipped,awaitingInspection,awaitingPaymentReview,name,status,createdAt,nextAction FROM cases WHERE ${where} ORDER BY createdAt,id LIMIT 50 OFFSET ${v.offset}`), db.all(sql7`${recoveryProgressQuery} SELECT count(*) n FROM cases WHERE ${where}`)]);
   return { ...v, total: count[0]?.n ?? 0, rows: rows.map((r) => ({ ...r, nextActionLabel: recoveryActionLabels[r.nextAction], createdAt: new Date(r.createdAt * 1e3).toISOString() })) };
 }
 async function readRecoveryCase(env, input) {
-  const { caseId } = z5.object({ caseId: id3 }).strict().parse(input), db = commerceDb(env);
+  const { caseId } = z4.object({ caseId: id3 }).strict().parse(input), db = commerceDb(env);
   const c = await db.query.recoveryCases.findFirst({ where: { id: caseId }, with: { payments: { orderBy: (_t, { sql: sql9 }) => sql9`rowid DESC`, limit: 1, with: { events: { orderBy: (_t, { sql: sql9 }) => sql9`rowid` } } }, events: { orderBy: (_t, { sql: sql9 }) => sql9`rowid DESC`, limit: 200 }, shipments: { orderBy: (_t, { sql: sql9 }) => sql9`rowid DESC`, limit: 100, with: { receipts: { with: { inspections: true } } } }, order: { columns: { status: true, currency: true, shippingAddress: true } } } });
   if (!c) throw new CommerceOperationsConflict("Recovery case unavailable.");
   const refund = c.receiptId ? await db.query.returnRefundDecisions.findFirst({ where: { receiptId: c.receiptId }, columns: { status: true, amountMinor: true }, orderBy: (_t, { sql: sql9 }) => sql9`rowid DESC` }) : null;
@@ -1677,7 +1634,7 @@ async function readRecoveryCase(env, input) {
   };
 }
 async function readRecoveryOrder(env, input) {
-  const v = z5.object({ orderId: id3 }).strict().parse(input), db = commerceDb(env), warehouse = await readOrderWarehouse(env, v);
+  const v = z4.object({ orderId: id3 }).strict().parse(input), db = commerceDb(env), warehouse = await readOrderWarehouse(env, v);
   const cases = await db.query.recoveryCases.findMany({ where: { orderId: v.orderId }, columns: { id: true, lineIndex: true, quantity: true, receiptId: true, fulfillmentId: true, sourceShipmentId: true, kind: true, target: true }, with: { shipments: { columns: { id: true, quantity: true, createdAt: true } } } });
   const o = await db.query.orders.findFirst({ where: { id: v.orderId }, columns: { items: true, currency: true } });
   return {
@@ -1690,7 +1647,7 @@ async function readRecoveryOrder(env, input) {
   };
 }
 async function listExchangeChoices(env, input) {
-  const v = z5.object({ orderId: id3, lineIndex: line, search: z5.string().trim().max(100).default(""), allowPriceDifference: z5.boolean().default(false), offset: z5.coerce.number().int().min(0).max(1e6).default(0) }).strict().parse(input), db = commerceDb(env);
+  const v = z4.object({ orderId: id3, lineIndex: line, search: z4.string().trim().max(100).default(""), allowPriceDifference: z4.boolean().default(false), offset: z4.coerce.number().int().min(0).max(1e6).default(0) }).strict().parse(input), db = commerceDb(env);
   const o = await db.query.orders.findFirst({ where: { id: v.orderId }, columns: { items: true, currency: true, status: true, paymentProvider: true } }), item = o?.items[v.lineIndex];
   if (!item || o?.paymentProvider === "admin_test" || !["paid", "partially_refunded"].includes(o?.status ?? "") || o.currency !== readStoreCurrency(env)) throw new CommerceOperationsConflict("Equal-price choices are unavailable for this order.");
   const cte2 = sql7`WITH choices AS (
@@ -1702,7 +1659,7 @@ async function listExchangeChoices(env, input) {
   return { ...v, currency: o.currency, price: item.priceAtPurchase, total: count[0]?.n ?? 0, rows };
 }
 async function readExchangeHandoff(env, input) {
-  const { requestId } = z5.object({ requestId: id3 }).strict().parse(input), db = commerceDb(env);
+  const { requestId } = z4.object({ requestId: id3 }).strict().parse(input), db = commerceDb(env);
   const r = await db.query.returnRequests.findFirst({ where: { id: requestId }, with: { exchangePreference: true, events: { orderBy: (_t, { sql: sql9 }) => sql9`rowid DESC`, limit: 1 }, order: { columns: { items: true, currency: true, status: true, paymentProvider: true, shippingAddress: true } }, receipts: { with: { receipt: { with: { inspections: true, refundDecisions: { columns: { status: true }, orderBy: (_t, { sql: sql9 }) => sql9`rowid DESC`, limit: 1 }, recoveryCases: { columns: { id: true, lineIndex: true, quantity: true } } } } } } } });
   if (!r || r.redactedAt || !r.exchangePreference || r.order.paymentProvider === "admin_test") throw new CommerceOperationsConflict("This exchange request is unavailable.");
   const preference = r.exchangePreference, lineIndex = preference.lineIndex, status = r.events[0]?.status ?? "pending";
@@ -1746,20 +1703,20 @@ async function readExchangeHandoff(env, input) {
 
 // src/return-requests.ts
 import { eq as eq7, sql as sql8 } from "drizzle-orm";
-import { z as z6 } from "zod";
-var id4 = z6.string().trim().min(1).max(128);
+import { z as z5 } from "zod";
+var id4 = z5.string().trim().min(1).max(128);
 var key = id4.min(8);
-var items = z6.array(z6.object({ lineIndex: z6.number().int().min(0).max(199), quantity: z6.number().int().min(1).max(1e6) }).strict()).min(1).max(50).refine((rows) => new Set(rows.map((r) => r.lineIndex)).size === rows.length, "Choose each line once");
-var createSchema = z6.object({ orderId: id4, requestKey: key, reason: z6.string().trim().min(8).max(1e3), reasonCode: z6.enum(RETURN_REASON_CODES).default("unspecified"), items, exchange: z6.object({ productId: id4, variantId: id4.nullable().default(null) }).strict().optional() }).strict().refine((v) => !v.exchange || v.items.length === 1, "Request one original item per exchange");
-var decisionSchema = z6.object({
+var items = z5.array(z5.object({ lineIndex: z5.number().int().min(0).max(199), quantity: z5.number().int().min(1).max(1e6) }).strict()).min(1).max(50).refine((rows) => new Set(rows.map((r) => r.lineIndex)).size === rows.length, "Choose each line once");
+var createSchema = z5.object({ orderId: id4, requestKey: key, reason: z5.string().trim().min(8).max(1e3), reasonCode: z5.enum(RETURN_REASON_CODES).default("unspecified"), items, exchange: z5.object({ productId: id4, variantId: id4.nullable().default(null) }).strict().optional() }).strict().refine((v) => !v.exchange || v.items.length === 1, "Request one original item per exchange");
+var decisionSchema = z5.object({
   requestId: id4,
   requestKey: key,
   expectedVersion: id4,
-  status: z6.enum(["approved", "declined", "closed"]),
-  reason: z6.string().trim().min(8).max(500),
-  customerMessage: z6.string().trim().min(8).max(1e3)
+  status: z5.enum(["approved", "declined", "closed"]),
+  reason: z5.string().trim().min(8).max(500),
+  customerMessage: z5.string().trim().min(8).max(1e3)
 }).strict();
-var cancelSchema = z6.object({ orderId: id4, requestId: id4, requestKey: key, expectedVersion: id4 }).strict();
+var cancelSchema = z5.object({ orderId: id4, requestId: id4, requestKey: key, expectedVersion: id4 }).strict();
 var fingerprint = (input, actor) => hashOrderAccess(JSON.stringify({ input, actor }));
 var statusOf = (events) => events.at(-1)?.status ?? "pending";
 async function owned(ctx, orderId, owner) {
@@ -1906,7 +1863,7 @@ async function cancelCustomerReturn(ctx, input, owner = {}) {
   return appendDecision(ctx.env, { ...v, status: "cancelled", reason: "Customer cancelled the return request", customerMessage: "You cancelled this return request." }, "customer", "customer");
 }
 async function readReturnRequestAdmin(env, input) {
-  const v = z6.object({ requestId: id4 }).strict().parse(input), db = commerceDb(env);
+  const v = z5.object({ requestId: id4 }).strict().parse(input), db = commerceDb(env);
   const request = await db.query.returnRequests.findFirst({ where: { id: v.requestId }, with: { exchangePreference: true, order: { columns: { id: true, items: true, status: true } }, events: { orderBy: (_t, { sql: sql9 }) => sql9`rowid` }, receipts: { with: { receipt: { with: { inspections: true } } } } } });
   if (!request) throw new CommerceOperationsConflict("Return request not found.");
   const names = await adminActorNames(env, request.events.filter((e) => e.actorKind === "staff").map((e) => e.actor));
@@ -1930,7 +1887,7 @@ async function readReturnRequestAdmin(env, input) {
   };
 }
 async function listReturnsQueue(env, input = {}) {
-  const v = z6.object({ filter: z6.enum(["active", "pending", "approved", "inspection", "waiting_goods", "arrange_exchange", "all"]).default("active"), orderId: z6.string().trim().max(128).default(""), offset: z6.coerce.number().int().min(0).max(1e6).default(0) }).strict().parse(input);
+  const v = z5.object({ filter: z5.enum(["active", "pending", "approved", "inspection", "waiting_goods", "arrange_exchange", "all"]).default("active"), orderId: z5.string().trim().max(128).default(""), offset: z5.coerce.number().int().min(0).max(1e6).default(0) }).strict().parse(input);
   const queue = sql8`WITH requests AS (
     SELECT 'request' AS kind,r.id,r.order_id AS orderId,COALESCE((SELECT status FROM _ecommerce_return_request_events e WHERE e.request_id=r.id ORDER BY rowid DESC LIMIT 1),'pending') AS status,r.created_at AS createdAt,r.reason,
     MAX(0,(SELECT sum(json_extract(value,'$.quantity')) FROM json_each(r.items))-COALESCE((SELECT sum(json_extract(i.value,'$.quantity')) FROM _ecommerce_return_request_receipts l JOIN _ecommerce_return_receipts x ON x.id=l.receipt_id,json_each(x.items) i WHERE l.request_id=r.id),0)) AS pendingUnits
@@ -1952,7 +1909,7 @@ async function listReturnsQueue(env, input = {}) {
   return { ...v, total: total[0]?.n ?? 0, rows: rows.map((r) => ({ ...r, createdAt: new Date(r.createdAt * 1e3).toISOString() })) };
 }
 async function readCustomerExchangeChoices(ctx, input, owner = {}) {
-  const v = z6.object({ orderId: id4, lineIndex: z6.number().int().min(0).max(199), search: z6.string().trim().max(100).default(""), offset: z6.number().int().min(0).max(1e6).default(0) }).strict().parse(input);
+  const v = z5.object({ orderId: id4, lineIndex: z5.number().int().min(0).max(199), search: z5.string().trim().max(100).default(""), offset: z5.number().int().min(0).max(1e6).default(0) }).strict().parse(input);
   const returns = await readCustomerReturns(ctx, v.orderId, owner);
   if (!returns) return null;
   if (!returns.lines.some((l) => l.lineIndex === v.lineIndex && l.available > 0)) throw new CommerceOperationsConflict("No received quantities are available for this exchange request.");
@@ -1971,12 +1928,6 @@ export {
   ProviderCheckLimitedError,
   providerCheckLimitResponse,
   mayAskPaymentProvider,
-  UNDELIVERABLE_COUNTRY,
-  SHIPPING_OPTION_UNAVAILABLE,
-  isCheckoutDetailsError,
-  withCountryCode,
-  checkoutSchema,
-  checkoutInputError,
   TaxCalculationError,
   taxableLines,
   taxAddressFor,

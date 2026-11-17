@@ -1,14 +1,16 @@
 import {
   bindCommerceApi
-} from "../chunk-5UT54SKW.js";
-import "../chunk-PDZF27EW.js";
+} from "../chunk-NKRAW7IR.js";
+import "../chunk-4OZ23J3X.js";
 import "../chunk-BVMDOVSS.js";
-import "../chunk-MPH2QR5Y.js";
+import "../chunk-25X32EKO.js";
 import "../chunk-AVWDMCNG.js";
 import "../chunk-IN4CG7W7.js";
-import "../chunk-GLO65VCM.js";
-import "../chunk-PVGGIHJ5.js";
-import "../chunk-IC3XDWQU.js";
+import "../chunk-3RWEM2DK.js";
+import "../chunk-YHTTKGNB.js";
+import "../chunk-QVDRNSCF.js";
+import "../chunk-7CFKBAUU.js";
+import "../chunk-LCILI57I.js";
 import "../chunk-GNU6N22K.js";
 import {
   CUSTOMER_SESSION_COOKIE,
@@ -25,7 +27,9 @@ import {
   requestCustomerEmailSignIn,
   revokeCustomerSession,
   verifyTurnstileToken
-} from "../chunk-PMYARYOQ.js";
+} from "../chunk-WHUJCCDD.js";
+import "../chunk-3MXMGN5I.js";
+import "../chunk-USNNZXV4.js";
 import "../chunk-SXQHVX4E.js";
 import "../chunk-PLAJXKV3.js";
 import {
@@ -35,8 +39,11 @@ import {
 } from "../chunk-NQUBOBQT.js";
 import {
   shopperSignInEmail
-} from "../chunk-AQNK3BKB.js";
+} from "../chunk-XJTZUPZM.js";
 import "../chunk-HNDRZISR.js";
+import {
+  customerOrderDestination
+} from "../chunk-C66AEOTN.js";
 
 // src/routes/ecommerce-account.ts
 import { readSetting } from "talisman-cms/env";
@@ -113,13 +120,14 @@ var ALL = async ({ request, cookies }) => {
         return Response.json({ error: BOT_CHECK_FAILED }, { status: 403, headers });
       }
     }
-    const siteName = parseAddress(from)?.name ?? new URL(publicOrigin).host;
+    const siteName = readSetting(settings, "COMMERCE_STORE_NAME") ?? parseAddress(from)?.name ?? new URL(publicOrigin).host;
+    const destination = customerOrderDestination(body.orderId);
     try {
       const { limited } = await requestCustomerEmailSignIn(
         runtimeEnv,
         body.email,
         // The token travels in the fragment, so it never reaches the server or its request logs.
-        (token) => `${publicOrigin}/account/verify#token=${encodeURIComponent(token)}`,
+        (token) => `${publicOrigin}/account/verify#token=${encodeURIComponent(token)}${destination ? `&order=${encodeURIComponent(destination)}` : ""}`,
         async (to, link) => {
           await sendEmail(settings, { to: { email: to }, from, ...shopperSignInEmail({ link, siteName }) }, provider);
         },

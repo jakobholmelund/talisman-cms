@@ -14,12 +14,20 @@ import {
   manageShopperData,
   normalizeShopperEmail,
   previewCustomerEmailSignIn,
+  readCustomerHub,
   requestCustomerEmailSignIn,
   revokeCustomerSession,
   shopperSignInBotCheck
-} from "./chunk-PMYARYOQ.js";
+} from "./chunk-WHUJCCDD.js";
+import "./chunk-USNNZXV4.js";
 import "./chunk-SXQHVX4E.js";
 import "./chunk-PLAJXKV3.js";
+import "./chunk-HNDRZISR.js";
+import {
+  customerOrderDestination,
+  customerOrderPath,
+  orderReference
+} from "./chunk-C66AEOTN.js";
 export {
   CUSTOMER_EMAIL_DAILY_LIMIT,
   CUSTOMER_SESSION_COOKIE,
@@ -30,12 +38,16 @@ export {
   ShopperPrivacyError,
   activateNewCustomer,
   consumeCustomerEmailSignIn,
+  customerOrderDestination,
+  customerOrderPath,
   findCustomerSession,
   hasPurchaseHistory,
   listCustomerOrders,
   manageShopperData,
   normalizeShopperEmail,
+  orderReference,
   previewCustomerEmailSignIn,
+  readCustomerHub,
   requestCustomerEmailSignIn,
   revokeCustomerSession,
   shopperSignInBotCheck

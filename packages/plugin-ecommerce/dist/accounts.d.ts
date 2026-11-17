@@ -1,5 +1,6 @@
 import { TalismanEnv } from 'talisman-cms/client';
 import { ParcelItem, ReturnExchangePreference, ReturnedItem } from './schema.js';
+export { c as customerOrderDestination, a as customerOrderPath, o as orderReference } from './order-reference-DIO_K6ml.js';
 import 'drizzle-orm';
 import 'drizzle-orm/sqlite-core';
 
@@ -192,6 +193,43 @@ declare function manageShopperData(env: TalismanEnv, actor: string, input: unkno
     discounts?: undefined;
 }>;
 
+/** A bounded, owner-only projection. Never return addresses, staff notes or provider identifiers. */
+declare function readCustomerHub(env: TalismanEnv, sessionToken?: string | null, requestedPage?: number): Promise<{
+    account: {
+        email: string;
+        name: string | null;
+        creditBalance: number;
+        currency: string;
+    };
+    total: number;
+    page: number;
+    pages: number;
+    orders: {
+        items: {
+            productId: string;
+            variantId: string | null;
+            quantity: number;
+            productName: string | null;
+            variantLabel: string | null;
+            sku: string | null;
+        }[];
+        reference: string;
+        orderTotal: number;
+        id: string;
+        status: string;
+        fulfillmentStatus: "fulfilled" | "unfulfilled" | "partially_fulfilled";
+        createdAt: Date;
+        currency: string;
+        totalAmount: number;
+        giftCardApplied: number;
+        creditApplied: number;
+        providerRefundedCents: number;
+        giftCardRefundedCents: number;
+        paymentUnderReview: boolean;
+        openReturns: number;
+    }[];
+} | null>;
+
 declare const CUSTOMER_SESSION_COOKIE = "talisman-customer";
 declare const CUSTOMER_SESSION_MAX_AGE: number;
 /** Store-wide sign-in emails per 24 hours unless `TALISMAN_COMMERCE_EMAIL_DAILY_LIMIT` sets another positive whole number. */
@@ -328,4 +366,4 @@ declare function listCustomerOrders(env: TalismanEnv, accountId: string): Promis
     createdAt: Date;
 }[]>;
 
-export { CUSTOMER_EMAIL_DAILY_LIMIT, CUSTOMER_SESSION_COOKIE, CUSTOMER_SESSION_MAX_AGE, CustomerEmailLimitError, type CustomerEmailSignInOptions, CustomerRequestLimitError, PURCHASED_ORDER_STATUSES, ShopperPrivacyError, activateNewCustomer, consumeCustomerEmailSignIn, findCustomerSession, hasPurchaseHistory, listCustomerOrders, manageShopperData, normalizeShopperEmail, previewCustomerEmailSignIn, requestCustomerEmailSignIn, revokeCustomerSession, shopperSignInBotCheck };
+export { CUSTOMER_EMAIL_DAILY_LIMIT, CUSTOMER_SESSION_COOKIE, CUSTOMER_SESSION_MAX_AGE, CustomerEmailLimitError, type CustomerEmailSignInOptions, CustomerRequestLimitError, PURCHASED_ORDER_STATUSES, ShopperPrivacyError, activateNewCustomer, consumeCustomerEmailSignIn, findCustomerSession, hasPurchaseHistory, listCustomerOrders, manageShopperData, normalizeShopperEmail, previewCustomerEmailSignIn, readCustomerHub, requestCustomerEmailSignIn, revokeCustomerSession, shopperSignInBotCheck };

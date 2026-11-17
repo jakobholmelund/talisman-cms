@@ -10,7 +10,7 @@ type OrderAmount = {
 declare const ORDERS_PAGE_SIZE = 50;
 /** The largest page a request may ask for. */
 declare const ORDERS_PAGE_MAX = 100;
-type OrdersView = 'awaiting' | 'recent';
+type OrdersView = 'awaiting' | 'recent' | 'partial' | 'shipped' | 'refunded' | 'disputed';
 type FulfillmentStatus = 'unfulfilled' | 'partially_fulfilled' | 'fulfilled';
 /** Invalid input to the orders queue or to a shipment write. The admin route answers it with 400. */
 declare class FulfillmentInputError extends Error {
@@ -52,7 +52,7 @@ declare function listCommerceOrdersAdmin(env: TalismanEnv, options?: {
     limit?: number;
     query?: string | null;
 }): Promise<{
-    view: "awaiting" | "recent";
+    view: "refunded" | "disputed" | "partial" | "awaiting" | "recent" | "shipped";
     pageSize: number;
     awaitingCount: number;
     nextCursor: string | null;
@@ -103,12 +103,12 @@ declare function listCommerceOrdersAdmin(env: TalismanEnv, options?: {
         amounts: OrderAmount[];
         shipments: Shipment[];
         fulfillmentEvents: {
+            orderId: string;
             id: string;
             createdAt: Date;
-            orderId: string;
+            kind: "shipment" | "correction" | "reopen" | "complete";
             adminActor: string;
             note: string;
-            kind: "shipment" | "correction" | "reopen" | "complete";
         }[];
     }[];
 }>;

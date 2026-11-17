@@ -150,8 +150,8 @@ declare function getClient(env: TalismanEnv, ctx?: CacheContext, options?: Clien
          */
         save: (slug: string, data: Record<string, any>, opts?: SaveGlobalOptions) => Promise<{
             name: string;
-            data: unknown;
             slug: string;
+            data: unknown;
             description: string | null;
             id: string;
             createdAt: Date;
@@ -161,8 +161,8 @@ declare function getClient(env: TalismanEnv, ctx?: CacheContext, options?: Clien
         /** The same as `save`, under the name earlier releases used. */
         update: (slug: string, data: Record<string, any>, opts?: SaveGlobalOptions) => Promise<{
             name: string;
-            data: unknown;
             slug: string;
+            data: unknown;
             description: string | null;
             id: string;
             createdAt: Date;

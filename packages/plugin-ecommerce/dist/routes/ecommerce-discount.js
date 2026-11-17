@@ -2,40 +2,48 @@ import {
   CODE_CHECK_LIMIT_MESSAGE,
   codeChecksOverBasketLimit,
   codeChecksOverNetworkLimit
-} from "../chunk-CY4SNCGR.js";
+} from "../chunk-LXTB4PCH.js";
 import {
   bindCommerceApi
-} from "../chunk-5UT54SKW.js";
-import "../chunk-PDZF27EW.js";
+} from "../chunk-NKRAW7IR.js";
+import "../chunk-4OZ23J3X.js";
 import "../chunk-BVMDOVSS.js";
 import {
   codeRefusalBody,
   evaluateDiscountCode
-} from "../chunk-MPH2QR5Y.js";
+} from "../chunk-25X32EKO.js";
 import "../chunk-AVWDMCNG.js";
 import "../chunk-IN4CG7W7.js";
-import "../chunk-GLO65VCM.js";
 import {
-  StoreSettingsError,
-  evaluateGiftCard,
-  readStoreSettings,
-  reportStoreSettingsError
-} from "../chunk-PVGGIHJ5.js";
-import "../chunk-IC3XDWQU.js";
+  chooseShippingRate,
+  shippingCharge
+} from "../chunk-3RWEM2DK.js";
+import "../chunk-YHTTKGNB.js";
+import "../chunk-QVDRNSCF.js";
+import {
+  evaluateGiftCard
+} from "../chunk-7CFKBAUU.js";
+import "../chunk-LCILI57I.js";
 import "../chunk-GNU6N22K.js";
 import {
   CUSTOMER_SESSION_COOKIE,
-  findCustomerSession
-} from "../chunk-PMYARYOQ.js";
+  StoreSettingsError,
+  findCustomerSession,
+  readStoreSettings,
+  reportStoreSettingsError
+} from "../chunk-WHUJCCDD.js";
+import "../chunk-3MXMGN5I.js";
+import "../chunk-USNNZXV4.js";
 import "../chunk-SXQHVX4E.js";
 import "../chunk-PLAJXKV3.js";
 import {
   readCartSessionToken
 } from "../chunk-NQUBOBQT.js";
-import "../chunk-AQNK3BKB.js";
+import "../chunk-XJTZUPZM.js";
 import {
   minimumChargeAmount
 } from "../chunk-HNDRZISR.js";
+import "../chunk-C66AEOTN.js";
 
 // src/routes/ecommerce-discount.ts
 import { z } from "zod";
@@ -43,6 +51,8 @@ import { readSetting } from "talisman-cms/env";
 var previewSchema = z.object({
   code: z.string().trim().max(200).optional(),
   giftCardCode: z.string().trim().max(200).optional(),
+  shippingCountry: z.string().trim().length(2).optional(),
+  shippingRateId: z.string().regex(/^[a-z0-9_-]{1,40}$/).optional(),
   customerEmail: z.unknown().optional()
 }).strict();
 var POST = async ({ request, cookies }) => {
@@ -65,7 +75,7 @@ var POST = async ({ request, cookies }) => {
   const token = readCartSessionToken(cookies);
   if (!token) return Response.json({ error: "Basket not found" }, { status: 404, headers });
   try {
-    readStoreSettings(runtimeEnv);
+    const settings = readStoreSettings(runtimeEnv);
     const account = await findCustomerSession(runtimeEnv, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
     const api = bindCommerceApi({ env: runtimeEnv });
     const cart = (account ? await api.carts.claim(token, account.id) : null) ?? await api.carts.find(token, account?.id);
@@ -84,11 +94,15 @@ var POST = async ({ request, cookies }) => {
         priceAtPurchase: line.unitAmount
       }))
     }) : null;
+    const merchandise = quote.totalAmount - (promotion?.amount ?? 0);
+    const rate = quote.requiresShipping && parsed.data.shippingCountry && settings.shippingRates.length ? chooseShippingRate(settings, parsed.data.shippingCountry.toUpperCase(), parsed.data.shippingRateId) : null;
+    const shipping = rate ? shippingCharge(rate, merchandise) : 0;
     const creditApplied = Math.min(
       Math.max(0, account?.creditBalance ?? 0),
-      Math.max(0, quote.totalAmount - (promotion?.amount ?? 0) - minimumChargeAmount(quote.currency))
+      merchandise,
+      Math.max(0, merchandise + shipping - minimumChargeAmount(quote.currency))
     );
-    const afterCredit = quote.totalAmount - (promotion?.amount ?? 0) - creditApplied;
+    const afterCredit = merchandise + shipping - creditApplied;
     const giftCard = parsed.data.giftCardCode ? await evaluateGiftCard(runtimeEnv, parsed.data.giftCardCode, afterCredit) : null;
     return Response.json({
       code: promotion?.code ?? null,

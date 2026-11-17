@@ -11,7 +11,12 @@ import {
   sendCommerceEmailNow,
   unclaimedAt,
   waitingEmailsResult
-} from "./chunk-PVGGIHJ5.js";
+} from "./chunk-7CFKBAUU.js";
+import {
+  describeOrderItems,
+  orderAmountColumns,
+  orderAmounts
+} from "./chunk-WHUJCCDD.js";
 import {
   batchGroups,
   chunked,
@@ -45,7 +50,7 @@ import {
   returnNoticeEmail,
   returnRefundEmail,
   shipmentEmail
-} from "./chunk-AQNK3BKB.js";
+} from "./chunk-XJTZUPZM.js";
 
 // src/warehouse.ts
 import { eq as eq2, sql as sql2 } from "drizzle-orm";
@@ -58,79 +63,6 @@ async function adminActorNames(env, actorIds) {
   const db = commerceDb(env);
   const { users } = await batchGroups(db, { users: chunked([...new Set(actorIds)]).map((ids) => db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, ids))) });
   return new Map(users.map((row) => [row.id, row.name?.trim() || row.id]));
-}
-
-// src/order-items.ts
-var orderAmountColumns = {
-  subtotalAmount: orders.subtotalAmount,
-  discountCode: orders.discountCode,
-  discountAmount: orders.discountAmount,
-  creditApplied: orders.creditApplied,
-  shippingAmount: orders.shippingAmount,
-  shippingLabel: orders.shippingLabel,
-  taxAmount: orders.taxAmount,
-  taxBehavior: orders.taxBehavior,
-  giftCardApplied: orders.giftCardApplied,
-  totalAmount: orders.totalAmount,
-  providerRefundedCents: orders.providerRefundedCents,
-  giftCardRefundedCents: orders.giftCardRefundedCents
-};
-function orderAmounts(row) {
-  const amounts = [{ key: "itemsSubtotal", label: "Items subtotal", cents: row.subtotalAmount || row.totalAmount }];
-  if (row.discountAmount > 0) {
-    amounts.push({ key: "discount", label: row.discountCode ? `Discount (${row.discountCode})` : "Discount", cents: -row.discountAmount });
-  }
-  if (row.creditApplied > 0) amounts.push({ key: "storeCredit", label: "Store credit", cents: -row.creditApplied });
-  if (row.shippingAmount > 0 || row.shippingLabel) {
-    amounts.push({ key: "shipping", label: row.shippingLabel ? `Shipping (${row.shippingLabel})` : "Shipping", cents: row.shippingAmount });
-  }
-  if (row.taxAmount > 0) {
-    amounts.push(row.taxBehavior === "inclusive" ? { key: "taxIncluded", label: "Tax included in the prices", cents: row.taxAmount } : { key: "tax", label: "Tax", cents: row.taxAmount });
-  }
-  if (row.giftCardApplied > 0) amounts.push({ key: "giftCard", label: "Gift card", cents: -row.giftCardApplied });
-  amounts.push({ key: "charged", label: "Charged by the payment provider", cents: row.totalAmount });
-  if (row.providerRefundedCents > 0) {
-    amounts.push({ key: "providerRefunded", label: "Refunded by the payment provider", cents: row.providerRefundedCents });
-  }
-  if (row.giftCardRefundedCents > 0) {
-    amounts.push({ key: "giftCardRefunded", label: "Refunded to the gift card", cents: row.giftCardRefundedCents });
-  }
-  return amounts;
-}
-async function describeOrderItems(env, items) {
-  const db = commerceDb(env);
-  const productIds = [...new Set(items.map((item) => item.productId))];
-  const variantIds = [...new Set(items.flatMap((item) => item.variantId ? [item.variantId] : []))];
-  const rows = await batchGroups(db, {
-    products: chunked(productIds).map((ids) => db.query.products.findMany({
-      columns: { id: true, name: true, sku: true },
-      where: { id: { in: ids } }
-    })),
-    values: chunked(variantIds).map((ids) => db.query.productVariantValues.findMany({
-      columns: { id: true, value: true, sku: true },
-      where: { id: { in: ids } },
-      with: { productVariant: { columns: { name: true, sku: true }, with: { variant: { columns: { name: true } } } } }
-    })),
-    // A variant group without values is sold as itself.
-    groups: chunked(variantIds).map((ids) => db.query.productVariants.findMany({
-      columns: { id: true, name: true, sku: true },
-      where: { id: { in: ids } }
-    }))
-  });
-  const products = new Map(rows.products.map((row) => [row.id, row]));
-  const values = new Map(rows.values.map((row) => [row.id, row]));
-  const groups = new Map(rows.groups.map((row) => [row.id, row]));
-  return items.map((item) => {
-    const product = products.get(item.productId);
-    const value = item.variantId ? values.get(item.variantId) : void 0;
-    const group = item.variantId && !value ? groups.get(item.variantId) : void 0;
-    return {
-      ...item,
-      productName: product?.name ?? null,
-      variantLabel: value ? `${value.productVariant.variant?.name ?? value.productVariant.name}: ${value.value}` : group?.name ?? null,
-      sku: (value ? value.sku || value.productVariant.sku : group?.sku) || product?.sku || null
-    };
-  });
 }
 
 // src/email-recovery.ts
@@ -469,9 +401,9 @@ var locations = sql2`WITH locations AS (
  UNION ALL SELECT 'component', id, name, sku, quantity, updated_at FROM _ecommerce_components
 )`;
 async function listStockLocations(env, input = {}) {
-  const v = z2.object({ search: z2.string().trim().max(100).default(""), offset: z2.coerce.number().int().min(0).max(1e6).default(0) }).strict().parse(input);
+  const v = z2.object({ search: z2.string().trim().max(100).default(""), offset: z2.coerce.number().int().min(0).max(1e6).default(0), targetType: z2.enum(["product", "variant", "stock", "component"]).optional(), targetId: id.optional() }).strict().refine((value) => Boolean(value.targetType) === Boolean(value.targetId), "Choose a stock type and ID together").parse(input);
   const pattern = `%${v.search.replace(/[\\%_]/g, (c) => `\\${c}`)}%`, db = commerceDb(env);
-  const where = sql2`(name LIKE ${pattern} ESCAPE '\\' OR COALESCE(sku, '') LIKE ${pattern} ESCAPE '\\')`;
+  const where = sql2`(name LIKE ${pattern} ESCAPE '\\' OR COALESCE(sku, '') LIKE ${pattern} ESCAPE '\\') AND ${v.targetType ? sql2`type = ${v.targetType} AND id = ${v.targetId}` : sql2`1`}`;
   const [rows, total] = await db.batch([
     db.all(sql2`${locations} SELECT * FROM locations WHERE ${where} ORDER BY name, type, id LIMIT 50 OFFSET ${v.offset}`),
     db.all(sql2`${locations} SELECT count(*) n FROM locations WHERE ${where}`)
@@ -858,7 +790,7 @@ var composeReturnRefund = async (env, subjectId, setup) => {
   if (!to) return { cancel: "not_due" };
   const labels = { provider: "Original payment method", gift_card: "Gift card", store_credit: "Store credit" }, sums = /* @__PURE__ */ new Map();
   for (const a of decision.allocations) sums.set(a.kind, (sums.get(a.kind) ?? 0) + a.amountMinor);
-  const email = { store: setup.store, orderId: order.id, occurredAt: decision.createdAt, currency: order.currency, amountMinor: decision.amountMinor, tenders: [...sums].map(([kind, amountMinor]) => ({ label: labels[kind], amountMinor })) };
+  const email = { store: setup.store, orderId: order.id, occurredAt: decision.createdAt, currency: order.currency, amountMinor: decision.amountMinor, tenders: [...sums].map(([kind, amountMinor]) => ({ kind, label: labels[kind], amountMinor })) };
   return { to, message: await applyEmailTemplate(setup, "returnRefund", email, returnRefundEmail(email)) };
 };
 var COMPOSERS = {
@@ -922,7 +854,11 @@ var VIEWS = {
   // Every real order that can still ship, oldest first.
   awaiting: { where: sql5`${orders.status} IN ('paid','partially_refunded') AND ${orders.fulfillmentStatus} <> 'fulfilled' AND ${REAL_ORDER}`, ascending: true },
   // Real orders past checkout, newest first.
-  recent: { where: sql5`${orders.status} NOT IN ('pending','cancelled','draft') AND ${REAL_ORDER}`, ascending: false }
+  recent: { where: sql5`${orders.status} NOT IN ('pending','cancelled','draft') AND ${REAL_ORDER}`, ascending: false },
+  partial: { where: sql5`${orders.status} IN ('paid','partially_refunded') AND ${orders.fulfillmentStatus} = 'partially_fulfilled' AND ${REAL_ORDER}`, ascending: true },
+  shipped: { where: sql5`${orders.status} NOT IN ('pending','cancelled','draft') AND ${orders.fulfillmentStatus} = 'fulfilled' AND ${REAL_ORDER}`, ascending: false },
+  refunded: { where: sql5`${orders.status} IN ('refunded','partially_refunded') AND ${REAL_ORDER}`, ascending: false },
+  disputed: { where: sql5`${orders.status} = 'disputed' AND ${REAL_ORDER}`, ascending: true }
 };
 var orderColumns = {
   id: orders.id,
@@ -938,7 +874,7 @@ var orderColumns = {
 };
 var optionalText = (max) => z3.string().trim().max(max).nullish().transform((value) => value || null);
 var listSchema = z3.object({
-  view: z3.enum(["awaiting", "recent"]).default("awaiting"),
+  view: z3.enum(["awaiting", "recent", "partial", "shipped", "refunded", "disputed"]).default("awaiting"),
   // Room for an order id of about 3,000 ASCII characters; checkout writes ids of 40.
   cursor: z3.string().max(4096).nullish(),
   limit: z3.number().int().min(1).max(ORDERS_PAGE_MAX).default(ORDERS_PAGE_SIZE),
@@ -1037,7 +973,8 @@ async function listCommerceOrdersAdmin(env, options = {}) {
   if (values.query?.includes("@")) {
     conditions.push(eq5(sql5`lower(${orders.customerEmail})`, values.query.toLowerCase()));
   } else if (values.query) {
-    conditions.push(eq5(orders.id, values.query));
+    const reference = values.query.match(/^TAL-([0-9a-f]{12})$/i)?.[1];
+    conditions.push(reference ? sql5`lower(substr(${orders.id}, -13)) = ${`-${reference.toLowerCase()}`}` : eq5(orders.id, values.query));
   }
   if (values.cursor) {
     const [createdAt, id2] = decodeCursor(values.view, values.cursor);
@@ -1264,7 +1201,6 @@ async function adjustCommerceFulfillment(env, actor, input) {
 }
 
 export {
-  describeOrderItems,
   deliverCommerceEmail,
   deliverPendingCommerceEmails,
   adminActorNames,

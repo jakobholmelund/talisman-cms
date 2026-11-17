@@ -2,16 +2,18 @@ import {
   effectiveDeliveryDate,
   openRecoveryCase,
   physicalStockLocations
-} from "./chunk-PDZF27EW.js";
+} from "./chunk-4OZ23J3X.js";
 import {
   CommerceOperationsConflict,
   adminActorNames,
-  describeOrderItems,
   warehouseFingerprint
-} from "./chunk-GLO65VCM.js";
+} from "./chunk-QVDRNSCF.js";
 import {
   commerceEmailStatement
-} from "./chunk-PVGGIHJ5.js";
+} from "./chunk-7CFKBAUU.js";
+import {
+  describeOrderItems
+} from "./chunk-WHUJCCDD.js";
 import {
   commerceDb,
   commitBatch,
@@ -24,7 +26,9 @@ import {
   RETURN_REFUND_STATUSES,
   SUPPLIER_ISSUE_KINDS,
   SUPPLIER_ISSUE_STATUSES,
+  categories,
   orders,
+  products,
   purchaseOrderEvents,
   purchaseOrderLines,
   purchaseOrders,
@@ -76,10 +80,10 @@ async function reportSupplierIssue(env, input, actor) {
   }).strict().parse(input);
   const db = commerceDb(env), ident = await identity(v, actor, "supissue");
   const replay = async () => {
-    const row = await db.select().from(supplierIssues).where(eq(supplierIssues.id, ident.id)).get();
-    if (!row) return null;
-    if (row.fingerprint !== ident.fingerprint) throw new CommerceOperationsConflict("This supplier issue key was used with different details.");
-    return { issueId: row.id, duplicate: true };
+    const row2 = await db.select().from(supplierIssues).where(eq(supplierIssues.id, ident.id)).get();
+    if (!row2) return null;
+    if (row2.fingerprint !== ident.fingerprint) throw new CommerceOperationsConflict("This supplier issue key was used with different details.");
+    return { issueId: row2.id, duplicate: true };
   };
   const previous = await replay();
   if (previous) return previous;
@@ -91,10 +95,10 @@ async function recordSupplierIssue(env, input, actor) {
   const v = z.object({ issueId: id, expectedVersion: id, status: z.enum(SUPPLIER_ISSUE_STATUSES), reason, requestKey: id.min(8) }).strict().parse(input);
   const db = commerceDb(env), ident = await identity(v, actor, "supissueevent");
   const replay = async () => {
-    const row = await db.select().from(supplierIssueEvents).where(eq(supplierIssueEvents.id, ident.id)).get();
-    if (!row) return null;
-    if (row.fingerprint !== ident.fingerprint) throw new CommerceOperationsConflict("This supplier follow-up key was used with different details.");
-    return { issueId: row.issueId, eventId: row.id, duplicate: true };
+    const row2 = await db.select().from(supplierIssueEvents).where(eq(supplierIssueEvents.id, ident.id)).get();
+    if (!row2) return null;
+    if (row2.fingerprint !== ident.fingerprint) throw new CommerceOperationsConflict("This supplier follow-up key was used with different details.");
+    return { issueId: row2.issueId, eventId: row2.id, duplicate: true };
   };
   const previous = await replay();
   if (previous) return previous;
@@ -120,13 +124,13 @@ async function listSupplierIssues(env, input = {}) {
     db.all(sql`${queue} SELECT * FROM issues WHERE ${where} ORDER BY createdAt,id LIMIT 50 OFFSET ${v.offset}`),
     db.all(sql`${queue} SELECT count(*) AS n FROM issues WHERE ${where}`)
   ]);
-  return { ...v, total: count[0]?.n ?? 0, rows: rows.map((row) => ({ ...row, createdAt: new Date(row.createdAt * 1e3).toISOString() })) };
+  return { ...v, total: count[0]?.n ?? 0, rows: rows.map((row2) => ({ ...row2, createdAt: new Date(row2.createdAt * 1e3).toISOString() })) };
 }
 async function readSupplierIssue(env, input) {
   const { issueId } = z.object({ issueId: id }).strict().parse(input), db = commerceDb(env);
   const issue = await db.query.supplierIssues.findFirst({ where: { id: issueId }, with: {
-    events: { orderBy: (_t, { sql: sql10 }) => sql10`rowid DESC`, limit: 100 },
-    line: { with: { purchaseOrder: { with: { events: { orderBy: (_t, { sql: sql10 }) => sql10`rowid DESC`, limit: 1 } } } } }
+    events: { orderBy: (_t, { sql: sql11 }) => sql11`rowid DESC`, limit: 100 },
+    line: { with: { purchaseOrder: { with: { events: { orderBy: (_t, { sql: sql11 }) => sql11`rowid DESC`, limit: 1 } } } } }
   } });
   if (!issue) throw new CommerceOperationsConflict("Supplier issue not found.");
   const latest = issue.events[0], purchase = issue.line.purchaseOrder.events[0];
@@ -202,8 +206,8 @@ async function readCommerceAttention(env, now = Math.floor(Date.now() / 1e3)) {
   ]);
   return {
     checkedAt: new Date(now * 1e3).toISOString(),
-    counts: Object.fromEntries(counts.map((row) => [row.kind, Number(row.count)])),
-    rows: rows.map((row) => ({ ...row, createdAt: new Date(row.createdAt * 1e3).toISOString() }))
+    counts: Object.fromEntries(counts.map((row2) => [row2.kind, Number(row2.count)])),
+    rows: rows.map((row2) => ({ ...row2, createdAt: new Date(row2.createdAt * 1e3).toISOString() }))
   };
 }
 
@@ -218,11 +222,11 @@ var inputSchema = z2.object({
   offset: z2.coerce.number().int().min(0).max(1e6).default(0)
 });
 var choices = sql3`WITH inventory AS (
-  SELECT p.id, 'product' AS kind, p.id AS productId, p.name, p.sku, p.inventory_quantity AS quantity, 'Product' AS source
+  SELECT p.id, 'product' AS kind, p.id AS productId, p.name, p.sku, p.inventory_quantity AS quantity, 'Product' AS source, 'product' AS targetType, p.id AS targetId
     FROM _ecommerce_products p WHERE p.status = 'active' AND p.type = 'standard'
       AND NOT EXISTS (SELECT 1 FROM _ecommerce_product_variants g WHERE g.product_id = p.id)
   UNION ALL
-  SELECT g.id, 'variant', p.id, p.name || ' / ' || g.name, g.sku, g.inventory_quantity, 'Option group'
+  SELECT g.id, 'variant', p.id, p.name || ' / ' || g.name, g.sku, g.inventory_quantity, 'Option group', 'variant', g.id
     FROM _ecommerce_product_variants g JOIN _ecommerce_products p ON p.id = g.product_id
     WHERE p.status = 'active' AND p.type = 'standard'
       AND NOT EXISTS (SELECT 1 FROM _ecommerce_product_variant_values v WHERE v.product_variant_id = g.id)
@@ -233,14 +237,16 @@ var choices = sql3`WITH inventory AS (
         JOIN _ecommerce_components c ON c.id = r.component_id WHERE r.product_variant_value_id = v.id)
       ELSE COALESCE(s.quantity, g.inventory_quantity) END,
     CASE WHEN EXISTS (SELECT 1 FROM _ecommerce_variant_components r WHERE r.product_variant_value_id = v.id)
-      THEN 'Shared components' WHEN s.id IS NOT NULL THEN 'Choice stock' ELSE 'Option group' END
+      THEN 'Shared components' WHEN s.id IS NOT NULL THEN 'Choice stock' ELSE 'Option group' END,
+    CASE WHEN EXISTS (SELECT 1 FROM _ecommerce_variant_components r WHERE r.product_variant_value_id = v.id) THEN NULL WHEN s.id IS NOT NULL THEN 'stock' ELSE 'variant' END,
+    CASE WHEN EXISTS (SELECT 1 FROM _ecommerce_variant_components r WHERE r.product_variant_value_id = v.id) THEN NULL ELSE COALESCE(s.id, g.id) END
     FROM _ecommerce_product_variant_values v JOIN _ecommerce_product_variants g ON g.id = v.product_variant_id
       JOIN _ecommerce_products p ON p.id = g.product_id
       LEFT JOIN _ecommerce_stocks s ON s.product_variant_value_id = v.id
     WHERE p.status = 'active' AND p.type = 'standard'
 )`;
 var parts = sql3`WITH inventory AS (SELECT id, 'component' AS kind, NULL AS productId, name, sku, quantity,
-  'Shared component' AS source FROM _ecommerce_components)`;
+  'Shared component' AS source, 'component' AS targetType, id AS targetId FROM _ecommerce_components)`;
 async function readStockOverview(env, input = {}) {
   const values = inputSchema.parse(input);
   const cte = values.view === "components" ? parts : choices;
@@ -533,8 +539,8 @@ async function exportCommerceOperations(env, input) {
       SELECT * FROM events WHERE (order_id IS NULL OR EXISTS(SELECT 1 FROM _ecommerce_orders o WHERE o.id=events.order_id AND COALESCE(o.payment_provider,'stripe')<>'admin_test')) AND created_at_utc>=${from} AND created_at_utc<${to} AND (${v.orderId}='' OR order_id=${v.orderId}) AND (${v.targetType}='all' OR target_type=${v.targetType}) AND (${v.targetId}='' OR target_id=${v.targetId}) ORDER BY created_at_utc,movement_id LIMIT 1001`);
   }
   if (rows.length > 1e3) throw new OperationsExportLimit("This selection exceeds 1,000 rows. Narrow the dates or filters; no partial file was created.");
-  for (const row of rows) row.created_at_utc = new Date(Number(row.created_at_utc) * 1e3).toISOString();
-  return { filename: `commerce-${v.kind}-${v.from}-${v.to}.csv`, rows: rows.length, csv: "\uFEFF" + [columns.map(csvCell).join(","), ...rows.map((row) => columns.map((c) => csvCell(row[c] ?? null)).join(","))].join("\r\n") + "\r\n" };
+  for (const row2 of rows) row2.created_at_utc = new Date(Number(row2.created_at_utc) * 1e3).toISOString();
+  return { filename: `commerce-${v.kind}-${v.from}-${v.to}.csv`, rows: rows.length, csv: "\uFEFF" + [columns.map(csvCell).join(","), ...rows.map((row2) => columns.map((c) => csvCell(row2[c] ?? null)).join(","))].join("\r\n") + "\r\n" };
 }
 
 // src/refund-follow-up.ts
@@ -557,7 +563,7 @@ async function listRefundFollowUp(env, input = {}) {
 }
 async function readRefundCase(env, input) {
   const v = z5.object({ receiptId: id2 }).strict().parse(input), db = commerceDb(env);
-  const r = await db.query.returnReceipts.findFirst({ where: { id: v.receiptId }, with: { order: { columns: { id: true, items: true, currency: true, paymentProvider: true, userId: true } }, refundDecisions: { orderBy: (_t, { sql: sql10 }) => sql10`rowid` } } });
+  const r = await db.query.returnReceipts.findFirst({ where: { id: v.receiptId }, with: { requestLinks: true, order: { columns: { id: true, items: true, currency: true, paymentProvider: true, giftCardApplied: true, giftCardRefundedCents: true, userId: true } }, refundDecisions: { orderBy: (_t, { sql: sql11 }) => sql11`rowid` } } });
   if (!r || r.order.paymentProvider === "admin_test") throw new CommerceOperationsConflict("Received return is unavailable.");
   const [sources, names, items] = await Promise.all([db.all(sql6`WITH sources AS (${sourceRows}) SELECT kind,id,amount_cents AS amountMinor,created_at AS createdAt,
  amount_cents-COALESCE((SELECT sum(json_extract(a.value,'$.amountMinor')) FROM _ecommerce_return_refund_decisions d,json_each(d.allocations) a WHERE d.status='settled' AND json_extract(a.value,'$.kind')=sources.kind AND json_extract(a.value,'$.sourceId')=sources.id),0) AS availableMinor FROM sources WHERE order_id=${r.orderId} ORDER BY created_at,id`), adminActorNames(env, r.refundDecisions.map((d) => d.actor)), describeOrderItems(env, r.items.map((i) => ({ ...r.order.items[i.lineIndex], quantity: i.quantity })))]);
@@ -569,6 +575,9 @@ async function readRefundCase(env, input) {
     version: latest?.id ?? r.id,
     status: erased ? "unavailable" : latest?.status ?? "review",
     amountMinor: latest?.amountMinor ?? 0,
+    requestId: r.requestLinks[0]?.requestId ?? null,
+    paymentProvider: r.order.paymentProvider,
+    giftCardRemainingMinor: Math.max(0, r.order.giftCardApplied - r.order.giftCardRefundedCents),
     items: items.map((i) => ({ name: [i.productName || "Ordered item", i.variantLabel].filter(Boolean).join(" / "), quantity: i.quantity })),
     history: r.refundDecisions.map((d) => ({ id: d.id, status: d.status, amountMinor: d.amountMinor, allocations: d.allocations, reason: d.reason, actor: d.actor, actorName: names.get(d.actor) ?? d.actor, createdAt: d.createdAt.toISOString() })),
     sources: sources.map((s) => ({ ...s, createdAt: s.createdAt === null ? null : new Date(s.createdAt * 1e3).toISOString() }))
@@ -654,7 +663,7 @@ async function saveSupplier(env, input, actor) {
   const failure = await conflict(() => commitBatch(db, [...!v.supplierId ? [db.insert(suppliers).values({ id: supplierId, createdAt: /* @__PURE__ */ new Date() })] : [], db.insert(supplierRevisions).values({ ...ident, supplierId, expectedVersion: v.expectedVersion, name: v.name, contact: v.contact, address: v.address, active: v.active, actor, reason: v.reason, createdAt: /* @__PURE__ */ new Date() })]), replay);
   return failure ?? { supplierId, revisionId: ident.id };
 }
-var latestSupplier = (env, supplierId) => commerceDb(env).query.supplierRevisions.findFirst({ where: { supplierId }, orderBy: (_t, { sql: sql10 }) => sql10`rowid DESC` });
+var latestSupplier = (env, supplierId) => commerceDb(env).query.supplierRevisions.findFirst({ where: { supplierId }, orderBy: (_t, { sql: sql11 }) => sql11`rowid DESC` });
 var supplierSnapshot = (s) => ({ version: s.id, name: s.name, contact: s.contact, address: s.address });
 async function savePurchaseOrder(env, input, actor) {
   const v = draftInput.parse(input), db = commerceDb(env), ident = await identity2(v, actor, "poe"), purchaseOrderId = v.purchaseOrderId ?? `po_${await hashOrderAccess(v.requestKey)}`;
@@ -687,7 +696,7 @@ function eventReplay(db, ident) {
 async function recordPurchaseOrder(env, input, actor) {
   const v = actionInput.parse(input), db = commerceDb(env), ident = await identity2(v, actor, "poe"), replay = eventReplay(db, ident), previous = await replay();
   if (previous) return previous;
-  const order = await db.query.purchaseOrders.findFirst({ where: { id: v.purchaseOrderId }, with: { events: { orderBy: (_t, { sql: sql10 }) => sql10`rowid` }, lines: { with: { delivery: { with: { events: { orderBy: (_t, { sql: sql10 }) => sql10`rowid`, with: { movement: { columns: { delta: true } } } } } } } } } });
+  const order = await db.query.purchaseOrders.findFirst({ where: { id: v.purchaseOrderId }, with: { events: { orderBy: (_t, { sql: sql11 }) => sql11`rowid` }, lines: { with: { delivery: { with: { events: { orderBy: (_t, { sql: sql11 }) => sql11`rowid`, with: { movement: { columns: { delta: true } } } } } } } } } });
   const last = order?.events.at(-1);
   if (!order || !last || last.id !== v.expectedVersion || last.status === "cancelled") throw new CommerceOperationsConflict("Purchase order changed. Refresh before continuing.");
   const statements = [], now = /* @__PURE__ */ new Date();
@@ -726,7 +735,7 @@ async function listPurchaseOrders(env, input = {}) {
 }
 async function readPurchaseOrder(env, input) {
   const { purchaseOrderId } = z6.object({ purchaseOrderId: id3 }).strict().parse(input), db = commerceDb(env);
-  const order = await db.query.purchaseOrders.findFirst({ where: { id: purchaseOrderId }, with: { events: { orderBy: (_t, { sql: sql10 }) => sql10`rowid DESC`, limit: 200 }, lines: { with: { delivery: { with: { events: { orderBy: (_t, { sql: sql10 }) => sql10`rowid`, with: { movement: { columns: { delta: true } } } } } } } } } });
+  const order = await db.query.purchaseOrders.findFirst({ where: { id: purchaseOrderId }, with: { events: { orderBy: (_t, { sql: sql11 }) => sql11`rowid DESC`, limit: 200 }, lines: { with: { delivery: { with: { events: { orderBy: (_t, { sql: sql11 }) => sql11`rowid`, with: { movement: { columns: { delta: true } } } } } } } } } });
   const latest = order?.events[0];
   if (!order || !latest) throw new CommerceOperationsConflict("Purchase order not found.");
   const names = await adminActorNames(env, order.events.map((e) => e.actor)), current = await latestSupplier(env, order.supplierId);
@@ -759,7 +768,7 @@ async function readOperationsReport(env, input = {}) {
   const now = Math.floor(Date.now() / 1e3), today = new Date(now * 1e3).toISOString().slice(0, 10);
   const v = z7.object({ start: day2.default(new Date((now - 29 * 86400) * 1e3).toISOString().slice(0, 10)), end: day2.default(today) }).strict().refine((v2) => v2.start <= v2.end && (Date.parse(v2.end) - Date.parse(v2.start)) / 864e5 < 366, "Choose at most 366 UTC days").parse(input);
   const start = Date.parse(v.start) / 1e3, end = Date.parse(v.end) / 1e3 + 86400, db = commerceDb(env), period = (column) => sql8`${column}>=${start} AND ${column}<${end}`;
-  const [reasons, conditions, resolved, shipping, incoming, backlog, recoveryActivity, exchangeMoney, recoveryWork] = await db.batch([
+  const [reasons, conditions2, resolved, shipping, incoming, backlog, recoveryActivity, exchangeMoney, recoveryWork] = await db.batch([
     db.all(sql8`SELECT COALESCE(c.code,'unspecified') AS code,count(*) AS requests FROM _ecommerce_return_requests r JOIN _ecommerce_orders o ON o.id=r.order_id LEFT JOIN _ecommerce_return_request_reasons c ON c.request_id=r.id WHERE COALESCE(o.payment_provider,'stripe')<>'admin_test' AND ${period(sql8`r.created_at`)} GROUP BY COALESCE(c.code,'unspecified')`),
     db.all(sql8`SELECT json_extract(i.value,'$.condition') AS condition,sum(json_extract(i.value,'$.quantity')) AS units,count(DISTINCT r.id) AS receipts FROM _ecommerce_return_receipts r JOIN _ecommerce_orders o ON o.id=r.order_id,json_each(r.items) i WHERE COALESCE(o.payment_provider,'stripe')<>'admin_test' AND ${period(sql8`r.created_at`)} GROUP BY json_extract(i.value,'$.condition')`),
     db.all(sql8`SELECT d.status,count(*) AS returns,avg(MAX(0,d.created_at-r.created_at)) AS averageSeconds FROM _ecommerce_return_refund_decisions d JOIN _ecommerce_return_receipts r ON r.id=d.receipt_id JOIN _ecommerce_orders o ON o.id=r.order_id WHERE COALESCE(o.payment_provider,'stripe')<>'admin_test' AND d.status IN ('settled','not_needed') AND d.rowid=(SELECT rowid FROM _ecommerce_return_refund_decisions WHERE receipt_id=d.receipt_id ORDER BY rowid DESC LIMIT 1) AND ${period(sql8`d.created_at`)} GROUP BY d.status`),
@@ -789,7 +798,7 @@ async function readOperationsReport(env, input = {}) {
     endBefore: new Date(end * 1e3).toISOString(),
     asOf: new Date(now * 1e3).toISOString(),
     reasons,
-    conditions,
+    conditions: conditions2,
     resolutions: resolved.map((r) => ({ ...r, averageHours: r.averageSeconds / 3600 })),
     firstShipment: { orders: shipping[0]?.orders ?? 0, averageHours: shipping[0]?.averageSeconds == null ? null : shipping[0].averageSeconds / 3600 },
     overdueDeliveries: incoming[0] ?? { deliveries: 0, units: 0, oldestDate: null },
@@ -858,6 +867,188 @@ async function inspectReplacementReturn(env, input, actor) {
   return await commit(() => db.insert(recoveryInspections).values({ id: inspectionId, receiptId: v.receiptId, quantity: v.quantity, disposition: v.disposition, restock: v.restock, stock: pools, actor, reason: v.reason, fingerprint, createdAt: /* @__PURE__ */ new Date() }), replay) ?? { inspectionId };
 }
 
+// src/catalog-admin.ts
+import { and as and2, eq as eq6, inArray, sql as sql10 } from "drizzle-orm";
+import { z as z9 } from "zod";
+import { invalidateEntryCache } from "talisman-cms/client";
+var filtersSchema = z9.object({
+  search: z9.string().trim().max(120).default(""),
+  status: z9.enum(["", "draft", "active", "archived"]).default(""),
+  category: z9.string().max(128).default(""),
+  attention: z9.enum(["all", "images", "low", "out", "price"]).default("all"),
+  threshold: z9.coerce.number().int().min(1).max(1e6).default(5),
+  sort: z9.enum(["name", "updated", "price-asc", "price-desc"]).default("updated"),
+  page: z9.coerce.number().int().min(1).max(1e6).default(1)
+}).strict();
+function catalogueQuery(where, threshold) {
+  return sql10`WITH candidates AS (
+ SELECT p.* FROM _ecommerce_products p WHERE ${where}
+), choices AS (
+ SELECT p.id AS productId, p.base_price AS price, NULL AS customPrice, CASE WHEN p.type='standard' THEN p.inventory_quantity ELSE NULL END AS quantity, 0 AS variant
+ FROM candidates p WHERE NOT EXISTS(SELECT 1 FROM _ecommerce_product_variants g WHERE g.product_id=p.id)
+ UNION ALL
+ SELECT p.id, COALESCE(v.price_override,g.price_override,p.base_price), COALESCE(v.price_override,g.price_override),
+ CASE WHEN p.type<>'standard' THEN NULL WHEN EXISTS(SELECT 1 FROM _ecommerce_variant_components r WHERE r.product_variant_value_id=v.id)
+ THEN COALESCE((SELECT MIN(CASE WHEN c.id IS NULL OR r.quantity<=0 THEN 0 ELSE CAST(c.quantity/r.quantity AS INTEGER) END) FROM _ecommerce_variant_components r LEFT JOIN _ecommerce_components c ON c.id=r.component_id WHERE r.product_variant_value_id=v.id),0)
+ ELSE COALESCE(s.quantity,g.inventory_quantity) END, 1
+ FROM candidates p JOIN _ecommerce_product_variants g ON g.product_id=p.id LEFT JOIN _ecommerce_product_variant_values v ON v.product_variant_id=g.id LEFT JOIN _ecommerce_stocks s ON s.product_variant_value_id=v.id
+), health AS (
+ SELECT productId, COUNT(*) AS choiceCount,SUM(variant) AS variantCount,
+ SUM(CASE WHEN price>0 AND (quantity IS NULL OR quantity>0) THEN 1 ELSE 0 END) AS inStock,
+ SUM(CASE WHEN quantity>0 AND quantity<=${threshold} THEN 1 ELSE 0 END) AS lowCount,
+ SUM(CASE WHEN quantity=0 THEN 1 ELSE 0 END) AS outCount,SUM(CASE WHEN price<=0 THEN 1 ELSE 0 END) AS missingPrice,
+ SUM(CASE WHEN customPrice IS NOT NULL THEN 1 ELSE 0 END) AS customPrices,SUM(CASE WHEN customPrice IS NULL THEN 1 ELSE 0 END) AS inheritedPrices,
+ MIN(customPrice) AS minCustom,MAX(customPrice) AS maxCustom,MIN(price) AS minPrice,MAX(price) AS maxPrice
+ FROM choices GROUP BY productId
+), catalogue AS (
+ SELECT p.id,p.name,p.slug,p.sku,p.base_price AS basePrice,p.status,p.type,p.updated_at AS updatedSeconds,
+ (SELECT CASE WHEN j.type='text' THEN trim(j.value) ELSE trim(json_extract(j.value,'$.url')) END FROM json_each(CASE WHEN json_valid(p.images) THEN p.images ELSE '[]' END) j
+ WHERE CASE WHEN j.type='text' THEN length(trim(j.value))>0 WHEN j.type='object' THEN length(trim(COALESCE(json_extract(j.value,'$.url'),'')))>0 ELSE 0 END LIMIT 1) AS image,
+ h.*,CASE WHEN h.variantCount=0 AND p.type='standard' THEN p.inventory_quantity ELSE NULL END AS simpleQuantity
+ FROM candidates p JOIN health h ON h.productId=p.id
+)`;
+}
+function row(value) {
+  const { updatedSeconds, ...rest } = value;
+  return { ...rest, updatedAt: new Date(updatedSeconds * 1e3).toISOString() };
+}
+function conditions(v) {
+  const parts2 = [sql10`1`];
+  if (v.status) parts2.push(sql10`p.status=${v.status}`);
+  if (v.category)
+    parts2.push(
+      sql10`EXISTS(SELECT 1 FROM _ecommerce_product_categories pc WHERE pc.product_id=p.id AND pc.category_id=${v.category})`
+    );
+  if (v.search) {
+    const q = v.search.toLowerCase();
+    parts2.push(
+      sql10`(instr(lower(p.name),${q})>0 OR instr(lower(p.slug),${q})>0 OR instr(lower(COALESCE(p.sku,'')),${q})>0 OR instr(lower(p.id),${q})>0 OR EXISTS(SELECT 1 FROM _ecommerce_product_variants g LEFT JOIN _ecommerce_product_variant_values v ON v.product_variant_id=g.id WHERE g.product_id=p.id AND (instr(lower(COALESCE(g.sku,'')),${q})>0 OR instr(lower(COALESCE(v.sku,'')),${q})>0 OR instr(lower(COALESCE(v.value,'')),${q})>0)))`
+    );
+  }
+  return and2(...parts2);
+}
+var attentionWhere = {
+  all: sql10`1`,
+  images: sql10`image IS NULL`,
+  low: sql10`lowCount>0`,
+  out: sql10`outCount>0`,
+  price: sql10`missingPrice>0`
+};
+async function readAdminCatalogue(env, input = {}) {
+  const v = filtersSchema.parse(input), db = commerceDb(env), cte = catalogueQuery(conditions(v), v.threshold), where = attentionWhere[v.attention];
+  const [totals, categoryRows] = await db.batch([
+    db.all(
+      sql10`${cte} SELECT COUNT(*) AS "all",COALESCE(SUM(image IS NULL),0) AS images,COALESCE(SUM(lowCount>0),0) AS low,COALESCE(SUM(outCount>0),0) AS out,COALESCE(SUM(missingPrice>0),0) AS price,COALESCE(SUM(CASE WHEN ${where} THEN 1 ELSE 0 END),0) AS total FROM catalogue`
+    ),
+    db.select({ id: categories.id, name: categories.name }).from(categories).orderBy(categories.name).limit(200)
+  ]);
+  const counts = totals[0], total = Number(counts.total), pages = Math.max(1, Math.ceil(total / 25)), page = Math.min(v.page, pages);
+  const order = v.sort === "name" ? sql10`lower(name),id` : v.sort === "price-asc" ? sql10`basePrice,id` : v.sort === "price-desc" ? sql10`basePrice DESC,id` : sql10`updatedSeconds DESC,id`;
+  const found = await db.all(
+    sql10`${cte} SELECT * FROM catalogue WHERE ${where} ORDER BY ${order} LIMIT 25 OFFSET ${(page - 1) * 25}`
+  );
+  return {
+    rows: found.map(row),
+    counts,
+    total,
+    page,
+    pages,
+    pageSize: 25,
+    categories: categoryRows,
+    filters: { ...v, page }
+  };
+}
+var selectionSchema = z9.object({
+  ids: z9.array(z9.string().min(1).max(128)).min(1).max(50).refine((ids) => new Set(ids).size === ids.length)
+}).strict();
+async function readCatalogueSelection(env, input) {
+  const { ids } = selectionSchema.parse(input), cte = catalogueQuery(inArray(sql10`p.id`, ids), 5);
+  const found = await commerceDb(env).all(sql10`${cte} SELECT * FROM catalogue ORDER BY lower(name),id`);
+  if (found.length !== ids.length)
+    throw new CommerceOperationsConflict(
+      "Some selected products are no longer available. Refresh the catalogue and review your selection."
+    );
+  return { rows: found.map(row) };
+}
+var editSchema = z9.object({
+  requestKey: z9.string().uuid(),
+  collectionSlug: z9.string().regex(/^[A-Za-z0-9_-]+$/).max(128).default("products"),
+  kind: z9.enum(["price", "visibility"]),
+  rows: z9.array(
+    z9.object({
+      id: z9.string().min(1).max(128),
+      expectedUpdatedAt: z9.string().min(1).max(64),
+      basePrice: z9.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+      status: z9.enum(["draft", "active", "archived"]).optional()
+    }).strict()
+  ).min(1).max(50).refine((rows) => new Set(rows.map((r) => r.id)).size === rows.length)
+}).strict().refine(
+  (v) => v.rows.every(
+    (r) => v.kind === "price" ? r.basePrice !== void 0 && r.status === void 0 : r.status !== void 0 && r.basePrice === void 0
+  ),
+  "Choose a price or visibility for every product"
+);
+async function updateCatalogue(env, input, _actor) {
+  const v = editSchema.parse(input), db = commerceDb(env), now = Math.floor(Date.now() / 1e3);
+  const current = await db.select().from(products).where(
+    inArray(
+      products.id,
+      v.rows.map((r) => r.id)
+    )
+  );
+  if (current.length !== v.rows.length)
+    throw new CommerceOperationsConflict(
+      "Some selected products were removed. Refresh the catalogue before saving."
+    );
+  const changed = v.rows.filter((r) => {
+    const p = current.find((p2) => p2.id === r.id);
+    return v.kind === "price" ? p.basePrice !== r.basePrice : p.status !== r.status;
+  });
+  const statements = [];
+  for (const item of changed) {
+    const seconds = Date.parse(item.expectedUpdatedAt) / 1e3;
+    if (!Number.isSafeInteger(seconds))
+      throw new CommerceOperationsConflict(
+        "A product version is invalid. Refresh the catalogue before saving."
+      );
+    statements.push(
+      db.get(
+        sql10`SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM _ecommerce_products WHERE id=${item.id} AND updated_at=${seconds}) THEN json_extract('{}','$catalog_stale') END AS conflict`
+      )
+    );
+    statements.push(
+      db.update(products).set({
+        ...v.kind === "price" ? { basePrice: item.basePrice } : { status: item.status },
+        updatedAt: sql10`MAX(${products.updatedAt}+1,${now})`
+      }).where(eq6(products.id, item.id))
+    );
+  }
+  try {
+    if (statements.length)
+      await db.batch(
+        statements
+      );
+  } catch (error) {
+    if (errorText(error).includes("catalog_stale"))
+      throw new CommerceOperationsConflict(
+        "Products changed after your review. Reload the selected products and review the changes again."
+      );
+    throw error;
+  }
+  try {
+    await invalidateEntryCache(
+      env,
+      v.collectionSlug,
+      v.rows.map((r) => r.id)
+    );
+  } catch {
+    console.warn(
+      "[commerce:catalogue] Could not clear product cache after saving."
+    );
+  }
+  return { batchId: v.requestKey, count: v.rows.length };
+}
+
 export {
   reportSupplierIssue,
   recordSupplierIssue,
@@ -879,5 +1070,8 @@ export {
   readPurchaseOrder,
   readOperationsReport,
   receiveReplacementReturn,
-  inspectReplacementReturn
+  inspectReplacementReturn,
+  readAdminCatalogue,
+  readCatalogueSelection,
+  updateCatalogue
 };

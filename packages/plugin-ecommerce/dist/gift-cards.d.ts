@@ -41,7 +41,7 @@ declare function replaceAdminGiftCardCode(env: TalismanEnv, actor: string, input
     code: string;
     balanceCents: number;
     currency: string;
-    status: "void" | "active" | "suspended";
+    status: "active" | "void" | "suspended";
 }>;
 declare function getGiftCardsAdmin(env: TalismanEnv): Promise<{
     id: string;
@@ -58,7 +58,7 @@ declare function getGiftCardsAdmin(env: TalismanEnv): Promise<{
     initialCents: number;
     balanceCents: number;
     currency: string;
-    status: "void" | "active" | "suspended";
+    status: "active" | "void" | "suspended";
     inReview: boolean;
     claimLink: {
         createdAt: string | null;
@@ -89,7 +89,7 @@ declare function getGiftCardReviewsAdmin(env: TalismanEnv): Promise<{
         adjustedCents: number;
         cardId: string | null;
         codeSuffix: string | null;
-        cardStatus: "void" | "active" | "suspended" | null;
+        cardStatus: "active" | "void" | "suspended" | null;
         cardReplacement: boolean;
         balanceCents: number | null;
         spentCents: number;
@@ -122,7 +122,7 @@ declare function evaluateGiftCard(env: TalismanEnv, code: string, amountDue: num
 declare function getGiftCardBalance(env: TalismanEnv, code: string): Promise<{
     balanceCents: number;
     currency: string;
-    status: "void" | "active" | "suspended";
+    status: "active" | "void" | "suspended";
 }>;
 declare function startGiftCardPurchase(env: TalismanEnv, adapter: PaymentProviderAdapter, input: unknown, urls: {
     successUrl: string;
@@ -266,9 +266,18 @@ declare function refundGiftCardTender(env: TalismanEnv, actor: string, input: un
     id: string;
     orderId: string;
     amountCents: number;
+    duplicate: boolean;
+} | {
+    id: string;
+    orderId: string;
+    amountCents: number;
 }>;
 /** Refund a zero-provider gift-card order, including any promotional credit used with it. */
 declare function refundGiftCardOnlyOrder(env: TalismanEnv, actor: string, input: unknown): Promise<{
+    orderId: string;
+    status: string;
+    duplicate: boolean;
+} | {
     orderId: string;
     status: string;
 }>;

@@ -3,34 +3,40 @@ import {
 } from "./chunk-FK3KKBW6.js";
 import {
   bindCommerceApi,
-  reconcileCommerce,
-  shippingOptionsFor
-} from "./chunk-5UT54SKW.js";
+  reconcileCommerce
+} from "./chunk-NKRAW7IR.js";
 import {
   CART_MAX_LINES,
   CART_MAX_LINE_QUANTITY,
   TaxCalculationError
-} from "./chunk-PDZF27EW.js";
+} from "./chunk-4OZ23J3X.js";
 import "./chunk-BVMDOVSS.js";
-import "./chunk-MPH2QR5Y.js";
+import "./chunk-25X32EKO.js";
 import "./chunk-AVWDMCNG.js";
 import {
   StripePaymentAdapter,
   TaxAddressError
 } from "./chunk-IN4CG7W7.js";
 import {
-  deliverPendingCommerceEmails
-} from "./chunk-GLO65VCM.js";
+  shippingOptionsFor
+} from "./chunk-3RWEM2DK.js";
+import "./chunk-YHTTKGNB.js";
 import {
-  COUNTRY_CODES,
+  deliverPendingCommerceEmails
+} from "./chunk-QVDRNSCF.js";
+import "./chunk-7CFKBAUU.js";
+import "./chunk-LCILI57I.js";
+import "./chunk-GNU6N22K.js";
+import {
   StoreSettingsError,
-  isCountryCode,
   readStoreCurrency,
   readStoreSettings
-} from "./chunk-PVGGIHJ5.js";
-import "./chunk-IC3XDWQU.js";
-import "./chunk-GNU6N22K.js";
-import "./chunk-PMYARYOQ.js";
+} from "./chunk-WHUJCCDD.js";
+import "./chunk-3MXMGN5I.js";
+import {
+  COUNTRY_CODES,
+  isCountryCode
+} from "./chunk-USNNZXV4.js";
 import {
   commerceDb
 } from "./chunk-SXQHVX4E.js";
@@ -104,7 +110,7 @@ import {
   variants
 } from "./chunk-PLAJXKV3.js";
 import "./chunk-NQUBOBQT.js";
-import "./chunk-AQNK3BKB.js";
+import "./chunk-XJTZUPZM.js";
 import {
   SUPPORTED_CURRENCIES,
   currencyMinorUnits,
@@ -114,6 +120,7 @@ import {
   minimumChargeAmount,
   toMinorUnits
 } from "./chunk-HNDRZISR.js";
+import "./chunk-C66AEOTN.js";
 
 // src/index.ts
 import { nativeFields } from "talisman-cms/fields";
@@ -317,6 +324,7 @@ var ecommercePlugin = (config) => {
         body: 'Enable the ecommerce plugin or tag a collection with `adminSection: "commerce"`.'
       }
     }],
+    adminCollectionViews: [{ slug: productsSlug, nativeSchemaExport: "products", componentPath: "@talisman-cms/plugin-ecommerce/admin/ProductCatalogue" }],
     adminEditorPanels: [
       { id: "commerce-model-guide", placement: "before-fields", sections: ["commerce"], componentPath: "@talisman-cms/plugin-ecommerce/admin/CommerceModelGuidePanel" },
       { id: "commerce-product-options", placement: "after-form", slugs: [productsSlug], componentPath: "@talisman-cms/plugin-ecommerce/admin/ProductOptionsPanel" }
@@ -373,8 +381,21 @@ export const productsCollectionSlug = ${JSON.stringify(productsSlug)};`;
           { name: "type", label: "Product Type" },
           "status"
         ]);
+        const productSections = { name: "About this product", description: "About this product", slug: "About this product", sku: "About this product", images: "Images", basePrice: "Pricing", isPhysical: "Selling & shipping", type: "Selling & shipping", status: "Selling & shipping", categoryIds: "Organisation", tagIds: "Organisation" };
+        for (const field of productFields) Object.assign(field, { editorSection: productSections[field.name] || "Advanced", editorHidden: field.name === "inventoryQuantity" || field.name === "id" });
+        productFields.sort((a, b) => ["About this product", "Images", "Pricing", "Selling & shipping", "Organisation", "Advanced"].indexOf(productSections[a.name] || "Advanced") - ["About this product", "Images", "Pricing", "Selling & shipping", "Organisation", "Advanced"].indexOf(productSections[b.name] || "Advanced"));
+        const labels = { isPhysical: { label: "Requires shipping" }, sku: { label: "SKU (optional)" }, type: { label: "Selling format", optionLabels: { standard: "One-time purchase", digital: "Digital download", subscription: "Subscription" } }, status: { label: "Visibility", optionLabels: { draft: "Draft \u2014 hidden from shoppers", active: "Available in store", archived: "Archived \u2014 hidden from shoppers" } } };
+        for (const field of productFields) if (labels[field.name]) Object.assign(field, labels[field.name]);
+        const handle = productFields.find((field) => field.name === "slug");
+        if (handle) Object.assign(handle, { label: "URL name", adminPresentation: "slug", generateFrom: "name" });
+        const price = productFields.find((field) => field.name === "basePrice");
+        if (price) Object.assign(price, { label: "Price", adminPresentation: "money" });
+        const gallery = productFields.find((field) => field.name === "images");
+        if (gallery) Object.assign(gallery, { adminPresentation: "gallery" });
         collections.push({
           name: "Products",
+          singularName: "Product",
+          editorCreateNext: "commerce-product-options",
           slug: productsSlug,
           description: "Catalog of items available for purchase",
           adminSection: "commerce",

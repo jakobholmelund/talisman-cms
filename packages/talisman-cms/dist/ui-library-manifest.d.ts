@@ -1,4 +1,4 @@
-import { n as UiLibraryRequirement, F as FieldDefinition, o as AdvancedAdapterDefinition, U as UiComponentPresetDefinition, g as ComponentSlotDefinition, m as UiLibraryDefinition, k as UiLibraryBlockAdapter, l as UiLibraryComponentAdapter } from './fields-BNNcWDXj.js';
+import { n as UiLibraryRequirement, F as FieldDefinition, o as AdvancedAdapterDefinition, U as UiComponentPresetDefinition, g as ComponentSlotDefinition, m as UiLibraryDefinition, k as UiLibraryBlockAdapter, l as UiLibraryComponentAdapter } from './fields-BK8TPbdA.js';
 import './actor-Daa_hmny.js';
 import './types-C5a-hx5D.js';
 import 'astro';

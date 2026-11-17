@@ -1,13 +1,9 @@
 import {
-  SHIPPING_OPTION_UNAVAILABLE,
-  UNDELIVERABLE_COUNTRY,
   aggregateComponentDemand,
   calculateOrderTax,
   cancelCustomerReturn,
   cancelOrder,
   checkCartItems,
-  checkoutInputError,
-  checkoutSchema,
   claimCart,
   commerceContext,
   createCustomerReturn,
@@ -36,25 +32,34 @@ import {
   taxAddressFor,
   taxableLines,
   updateCartItems,
-  updateOrderStatus,
-  withCountryCode
-} from "./chunk-PDZF27EW.js";
+  updateOrderStatus
+} from "./chunk-4OZ23J3X.js";
 import {
   INVENTORY_COLUMNS,
   fullRefundStatements
 } from "./chunk-BVMDOVSS.js";
 import {
   evaluateDiscountCode
-} from "./chunk-MPH2QR5Y.js";
+} from "./chunk-25X32EKO.js";
+import {
+  chooseShippingRate,
+  deliveryEstimate,
+  shippingCharge
+} from "./chunk-3RWEM2DK.js";
+import {
+  UNDELIVERABLE_COUNTRY,
+  checkoutInputError,
+  checkoutSchema,
+  withCountryCode
+} from "./chunk-YHTTKGNB.js";
 import {
   adminActorNames,
   deliverPendingCommerceEmails
-} from "./chunk-GLO65VCM.js";
+} from "./chunk-QVDRNSCF.js";
 import {
   RECONCILE_FAILURE_MESSAGES,
   RECONCILE_TABLES,
   ReconcileFailure,
-  ShopperError,
   WebhookMismatchError,
   WebhookRetryLaterError,
   WebhookSignatureError,
@@ -68,11 +73,9 @@ import {
   giftCardPurchaseHoldStatements,
   giftCardPurchaseReleaseStatements,
   hashGiftCardSecret,
-  isCountryCode,
   isMissingSessionError,
   isOtherStripeModeSession,
   isProviderError,
-  readStoreSettings,
   reconcileAttempt,
   reconcileBackoff,
   reconcileFailure,
@@ -80,7 +83,7 @@ import {
   recordGiftCardPurchaseRefund,
   sessionLookupFailure,
   uncheckedSessionRefusal
-} from "./chunk-PVGGIHJ5.js";
+} from "./chunk-7CFKBAUU.js";
 import {
   canonicalEmail,
   canonicalEmails,
@@ -89,14 +92,18 @@ import {
   hasCanonicalPurchase,
   referralReversalStatements,
   releaseReferralAwards
-} from "./chunk-IC3XDWQU.js";
+} from "./chunk-LCILI57I.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
 } from "./chunk-GNU6N22K.js";
 import {
-  hasPurchaseHistory
-} from "./chunk-PMYARYOQ.js";
+  hasPurchaseHistory,
+  readStoreSettings
+} from "./chunk-WHUJCCDD.js";
+import {
+  ShopperError
+} from "./chunk-3MXMGN5I.js";
 import {
   batchGroups,
   commerceDb,
@@ -126,47 +133,6 @@ import {
 
 // src/checkout.ts
 import { and, eq, isNull, lt, notExists, sql } from "drizzle-orm";
-
-// src/shipping.ts
-function shippingOptionsFor(settings, country, itemsAmount) {
-  return ratesServing(settings, country).map((rate) => ({
-    id: rate.id,
-    label: rate.label,
-    amount: shippingCharge(rate, itemsAmount),
-    description: deliveryEstimate(rate),
-    freeOver: rate.freeOver,
-    minDays: rate.minDays,
-    maxDays: rate.maxDays
-  }));
-}
-function ratesServing(settings, country) {
-  const code = typeof country === "string" ? country.trim().toUpperCase() : "";
-  if (!isCountryCode(code) || settings.deliveryCountries && !settings.deliveryCountries.includes(code)) return [];
-  return settings.shippingRates.filter((rate) => !rate.countries || rate.countries.includes(code));
-}
-function chooseShippingRate(settings, country, chosenId) {
-  const serving = ratesServing(settings, country);
-  if (!serving.length) throw new ShopperError("checkout_details", UNDELIVERABLE_COUNTRY, 400);
-  const chosen = chosenId?.trim();
-  const rate = chosen ? serving.find((candidate) => candidate.id === chosen) : serving[0];
-  if (!rate) throw new ShopperError("checkout_details", SHIPPING_OPTION_UNAVAILABLE, 400);
-  return rate;
-}
-function shippingCharge(rate, itemsAmount) {
-  return rate.freeOver !== null && itemsAmount >= rate.freeOver ? 0 : rate.amount;
-}
-function deliveryEstimate(rate) {
-  const days = (count) => `${count} business day${count === 1 ? "" : "s"}`;
-  const { minDays, maxDays } = rate;
-  if (minDays !== null && maxDays !== null) {
-    return `Delivery in ${minDays === maxDays ? days(maxDays) : `${minDays}\u2013${days(maxDays)}`}`;
-  }
-  if (maxDays !== null) return `Delivery in up to ${days(maxDays)}`;
-  if (minDays !== null) return `Delivery in at least ${days(minDays)}`;
-  return null;
-}
-
-// src/checkout.ts
 var reservationRows = (list) => sql`SELECT json_extract(value, '$.target') AS target, json_extract(value, '$.amount') AS amount
   FROM json_each(${list})`;
 async function createOrderFromCart(ctx, cartId, options) {
@@ -1385,7 +1351,6 @@ function bindCommerceApi(options) {
 }
 
 export {
-  shippingOptionsFor,
   reconcileCommerce,
   purgeStaleCommerceData,
   ReconcileInputError,

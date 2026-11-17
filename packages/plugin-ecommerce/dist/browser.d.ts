@@ -1,5 +1,7 @@
 import { C as CustomerReturns } from './return-request-types-eGNtr7cH.js';
+export { c as customerOrderDestination, a as customerOrderPath, o as orderReference } from './order-reference-DIO_K6ml.js';
 import { C as CommerceContext } from './commerce-context-DMvZFbwj.js';
+export { S as ShippingRate, s as shippingOptionsFor } from './shipping-Djkz1OMZ.js';
 import './schema.js';
 import 'drizzle-orm';
 import 'drizzle-orm/sqlite-core';
@@ -101,6 +103,7 @@ declare function activateNewCustomerAccount(orderId: string): Promise<{
  */
 declare function requestCustomerEmailSignIn(email: string, options?: {
     turnstileToken?: string;
+    orderId?: string;
 }): Promise<{
     accepted: true;
     limited?: true;

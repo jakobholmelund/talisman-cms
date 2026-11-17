@@ -1,11 +1,17 @@
 import {
   getReferralPolicy,
   referralReversalStatements
-} from "./chunk-IC3XDWQU.js";
+} from "./chunk-LCILI57I.js";
 import {
   runtimeStripeMode,
   stripeSessionMode
 } from "./chunk-GNU6N22K.js";
+import {
+  readStoreSettings
+} from "./chunk-WHUJCCDD.js";
+import {
+  ShopperError
+} from "./chunk-3MXMGN5I.js";
 import {
   commerceDb,
   commitBatch
@@ -27,424 +33,16 @@ import {
 import {
   emailLink,
   giftCardClaimEmail
-} from "./chunk-AQNK3BKB.js";
+} from "./chunk-XJTZUPZM.js";
 import {
-  SUPPORTED_CURRENCIES,
-  isSupportedCurrency,
   minimumChargeAmount
 } from "./chunk-HNDRZISR.js";
 
 // src/gift-cards.ts
 import { and as and3, count, eq as eq3, exists, gt, inArray, isNull as isNull3, lt, ne, not, or as or2, sql as sql3 } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
-import { z as z2 } from "zod";
-import { readSetting as readSetting2 } from "talisman-cms/env";
-
-// src/store-settings.ts
 import { z } from "zod";
-import { readBinding } from "talisman-cms/env";
-
-// src/countries.ts
-var COUNTRY_CODES = Object.freeze([
-  "AD",
-  "AE",
-  "AF",
-  "AG",
-  "AI",
-  "AL",
-  "AM",
-  "AO",
-  "AQ",
-  "AR",
-  "AS",
-  "AT",
-  "AU",
-  "AW",
-  "AX",
-  "AZ",
-  "BA",
-  "BB",
-  "BD",
-  "BE",
-  "BF",
-  "BG",
-  "BH",
-  "BI",
-  "BJ",
-  "BL",
-  "BM",
-  "BN",
-  "BO",
-  "BQ",
-  "BR",
-  "BS",
-  "BT",
-  "BV",
-  "BW",
-  "BY",
-  "BZ",
-  "CA",
-  "CC",
-  "CD",
-  "CF",
-  "CG",
-  "CH",
-  "CI",
-  "CK",
-  "CL",
-  "CM",
-  "CN",
-  "CO",
-  "CR",
-  "CU",
-  "CV",
-  "CW",
-  "CX",
-  "CY",
-  "CZ",
-  "DE",
-  "DJ",
-  "DK",
-  "DM",
-  "DO",
-  "DZ",
-  "EC",
-  "EE",
-  "EG",
-  "EH",
-  "ER",
-  "ES",
-  "ET",
-  "FI",
-  "FJ",
-  "FK",
-  "FM",
-  "FO",
-  "FR",
-  "GA",
-  "GB",
-  "GD",
-  "GE",
-  "GF",
-  "GG",
-  "GH",
-  "GI",
-  "GL",
-  "GM",
-  "GN",
-  "GP",
-  "GQ",
-  "GR",
-  "GS",
-  "GT",
-  "GU",
-  "GW",
-  "GY",
-  "HK",
-  "HM",
-  "HN",
-  "HR",
-  "HT",
-  "HU",
-  "ID",
-  "IE",
-  "IL",
-  "IM",
-  "IN",
-  "IO",
-  "IQ",
-  "IR",
-  "IS",
-  "IT",
-  "JE",
-  "JM",
-  "JO",
-  "JP",
-  "KE",
-  "KG",
-  "KH",
-  "KI",
-  "KM",
-  "KN",
-  "KP",
-  "KR",
-  "KW",
-  "KY",
-  "KZ",
-  "LA",
-  "LB",
-  "LC",
-  "LI",
-  "LK",
-  "LR",
-  "LS",
-  "LT",
-  "LU",
-  "LV",
-  "LY",
-  "MA",
-  "MC",
-  "MD",
-  "ME",
-  "MF",
-  "MG",
-  "MH",
-  "MK",
-  "ML",
-  "MM",
-  "MN",
-  "MO",
-  "MP",
-  "MQ",
-  "MR",
-  "MS",
-  "MT",
-  "MU",
-  "MV",
-  "MW",
-  "MX",
-  "MY",
-  "MZ",
-  "NA",
-  "NC",
-  "NE",
-  "NF",
-  "NG",
-  "NI",
-  "NL",
-  "NO",
-  "NP",
-  "NR",
-  "NU",
-  "NZ",
-  "OM",
-  "PA",
-  "PE",
-  "PF",
-  "PG",
-  "PH",
-  "PK",
-  "PL",
-  "PM",
-  "PN",
-  "PR",
-  "PS",
-  "PT",
-  "PW",
-  "PY",
-  "QA",
-  "RE",
-  "RO",
-  "RS",
-  "RU",
-  "RW",
-  "SA",
-  "SB",
-  "SC",
-  "SD",
-  "SE",
-  "SG",
-  "SH",
-  "SI",
-  "SJ",
-  "SK",
-  "SL",
-  "SM",
-  "SN",
-  "SO",
-  "SR",
-  "SS",
-  "ST",
-  "SV",
-  "SX",
-  "SY",
-  "SZ",
-  "TC",
-  "TD",
-  "TF",
-  "TG",
-  "TH",
-  "TJ",
-  "TK",
-  "TL",
-  "TM",
-  "TN",
-  "TO",
-  "TR",
-  "TT",
-  "TV",
-  "TW",
-  "TZ",
-  "UA",
-  "UG",
-  "UM",
-  "US",
-  "UY",
-  "UZ",
-  "VA",
-  "VC",
-  "VE",
-  "VG",
-  "VI",
-  "VN",
-  "VU",
-  "WF",
-  "WS",
-  "YE",
-  "YT",
-  "ZA",
-  "ZM",
-  "ZW"
-]);
-var assigned = new Set(COUNTRY_CODES);
-function isCountryCode(code) {
-  return assigned.has(code);
-}
-
-// src/store-settings.ts
-var StoreSettingsError = class extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "StoreSettingsError";
-  }
-};
-function readStoreSettings(env) {
-  const currency = readCurrency(env);
-  const deliveryCountries = readDeliveryCountries(env);
-  const shippingRates = readShippingRates(env, deliveryCountries);
-  return { currency, deliveryCountries, shippingRates, tax: readTax(env) };
-}
-function readStoreCurrency(env) {
-  return readCurrency(env);
-}
-function reportStoreSettingsError(error) {
-  console.error(`[Commerce] Store settings are invalid: ${error.message}`);
-  return "Checkout is temporarily unavailable.";
-}
-function readText(env, name) {
-  const value = readBinding(env, name);
-  if (value === void 0) return void 0;
-  if (typeof value !== "string") throw new StoreSettingsError(`TALISMAN_${name} must be text`);
-  return value.trim();
-}
-function readCurrency(env) {
-  const value = readText(env, "COMMERCE_CURRENCY");
-  if (value === void 0) return "usd";
-  const currency = value.toLowerCase();
-  if (!isSupportedCurrency(currency)) {
-    throw new StoreSettingsError(`TALISMAN_COMMERCE_CURRENCY must be one of the supported ISO 4217 codes (${SUPPORTED_CURRENCIES.join(", ")}), not ${JSON.stringify(value)}`);
-  }
-  return currency;
-}
-function readDeliveryCountries(env) {
-  const name = "TALISMAN_COMMERCE_DELIVERY_COUNTRIES";
-  const value = readBinding(env, "COMMERCE_DELIVERY_COUNTRIES");
-  if (value === void 0) return null;
-  const entries = typeof value === "string" ? value.split(/[\s,]+/) : Array.isArray(value) && value.every((entry) => typeof entry === "string") ? value : null;
-  if (!entries) throw new StoreSettingsError(`${name} must be text or a list of text`);
-  const given = [...new Set(entries.map((entry) => entry.trim()).filter(Boolean))];
-  const invalid = given.filter((entry) => !isCountryCode(entry.toUpperCase()));
-  if (invalid.length) {
-    throw new StoreSettingsError(`${name} must list officially assigned ISO 3166-1 alpha-2 codes such as "US", not ${invalid.map((entry) => JSON.stringify(entry)).join(", ")}`);
-  }
-  if (!given.length) {
-    throw new StoreSettingsError(`${name} lists no countries; leave it unset to deliver to any country`);
-  }
-  return [...new Set(given.map((entry) => entry.toUpperCase()))];
-}
-var MAX_SHIPPING_RATES = 10;
-var deliveryDays = z.number().int().min(1).max(365);
-var minorUnits = z.number().int().max(Number.MAX_SAFE_INTEGER);
-var shippingRateSchema = z.object({
-  id: z.string().regex(/^[a-z0-9_-]{1,40}$/, "must be 1 to 40 characters from a-z, 0-9, _ and -"),
-  label: z.string().trim().min(1).max(100),
-  amount: minorUnits.min(0),
-  countries: z.array(z.string()).nullish().superRefine((entries, context) => {
-    if (!entries) return;
-    const invalid = entries.filter((entry) => !isCountryCode(entry.trim().toUpperCase()));
-    if (invalid.length) {
-      context.addIssue({ code: "custom", message: `must list officially assigned ISO 3166-1 alpha-2 codes such as "US", not ${invalid.map((entry) => JSON.stringify(entry)).join(", ")}` });
-    } else if (!entries.length) {
-      context.addIssue({ code: "custom", message: "lists no countries; leave it out to serve every delivery country" });
-    }
-  }),
-  freeOver: minorUnits.positive().nullish(),
-  minDays: deliveryDays.nullish(),
-  maxDays: deliveryDays.nullish()
-}).strict().refine(
-  (rate) => rate.minDays == null || rate.maxDays == null || rate.minDays <= rate.maxDays,
-  { message: "must not be more than maxDays", path: ["minDays"] }
-);
-var shippingRatesSchema = z.array(shippingRateSchema).superRefine((rates, context) => {
-  const seen = /* @__PURE__ */ new Set();
-  rates.forEach((rate, index) => {
-    if (seen.has(rate.id)) {
-      context.addIssue({
-        code: "custom",
-        path: [index, "id"],
-        message: `${JSON.stringify(rate.id)} is used by another rate`
-      });
-    }
-    seen.add(rate.id);
-  });
-});
-function readShippingRates(env, deliveryCountries) {
-  const name = "TALISMAN_COMMERCE_SHIPPING_RATES";
-  const value = readBinding(env, "COMMERCE_SHIPPING_RATES");
-  if (value === void 0) return [];
-  let list = value;
-  if (typeof value === "string") {
-    try {
-      list = JSON.parse(value);
-    } catch (error) {
-      throw new StoreSettingsError(`${name} must be valid JSON: ${error instanceof Error ? error.message : "parse error"}`);
-    }
-  }
-  if (!Array.isArray(list)) throw new StoreSettingsError(`${name} must be a JSON list of shipping rates`);
-  if (!list.length) throw new StoreSettingsError(`${name} lists no rates; leave it unset to charge no shipping`);
-  if (list.length > MAX_SHIPPING_RATES) {
-    throw new StoreSettingsError(`${name} must list at most ${MAX_SHIPPING_RATES} rates, not ${list.length}`);
-  }
-  const parsed = shippingRatesSchema.safeParse(list, {
-    error: (issue) => issue.code === "invalid_type" && issue.input === void 0 ? "Required" : void 0
-  });
-  if (!parsed.success) {
-    throw new StoreSettingsError(parsed.error.issues.map((issue) => `${name}${issue.path.map((key) => typeof key === "number" ? `[${key}]` : `.${String(key)}`).join("")}: ${issue.message}`).join("; "));
-  }
-  return parsed.data.map((rate, index) => {
-    const countries = rate.countries ? [...new Set(rate.countries.map((entry) => entry.trim().toUpperCase()))] : null;
-    const outside = countries && deliveryCountries ? countries.filter((code) => !deliveryCountries.includes(code)) : [];
-    if (outside.length) {
-      throw new StoreSettingsError(`${name}[${index}].countries: must be among TALISMAN_COMMERCE_DELIVERY_COUNTRIES, not ${outside.map((code) => JSON.stringify(code)).join(", ")}`);
-    }
-    return {
-      id: rate.id,
-      label: rate.label,
-      amount: rate.amount,
-      countries,
-      freeOver: rate.freeOver ?? null,
-      minDays: rate.minDays ?? null,
-      maxDays: rate.maxDays ?? null
-    };
-  });
-}
-var TAX_MODES = ["none", "stripe-inclusive", "stripe-exclusive"];
-function readTax(env) {
-  const modeText = readText(env, "COMMERCE_TAX");
-  const mode = TAX_MODES.find((candidate) => candidate === modeText?.toLowerCase());
-  if (modeText !== void 0 && !mode) {
-    throw new StoreSettingsError(`TALISMAN_COMMERCE_TAX must be "none", "stripe-inclusive" or "stripe-exclusive", not ${JSON.stringify(modeText)}`);
-  }
-  const taxCode = readText(env, "COMMERCE_TAX_CODE");
-  if (taxCode !== void 0 && !/^txcd_[0-9]{8}$/.test(taxCode)) {
-    throw new StoreSettingsError(`TALISMAN_COMMERCE_TAX_CODE must be a Stripe tax code such as "txcd_99999999", not ${JSON.stringify(taxCode)}`);
-  }
-  const shipFrom = readText(env, "COMMERCE_SHIP_FROM_COUNTRY");
-  if (shipFrom !== void 0 && !isCountryCode(shipFrom.toUpperCase())) {
-    throw new StoreSettingsError(`TALISMAN_COMMERCE_SHIP_FROM_COUNTRY must be an officially assigned ISO 3166-1 alpha-2 code such as "US", not ${JSON.stringify(shipFrom)}`);
-  }
-  return { mode: mode ?? "none", taxCode: taxCode ?? null, shipFromCountry: shipFrom?.toUpperCase() ?? null };
-}
+import { readSetting as readSetting2 } from "talisman-cms/env";
 
 // src/webhook-errors.ts
 var WebhookSignatureError = class extends Error {
@@ -461,22 +59,6 @@ var WebhookMismatchError = class extends Error {
     this.reason = reason;
   }
 };
-
-// src/shopper-errors.ts
-var ShopperError = class extends Error {
-  constructor(code, message, status, options) {
-    super(message, options);
-    this.code = code;
-    this.status = status;
-    this.name = "ShopperError";
-  }
-};
-function shopperFailure(error) {
-  if (error instanceof ShopperError) return { error: error.message, code: error.code, status: error.status };
-  if (error instanceof SyntaxError) return { error: "Request must be valid JSON", code: "invalid_json", status: 400 };
-  console.error("[commerce] Shopper operation failed", { name: error instanceof Error ? error.name : typeof error });
-  return { error: "Checkout is unavailable right now. Please try again later.", code: "checkout_failed", status: 503 };
-}
 
 // src/reconcile.ts
 import { and, eq, isNull, sql } from "drizzle-orm";
@@ -890,26 +472,26 @@ async function sendCommerceEmailNow(env, kind, subjectId, compose) {
 
 // src/gift-cards.ts
 var MIN_CARD_CENTS = 500;
-var amountSchema = z2.number().int().min(MIN_CARD_CENTS).max(1e5);
-var purchaseIdSchema = z2.string().regex(/^gp_[0-9a-f-]{36}$/);
-var purchaseSchema = z2.object({
+var amountSchema = z.number().int().min(MIN_CARD_CENTS).max(1e5);
+var purchaseIdSchema = z.string().regex(/^gp_[0-9a-f-]{36}$/);
+var purchaseSchema = z.object({
   amountCents: amountSchema,
-  buyerEmail: z2.string().trim().email().max(254)
+  buyerEmail: z.string().trim().email().max(254)
 }).strict();
-var adminIssueSchema = z2.object({
+var adminIssueSchema = z.object({
   amountCents: amountSchema,
   // A private caller-held key recovers one issuance after an interrupted response.
-  requestKey: z2.string().uuid().transform((value) => value.toLowerCase()).optional(),
-  reason: z2.string().trim().min(8).max(500),
+  requestKey: z.string().uuid().transform((value) => value.toLowerCase()).optional(),
+  reason: z.string().trim().min(8).max(500),
   // A card support issues in place of a purchased one takes over the value left on the purchase's card.
   replacesPurchaseId: purchaseIdSchema.optional()
 }).strict();
-var replaceCodeSchema = z2.object({
-  cardId: z2.string().regex(/^gift_[0-9a-f-]{36}$/),
-  codeVersion: z2.string().regex(/^gcr_[0-9a-f]{64}$/).nullable(),
-  balanceCents: z2.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  reason: z2.string().trim().min(8).max(500),
-  requestKey: z2.string().uuid().transform((value) => value.toLowerCase())
+var replaceCodeSchema = z.object({
+  cardId: z.string().regex(/^gift_[0-9a-f-]{36}$/),
+  codeVersion: z.string().regex(/^gcr_[0-9a-f]{64}$/).nullable(),
+  balanceCents: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  reason: z.string().trim().min(8).max(500),
+  requestKey: z.string().uuid().transform((value) => value.toLowerCase())
 }).strict();
 var hex = (bytes) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 var unhex = (value) => new Uint8Array(value.match(/.{2}/g)?.map((byte) => parseInt(byte, 16)) ?? []);
@@ -996,10 +578,10 @@ async function newCardSecret(env, cardId) {
     encryptedCode: await encryptCardSecret(await currentGiftCardKey(env), cardId, code)
   };
 }
-var reencryptSchema = z2.object({
-  after: z2.string().max(100).optional(),
+var reencryptSchema = z.object({
+  after: z.string().max(100).optional(),
   // Each update is a D1 query, and a Worker invocation on the Free plan may run only 50.
-  limit: z2.number().int().min(1).max(40).optional()
+  limit: z.number().int().min(1).max(40).optional()
 }).strict();
 async function reencryptGiftCardCodes(env, input = {}) {
   const { after = "", limit = 25 } = reencryptSchema.parse(input ?? {});
@@ -1544,9 +1126,9 @@ async function claimGiftCardCode(env, token) {
   if (!used.length) return null;
   return { code, balanceCents: claim.balanceCents, currency: claim.currency };
 }
-var resendSchema = z2.object({
+var resendSchema = z.object({
   purchaseId: purchaseIdSchema,
-  reason: z2.string().trim().min(8).max(500)
+  reason: z.string().trim().min(8).max(500)
 }).strict();
 async function resendGiftCardClaimLink(env, actor, input) {
   const values = resendSchema.parse(input);
@@ -1722,12 +1304,12 @@ async function recordGiftCardPurchaseRefund(env, params) {
   const current = await db.select({ status: giftCardPurchases.status }).from(giftCardPurchases).where(eq3(giftCardPurchases.id, purchase.id)).get();
   return { success: true, purchaseId: purchase.id, status: current?.status ?? "review" };
 }
-var reviewSchema = z2.object({
+var reviewSchema = z.object({
   purchaseId: purchaseIdSchema,
-  outcome: z2.enum(["reinstate", "void"]),
-  reason: z2.string().trim().min(8).max(500),
+  outcome: z.enum(["reinstate", "void"]),
+  reason: z.string().trim().min(8).max(500),
   // The refund total the administrator decided on; a refund recorded since then stops the action.
-  refundedCents: z2.number().int().positive()
+  refundedCents: z.number().int().positive()
 }).strict();
 async function resolveGiftCardReview(env, actor, input) {
   const values = reviewSchema.parse(input);
@@ -1804,15 +1386,25 @@ async function resolveGiftCardReview(env, actor, input) {
     status: values.refundedCents >= purchase.amountCents ? "refunded" : "partially_refunded"
   };
 }
-var refundSchema = z2.object({
-  orderId: z2.string().regex(/^ord_[0-9a-f-]{36}$/),
-  reason: z2.string().trim().min(8).max(500),
-  amountCents: z2.number().int().positive().optional()
+var refundSchema = z.object({
+  orderId: z.string().regex(/^ord_[0-9a-f-]{36}$/),
+  reason: z.string().trim().min(8).max(500),
+  amountCents: z.number().int().positive().optional(),
+  requestKey: z.string().min(8).max(128).regex(/^[A-Za-z0-9_-]+$/).optional()
 }).strict();
 async function refundGiftCardTender(env, actor, input) {
   const values = refundSchema.parse(input);
   if (!actor.trim()) throw new Error("Administrator identity is required");
   const db = commerceDb(env);
+  const id = values.requestKey ? `gfr_${await hashGiftCardSecret(`tender-refund:${values.orderId}:${values.requestKey}`)}` : `gfr_${crypto.randomUUID()}`;
+  const replay = async () => {
+    const saved = await db.select().from(giftCardRefunds).where(eq3(giftCardRefunds.id, id)).get();
+    if (!saved) return null;
+    if (saved.orderId !== values.orderId || saved.amountCents !== values.amountCents || saved.adminActor !== actor || saved.reason !== values.reason) throw new Error("This refund request key was used with different details");
+    return { id, orderId: saved.orderId, amountCents: saved.amountCents, duplicate: true };
+  };
+  const previous = await replay();
+  if (previous) return previous;
   const current = await db.select({
     giftCardId: orders.giftCardId,
     giftCardApplied: orders.giftCardApplied,
@@ -1825,7 +1417,6 @@ async function refundGiftCardTender(env, actor, input) {
   }
   const remaining = current.giftCardApplied - current.giftCardRefundedCents;
   if (!values.amountCents || values.amountCents > remaining) throw new Error("Refund exceeds gift card payment");
-  const id = `gfr_${crypto.randomUUID()}`;
   const now = Math.floor(Date.now() / 1e3);
   const statements = [db.insert(giftCardRefunds).values({
     id,
@@ -1840,13 +1431,27 @@ async function refundGiftCardTender(env, actor, input) {
     const policy = await getReferralPolicy(env);
     statements.push(...referralReversalStatements(values.orderId, { minOrderCents: policy.minOrderCents, now }).map((statement) => db.run(statement)));
   }
-  await commitBatch(db, statements);
+  try {
+    await commitBatch(db, statements);
+  } catch (error) {
+    const saved = await replay();
+    if (saved) return saved;
+    throw error;
+  }
   return { id, orderId: values.orderId, amountCents: values.amountCents };
 }
 async function refundGiftCardOnlyOrder(env, actor, input) {
   const values = refundSchema.parse(input);
   if (!actor.trim() || values.amountCents !== void 0) throw new Error("Invalid full refund request");
   const db = commerceDb(env);
+  const replay = async () => {
+    const saved = await db.select().from(giftCardOrderRefunds).where(eq3(giftCardOrderRefunds.orderId, values.orderId)).get();
+    if (!saved) return null;
+    if (saved.adminActor !== actor || saved.reason !== values.reason) throw new Error("This order already has a different full refund recorded");
+    return { orderId: values.orderId, status: "refunded", duplicate: true };
+  };
+  const previous = await replay();
+  if (previous) return previous;
   const order = await db.select({
     id: orders.id,
     giftCardId: orders.giftCardId,
@@ -1864,35 +1469,41 @@ async function refundGiftCardOnlyOrder(env, actor, input) {
   const now = Math.floor(Date.now() / 1e3);
   const remaining = order.giftCardApplied - order.giftCardRefundedCents;
   const confirmed = (redemptions) => and3(eq3(redemptions.orderId, order.id), eq3(redemptions.status, "confirmed"));
-  await commitBatch(db, [
-    db.insert(giftCardOrderRefunds).values({ orderId: order.id, adminActor: actor, reason: values.reason, createdAt: at3(now) }),
-    ...remaining > 0 ? [db.insert(giftCardRefunds).values({
-      id: `gfr_full_${order.id}`,
-      cardId: order.giftCardId,
-      orderId: order.id,
-      amountCents: remaining,
-      adminActor: actor,
-      reason: values.reason,
-      createdAt: at3(now)
-    })] : [],
-    db.update(orders).set({ status: "refunded", updatedAt: at3(now) }).where(and3(
-      eq3(orders.id, order.id),
-      eq3(orders.paymentProvider, "gift_card"),
-      eq3(orders.totalAmount, 0),
-      inArray(orders.status, ["paid", "fulfilled", "partially_refunded"])
-    )),
-    db.update(giftCardRedemptions).set({ status: "refunded", updatedAt: at3(now) }).where(confirmed(giftCardRedemptions)),
-    db.update(discountRedemptions).set({ status: "refunded", updatedAt: at3(now) }).where(confirmed(discountRedemptions)),
-    ...order.creditApplied > 0 && order.userId ? [db.insert(creditLedger).values({
-      id: `credit_refund_${order.id}`,
-      accountId: order.userId,
-      orderId: order.id,
-      kind: "purchase_credit_refund",
-      amountCents: order.creditApplied,
-      createdAt: at3(now)
-    }).onConflictDoNothing({ target: [creditLedger.orderId, creditLedger.kind] })] : [],
-    db.update(payments).set({ status: "refunded" }).where(eq3(payments.orderId, order.id))
-  ]);
+  try {
+    await commitBatch(db, [
+      db.insert(giftCardOrderRefunds).values({ orderId: order.id, adminActor: actor, reason: values.reason, createdAt: at3(now) }),
+      ...remaining > 0 ? [db.insert(giftCardRefunds).values({
+        id: `gfr_full_${order.id}`,
+        cardId: order.giftCardId,
+        orderId: order.id,
+        amountCents: remaining,
+        adminActor: actor,
+        reason: values.reason,
+        createdAt: at3(now)
+      })] : [],
+      db.update(orders).set({ status: "refunded", updatedAt: at3(now) }).where(and3(
+        eq3(orders.id, order.id),
+        eq3(orders.paymentProvider, "gift_card"),
+        eq3(orders.totalAmount, 0),
+        inArray(orders.status, ["paid", "fulfilled", "partially_refunded"])
+      )),
+      db.update(giftCardRedemptions).set({ status: "refunded", updatedAt: at3(now) }).where(confirmed(giftCardRedemptions)),
+      db.update(discountRedemptions).set({ status: "refunded", updatedAt: at3(now) }).where(confirmed(discountRedemptions)),
+      ...order.creditApplied > 0 && order.userId ? [db.insert(creditLedger).values({
+        id: `credit_refund_${order.id}`,
+        accountId: order.userId,
+        orderId: order.id,
+        kind: "purchase_credit_refund",
+        amountCents: order.creditApplied,
+        createdAt: at3(now)
+      }).onConflictDoNothing({ target: [creditLedger.orderId, creditLedger.kind] })] : [],
+      db.update(payments).set({ status: "refunded" }).where(eq3(payments.orderId, order.id))
+    ]);
+  } catch (error) {
+    const saved = await replay();
+    if (saved) return saved;
+    throw error;
+  }
   return { orderId: order.id, status: "refunded" };
 }
 
@@ -1908,17 +1519,9 @@ export {
   commerceEmailStatement,
   runCommerceEmailDelivery,
   sendCommerceEmailNow,
-  COUNTRY_CODES,
-  isCountryCode,
-  StoreSettingsError,
-  readStoreSettings,
-  readStoreCurrency,
-  reportStoreSettingsError,
   WebhookSignatureError,
   WebhookRetryLaterError,
   WebhookMismatchError,
-  ShopperError,
-  shopperFailure,
   RECONCILE_FAILURE_MESSAGES,
   ReconcileFailure,
   isMissingSessionError,

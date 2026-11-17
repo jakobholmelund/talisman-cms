@@ -155,6 +155,7 @@ var EDITOR_PANEL_PLACEMENTS = /* @__PURE__ */ new Set(["before-fields", "after-f
 var JS_IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
 function validateAdminExtensions(plugins) {
   const sectionOwners = /* @__PURE__ */ new Map();
+  const collectionViewOwners = /* @__PURE__ */ new Map();
   for (const plugin of plugins) {
     const fail = (message) => {
       throw new Error(`[talisman-cms] ${plugin.name}: ${message}`);
@@ -171,6 +172,11 @@ function validateAdminExtensions(plugins) {
       if (section.componentPath !== void 0 && (typeof section.componentPath !== "string" || !section.componentPath.trim())) {
         fail(`the admin section "${section.id}" has an empty componentPath.`);
       }
+    }
+    for (const view of plugin.adminCollectionViews || []) {
+      if (typeof view.slug !== "string" || !view.slug.trim() || typeof view.componentPath !== "string" || !view.componentPath.trim()) fail("each adminCollectionViews entry needs a slug and componentPath.");
+      if (collectionViewOwners.has(view.slug)) fail(`the collection view "${view.slug}" is already registered by ${collectionViewOwners.get(view.slug)}.`);
+      collectionViewOwners.set(view.slug, plugin.name);
     }
     for (const panel of plugin.adminEditorPanels || []) {
       if (typeof panel?.id !== "string" || !panel.id.trim()) fail("every adminEditorPanels entry needs an id.");
@@ -236,6 +242,8 @@ function withoutSecretLookingValues(value, path, dropped) {
 function buildClientConfigModule(options, adminPath) {
   const collections = (options.collections || []).map((collection) => ({
     name: collection.name,
+    singularName: collection.singularName,
+    editorCreateNext: collection.editorCreateNext,
     slug: collection.slug,
     description: collection.description,
     fields: collection.fields,
@@ -339,6 +347,7 @@ function buildAdminExtensionsModule(plugins) {
     plugin: ${JSON.stringify(plugin.name)},
     component: lazy(() => import(${JSON.stringify(panel.componentPath)}))
   }`));
+  const collectionViews = plugins.flatMap((plugin) => (plugin.adminCollectionViews || []).map((view) => `{ slug: ${JSON.stringify(view.slug)}, ${view.nativeSchemaExport ? `nativeSchemaExport: ${JSON.stringify(view.nativeSchemaExport)}, ` : ""}component: lazy(() => import(${JSON.stringify(view.componentPath)})) }`));
   const describerImports = [];
   const describers = plugins.flatMap((plugin) => (plugin.adminEntryDescribers || []).map((describer) => {
     const importName = `describer_${describerImports.length}`;
@@ -355,6 +364,7 @@ function buildAdminExtensionsModule(plugins) {
     export const adminSections = [
       ${sections.join(",\n")}
     ];
+    export const adminCollectionViews = [${collectionViews.join(",")}];
     export const adminEditorPanels = [
       ${panels.join(",\n")}
     ];

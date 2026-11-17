@@ -32,6 +32,29 @@ declare const saveValueInput: z.ZodObject<{
 }, z.core.$strict>;
 /** A request to the admin variants endpoint. */
 declare const variantChangeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
+    action: z.ZodLiteral<"createOptionSet">;
+    productId: z.ZodString;
+    requestKey: z.ZodString;
+    name: z.ZodString;
+    values: z.ZodArray<z.ZodString>;
+    images: z.ZodOptional<z.ZodArray<z.ZodNullable<z.ZodString>>>;
+}, z.core.$strict>, z.ZodObject<{
+    action: z.ZodLiteral<"addOptionValues">;
+    productId: z.ZodString;
+    groupId: z.ZodString;
+    expectedUpdatedAt: z.ZodUnion<readonly [z.ZodString, z.ZodNumber]>;
+    requestKey: z.ZodString;
+    values: z.ZodArray<z.ZodString>;
+    images: z.ZodArray<z.ZodNullable<z.ZodString>>;
+}, z.core.$strict>, z.ZodObject<{
+    action: z.ZodLiteral<"setVariantImages">;
+    groupId: z.ZodString;
+    image: z.ZodPipe<z.ZodNullable<z.ZodString>, z.ZodTransform<string | null, string | null>>;
+    values: z.ZodArray<z.ZodObject<{
+        id: z.ZodString;
+        expectedUpdatedAt: z.ZodUnion<readonly [z.ZodString, z.ZodNumber]>;
+    }, z.core.$strict>>;
+}, z.core.$strict>, z.ZodObject<{
     groupId: z.ZodString;
     value: z.ZodObject<{
         id: z.ZodOptional<z.ZodString>;
@@ -117,6 +140,12 @@ declare function runVariantChange(env: TalismanEnv, body: unknown): Promise<{
         stockRows: number;
         partRows: number;
     };
+} | {
+    groupId: string;
+    count: number;
+} | {
+    groupId: string;
+    count?: undefined;
 }>;
 
 export { type SaveVariantValueInput, VariantChangeError, deleteVariantGroup, deleteVariantValue, runVariantChange, saveVariantValue, variantChangeSchema };

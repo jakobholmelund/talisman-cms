@@ -65,6 +65,14 @@ interface RelationReference {
     value: string;
 }
 interface FieldDefinition {
+    /** Optional field presentation; stored data is unchanged. */
+    adminPresentation?: 'gallery' | 'money' | 'slug';
+    /** Fill an empty slug from this sibling field until the editor customises it. */
+    generateFrom?: string;
+    /** Group top-level editor fields under a named section. */
+    editorSection?: string;
+    /** Managed through another editor panel; retain the field and its API rules. */
+    editorHidden?: boolean;
     name: string;
     label: string;
     type: FieldType;
@@ -75,6 +83,8 @@ interface FieldDefinition {
     fields?: FieldDefinition[];
     blocks?: BlockDefinition[];
     options?: string[];
+    /** Friendly labels for stored enum values. */
+    optionLabels?: Record<string, string>;
     blocksFromPlugins?: boolean | string[];
     blockSettings?: BlockSettingsConfig;
     /**
@@ -120,6 +130,9 @@ interface RuntimeCollectionHooks {
 }
 interface CollectionConfig {
     name: string;
+    singularName?: string;
+    /** Section to open after creating a record. */
+    editorCreateNext?: string;
     slug: string;
     description?: string;
     fields?: FieldDefinition[];
@@ -331,6 +344,12 @@ interface Plugin {
     adminSections?: AdminSectionDefinition[];
     /** Panels the entry editor shows for matching collections. */
     adminEditorPanels?: AdminEditorPanelDefinition[];
+    /** Lazy collection list replacements; each slug may be registered once. */
+    adminCollectionViews?: {
+        slug: string;
+        componentPath: string;
+        nativeSchemaExport?: string;
+    }[];
     /** Modules that label records in relation pickers and summaries. */
     adminEntryDescribers?: AdminEntryDescriberDefinition[];
     /**

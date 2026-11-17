@@ -1,3 +1,15 @@
+import {
+  shippingOptionsFor
+} from "./chunk-3RWEM2DK.js";
+import "./chunk-YHTTKGNB.js";
+import "./chunk-3MXMGN5I.js";
+import "./chunk-USNNZXV4.js";
+import {
+  customerOrderDestination,
+  customerOrderPath,
+  orderReference
+} from "./chunk-C66AEOTN.js";
+
 // src/browser.ts
 var CART_UPDATED_EVENT = "talisman:cart-updated";
 function dispatchCartUpdated(detail) {
@@ -27,7 +39,7 @@ function requestCustomerEmailSignIn(email, options = {}) {
   return commerceRequest(
     "/api/ecommerce/account",
     "POST",
-    options.turnstileToken === void 0 ? { email } : { email, turnstileToken: options.turnstileToken }
+    { email, ...options }
   );
 }
 function readCustomerSignInToken(loc = typeof window === "undefined" ? void 0 : window.location, hist = typeof window === "undefined" ? void 0 : window.history) {
@@ -135,16 +147,20 @@ export {
   cancelReturnRequest,
   chooseCustomerBasket,
   claimGiftCardCode,
+  customerOrderDestination,
+  customerOrderPath,
   dispatchCartUpdated,
   getCustomerAccount,
   getCustomerExchangeChoices,
   getCustomerReturns,
   getOrderStatus,
   installTalismanEcommerceBrowserHelpers,
+  orderReference,
   previewCustomerSignIn,
   readCustomerSignInToken,
   readGiftCardClaimToken,
   requestCustomerEmailSignIn,
+  shippingOptionsFor,
   signOutCustomerAccount,
   startAdminTestCheckout,
   startCheckout,

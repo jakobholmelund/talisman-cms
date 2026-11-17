@@ -1,5 +1,5 @@
 import { WorkflowEntrypoint, WorkflowEvent, WorkflowStep } from 'cloudflare:workers';
-import { T as TalismanEnv } from './client-D1zn08c5.js';
+import { T as TalismanEnv } from './client-BnymGq0d.js';
 import { PublishWorkflowPayload, PublishWorkflowResult } from './versioning.js';
 import 'drizzle-orm/d1';
 import 'drizzle-orm';

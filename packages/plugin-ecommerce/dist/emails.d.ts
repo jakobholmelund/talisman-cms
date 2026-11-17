@@ -205,6 +205,7 @@ interface ReturnRefundEmail {
     tenders: Array<{
         label: string;
         amountMinor: number;
+        kind?: 'provider' | 'gift_card' | 'store_credit';
     }>;
 }
 declare function returnRefundEmail(email: ReturnRefundEmail): CommerceEmailMessage;

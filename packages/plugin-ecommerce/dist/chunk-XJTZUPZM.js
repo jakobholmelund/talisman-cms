@@ -1,6 +1,10 @@
 import {
   formatMoney
 } from "./chunk-HNDRZISR.js";
+import {
+  customerOrderPath,
+  orderReference
+} from "./chunk-C66AEOTN.js";
 
 // src/emails.ts
 import { escapeHtml, renderTransactionalEmail } from "talisman-cms/email";
@@ -23,7 +27,8 @@ function recoveryNoticeEmail(email) {
   return { subject: oneLine(`${heading} \u2014 ${store.name}`), ...renderCommerceEmail({
     storeName: store.name,
     heading,
-    paragraphs: [`Order ${orderId} \xB7 ${formatDate(occurredAt)}`, kind === "received" ? "We will inspect the returned goods separately. Receipt does not confirm a refund." : "This parcel is additional to your original shipment."],
+    action: orderAction(store, orderId, "View replacement updates"),
+    paragraphs: [`Order ${orderReference(orderId)} \xB7 ${formatDate(occurredAt)}`, kind === "received" ? "We will inspect the returned goods separately. Receipt does not confirm a refund." : "This parcel is additional to your original shipment."],
     sections: [{
       title: kind === "received" ? "Received goods" : "Parcel contents",
       rows: [{ label: `${name}${sku ? ` \xB7 ${sku}` : ""}`, value: `${quantity} units` }],
@@ -126,6 +131,9 @@ function storeSections(store) {
   ];
 }
 var contact = (store) => store.supportEmail ? `write to ${store.supportEmail}` : `contact ${store.name}`;
+function orderAction(store, id, label) {
+  return store.origin ? { label, url: `${store.origin}${customerOrderPath(id)}` } : void 0;
+}
 function orderConfirmationEmail({ store, order }) {
   const money = (cents) => formatMoney2(cents, order.currency);
   const shippingLines = formatAddress(order.shippingAddress);
@@ -134,9 +142,11 @@ function orderConfirmationEmail({ store, order }) {
     ...renderCommerceEmail({
       storeName: store.name,
       heading: "Thank you for your order",
+      action: orderAction(store, order.id, "View your order"),
       paragraphs: [
-        `We have received your payment for order ${order.id}, placed on ${formatDate(order.placedAt)}.`,
-        "This email confirms your order. Please keep it for your records."
+        `We have received your payment for order ${orderReference(order.id)}, placed on ${formatDate(order.placedAt)}.`,
+        "Your order page brings together your receipt, delivery updates, returns and exchanges. On another device, sign in with the email you used at checkout.",
+        "Please keep this confirmation for your records."
       ],
       sections: [
         { title: "Items", rows: order.items.map((item) => ({ label: `${item.quantity} \xD7 ${item.name}`, value: money(item.lineCents) })) },
@@ -155,10 +165,10 @@ function orderConfirmationEmail({ store, order }) {
 function shipmentEmail({ store, order, shipment, update }) {
   const shippedOn = formatDate(shipment.shippedAt);
   const part = !shipment.completesOrder ? "part" : shipment.earlierShipments ? "rest" : "whole";
-  const paragraphs = update ? [`The shipping details of a parcel of order ${order.id} have changed. They replace the ones we sent you before.`] : {
-    whole: [`We shipped your order ${order.id} on ${shippedOn}.`],
-    part: [`We shipped a parcel of your order ${order.id} on ${shippedOn}.`, "More parcels will follow."],
-    rest: [`We shipped the last parcel of your order ${order.id} on ${shippedOn}.`]
+  const paragraphs = update ? [`The shipping details of a parcel of order ${orderReference(order.id)} have changed. They replace the ones we sent you before.`] : {
+    whole: [`We shipped your order ${orderReference(order.id)} on ${shippedOn}.`],
+    part: [`We shipped a parcel of your order ${orderReference(order.id)} on ${shippedOn}.`, "More parcels will follow."],
+    rest: [`We shipped the last parcel of your order ${orderReference(order.id)} on ${shippedOn}.`]
   }[part];
   const rows = [
     ...shipment.carrier ? [{ label: "Carrier", value: shipment.carrier }] : [],
@@ -179,6 +189,7 @@ function shipmentEmail({ store, order, shipment, update }) {
         rest: "The rest of your order is on its way"
       }[part],
       paragraphs,
+      action: orderAction(store, order.id, "View delivery updates"),
       sections: [...rows.length ? [{ title: "Shipment", rows }] : [], ...shipment.items?.length ? [{ title: "Items in this parcel", rows: shipment.items.map((i) => ({ label: `${i.quantity} \xD7 ${i.name}`, value: i.sku ? `SKU ${i.sku}` : "" })) }] : []],
       footer: [`Questions about your delivery? Please ${contact(store)} and mention the order number.`]
     })
@@ -205,8 +216,12 @@ function returnNoticeEmail(email) {
   return { subject: oneLine(`${heading} \u2014 ${store.name}`), ...renderCommerceEmail({
     storeName: store.name,
     heading,
-    paragraphs: [`Order ${orderId} \xB7 ${formatDate(occurredAt)}`, message],
-    ...store.origin ? { action: { label: "View your order", url: `${store.origin}/checkout/success?order=${encodeURIComponent(orderId)}` } } : {},
+    paragraphs: [
+      `Order ${orderReference(orderId)} \xB7 ${formatDate(occurredAt)}`,
+      message,
+      status === "approved" ? "Follow the return instructions on your order page before sending anything back." : status === "received" ? "We will update your order page after the return review." : "Your request history and any next steps are on your order page."
+    ],
+    action: orderAction(store, orderId, "View your return"),
     sections: [{ title: status === "received" ? "Received items" : "Requested items", rows: items.map((i) => ({ label: i.name, value: String(i.quantity) })) }, ...storeSections(store)],
     footer: [`Questions about your return? Please ${contact(store)} and mention the order number.`]
   }) };
@@ -216,8 +231,14 @@ function returnRefundEmail(email) {
   return { subject: oneLine(`Your return refund is recorded \u2014 ${store.name}`), ...renderCommerceEmail({
     storeName: store.name,
     heading: "Your return refund is recorded",
-    paragraphs: [`Order ${orderId} \xB7 ${formatDate(occurredAt)}`, `A refund of ${formatMoney2(amountMinor, currency)} has been recorded for your received return. Your payment provider may take time to show the amount in your account.`],
-    ...store.origin ? { action: { label: "View your order", url: `${store.origin}/checkout/success?order=${encodeURIComponent(orderId)}` } } : {},
+    paragraphs: [
+      `Order ${orderReference(orderId)} \xB7 ${formatDate(occurredAt)}`,
+      `A refund of ${formatMoney2(amountMinor, currency)} has been recorded for your received return.`,
+      ...tenders.some((t) => t.kind === "provider" || !t.kind && t.label === "Original payment method") ? ["Your payment provider may take time to show the amount in your account."] : [],
+      ...tenders.some((t) => t.kind === "gift_card" || t.label === "Gift card") ? ["The gift card portion has been restored to your gift card. Keep using the same card code."] : [],
+      ...tenders.some((t) => t.kind === "store_credit" || t.label === "Store credit") ? ["The store credit portion is available in your customer hub."] : []
+    ],
+    action: orderAction(store, orderId, "View your refund"),
     sections: [{ title: "Recorded refund", rows: tenders.map((t) => ({ label: t.label, value: formatMoney2(t.amountMinor, currency) })) }, ...storeSections(store)],
     footer: [`Questions about your refund? Please ${contact(store)} and mention the order number.`]
   }) };

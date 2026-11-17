@@ -1,4 +1,4 @@
-import { F as FieldDefinition, G as GlobalConfig } from './fields-BNNcWDXj.js';
+import { F as FieldDefinition, G as GlobalConfig } from './fields-BK8TPbdA.js';
 import './actor-Daa_hmny.js';
 import './types-C5a-hx5D.js';
 import 'astro';

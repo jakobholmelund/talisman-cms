@@ -5,6 +5,7 @@ import {
 import {
   productVariantValues,
   productVariants,
+  products,
   stocks,
   variantComponents
 } from "./chunk-PLAJXKV3.js";
@@ -55,6 +56,9 @@ var saveValueInput = z.object({
   }).strict().optional()
 }).strict();
 var variantChangeSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("createOptionSet"), productId: recordId, requestKey: z.string().uuid(), name: z.string().trim().min(1).max(200), values: z.array(z.string().trim().min(1).max(200)).min(1).max(50).refine((values) => new Set(values.map((v) => v.toLowerCase())).size === values.length, "Each choice needs a different name"), images: z.array(z.string().trim().max(2048).nullable()).max(50).optional() }).strict().refine((v) => !v.images || v.images.length === v.values.length, "Choose one image per variant"),
+  z.object({ action: z.literal("addOptionValues"), productId: recordId, groupId: recordId, expectedUpdatedAt: loadedToken, requestKey: z.string().uuid(), values: z.array(z.string().trim().min(1).max(200)).min(1).max(50).refine((values) => new Set(values.map((v) => v.toLowerCase())).size === values.length, "Each choice needs a different name"), images: z.array(z.string().trim().max(2048).nullable()).max(50) }).strict().refine((v) => v.images.length === v.values.length, "Choose one image per variant"),
+  z.object({ action: z.literal("setVariantImages"), groupId: recordId, image: optionalText(2048, "Variant image"), values: z.array(z.object({ id: recordId, expectedUpdatedAt: loadedToken }).strict()).min(1).max(50).refine((values) => new Set(values.map((v) => v.id)).size === values.length, "Choose each variant once") }).strict(),
   saveValueInput.extend({ action: z.literal("saveValue") }),
   z.object({ action: z.literal("deleteValue"), valueId: recordId }).strict(),
   z.object({ action: z.literal("deleteGroup"), groupId: recordId }).strict()
@@ -194,6 +198,77 @@ async function deleteVariantGroup(env, groupId) {
 }
 async function runVariantChange(env, body) {
   const change = parseChange(variantChangeSchema, body);
+  if (change.action === "setVariantImages") {
+    const db = commerceDb(env), now = Math.floor(Date.now() / 1e3);
+    const current = await db.select().from(productVariantValues).where(and(eq(productVariantValues.productVariantId, change.groupId), inArray(productVariantValues.id, change.values.map((v) => v.id))));
+    if (current.length !== change.values.length) throw staleRecord();
+    const changed = change.values.filter((value) => current.find((row) => row.id === value.id)?.image !== change.image);
+    if (changed.length) await runBatch(db, changed.flatMap((value) => [
+      staleGuard(db, notExists(db.select({ one: sql`1` }).from(productVariantValues).where(and(eq(productVariantValues.id, value.id), eq(productVariantValues.productVariantId, change.groupId), eq(productVariantValues.updatedAt, at(storedSeconds(value.expectedUpdatedAt, "variant value"))))))),
+      db.update(productVariantValues).set({ image: change.image, updatedAt: movedUpdatedAt(productVariantValues.updatedAt, now) }).where(eq(productVariantValues.id, value.id))
+    ]));
+    await clearCachedRows(env, { _ecommerce_product_variant_values: change.values.map((v) => v.id) });
+    return { groupId: change.groupId, count: change.values.length };
+  }
+  if (change.action === "addOptionValues") {
+    const db = commerceDb(env), prefix = `setup_${change.requestKey}`;
+    const ids = change.values.map((_, index) => `${prefix}_${index}`);
+    const replay = async () => {
+      const rows = await db.select().from(productVariantValues).where(inArray(productVariantValues.id, ids));
+      if (!rows.length) return false;
+      if (rows.length !== ids.length || change.values.some((label, index) => !rows.some((row) => row.id === ids[index] && row.productVariantId === change.groupId && row.value === label && (row.image || null) === (change.images[index] || null)))) throw new VariantChangeError(409, "These additions were already saved with different details. Refresh the product to review them.");
+      return true;
+    };
+    const group = await db.select().from(productVariants).where(and(eq(productVariants.id, change.groupId), eq(productVariants.productId, change.productId))).get();
+    if (!group) throw new VariantChangeError(404, "This option set is no longer available. Refresh the product.");
+    if (!await replay()) {
+      const existing = await db.select({ value: productVariantValues.value }).from(productVariantValues).where(eq(productVariantValues.productVariantId, change.groupId));
+      const names = new Set(existing.map((row) => row.value.toLowerCase()));
+      if (change.values.some((value) => names.has(value.toLowerCase()))) throw new VariantChangeError(409, "Some of these variants already exist. Refresh the product to review the missing combinations.");
+      const now = Math.floor(Date.now() / 1e3);
+      try {
+        await runBatch(db, [
+          staleGuard(db, notExists(db.select({ one: sql`1` }).from(productVariants).where(and(eq(productVariants.id, change.groupId), eq(productVariants.updatedAt, at(storedSeconds(change.expectedUpdatedAt, "option set"))))))),
+          db.update(productVariants).set({ updatedAt: movedUpdatedAt(productVariants.updatedAt, now) }).where(eq(productVariants.id, change.groupId)),
+          ...Array.from({ length: Math.ceil(ids.length / 10) }, (_, chunk) => {
+            const entries = change.values.slice(chunk * 10, chunk * 10 + 10).map((value, index) => ({ id: ids[chunk * 10 + index], productVariantId: change.groupId, value, image: change.images[chunk * 10 + index] || null, createdAt: at(now), updatedAt: at(now) }));
+            return [staleGuard(db, exists(db.select({ one: sql`1` }).from(productVariantValues).where(and(eq(productVariantValues.productVariantId, change.groupId), inArray(sql`lower(${productVariantValues.value})`, entries.map((e) => e.value.toLowerCase())))))), db.insert(productVariantValues).values(entries), db.insert(stocks).values(entries.map((row) => ({ id: `stock_${row.id}`, productVariantValueId: row.id, quantity: 0, createdAt: at(now), updatedAt: at(now) })))];
+          }).flat()
+        ]);
+      } catch (error) {
+        if (!await replay()) throw error;
+      }
+    }
+    await clearCachedRows(env, { _ecommerce_product_variants: [change.groupId], _ecommerce_product_variant_values: ids, _ecommerce_stocks: ids.map((id) => `stock_${id}`) });
+    return { groupId: change.groupId };
+  }
+  if (change.action === "createOptionSet") {
+    const db = commerceDb(env), groupId = `setup_${change.requestKey}`;
+    const replay = async () => {
+      const group = await db.select().from(productVariants).where(eq(productVariants.id, groupId)).get();
+      if (!group) return false;
+      const values = await db.select().from(productVariantValues).where(eq(productVariantValues.productVariantId, groupId));
+      if (group.productId !== change.productId || group.name !== change.name || values.length !== change.values.length || change.values.some((value, index) => !values.some((row) => row.id === `${groupId}_${index}` && row.value === value && (row.image || null) === (change.images?.[index] || null)))) throw new VariantChangeError(409, "This setup has already been saved with different details. Refresh the product to review it.");
+      return true;
+    };
+    if (!await replay()) {
+      if (!await db.select({ id: products.id }).from(products).where(eq(products.id, change.productId)).get()) throw new VariantChangeError(404, "Save the product before adding choices.");
+      const now = /* @__PURE__ */ new Date();
+      try {
+        await db.batch([
+          db.insert(productVariants).values({ id: groupId, productId: change.productId, name: change.name, createdAt: now, updatedAt: now }),
+          ...Array.from({ length: Math.ceil(change.values.length / 10) }, (_, chunk) => {
+            const rows = change.values.slice(chunk * 10, chunk * 10 + 10).map((value, index) => ({ id: `${groupId}_${chunk * 10 + index}`, productVariantId: groupId, value, image: change.images?.[chunk * 10 + index] || null, createdAt: now, updatedAt: now }));
+            return [db.insert(productVariantValues).values(rows), db.insert(stocks).values(rows.map((row) => ({ id: `stock_${row.id}`, productVariantValueId: row.id, quantity: 0, createdAt: now, updatedAt: now })))];
+          }).flat()
+        ]);
+      } catch (error) {
+        if (!await replay()) throw error;
+      }
+    }
+    await clearCachedRows(env, { _ecommerce_product_variants: [groupId], _ecommerce_product_variant_values: change.values.map((_, i) => `${groupId}_${i}`), _ecommerce_stocks: change.values.map((_, i) => `stock_${groupId}_${i}`) });
+    return { groupId };
+  }
   if (change.action === "saveValue") {
     const { action: _action, ...input } = change;
     return saveVariantValue(env, input);

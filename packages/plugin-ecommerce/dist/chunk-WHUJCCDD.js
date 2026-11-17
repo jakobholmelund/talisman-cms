@@ -1,4 +1,9 @@
 import {
+  isCountryCode
+} from "./chunk-USNNZXV4.js";
+import {
+  batchGroups,
+  chunked,
   commerceDb,
   commitBatch
 } from "./chunk-SXQHVX4E.js";
@@ -28,6 +33,13 @@ import {
   shopperAudits,
   signInTokens
 } from "./chunk-PLAJXKV3.js";
+import {
+  SUPPORTED_CURRENCIES,
+  isSupportedCurrency
+} from "./chunk-HNDRZISR.js";
+import {
+  orderReference
+} from "./chunk-C66AEOTN.js";
 
 // src/shopper-privacy.ts
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
@@ -186,14 +198,284 @@ async function manageShopperData(env, actor, input) {
   return { accountId: account.id, action: values.action, accountingRetained: true };
 }
 
+// src/customer-hub.ts
+import { and as and2, count, desc, eq as eq2, sql as sql2 } from "drizzle-orm";
+
+// src/store-settings.ts
+import { z as z2 } from "zod";
+import { readBinding } from "talisman-cms/env";
+var StoreSettingsError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "StoreSettingsError";
+  }
+};
+function readStoreSettings(env) {
+  const currency = readCurrency(env);
+  const deliveryCountries = readDeliveryCountries(env);
+  const shippingRates = readShippingRates(env, deliveryCountries);
+  return { currency, deliveryCountries, shippingRates, tax: readTax(env) };
+}
+function readStoreCurrency(env) {
+  return readCurrency(env);
+}
+function reportStoreSettingsError(error) {
+  console.error(`[Commerce] Store settings are invalid: ${error.message}`);
+  return "Checkout is temporarily unavailable.";
+}
+function readText(env, name) {
+  const value = readBinding(env, name);
+  if (value === void 0) return void 0;
+  if (typeof value !== "string") throw new StoreSettingsError(`TALISMAN_${name} must be text`);
+  return value.trim();
+}
+function readCurrency(env) {
+  const value = readText(env, "COMMERCE_CURRENCY");
+  if (value === void 0) return "usd";
+  const currency = value.toLowerCase();
+  if (!isSupportedCurrency(currency)) {
+    throw new StoreSettingsError(`TALISMAN_COMMERCE_CURRENCY must be one of the supported ISO 4217 codes (${SUPPORTED_CURRENCIES.join(", ")}), not ${JSON.stringify(value)}`);
+  }
+  return currency;
+}
+function readDeliveryCountries(env) {
+  const name = "TALISMAN_COMMERCE_DELIVERY_COUNTRIES";
+  const value = readBinding(env, "COMMERCE_DELIVERY_COUNTRIES");
+  if (value === void 0) return null;
+  const entries = typeof value === "string" ? value.split(/[\s,]+/) : Array.isArray(value) && value.every((entry) => typeof entry === "string") ? value : null;
+  if (!entries) throw new StoreSettingsError(`${name} must be text or a list of text`);
+  const given = [...new Set(entries.map((entry) => entry.trim()).filter(Boolean))];
+  const invalid = given.filter((entry) => !isCountryCode(entry.toUpperCase()));
+  if (invalid.length) {
+    throw new StoreSettingsError(`${name} must list officially assigned ISO 3166-1 alpha-2 codes such as "US", not ${invalid.map((entry) => JSON.stringify(entry)).join(", ")}`);
+  }
+  if (!given.length) {
+    throw new StoreSettingsError(`${name} lists no countries; leave it unset to deliver to any country`);
+  }
+  return [...new Set(given.map((entry) => entry.toUpperCase()))];
+}
+var MAX_SHIPPING_RATES = 10;
+var deliveryDays = z2.number().int().min(1).max(365);
+var minorUnits = z2.number().int().max(Number.MAX_SAFE_INTEGER);
+var shippingRateSchema = z2.object({
+  id: z2.string().regex(/^[a-z0-9_-]{1,40}$/, "must be 1 to 40 characters from a-z, 0-9, _ and -"),
+  label: z2.string().trim().min(1).max(100),
+  amount: minorUnits.min(0),
+  countries: z2.array(z2.string()).nullish().superRefine((entries, context) => {
+    if (!entries) return;
+    const invalid = entries.filter((entry) => !isCountryCode(entry.trim().toUpperCase()));
+    if (invalid.length) {
+      context.addIssue({ code: "custom", message: `must list officially assigned ISO 3166-1 alpha-2 codes such as "US", not ${invalid.map((entry) => JSON.stringify(entry)).join(", ")}` });
+    } else if (!entries.length) {
+      context.addIssue({ code: "custom", message: "lists no countries; leave it out to serve every delivery country" });
+    }
+  }),
+  freeOver: minorUnits.positive().nullish(),
+  minDays: deliveryDays.nullish(),
+  maxDays: deliveryDays.nullish()
+}).strict().refine(
+  (rate) => rate.minDays == null || rate.maxDays == null || rate.minDays <= rate.maxDays,
+  { message: "must not be more than maxDays", path: ["minDays"] }
+);
+var shippingRatesSchema = z2.array(shippingRateSchema).superRefine((rates, context) => {
+  const seen = /* @__PURE__ */ new Set();
+  rates.forEach((rate, index) => {
+    if (seen.has(rate.id)) {
+      context.addIssue({
+        code: "custom",
+        path: [index, "id"],
+        message: `${JSON.stringify(rate.id)} is used by another rate`
+      });
+    }
+    seen.add(rate.id);
+  });
+});
+function readShippingRates(env, deliveryCountries) {
+  const name = "TALISMAN_COMMERCE_SHIPPING_RATES";
+  const value = readBinding(env, "COMMERCE_SHIPPING_RATES");
+  if (value === void 0) return [];
+  let list = value;
+  if (typeof value === "string") {
+    try {
+      list = JSON.parse(value);
+    } catch (error) {
+      throw new StoreSettingsError(`${name} must be valid JSON: ${error instanceof Error ? error.message : "parse error"}`);
+    }
+  }
+  if (!Array.isArray(list)) throw new StoreSettingsError(`${name} must be a JSON list of shipping rates`);
+  if (!list.length) throw new StoreSettingsError(`${name} lists no rates; leave it unset to charge no shipping`);
+  if (list.length > MAX_SHIPPING_RATES) {
+    throw new StoreSettingsError(`${name} must list at most ${MAX_SHIPPING_RATES} rates, not ${list.length}`);
+  }
+  const parsed = shippingRatesSchema.safeParse(list, {
+    error: (issue) => issue.code === "invalid_type" && issue.input === void 0 ? "Required" : void 0
+  });
+  if (!parsed.success) {
+    throw new StoreSettingsError(parsed.error.issues.map((issue) => `${name}${issue.path.map((key) => typeof key === "number" ? `[${key}]` : `.${String(key)}`).join("")}: ${issue.message}`).join("; "));
+  }
+  return parsed.data.map((rate, index) => {
+    const countries = rate.countries ? [...new Set(rate.countries.map((entry) => entry.trim().toUpperCase()))] : null;
+    const outside = countries && deliveryCountries ? countries.filter((code) => !deliveryCountries.includes(code)) : [];
+    if (outside.length) {
+      throw new StoreSettingsError(`${name}[${index}].countries: must be among TALISMAN_COMMERCE_DELIVERY_COUNTRIES, not ${outside.map((code) => JSON.stringify(code)).join(", ")}`);
+    }
+    return {
+      id: rate.id,
+      label: rate.label,
+      amount: rate.amount,
+      countries,
+      freeOver: rate.freeOver ?? null,
+      minDays: rate.minDays ?? null,
+      maxDays: rate.maxDays ?? null
+    };
+  });
+}
+var TAX_MODES = ["none", "stripe-inclusive", "stripe-exclusive"];
+function readTax(env) {
+  const modeText = readText(env, "COMMERCE_TAX");
+  const mode = TAX_MODES.find((candidate) => candidate === modeText?.toLowerCase());
+  if (modeText !== void 0 && !mode) {
+    throw new StoreSettingsError(`TALISMAN_COMMERCE_TAX must be "none", "stripe-inclusive" or "stripe-exclusive", not ${JSON.stringify(modeText)}`);
+  }
+  const taxCode = readText(env, "COMMERCE_TAX_CODE");
+  if (taxCode !== void 0 && !/^txcd_[0-9]{8}$/.test(taxCode)) {
+    throw new StoreSettingsError(`TALISMAN_COMMERCE_TAX_CODE must be a Stripe tax code such as "txcd_99999999", not ${JSON.stringify(taxCode)}`);
+  }
+  const shipFrom = readText(env, "COMMERCE_SHIP_FROM_COUNTRY");
+  if (shipFrom !== void 0 && !isCountryCode(shipFrom.toUpperCase())) {
+    throw new StoreSettingsError(`TALISMAN_COMMERCE_SHIP_FROM_COUNTRY must be an officially assigned ISO 3166-1 alpha-2 code such as "US", not ${JSON.stringify(shipFrom)}`);
+  }
+  return { mode: mode ?? "none", taxCode: taxCode ?? null, shipFromCountry: shipFrom?.toUpperCase() ?? null };
+}
+
+// src/order-items.ts
+var orderAmountColumns = {
+  subtotalAmount: orders.subtotalAmount,
+  discountCode: orders.discountCode,
+  discountAmount: orders.discountAmount,
+  creditApplied: orders.creditApplied,
+  shippingAmount: orders.shippingAmount,
+  shippingLabel: orders.shippingLabel,
+  taxAmount: orders.taxAmount,
+  taxBehavior: orders.taxBehavior,
+  giftCardApplied: orders.giftCardApplied,
+  totalAmount: orders.totalAmount,
+  providerRefundedCents: orders.providerRefundedCents,
+  giftCardRefundedCents: orders.giftCardRefundedCents
+};
+function orderAmounts(row) {
+  const amounts = [{ key: "itemsSubtotal", label: "Items subtotal", cents: row.subtotalAmount || row.totalAmount }];
+  if (row.discountAmount > 0) {
+    amounts.push({ key: "discount", label: row.discountCode ? `Discount (${row.discountCode})` : "Discount", cents: -row.discountAmount });
+  }
+  if (row.creditApplied > 0) amounts.push({ key: "storeCredit", label: "Store credit", cents: -row.creditApplied });
+  if (row.shippingAmount > 0 || row.shippingLabel) {
+    amounts.push({ key: "shipping", label: row.shippingLabel ? `Shipping (${row.shippingLabel})` : "Shipping", cents: row.shippingAmount });
+  }
+  if (row.taxAmount > 0) {
+    amounts.push(row.taxBehavior === "inclusive" ? { key: "taxIncluded", label: "Tax included in the prices", cents: row.taxAmount } : { key: "tax", label: "Tax", cents: row.taxAmount });
+  }
+  if (row.giftCardApplied > 0) amounts.push({ key: "giftCard", label: "Gift card", cents: -row.giftCardApplied });
+  amounts.push({ key: "charged", label: "Charged by the payment provider", cents: row.totalAmount });
+  if (row.providerRefundedCents > 0) {
+    amounts.push({ key: "providerRefunded", label: "Refunded by the payment provider", cents: row.providerRefundedCents });
+  }
+  if (row.giftCardRefundedCents > 0) {
+    amounts.push({ key: "giftCardRefunded", label: "Refunded to the gift card", cents: row.giftCardRefundedCents });
+  }
+  return amounts;
+}
+async function describeOrderItems(env, items) {
+  const db = commerceDb(env);
+  const productIds = [...new Set(items.map((item) => item.productId))];
+  const variantIds = [...new Set(items.flatMap((item) => item.variantId ? [item.variantId] : []))];
+  const rows = await batchGroups(db, {
+    products: chunked(productIds).map((ids) => db.query.products.findMany({
+      columns: { id: true, name: true, sku: true },
+      where: { id: { in: ids } }
+    })),
+    values: chunked(variantIds).map((ids) => db.query.productVariantValues.findMany({
+      columns: { id: true, value: true, sku: true },
+      where: { id: { in: ids } },
+      with: { productVariant: { columns: { name: true, sku: true }, with: { variant: { columns: { name: true } } } } }
+    })),
+    // A variant group without values is sold as itself.
+    groups: chunked(variantIds).map((ids) => db.query.productVariants.findMany({
+      columns: { id: true, name: true, sku: true },
+      where: { id: { in: ids } }
+    }))
+  });
+  const products = new Map(rows.products.map((row) => [row.id, row]));
+  const values = new Map(rows.values.map((row) => [row.id, row]));
+  const groups = new Map(rows.groups.map((row) => [row.id, row]));
+  return items.map((item) => {
+    const product = products.get(item.productId);
+    const value = item.variantId ? values.get(item.variantId) : void 0;
+    const group = item.variantId && !value ? groups.get(item.variantId) : void 0;
+    return {
+      ...item,
+      productName: product?.name ?? null,
+      variantLabel: value ? `${value.productVariant.variant?.name ?? value.productVariant.name}: ${value.value}` : group?.name ?? null,
+      sku: (value ? value.sku || value.productVariant.sku : group?.sku) || product?.sku || null
+    };
+  });
+}
+
+// src/customer-hub.ts
+async function readCustomerHub(env, sessionToken, requestedPage = 1) {
+  const account = await findCustomerSession(env, sessionToken);
+  if (!account) return null;
+  const db = commerceDb(env);
+  const owned = and2(eq2(orders.userId, account.id), sql2`COALESCE(${orders.paymentProvider}, 'stripe') <> 'admin_test'`);
+  const totals = await db.select({ count: count() }).from(orders).where(owned).get();
+  const total = totals?.count ?? 0;
+  const pages = Math.max(1, Math.ceil(total / 12));
+  const page = Math.min(pages, Math.max(1, Number.isSafeInteger(requestedPage) ? requestedPage : 1));
+  const rows = await db.select({
+    id: orders.id,
+    status: orders.status,
+    fulfillmentStatus: orders.fulfillmentStatus,
+    createdAt: orders.createdAt,
+    currency: orders.currency,
+    items: orders.items,
+    totalAmount: orders.totalAmount,
+    giftCardApplied: orders.giftCardApplied,
+    creditApplied: orders.creditApplied,
+    providerRefundedCents: orders.providerRefundedCents,
+    giftCardRefundedCents: orders.giftCardRefundedCents,
+    paymentUnderReview: sql2`(${orders.status} = 'pending' AND ${orders.reconcileReviewAt} IS NOT NULL)`.mapWith(Boolean),
+    openReturns: sql2`(SELECT count(*) FROM _ecommerce_return_requests r WHERE r.order_id = ${orders.id} AND r.redacted_at IS NULL
+      AND COALESCE((SELECT e.status FROM _ecommerce_return_request_events e WHERE e.request_id = r.id ORDER BY e.rowid DESC LIMIT 1), 'pending') IN ('pending', 'approved'))`.mapWith(Number)
+  }).from(orders).where(owned).orderBy(desc(orders.createdAt), desc(orders.id)).limit(12).offset((page - 1) * 12);
+  const descriptions = await describeOrderItems(env, rows.flatMap((order) => order.items));
+  let offset = 0;
+  return {
+    account: { email: account.email, name: account.name, creditBalance: account.creditBalance, currency: readStoreCurrency(env) },
+    total,
+    page,
+    pages,
+    orders: rows.map((order) => {
+      const items = descriptions.slice(offset, offset += order.items.length).map((item) => ({
+        productId: item.productId,
+        variantId: item.variantId ?? null,
+        quantity: item.quantity,
+        productName: item.productName,
+        variantLabel: item.variantLabel,
+        sku: item.sku
+      }));
+      return { ...order, items, reference: orderReference(order.id), orderTotal: order.totalAmount + order.giftCardApplied + order.creditApplied };
+    })
+  };
+}
+
 // src/accounts.ts
-import { and as and3, count, eq as eq3, gt as gt2, inArray as inArray2, isNotNull, isNull as isNull2, or as or2, sql as sql3 } from "drizzle-orm";
+import { and as and4, count as count2, eq as eq4, gt as gt2, inArray as inArray2, isNotNull, isNull as isNull2, or as or2, sql as sql4 } from "drizzle-orm";
 import { ensureVerifiedEmailIdentity } from "talisman-cms/auth/identity";
 import { parseAddress } from "talisman-cms/email";
 import { readSetting as readSetting2 } from "talisman-cms/env";
 
 // src/rate-limits.ts
-import { and as and2, eq as eq2, gt, lte, sql as sql2 } from "drizzle-orm";
+import { and as and3, eq as eq3, gt, lte, sql as sql3 } from "drizzle-orm";
 var MAX_RATE_LIMIT_WINDOW_SECONDS = 24 * 60 * 60;
 async function sha256Hex(value) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -208,7 +490,7 @@ function rateLimitSource(ip) {
   if (halves.length > 2) return value;
   const left = halves[0] ? halves[0].split(":") : [];
   const right = halves[1] ? halves[1].split(":") : [];
-  const width = [...left, ...right].reduce((count2, group) => count2 + (group.includes(".") ? 2 : 1), 0);
+  const width = [...left, ...right].reduce((count3, group) => count3 + (group.includes(".") ? 2 : 1), 0);
   if (halves.length === 1 ? width !== 8 : width > 7) return value;
   const groups = [...left, ...Array(8 - width).fill("0"), ...right].slice(0, 4);
   if (groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return value;
@@ -218,21 +500,21 @@ async function countRequest(env, key, now, windowSeconds) {
   if (!(windowSeconds > 0 && windowSeconds <= MAX_RATE_LIMIT_WINDOW_SECONDS)) {
     throw new RangeError("Rate-limit windows must be between 1 second and 24 hours");
   }
-  const ended = sql2`${rateLimits.windowStart} <= ${now - windowSeconds}`;
+  const ended = sql3`${rateLimits.windowStart} <= ${now - windowSeconds}`;
   const [limit] = await commerceDb(env).insert(rateLimits).values({ key, count: 1, windowStart: now }).onConflictDoUpdate({ target: rateLimits.key, set: {
-    count: sql2`CASE WHEN ${ended} THEN 1 ELSE ${rateLimits.count} + 1 END`,
-    windowStart: sql2`CASE WHEN ${ended} THEN ${now} ELSE ${rateLimits.windowStart} END`
+    count: sql3`CASE WHEN ${ended} THEN 1 ELSE ${rateLimits.count} + 1 END`,
+    windowStart: sql3`CASE WHEN ${ended} THEN ${now} ELSE ${rateLimits.windowStart} END`
   } }).returning({ count: rateLimits.count });
   return limit?.count;
 }
 async function peekRequestCount(env, key, now, windowSeconds) {
-  const row = await commerceDb(env).select({ count: rateLimits.count }).from(rateLimits).where(and2(eq2(rateLimits.key, key), gt(rateLimits.windowStart, now - windowSeconds))).get();
+  const row = await commerceDb(env).select({ count: rateLimits.count }).from(rateLimits).where(and3(eq3(rateLimits.key, key), gt(rateLimits.windowStart, now - windowSeconds))).get();
   return row?.count ?? 0;
 }
 async function clientOverLimit(env, bucket, sourceIp, { limit, windowSeconds, now = Math.floor(Date.now() / 1e3) }) {
   if (!sourceIp || sourceIp.length > 64) return false;
-  const count2 = await countRequest(env, `${bucket}:${await sha256Hex(rateLimitSource(sourceIp))}`, now, windowSeconds);
-  return (count2 ?? limit + 1) > limit;
+  const count3 = await countRequest(env, `${bucket}:${await sha256Hex(rateLimitSource(sourceIp))}`, now, windowSeconds);
+  return (count3 ?? limit + 1) > limit;
 }
 async function claimInterval(env, key, intervalSeconds, now = Math.floor(Date.now() / 1e3)) {
   if (!(intervalSeconds > 0 && intervalSeconds <= MAX_RATE_LIMIT_WINDOW_SECONDS)) {
@@ -240,7 +522,7 @@ async function claimInterval(env, key, intervalSeconds, now = Math.floor(Date.no
   }
   const [claimed] = await commerceDb(env).insert(rateLimits).values({ key, count: 1, windowStart: now }).onConflictDoUpdate({
     target: rateLimits.key,
-    set: { count: 1, windowStart: sql2`excluded.window_start` },
+    set: { count: 1, windowStart: sql3`excluded.window_start` },
     setWhere: lte(rateLimits.windowStart, now - intervalSeconds)
   }).returning({ windowStart: rateLimits.windowStart });
   return Boolean(claimed);
@@ -338,14 +620,14 @@ function maskEmailAddress(email) {
 async function findCustomerSession(env, token) {
   if (!token || token.length > 128) return null;
   const db = commerceDb(env);
-  const session = await db.select().from(customerSessions).where(and3(
-    eq3(customerSessions.tokenHash, await hashToken(token)),
+  const session = await db.select().from(customerSessions).where(and4(
+    eq4(customerSessions.tokenHash, await hashToken(token)),
     gt2(customerSessions.expiresAt, /* @__PURE__ */ new Date()),
     isNull2(customerSessions.revokedAt),
-    eq3(customerSessions.purpose, "session")
+    eq4(customerSessions.purpose, "session")
   )).get();
   if (!session) return null;
-  return await db.select().from(customerAccounts).where(and3(eq3(customerAccounts.id, session.accountId), eq3(customerAccounts.sessionVersion, session.sessionVersion), isNull2(customerAccounts.anonymizedAt))).get() ?? null;
+  return await db.select().from(customerAccounts).where(and4(eq4(customerAccounts.id, session.accountId), eq4(customerAccounts.sessionVersion, session.sessionVersion), isNull2(customerAccounts.anonymizedAt))).get() ?? null;
 }
 function customerEmailDailyLimit(env) {
   const configured = Number(readSetting2(env, "COMMERCE_EMAIL_DAILY_LIMIT"));
@@ -357,7 +639,7 @@ function customerEmailReservedDaily(env, dailyLimit) {
   return Number.isSafeInteger(configured) && configured >= 0 && configured < dailyLimit ? configured : Math.floor(dailyLimit / 4);
 }
 async function isExistingCustomer(env, email) {
-  const verified = await commerceDb(env).select({ id: customerAccounts.id }).from(customerAccounts).where(and3(eq3(customerAccounts.emailNormalized, email), isNotNull(customerAccounts.emailVerifiedAt))).get();
+  const verified = await commerceDb(env).select({ id: customerAccounts.id }).from(customerAccounts).where(and4(eq4(customerAccounts.emailNormalized, email), isNotNull(customerAccounts.emailVerifiedAt))).get();
   return Boolean(verified) || await hasPurchaseHistory(env, { emails: [email] });
 }
 function shopperSignInBotCheck(env) {
@@ -374,15 +656,15 @@ async function hasPurchaseHistory(env, shopper) {
   const matches = [
     // Order emails have an index on lower(customer_email), `_ecommerce_orders_customer_email_idx`.
     ...emails.length ? [
-      inArray2(sql3`lower(${orders.customerEmail})`, emails),
+      inArray2(sql4`lower(${orders.customerEmail})`, emails),
       inArray2(orders.userId, db.select({ id: customerAccounts.id }).from(customerAccounts).where(inArray2(customerAccounts.emailNormalized, emails)))
     ] : [],
     ...accountIds.length ? [inArray2(orders.userId, accountIds)] : []
   ];
   if (!matches.length) return false;
-  const prior = await db.select({ id: orders.id }).from(orders).where(and3(
+  const prior = await db.select({ id: orders.id }).from(orders).where(and4(
     inArray2(orders.status, [...PURCHASED_ORDER_STATUSES]),
-    sql3`COALESCE(${orders.paymentProvider}, 'stripe') <> 'admin_test'`,
+    sql4`COALESCE(${orders.paymentProvider}, 'stripe') <> 'admin_test'`,
     or2(...matches)
   )).limit(1).get();
   return Boolean(prior);
@@ -397,7 +679,7 @@ async function requestCustomerEmailSignIn(env, email, linkForToken, sendLink, so
   if (await clientOverLimit(env, "shopper-email", sourceIp, { limit: REQUESTS_PER_SOURCE_PER_HOUR, windowSeconds: 3600, now })) {
     return dropped();
   }
-  const recent = await commerceDb(env).select({ count: count() }).from(signInTokens).where(and3(eq3(signInTokens.emailNormalized, normalized), gt2(signInTokens.createdAt, at(now - ADDRESS_WINDOW_SECONDS)))).get();
+  const recent = await commerceDb(env).select({ count: count2() }).from(signInTokens).where(and4(eq4(signInTokens.emailNormalized, normalized), gt2(signInTokens.createdAt, at(now - ADDRESS_WINDOW_SECONDS)))).get();
   if ((recent?.count ?? 0) >= REQUESTS_PER_ADDRESS) return dropped();
   const addressKey = await sha256Hex(normalized);
   if ((await countRequest(env, `shopper-email:address:${addressKey}`, now, ADDRESS_WINDOW_SECONDS) ?? REQUESTS_PER_ADDRESS + 1) > REQUESTS_PER_ADDRESS) return dropped();
@@ -427,7 +709,7 @@ async function sendSignInLink(env, email, now, linkForToken, sendLink) {
   try {
     await sendLink(email, linkForToken(token));
   } catch (error) {
-    await db.update(signInTokens).set({ revokedAt: /* @__PURE__ */ new Date() }).where(eq3(signInTokens.tokenHash, tokenHash));
+    await db.update(signInTokens).set({ revokedAt: /* @__PURE__ */ new Date() }).where(eq4(signInTokens.tokenHash, tokenHash));
     throw error;
   }
 }
@@ -437,8 +719,8 @@ async function previewCustomerEmailSignIn(env, token, sourceIp) {
     throw new CustomerRequestLimitError();
   }
   if (!isSignInToken(token)) return null;
-  const link = await commerceDb(env).select({ emailNormalized: signInTokens.emailNormalized }).from(signInTokens).where(and3(
-    eq3(signInTokens.tokenHash, await hashToken(token)),
+  const link = await commerceDb(env).select({ emailNormalized: signInTokens.emailNormalized }).from(signInTokens).where(and4(
+    eq4(signInTokens.tokenHash, await hashToken(token)),
     isNull2(signInTokens.revokedAt),
     gt2(signInTokens.expiresAt, at(now))
   )).get();
@@ -449,8 +731,8 @@ async function consumeCustomerEmailSignIn(env, token) {
   if (!isSignInToken(token)) return null;
   const now = Math.floor(Date.now() / 1e3);
   const db = commerceDb(env);
-  const [claimed] = await db.update(signInTokens).set({ revokedAt: at(now) }).where(and3(
-    eq3(signInTokens.tokenHash, await hashToken(token)),
+  const [claimed] = await db.update(signInTokens).set({ revokedAt: at(now) }).where(and4(
+    eq4(signInTokens.tokenHash, await hashToken(token)),
     isNull2(signInTokens.revokedAt),
     gt2(signInTokens.expiresAt, at(now))
   )).returning({ emailNormalized: signInTokens.emailNormalized });
@@ -464,12 +746,12 @@ async function consumeCustomerEmailSignIn(env, token) {
     createdAt: at(now),
     updatedAt: at(now)
   }).onConflictDoNothing({ target: customerAccounts.emailNormalized });
-  const account = await db.select().from(customerAccounts).where(eq3(customerAccounts.emailNormalized, email)).get();
+  const account = await db.select().from(customerAccounts).where(eq4(customerAccounts.emailNormalized, email)).get();
   if (!account) return null;
   const cmsUserId = await ensureVerifiedEmailIdentity(env, account.emailNormalized, account.name);
   const sessionToken = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   await db.batch([
-    db.update(customerAccounts).set({ emailVerifiedAt: sql3`COALESCE(${customerAccounts.emailVerifiedAt}, ${now})`, updatedAt: at(now), cmsUserId }).where(eq3(customerAccounts.id, account.id)),
+    db.update(customerAccounts).set({ emailVerifiedAt: sql4`COALESCE(${customerAccounts.emailVerifiedAt}, ${now})`, updatedAt: at(now), cmsUserId }).where(eq4(customerAccounts.id, account.id)),
     db.insert(customerSessions).values({
       id: `csess_${crypto.randomUUID()}`,
       accountId: account.id,
@@ -485,7 +767,7 @@ async function consumeCustomerEmailSignIn(env, token) {
 async function revokeCustomerSession(env, token) {
   if (!token || token.length > 128) return;
   const db = commerceDb(env);
-  await db.update(customerSessions).set({ revokedAt: /* @__PURE__ */ new Date() }).where(eq3(customerSessions.tokenHash, await hashToken(token)));
+  await db.update(customerSessions).set({ revokedAt: /* @__PURE__ */ new Date() }).where(eq4(customerSessions.tokenHash, await hashToken(token)));
 }
 async function listCustomerOrders(env, accountId) {
   const db = commerceDb(env);
@@ -493,7 +775,7 @@ async function listCustomerOrders(env, accountId) {
     id: orders.id,
     status: orders.status,
     fulfillmentStatus: orders.fulfillmentStatus,
-    paymentUnderReview: sql3`(${orders.status} = 'pending' AND ${orders.reconcileReviewAt} IS NOT NULL)`.mapWith(Boolean),
+    paymentUnderReview: sql4`(${orders.status} = 'pending' AND ${orders.reconcileReviewAt} IS NOT NULL)`.mapWith(Boolean),
     totalAmount: orders.totalAmount,
     subtotalAmount: orders.subtotalAmount,
     shippingAmount: orders.shippingAmount,
@@ -503,12 +785,20 @@ async function listCustomerOrders(env, accountId) {
     creditApplied: orders.creditApplied,
     currency: orders.currency,
     createdAt: orders.createdAt
-  }).from(orders).where(eq3(orders.userId, accountId));
+  }).from(orders).where(eq4(orders.userId, accountId));
 }
 
 export {
   ShopperPrivacyError,
   manageShopperData,
+  StoreSettingsError,
+  readStoreSettings,
+  readStoreCurrency,
+  reportStoreSettingsError,
+  orderAmountColumns,
+  orderAmounts,
+  describeOrderItems,
+  readCustomerHub,
   countRequest,
   clientOverLimit,
   claimInterval,
