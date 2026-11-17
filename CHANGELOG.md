@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Commerce gains a searchable product catalogue, guided product and variant setup, clearer stock and refund follow-up, and shared storefront and customer-account components. Product editors support grouped sections, image galleries, money inputs and generated slugs. Browser and unit coverage now includes catalogue editing, existing products, storefront state and customer journeys. No database migrations or new bindings are required.
+
 - Analytics now exports a typed event API, provider adapter interface, consent controls, an optional local inspector and a GA4 adapter. Google loads only after consent; withdrawal cancels pending initialization, disables dispatch and clears owned cookies. Preview mode sends nothing. Event schemas reject unknown fields, sanitize page paths and map currency amounts to GA4. Purchase/refund mappings are available for verified-state integrations; automatic payment instrumentation and durable delivery are not included. No migrations or new dependencies.
 
 - Accessibility CI now scans 17 desktop/mobile states with axe-core, including validation, confirmation dialogs and light/dark theme previews. Keyboard checks cover skip navigation, error links, focus trapping and restoration; JSON reports retain inconclusive checks and CI uploads failure screenshots.
