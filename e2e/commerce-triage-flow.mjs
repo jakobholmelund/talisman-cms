@@ -76,7 +76,7 @@ export async function commerceTriageFlow(ctx, { fail, expectVisible, expectHidde
     if (!reads.some(r => r.action === 'recoveryRead' && r.data.caseId === 'triage-case')) fail('wrong recovery target read');
     await page.getByRole('link', { name: 'Needs attention', exact: true }).click();
     await page.getByRole('region', { name: 'Pending inspections', exact: true }).getByRole('link', { name: 'Open case · recovery-return', exact: true }).click();
-    await expectVisible(page.getByRole('region', { name: 'Inspection recovery-return', exact: true }).getByText('All received inspection quantities are resolved.'), 'actual inspection target loaded');
+    await expectVisible(page.getByRole('region', { name: 'Inspection recovery-return', exact: true }).getByText('Inspection complete', { exact: true }), 'actual inspection target loaded');
     await page.getByRole('link', { name: 'Needs attention', exact: true }).click();
     await page.getByRole('region', { name: 'Return refund follow-up', exact: true }).getByRole('link', { name: 'Open case · recovery-return', exact: true }).click();
     await expectVisible(page.getByRole('region', { name: 'Return refund details', exact: true }).getByText(`Order ${orderId}`, { exact: false }), 'actual refund target loaded');

@@ -496,7 +496,7 @@ export function CollectionEntryEditor({
   const editorSections = [...new Set<string>(editorFields.map((field: any) => field.editorSection || ""))];
   const groupedFields = editorSections.some(Boolean);
   const nativeIdColumn = getNativeIdColumn(collection);
-  const recordLabel = collection.singularName?.toLowerCase() || (nativeCollection ? 'record' : 'entry');
+  const recordLabel = collection?.singularName?.toLowerCase() || (nativeCollection ? 'record' : 'entry');
 
   const [currentEntry, setCurrentEntry] = useState<any>(initialEntry);
   const [revisions, setRevisions] = useState<any[]>(initialRevisions || []);
