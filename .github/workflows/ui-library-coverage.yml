@@ -93,11 +93,12 @@ jobs:
           trap 'pnpm --filter playground exec astro preview stop || true; rm -f playground/.dev.vars playground/dist/server/.dev.vars' EXIT
           TOKEN="$(openssl rand -hex 32)"
           printf 'TALISMAN_AUTH_SECRET=%s\nTALISMAN_AUTH_SETUP_TOKEN=%s\nTALISMAN_COMMERCE_GIFT_CARD_KEY=%s\n' "$(openssl rand -hex 32)" "$TOKEN" "$(openssl rand -hex 32)" > playground/.dev.vars
+          printf '%s\n' 'TALISMAN_COMMERCE_DELIVERY_COUNTRIES=US,SG' 'TALISMAN_COMMERCE_SHIPPING_RATES=[{"id":"standard","label":"Standard delivery","amount":800,"countries":["US","SG"],"freeOver":30000}]' >> playground/.dev.vars
           pnpm --filter playground build
           pnpm --filter talisman-cms db:migrate:local
           pnpm --filter talisman-cms db:seed:ecommerce:local
           # The real commerce browser flows require these synthetic paid-order fixtures.
-          for fixture in commerce-aftercare commerce-purchasing commerce-recoveries commerce-returns; do
+          for fixture in commerce-aftercare commerce-purchasing commerce-recoveries commerce-returns storefront; do
             pnpm exec wrangler d1 execute DB --local --config playground/wrangler.toml --file "e2e/fixtures/$fixture.sql"
           done
           pnpm --filter playground exec astro preview --host 127.0.0.1 --port 8787
@@ -109,6 +110,7 @@ jobs:
           export TALISMAN_CHROME_PATH="$(command -v google-chrome || command -v chromium)"
           export TALISMAN_E2E_AFTERCARE_ORDER_ID=ord_99999999-9999-4999-8999-999999999999
           export TALISMAN_E2E_RETURNS_ORDER_ID=ord_77777777-7777-4777-8777-777777777777
+          export TALISMAN_E2E_STOREFRONT_ORDERS=1
           TALISMAN_E2E_SETUP_TOKEN="$TOKEN" node e2e/admin-flows.mjs --base-url http://127.0.0.1:8787 --dist playground/dist --report e2e-report.json --artifacts e2e-artifacts || status=$?
           if [ "$status" = 0 ]; then
             TALISMAN_UI_BROWSER=1 pnpm --filter @talisman-cms/plugin-ui-daisyui exec node --test --test-concurrency=1 ./test/renderers.test.mjs ./test/theme-builder.browser.mjs || status=$?
