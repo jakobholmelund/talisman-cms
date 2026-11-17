@@ -259,6 +259,7 @@ export const ecommercePlugin = (
         body: 'Enable the ecommerce plugin or tag a collection with `adminSection: "commerce"`.'
       }
     }],
+    adminCollectionViews: [{slug: productsSlug, nativeSchemaExport:'products', componentPath: '@talisman-cms/plugin-ecommerce/admin/ProductCatalogue'}],
     adminEditorPanels: [
       { id: 'commerce-model-guide', placement: 'before-fields', sections: ['commerce'], componentPath: '@talisman-cms/plugin-ecommerce/admin/CommerceModelGuidePanel' },
       { id: 'commerce-product-options', placement: 'after-form', slugs: [productsSlug], componentPath: '@talisman-cms/plugin-ecommerce/admin/ProductOptionsPanel' }
@@ -313,8 +314,21 @@ export const ecommercePlugin = (
           'inventoryQuantity', { name: 'type', label: 'Product Type' }, 'status',
         ]);
 
+        const productSections: Record<string,string> = {name:'About this product',description:'About this product',slug:'About this product',sku:'About this product',images:'Images',basePrice:'Pricing',isPhysical:'Selling & shipping',type:'Selling & shipping',status:'Selling & shipping',categoryIds:'Organisation',tagIds:'Organisation'};
+        for (const field of productFields) Object.assign(field, {editorSection:productSections[field.name] || 'Advanced',editorHidden:field.name==='inventoryQuantity'||field.name==='id'});
+        productFields.sort((a,b)=>['About this product','Images','Pricing','Selling & shipping','Organisation','Advanced'].indexOf(productSections[a.name]||'Advanced')-['About this product','Images','Pricing','Selling & shipping','Organisation','Advanced'].indexOf(productSections[b.name]||'Advanced'));
+        const labels: Record<string,object> = {isPhysical:{label:'Requires shipping'},sku:{label:'SKU (optional)'},type:{label:'Selling format',optionLabels:{standard:'One-time purchase',digital:'Digital download',subscription:'Subscription'}},status:{label:'Visibility',optionLabels:{draft:'Draft — hidden from shoppers',active:'Available in store',archived:'Archived — hidden from shoppers'}}};
+        for (const field of productFields) if(labels[field.name])Object.assign(field,labels[field.name]);
+        const handle = productFields.find(field => field.name === 'slug');
+        if (handle) Object.assign(handle, {label:'URL name',adminPresentation:'slug',generateFrom:'name'});
+        const price = productFields.find(field => field.name === 'basePrice');
+        if (price) Object.assign(price, { label: 'Price', adminPresentation: 'money' });
+        const gallery = productFields.find(field => field.name === 'images');
+        if (gallery) Object.assign(gallery, { adminPresentation: 'gallery' });
         collections.push({
           name: 'Products',
+          singularName: 'Product',
+          editorCreateNext: 'commerce-product-options',
           slug: productsSlug,
           description: 'Catalog of items available for purchase',
           adminSection: 'commerce',

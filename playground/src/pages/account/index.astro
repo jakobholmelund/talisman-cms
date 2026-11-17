@@ -1,0 +1,61 @@
+---
+import { env } from 'cloudflare:workers';
+import { CUSTOMER_SESSION_COOKIE, readCustomerHub, shopperSignInBotCheck, customerOrderDestination, customerOrderPath } from '@talisman-cms/plugin-ecommerce/accounts';
+import { readCatalog } from '@talisman-cms/plugin-ecommerce/catalog';
+import { readSetting } from 'talisman-cms/env';
+import Layout from '../../layouts/Layout.astro';
+import { formatMoney, getOrderSummary } from '../../lib/commerce';
+import { getPrimaryProductImage } from '../../lib/product-media';
+import '../../styles/customer-hub.css';
+Astro.response.headers.set('Cache-Control', 'private, no-store');
+Astro.response.headers.set('Referrer-Policy', 'no-referrer');
+Astro.response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+const runtime = env as any;
+const destination = customerOrderDestination(Astro.url.searchParams.get('order'));
+const hub = await readCustomerHub(runtime, Astro.cookies.get(CUSTOMER_SESSION_COOKIE)?.value, Number(Astro.url.searchParams.get('page') || 1));
+let unavailable = false;
+if (hub && destination) {
+  if (await getOrderSummary(runtime, destination, Astro.cookies)) return Astro.redirect(customerOrderPath(destination), 303);
+  unavailable = true;
+}
+const botCheck = shopperSignInBotCheck(runtime);
+const support = readSetting(runtime, 'COMMERCE_SUPPORT_EMAIL');
+const products = hub?.orders.length ? await readCatalog(runtime, { ids: [...new Set(hub.orders.flatMap(o => o.items.map(i => i.productId)))] }) : [];
+const images = new Map(products.map(p => [p.id, getPrimaryProductImage(p)]));
+const date = (value: Date) => new Intl.DateTimeFormat('en-GB', { day:'numeric', month:'short', year:'numeric', timeZone:'UTC' }).format(value);
+const paymentLabels: Record<string,string> = {paid:'Payment confirmed',fulfilled:'Payment confirmed',partially_refunded:'Partly refunded',refunded:'Refunded',pending:'Payment pending',disputed:'Payment under review',failed:'Payment incomplete',cancelled:'Cancelled',draft:'Not confirmed'};
+const shippingLabels: Record<string,string> = {unfulfilled:'Not shipped yet',partially_fulfilled:'Partly shipped',fulfilled:'Shipped'};
+---
+<Layout title={`${hub ? 'Your account' : 'Welcome back'} | Talisman`} description="Your Talisman orders, delivery updates, returns and store credit, together in one place.">
+  <section class="store-page customer-hub" data-customer-hub>
+    {hub ? <>
+      <header class="hub-heading"><div><p class="store-eyebrow">Your Talisman</p><h1>Good to see you{hub.account.name ? `, ${hub.account.name.split(' ')[0]}` : ''}.</h1><p>Every order. Every update. All right here.</p></div><a href="/shop" class="store-button secondary">Explore the collection <span aria-hidden="true">↗</span></a></header>
+      {unavailable && <p class="hub-notice" role="status">That order isn’t available to this account. Use the email you checked out with, or contact the store for help.</p>}
+      <div class="hub-layout">
+        <div class="hub-orders" id="orders">
+          <div class="hub-section-heading"><h2>Your orders <span>{hub.total}</span></h2><a href={`/account?page=${hub.page}`} data-astro-reload class="store-text-link">Refresh updates</a></div>
+          <p class="hub-caption">Receipts, parcels and aftercare. Choose an order to see the whole story.</p>
+          {hub.orders.length ? hub.orders.map(order => <article class="hub-order" data-hub-order={order.id}>
+            <header><div><a href={customerOrderPath(order.id)} data-astro-reload class="hub-reference">{order.reference}</a><time datetime={order.createdAt.toISOString()}>{date(order.createdAt)}</time></div><div class="hub-order-total"><strong>{formatMoney(order.orderTotal,order.currency)}</strong><span>Order total</span></div></header>
+            <div class="hub-badges"><span data-tone={['refunded','partially_refunded','disputed'].includes(order.status)?'muted':'green'}>{order.paymentUnderReview?'Payment under review':paymentLabels[order.status] || 'Order update'}</span>{['paid','fulfilled','partially_refunded','refunded'].includes(order.status)&&<span>{shippingLabels[order.fulfillmentStatus]||'Delivery updates'}</span>}{order.openReturns>0 && <span data-tone="amber">{order.openReturns} open return{order.openReturns===1?'':'s'}</span>}</div>
+            <ul class="hub-items">{order.items.slice(0,3).map(item => <li>{images.get(item.productId) ? <img src={images.get(item.productId)!} width="64" height="72" alt="" loading="lazy"/> : <span class="hub-item-placeholder" aria-hidden="true">T</span>}<div><h3>{item.productName || 'Ordered item'}</h3><p>{[item.variantLabel,`Qty ${item.quantity}`].filter(Boolean).join(' · ')}</p>{products.some(p=>p.id===item.productId&&p.status==='active') && <a href={`/shop/${encodeURIComponent(item.productId)}${item.variantId?`?variant=${encodeURIComponent(item.variantId)}`:''}`} class="store-text-link">Shop this item again <span aria-hidden="true">↗</span></a>}</div></li>)}</ul>
+            {order.items.length>3 && <p class="hub-caption">+ {order.items.length-3} more item{order.items.length===4?'':'s'} in this order</p>}
+            {(order.giftCardRefundedCents+order.providerRefundedCents)>0&&<p class="hub-refund">{formatMoney(order.giftCardRefundedCents+order.providerRefundedCents,order.currency)} refunded · See the breakdown in your order.</p>}
+            {order.paymentUnderReview && <p class="hub-caption">We’re checking this payment. Please wait for an update before paying again.</p>}
+            <footer><span>Receipt · Tracking · Returns</span><a href={customerOrderPath(order.id)} data-astro-reload class="store-button secondary">View order <span aria-hidden="true">→</span><span class="hub-sr"> {order.reference}</span></a></footer>
+          </article>) : <div class="hub-empty store-panel"><span aria-hidden="true">↗</span><h3>Your next favourite is out there.</h3><p>Orders placed with {hub.account.email} will appear here once payment is confirmed.</p><a href="/shop" class="store-button">Find something you love</a></div>}
+          {hub.pages>1 && <nav class="hub-pagination" aria-label="Order history pages">{hub.page>1?<a data-astro-reload href={`/account?page=${hub.page-1}`} class="store-button secondary">← Newer</a>:<span/>}<span>Page {hub.page} of {hub.pages}</span>{hub.page<hub.pages?<a data-astro-reload href={`/account?page=${hub.page+1}`} class="store-button secondary">Older →</a>:<span/>}</nav>}
+        </div>
+        <aside class="hub-sidebar">
+          <section class="hub-credit"><p class="store-eyebrow">{hub.account.creditBalance>0 ? 'A little towards your next find' : 'Ready for your next chapter'}</p><h2>Store credit</h2><strong>{formatMoney(hub.account.creditBalance,hub.account.currency)}</strong><p>Available credit is applied to eligible items at checkout when you’re signed in. Gift cards are separate.</p><a href="/shop">{hub.account.creditBalance>0 ? 'Put it towards something good' : 'Explore the collection'} <span aria-hidden="true">↗</span></a></section>
+          <section class="store-panel hub-profile"><p class="store-eyebrow">Your account</p><h2>{hub.account.name || 'Welcome back'}</h2><p>{hub.account.email}</p><span class="hub-verified">✓ Email verified</span><div class="hub-account-actions"><button type="button" class="store-text-link" data-account-export>Download my account data</button><button type="button" class="store-text-link" data-account-signout>Sign out</button><button type="button" class="store-text-link" data-account-revoke>Sign out on all devices</button></div><p data-account-feedback role="status" aria-live="polite"></p></section>
+          <section class="hub-help"><h2>We’re here after checkout, too.</h2><p>For a return or exchange, open your order and choose the items. Your request and our replies stay together there.</p>{support && <a href={`mailto:${support}`} class="store-text-link">Contact the store ↗</a>}</section>
+        </aside>
+      </div>
+    </> : <div class="hub-signin-layout">
+      <div class="hub-welcome"><p class="store-eyebrow">Your Talisman</p><h1>A little closer <br/>to everything <br/>you love.</h1><p>Your orders, delivery updates and aftercare.<br/>One quiet corner, just for you.</p><ol><li><span>01</span><div><h2>Follow every order</h2><p>From payment to parcels, with the details that matter.</p></div></li><li><span>02</span><div><h2>Make yourself at home</h2><p>Keep receipts handy and revisit your favourite finds.</p></div></li><li><span>03</span><div><h2>We’ll take it from here</h2><p>Request a return or exchange and follow each next step.</p></div></li></ol></div>
+      <section class="store-panel hub-signin"><span class="hub-monogram" aria-hidden="true">T</span><p class="store-eyebrow">Welcome back</p><h2>{destination ? 'Let’s find your order.' : 'Your account awaits.'}</h2><p>Enter the email you used at checkout. We’ll send you a secure link. No password to remember.</p><form data-account-signin data-order-id={destination} data-sitekey={botCheck?.siteKey} data-turnstile-action={botCheck?.action}><label for="account-email">Email address</label><input id="account-email" name="email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com" required maxlength="254" aria-describedby="signin-feedback"/><div data-signin-botcheck></div><button class="store-button" type="submit">Email me a sign-in link <span aria-hidden="true">→</span></button><p id="signin-feedback" data-signin-feedback role="status" aria-live="polite"></p></form><noscript><p>Please enable JavaScript to request your secure sign-in link.</p></noscript><p class="hub-signin-footnote">Your link works once and expires in 15 minutes. You’ll confirm your email before signing in.</p><a href="/shop" class="store-text-link">Back to the collection</a></section>
+    </div>}
+  </section>
+</Layout>
+<script>import '../../lib/customer-hub';</script>

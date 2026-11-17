@@ -9,6 +9,7 @@ import { CUSTOMER_SESSION_COOKIE, CUSTOMER_SESSION_MAX_AGE, CustomerRequestLimit
   manageShopperData, ShopperPrivacyError, requestCustomerEmailSignIn, revokeCustomerSession } from '../accounts';
 import { CART_SESSION_COOKIE, LEGACY_CART_SESSION_COOKIE, readCartSessionToken } from '../cookies';
 import { shopperSignInEmail } from '../emails';
+import { customerOrderDestination } from '../order-reference';
 import { SHOPPER_SIGN_IN_TURNSTILE_ACTION, readTurnstileSettings, verifyTurnstileToken } from '../turnstile';
 
 /** One answer for every link that cannot be used, so a response never tells links apart. */
@@ -93,11 +94,12 @@ export const ALL: APIRoute = async ({ request, cookies }) => {
         return Response.json({ error: BOT_CHECK_FAILED }, { status: 403, headers });
       }
     }
-    const siteName = parseAddress(from)?.name ?? new URL(publicOrigin).host;
+    const siteName = readSetting(settings, 'COMMERCE_STORE_NAME') ?? parseAddress(from)?.name ?? new URL(publicOrigin).host;
+    const destination = customerOrderDestination(body.orderId);
     try {
       const { limited } = await requestCustomerEmailSignIn(runtimeEnv, body.email,
         // The token travels in the fragment, so it never reaches the server or its request logs.
-        token => `${publicOrigin}/account/verify#token=${encodeURIComponent(token)}`,
+        token => `${publicOrigin}/account/verify#token=${encodeURIComponent(token)}${destination ? `&order=${encodeURIComponent(destination)}` : ''}`,
         async (to, link) => {
           // The object form keeps the recipient a bare address; a display name can never change it.
           await sendEmail(settings, { to: { email: to }, from, ...shopperSignInEmail({ link, siteName }) }, provider);

@@ -142,7 +142,7 @@ const composeReturnRefund: CommerceEmailComposer = async (env,subjectId,setup) =
  const to=bareEmailAddress(order.customerEmail);if(!to)return {cancel:'not_due'};
  const labels={provider:'Original payment method',gift_card:'Gift card',store_credit:'Store credit'},sums=new Map<keyof typeof labels,number>();
  for(const a of decision.allocations)sums.set(a.kind,(sums.get(a.kind)??0)+a.amountMinor);
- const email={store:setup.store,orderId:order.id,occurredAt:decision.createdAt,currency:order.currency,amountMinor:decision.amountMinor,tenders:[...sums].map(([kind,amountMinor])=>({label:labels[kind],amountMinor}))};
+ const email={store:setup.store,orderId:order.id,occurredAt:decision.createdAt,currency:order.currency,amountMinor:decision.amountMinor,tenders:[...sums].map(([kind,amountMinor])=>({kind,label:labels[kind],amountMinor}))};
  return {to,message:await applyEmailTemplate(setup,'returnRefund',email,returnRefundEmail(email))};
 };
 

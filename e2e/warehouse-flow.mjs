@@ -43,7 +43,7 @@ export async function warehouseFlow(ctx, { fail, expectVisible, expectHidden, ex
       if(lose){lose=false;return json(route,{result:null});}
       return json(route,{result:{receiptId:receipt.id,orderId,restocked:receipt.stock}});
     });
-    await page.goto('/admin/extensions/commerce-orders');
+    await page.goto('/admin/extensions/commerce-orders');await page.getByRole('region',{name:`Order ${orderId}`,exact:true}).locator('.ecom-admin__order-summary').click();
     const warehouse=page.getByRole('region',{name:`Warehouse ${orderId}`,exact:true});
     await expectVisible(warehouse.getByRole('button',{name:'Print packing slip',exact:true}),'parcel packing slip');
     // A blank popup with print stubbed lets the test inspect the exact printable contents.

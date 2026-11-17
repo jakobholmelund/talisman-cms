@@ -4,7 +4,7 @@ import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { CUSTOMER_SESSION_COOKIE, CustomerEmailLimitError, requestCustomerEmailSignIn,
-  shopperSignInBotCheck } from '../dist/accounts.js';
+  shopperSignInBotCheck, readCustomerHub, orderReference, customerOrderDestination } from '../dist/accounts.js';
 import { previewCustomerSignIn, readCustomerSignInToken,
   requestCustomerEmailSignIn as requestSignInFromBrowser } from '../dist/browser.js';
 import { applyAllMigrations } from './helpers/migrations.mjs';
@@ -919,4 +919,41 @@ test('the reserve defaults to a quarter of the daily limit, and an invalid reser
     assert.deepEqual(await requestCustomerEmailSignIn(env, 'b@example.test', (token) => token, send), { limited: true }, name);
     sqlite.close();
   }
+});
+
+test('sign-in preserves only a bounded order destination and uses the configured store name', async () => {
+  const { sqlite, env, sent } = shop({ TALISMAN_COMMERCE_STORE_NAME: 'Considered Goods' });
+  const id='ord_88888888-1111-4111-8111-abcdef123456';
+  await account(env,{email:'hub@example.test',orderId:id});
+  assert.equal(sent[0].subject,'Sign in to Considered Goods');
+  const url=new URL(sent[0].text.match(/https:\/\/shop\.test\/account\/verify#[^\s]+/)[0]);
+  assert.equal(new URLSearchParams(url.hash.slice(1)).get('order'),id);
+  assert.equal(orderReference(id),'TAL-ABCDEF123456');
+  assert.equal(customerOrderDestination('https://attacker.test/path'),null);
+  await account(env,{email:'other@example.test',orderId:'https://attacker.test/path'});
+  assert.doesNotMatch(sent[1].text,/attacker|&order=/);
+  sqlite.close();
+});
+
+test('customer hub paginates owned orders, includes all tenders, and excludes internal data and admin test orders', async () => {
+  const { sqlite, env, sent }=shop();
+  await account(env,{email:'hub@example.test'});
+  const verified=await account(env,{token:tokenFrom(linkIn(sent[0].text))});
+  const token=verified.cookies.get(CUSTOMER_SESSION_COOKIE).value, id=verified.json.account.id;
+  const insert=sqlite.prepare(`INSERT INTO _ecommerce_orders (id,user_id,status,items,subtotal_amount,total_amount,gift_card_applied,credit_applied,currency,payment_provider,customer_email,created_at,updated_at) VALUES (?,?, 'paid', ?,1500,500,700,300,'usd',?,'private@example.test',?,1)`);
+  for(let i=0;i<14;i++)insert.run(`owned-${i}`,id,JSON.stringify([{productId:'removed-product',quantity:1,priceAtPurchase:1500,stockTargets:[{type:'component',id:'private-recipe',units:2}]}]),'stripe',100+i);
+  insert.run('foreign','someone-else','[]','stripe',999);
+  insert.run('admin-only',id,'[]','admin_test',998);
+  const first=await readCustomerHub(env,token);
+  assert.equal(first.total,14);assert.equal(first.pages,2);assert.equal(first.orders.length,12);
+  assert.equal(first.orders[0].id,'owned-13');assert.equal(first.orders[0].orderTotal,1500);
+  assert.equal(first.orders[0].items[0].productName,null,'deleted products stay in order history');
+  assert.doesNotMatch(JSON.stringify(first),/private-recipe|stockTargets|private@example|admin-only|foreign/);
+  const second=await readCustomerHub(env,token,2);assert.deepEqual(second.orders.map(o=>o.id),['owned-1','owned-0']);
+  assert.equal((await readCustomerHub(env,token,-1)).page,1);
+  assert.equal((await readCustomerHub(env,token,999999)).page,2);
+  assert.equal(await readCustomerHub(env,'bad-session'),null);
+  await account(env,{action:'revoke'},{cookies:verified.cookies});
+  assert.equal(await readCustomerHub(env,token),null,'revoked sessions cannot read history');
+  sqlite.close();
 });

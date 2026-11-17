@@ -1,3 +1,5 @@
+import {useAttentionTarget} from './attention-target';
+import {RefundHandoff} from './RefundHandoff';
 import React, { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useBlocker } from '@tanstack/react-router';
 import { adminRequest, amountInput, CommerceAdmin, errorText, Feedback, Field, formAmount, money, Panel, Stat, storeCurrency } from './common';
@@ -42,7 +44,12 @@ function claimSummary(card: Card) {
   return parts.map(part => ` · ${part}`).join('');
 }
 
+type RefundRequest = {action:'refundTender'|'refundGiftOnlyOrder';data:{orderId:string;reason:string;requestKey:string;amountCents?:number};form:HTMLFormElement};
 export default function GiftCards() {
+  const {target}=useAttentionTarget();
+  const refundForms=useRef<HTMLDivElement>(null),refundRetry=useRef<RefundRequest|null>(null);
+  const [refundRefresh,setRefundRefresh]=useState(''),[refundedOrder,setRefundedOrder]=useState('');
+  const [refundPending,setRefundPending]=useState(false),[refundDirty,setRefundDirty]=useState(false);
   const [cards, setCards] = useState<Card[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [reviewCount, setReviewCount] = useState(0);
@@ -79,13 +86,13 @@ export default function GiftCards() {
   const currencyCode = GIFT_CARD_CURRENCY.toUpperCase();
   const show = (value: string, failed = false) => { setMessage(value); setError(failed); };
   const baseBlocked = busy || reading || readFailed;
-  const blocked = baseBlocked || issuePending || replacementPending;
+  const blocked = baseBlocked || issuePending || replacementPending || refundPending;
   const cannotWrite = () => writing.current || loading.current || failedRead.current;
-  const cannotChange = () => cannotWrite() || Boolean(issueKey.current || replacementRetry.current);
-  const protectIssuance = issuePending || replacementPending || Boolean(replacement?.reason) || (Boolean(issuedCode) && !codeSaved);
+  const cannotChange = () => cannotWrite() || Boolean(issueKey.current || replacementRetry.current || refundRetry.current);
+  const protectIssuance = refundPending || refundDirty || issuePending || replacementPending || Boolean(replacement?.reason) || (Boolean(issuedCode) && !codeSaved);
   useBlocker({
-    shouldBlockFn: ({ current, next }) => current.pathname !== next.pathname && (protectIssuance || busy)
-      && !window.confirm(replacementPending
+    shouldBlockFn: () => (protectIssuance || busy)
+      && !window.confirm(refundPending ? 'This refund is unconfirmed and may already be recorded. Recover it before leaving. Leave gift cards?' : refundDirty ? 'Leave this unsaved refund draft?' : replacementPending
         ? 'This code replacement has not been confirmed. Leaving loses its retry key; the old code may already have stopped working. Leave gift cards?'
         : issuePending
         ? 'This issuance has not been confirmed. Leaving loses its retry key; a card may already have been created. Leave gift cards?'
@@ -147,7 +154,7 @@ export default function GiftCards() {
 
   async function issue(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (cannotWrite() || replacement || replacementRetry.current || !canIssue) return;
+    if (cannotWrite() || refundRetry.current || replacement || replacementRetry.current || !canIssue) return;
     const form = event.currentTarget; const values = new FormData(form);
     if (issuedCode && !codeSaved && !issueKey.current && !window.confirm('Have you saved the currently displayed private code? Issuing another card replaces its display.')) return;
     const replacesPurchaseId = String(values.get('replacesPurchaseId') || '').trim();
@@ -238,11 +245,23 @@ export default function GiftCards() {
     if (!window.confirm(action === 'refundTender'
       ? `Restore ${money(amountCents, GIFT_CARD_CURRENCY)} of gift-card payment for ${orderId}? Check its refund history first; this credits the card.`
       : `Fully refund ${orderId}? This restores its remaining gift-card and shopper-credit payments. Check its refund history first.`)) return;
-    await act('Recording gift-card refund…', async () => {
-      await adminRequest('gift-cards-admin', { action, data: { orderId, reason: String(values.get('reason') || '').trim(),
-        ...(action === 'refundTender' ? { amountCents } : {}) } });
-      if (activePage.current) form.reset();
-      return 'Gift card refund recorded.';
+    const request:RefundRequest={action,data:{orderId,reason:String(values.get('reason')||'').trim(),requestKey:crypto.randomUUID(),...(action==='refundTender'?{amountCents}:{})},form};
+    refundRetry.current=request;setRefundPending(true);
+    await sendRefund(request);
+  }
+
+  async function sendRefund(request:RefundRequest) {
+    await act('Recording gift-card refund…',async()=>{
+      try {
+        const response=await adminRequest<{result?:{id?:string;orderId?:string}}>('gift-cards-admin',{action:request.action,data:request.data});
+        const receipt=request.action==='refundTender'?response.result?.id:response.result?.orderId;
+        if(typeof receipt!=='string'||!receipt)throw new Error('The refund response was incomplete. Recover the same refund to confirm it.');
+        if(activePage.current){refundRetry.current=null;setRefundPending(false);setRefundDirty(false);setRefundedOrder(request.data.orderId);setRefundRefresh(request.data.requestKey);request.form.reset();}
+        return 'Gift card refund recorded. For a returned item, complete its refund follow-up by allocating this confirmed payment.';
+      } catch(cause) {
+        if([400,403,409].includes((cause as {status?:number}).status??0)) {refundRetry.current=null;setRefundPending(false);}
+        throw cause;
+      }
     });
   }
 
@@ -378,9 +397,13 @@ export default function GiftCards() {
     </Panel>
     <Panel title="Refund gift card tender" label="Gift-card payment refunds">
       <p className="ecom-admin__muted">Refund Stripe charges in Stripe. A full Stripe refund restores the remaining gift card amount automatically.</p>
-      <form onSubmit={event => void refund(event, 'refundTender')}><div className="ecom-admin__grid"><Field label="Order ID"><input readOnly={blocked} name="orderId" required /></Field><Field label={`Gift card amount to restore (${currencyCode})`}><input readOnly={blocked} name="amount" type="number" {...amountInput(GIFT_CARD_CURRENCY, limits.refund)} required /></Field><Field label="Reason"><input readOnly={blocked} name="reason" minLength={8} maxLength={500} required /></Field></div><div className="ecom-admin__actions"><button type="submit" aria-disabled={blocked}>Restore gift card amount</button></div></form>
+      {target?.kind==='refund'&&<RefundHandoff key={target.id} receiptId={target.id} refreshToken={refundRefresh} onLoaded={(orderId,amount)=>{if(refundDirty||refundRetry.current||refundedOrder===orderId)return;const form=refundForms.current?.querySelector('form');const order=form?.elements.namedItem('orderId') as HTMLInputElement|null;const value=form?.elements.namedItem('amount') as HTMLInputElement|null;if(order&&!order.value)order.value=orderId;if(value&&!value.value&&amount>0)value.value=String(amountInput(GIFT_CARD_CURRENCY,{min:amount}).min);}}/>}
+      {refundPending&&<div className="ecom-admin__notice" role="status"><p>This refund is unconfirmed and may already be recorded. Recover it before making another change.</p><button type="button" disabled={baseBlocked} onClick={()=>{if(refundRetry.current)void sendRefund(refundRetry.current);}}>Recover same refund</button></div>}
+      <div ref={refundForms} onChange={()=>setRefundDirty(true)}>
+      <form aria-label="Partial gift card refund" onSubmit={event => void refund(event, 'refundTender')}><div className="ecom-admin__grid"><Field label="Order ID"><input readOnly={blocked} name="orderId" required /></Field><Field label={`Gift card amount to restore (${currencyCode})`}><input readOnly={blocked} name="amount" type="number" {...amountInput(GIFT_CARD_CURRENCY, limits.refund)} required /></Field><Field label="Reason"><input readOnly={blocked} name="reason" minLength={8} maxLength={500} required /></Field></div><div className="ecom-admin__actions"><button type="submit" aria-disabled={blocked}>Restore gift card amount</button></div></form>
       <h3>Fully refund a gift-card-only order</h3><p className="ecom-admin__muted">This restores its gift card and shopper credit payments together. It is available only when Stripe charged nothing.</p>
-      <form onSubmit={event => void refund(event, 'refundGiftOnlyOrder')}><div className="ecom-admin__grid"><Field label="Order ID"><input readOnly={blocked} name="orderId" required /></Field><Field label="Reason"><input readOnly={blocked} name="reason" minLength={8} maxLength={500} required /></Field></div><div className="ecom-admin__actions"><button type="submit" aria-disabled={blocked}>Refund entire order</button></div></form>
+      <form aria-label="Full gift card order refund" onSubmit={event => void refund(event, 'refundGiftOnlyOrder')}><div className="ecom-admin__grid"><Field label="Order ID"><input readOnly={blocked} name="orderId" required /></Field><Field label="Reason"><input readOnly={blocked} name="reason" minLength={8} maxLength={500} required /></Field></div><div className="ecom-admin__actions"><button type="submit" aria-disabled={blocked}>Refund entire order</button></div></form>
+      </div>
     </Panel>
     {encryption && <Panel title="Code encryption">
       <p className="ecom-admin__muted">New codes are encrypted with key {encryption.keyId}.{' '}

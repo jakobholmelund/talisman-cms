@@ -1,190 +1,63 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import { env as cfEnv } from 'cloudflare:workers';
-import {
-  formatMoney,
-  getCartSessionToken,
-  getHydratedCart,
-  getPendingOrderForCart,
-} from '../lib/commerce';
+import { readStoreSettings } from '@talisman-cms/plugin-ecommerce';
+import { serializeJsonForScript } from '@talisman-cms/plugin-ecommerce/components/json-script.ts';
+import { readSetting } from 'talisman-cms/env';
+import { deliveryDetails } from '../lib/delivery';
+import { formatMoney, getCartSessionToken, getHydratedCart, getPendingOrderForCart } from '../lib/commerce';
 
+Astro.response.headers.set('Cache-Control', 'private, no-store');
 const sessionToken = getCartSessionToken(Astro.cookies, { create: true, secure: Astro.url.protocol === 'https:' });
-const cartState = await getHydratedCart(cfEnv as any, sessionToken);
+const cartState = await getHydratedCart(cfEnv as any, sessionToken, Astro.cookies);
+if (!cartState.items.length) return Astro.redirect('/cart');
 const pendingOrder = await getPendingOrderForCart(cfEnv as any, cartState.cart?.id);
-
-if (cartState.items.length === 0) {
-  return Astro.redirect('/cart');
-}
-
-const cancelled = Astro.url.searchParams.get('cancelled') === '1';
+let settings;
+try { settings = readStoreSettings(cfEnv); } catch { return Astro.redirect('/cart?checkout=unavailable'); }
+const checkoutEnabled = readSetting(cfEnv, 'COMMERCE_CHECKOUT_ENABLED') === 'true';
+const needsAddress = cartState.requiresShipping || settings.tax.mode !== 'none';
+const delivery = deliveryDetails(settings, cartState.requiresShipping);
+const deliveryState = serializeJsonForScript({...delivery, currency:cartState.currency, subtotal:cartState.subtotal});
 ---
-
-<Layout title="Checkout | Talisman CMS Showcase" description="Complete checkout for the Talisman storefront demo.">
-  <section class="py-12 animate-fade-in-up">
-    <div class="mb-8 flex items-end justify-between border-b border-gray-100 pb-4">
-      <div>
-        <p class="text-sm font-semibold uppercase tracking-[0.3em] text-brand-600">Checkout</p>
-        <h1 class="mt-2 text-4xl font-black tracking-tight text-gray-900">Complete your order</h1>
-      </div>
-      <a href="/cart" class="text-sm font-medium text-brand-600 transition-colors hover:text-brand-700">Back to cart</a>
-    </div>
-
-    {cancelled && (
-      <div class="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
-        The previous checkout session was cancelled. Your cart is unlocked and ready to try again.
-      </div>
-    )}
-
-    {cartState.locked && pendingOrder ? (
-      <div class="rounded-[2rem] border border-amber-200 bg-amber-50 px-8 py-12 text-center shadow-sm">
-        <p class="text-lg font-semibold text-amber-900">This cart is currently locked by an active checkout.</p>
-        <p class="mt-2 text-sm text-amber-800">Cancel that checkout to continue editing the cart.</p>
-        <a href={`/checkout/cancel?order=${pendingOrder.id}`} class="mt-6 inline-flex h-11 items-center justify-center rounded-full bg-amber-900 px-6 text-sm font-medium text-white transition-colors hover:bg-amber-950">
-          Cancel active checkout
-        </a>
-      </div>
-    ) : (
-      <div class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <form
-          id="checkout-form"
-          data-requires-shipping={cartState.requiresShipping ? 'true' : 'false'}
-          class="rounded-[2rem] border border-gray-200 bg-white/90 p-6 shadow-sm"
-        >
-          <div class="grid gap-6">
-            <section>
-              <h2 class="text-sm font-semibold uppercase tracking-[0.25em] text-gray-500">Contact</h2>
-              <div class="mt-4 grid gap-4">
-                <label class="grid gap-2 text-sm font-medium text-gray-700">
-                  Email
-                  <input name="customerEmail" type="email" required class="h-12 rounded-2xl border border-gray-200 bg-white px-4 text-gray-900 outline-none transition-colors focus:border-brand-500" placeholder="you@example.com" />
-                </label>
-              </div>
-            </section>
-
-            {cartState.requiresShipping && (
-              <section class="border-t border-gray-100 pt-6">
-                <h2 class="text-sm font-semibold uppercase tracking-[0.25em] text-gray-500">Shipping</h2>
-                <div class="mt-4 grid gap-4 sm:grid-cols-2">
-                  <label class="grid gap-2 text-sm font-medium text-gray-700 sm:col-span-2">
-                    Full name
-                    <input name="shippingName" required class="h-12 rounded-2xl border border-gray-200 bg-white px-4 text-gray-900 outline-none transition-colors focus:border-brand-500" />
-                  </label>
-                  <label class="grid gap-2 text-sm font-medium text-gray-700 sm:col-span-2">
-                    Address line 1
-                    <input name="shippingLine1" required class="h-12 rounded-2xl border border-gray-200 bg-white px-4 text-gray-900 outline-none transition-colors focus:border-brand-500" />
-                  </label>
-                  <label class="grid gap-2 text-sm font-medium text-gray-700 sm:col-span-2">
-                    Address line 2
-                    <input name="shippingLine2" class="h-12 rounded-2xl border border-gray-200 bg-white px-4 text-gray-900 outline-none transition-colors focus:border-brand-500" />
-                  </label>
-                  <label class="grid gap-2 text-sm font-medium text-gray-700">
-                    City
-                    <input name="shippingCity" required class="h-12 rounded-2xl border border-gray-200 bg-white px-4 text-gray-900 outline-none transition-colors focus:border-brand-500" />
-                  </label>
-                  <label class="grid gap-2 text-sm font-medium text-gray-700">
-                    State / Province
-                    <input name="shippingState" required class="h-12 rounded-2xl border border-gray-200 bg-white px-4 text-gray-900 outline-none transition-colors focus:border-brand-500" />
-                  </label>
-                  <label class="grid gap-2 text-sm font-medium text-gray-700">
-                    Postal code
-                    <input name="shippingPostalCode" required class="h-12 rounded-2xl border border-gray-200 bg-white px-4 text-gray-900 outline-none transition-colors focus:border-brand-500" />
-                  </label>
-                  <label class="grid gap-2 text-sm font-medium text-gray-700">
-                    Country
-                    <input name="shippingCountry" required value="US" class="h-12 rounded-2xl border border-gray-200 bg-white px-4 text-gray-900 outline-none transition-colors focus:border-brand-500" />
-                  </label>
-                </div>
-              </section>
-            )}
-
-            <button type="submit" class="inline-flex h-12 items-center justify-center rounded-full bg-brand-600 px-6 text-sm font-medium text-white shadow-lg shadow-brand-500/20 transition-colors hover:bg-brand-700">
-              Complete checkout
-            </button>
-            <p id="checkout-feedback" class="text-sm text-gray-500" aria-live="polite"></p>
-          </div>
-        </form>
-
-        <aside class="rounded-[2rem] border border-gray-200 bg-white/90 p-6 shadow-sm">
-          <p class="text-sm font-semibold uppercase tracking-[0.25em] text-gray-500">Order summary</p>
-          <div class="mt-6 space-y-4">
-            {cartState.items.map((item) => (
-              <div class="flex items-start justify-between gap-4 border-b border-gray-100 pb-4">
-                <div>
-                  <p class="font-semibold text-gray-900">{item.productName}</p>
-                  {item.variantLabel && <p class="text-sm text-gray-500">{item.variantLabel}</p>}
-                  <p class="text-xs uppercase tracking-[0.2em] text-gray-400">Qty {item.quantity}</p>
-                </div>
-                <span class="text-sm font-semibold text-gray-900">{formatMoney(item.lineTotal, cartState.currency)}</span>
-              </div>
-            ))}
-          </div>
-          <div class="mt-4 space-y-3 text-sm">
-            <div class="flex items-center justify-between text-gray-500">
-              <span>Items</span>
-              <span>{cartState.itemCount}</span>
-            </div>
-            <div class="flex items-center justify-between text-gray-500">
-              <span>Shipping</span>
-              <span>{cartState.requiresShipping ? 'Added at payment' : 'Not required'}</span>
-            </div>
-            <div class="flex items-center justify-between border-t border-gray-100 pt-4 text-lg font-bold text-gray-900">
-              <span>Items subtotal</span>
-              <span>{formatMoney(cartState.subtotal, cartState.currency)}</span>
-            </div>
-          </div>
-        </aside>
-      </div>
-    )}
+<Layout title="Checkout | Talisman" description="Review your order, choose delivery and continue to secure payment.">
+  <section class="store-page checkout">
+    <div class="store-heading"><div><p class="store-eyebrow">Cart <span aria-hidden="true">/</span> Details <span aria-hidden="true">/</span> Payment</p><h1>Make it yours.</h1></div><a href="/cart" class="store-text-link">← Edit your cart</a></div>
+    {!checkoutEnabled && <p class="store-notice" role="status">This store is not accepting orders yet. You can explore checkout, but payment is currently unavailable.</p>}
+    {cartState.pricingError && <p class="store-notice" role="alert">{cartState.pricingError} <a href="/cart" class="store-text-link">Review cart</a></p>}
+    {cartState.locked ? <section class="store-panel"><h2>A checkout is already in progress.</h2><p>Check its payment status before starting again.</p><div class="checkout__actions">{pendingOrder && <><a href={`/checkout/success?order=${encodeURIComponent(pendingOrder.id)}`} class="store-button">Check payment status</a><a href={`/checkout/cancel?order=${encodeURIComponent(pendingOrder.id)}`} class="store-button secondary">Return to editing</a></>}<a href="/cart" class="store-text-link">Review cart</a></div></section> : <div class="checkout__layout">
+      <form id="checkout-form" class="store-panel checkout__form" method="post" data-requires-shipping={String(cartState.requiresShipping)} data-needs-address={String(needsAddress)} data-checkout-enabled={String(checkoutEnabled && !cartState.pricingError)}>
+        <p class="checkout__intro">Check out as a guest. No account required.</p>
+        <p id="checkout-feedback" role="status" tabindex="-1"></p>
+        <fieldset data-checkout-fields>
+          <section><h2><span>01</span> Contact</h2><label>Email<input name="customerEmail" type="email" autocomplete="email" maxlength="254" required placeholder="you@example.com" aria-describedby="email-hint" /></label><p id="email-hint" class="checkout__hint">Use the email address for your order.</p></section>
+          {needsAddress && <section><h2><span>02</span> {cartState.requiresShipping ? 'Delivery address' : 'Billing address'}</h2><div class="checkout__fields">
+            <label class="wide">Country or region<select name="shippingCountry" autocomplete="country" required><option value="">Select your country</option>{delivery.countries.map(country => <option value={country.code}>{country.name}</option>)}</select></label>
+            <label class="wide">Full name<input name="shippingName" autocomplete="name" maxlength="200" required /></label>
+            <label class="wide">Address line 1<input name="shippingLine1" autocomplete="address-line1" maxlength="200" required /></label>
+            <details class="wide checkout__apartment"><summary>Add apartment, suite, etc. (optional)</summary><label>Address line 2<input name="shippingLine2" autocomplete="address-line2" maxlength="200" /></label></details>
+            <label>City<input name="shippingCity" autocomplete="address-level2" maxlength="100" required /></label>
+            <label>State / Province (if applicable)<input name="shippingState" autocomplete="address-level1" maxlength="100" /></label>
+            <label class="wide">{cartState.requiresShipping ? 'Postal code' : 'Postal code (if applicable)'}<input name="shippingPostalCode" autocomplete="postal-code" maxlength="32" required={cartState.requiresShipping} /></label>
+          </div></section>}
+          {cartState.requiresShipping && settings.shippingRates.length > 0 && <section><h2><span>03</span> Delivery method</h2><p data-delivery-placeholder class="checkout__hint">Choose your country to see delivery options.</p><div data-delivery-rates class="checkout__rates"></div></section>}
+          <details class="checkout__codes"><summary>Add a discount or gift card</summary><div class="checkout__fields"><label>Discount code<input name="discountCode" autocomplete="off" maxlength="32" spellcheck="false" /></label><label>Gift card code<input name="giftCardCode" autocomplete="off" maxlength="200" spellcheck="false" /></label></div><button class="store-button secondary" type="button" data-apply-codes>Apply codes</button><p data-code-feedback class="checkout__hint" role="status"></p></details>
+          <button class="store-button checkout__pay" type="submit" disabled>Continue to secure payment <span aria-hidden="true">→</span></button>
+        </fieldset>
+        <p class="checkout__hint checkout__reassurance" data-checkout-reassurance>You’ll review the final amount before paying. Your details stay here if anything needs correcting.</p><noscript><p>Enable JavaScript to continue to secure payment.</p></noscript>
+      </form>
+      <aside class="store-panel checkout__summary" aria-label="Order summary">
+        <details open data-checkout-summary><summary><span>Order summary <small>{cartState.itemCount} {cartState.itemCount === 1 ? 'item' : 'items'}</small></span><span class="checkout__mobile-total" data-mobile-total>{formatMoney(cartState.subtotal,cartState.currency)}</span></summary>
+          <div class="checkout__items">{cartState.items.map(item => <article><a href={item.href} tabindex="-1" aria-hidden="true">{item.imageUrl && <img src={item.imageUrl} alt="" width="64" height="72" />}</a><div><a href={item.href}>{item.productName}</a>{item.variantLabel && <p>{item.variantLabel}</p>}<small>Qty {item.quantity}</small></div><strong>{formatMoney(item.lineTotal,cartState.currency)}</strong></article>)}</div>
+          <dl class="checkout__totals"><div><dt>Subtotal</dt><dd>{formatMoney(cartState.subtotal,cartState.currency)}</dd></div><div data-discount-row hidden><dt>Discount</dt><dd data-discount-summary></dd></div><div><dt>Delivery</dt><dd data-shipping-summary>{cartState.requiresShipping ? settings.shippingRates.length ? 'Choose your country' : 'Free' : 'Not required'}</dd></div><div><dt>Tax</dt><dd>{settings.tax.mode === 'none' ? 'No additional tax' : settings.tax.mode === 'stripe-inclusive' ? 'Included in prices' : 'Calculated before payment'}</dd></div><div data-credit-row hidden><dt>Store credit</dt><dd data-credit-summary></dd></div><div data-gift-row hidden><dt>Gift card</dt><dd data-gift-summary></dd></div><div class="checkout__total"><dt>Estimated total <small>{cartState.currency.toUpperCase()}</small></dt><dd data-estimated-total>{formatMoney(cartState.subtotal,cartState.currency)}</dd></div></dl>
+          <p data-total-note class="checkout__hint">{cartState.requiresShipping && settings.shippingRates.length ? 'Choose your destination for a delivery estimate.' : 'Final availability and total are confirmed before payment.'}</p><a href="/cart" class="store-text-link">Edit cart</a>
+        </details>
+      </aside>
+    </div>}
+    <script type="application/json" data-delivery-state set:html={deliveryState}></script>
   </section>
 </Layout>
-
-<script>
-  import { dispatchCartUpdated, startCheckout } from '@talisman-cms/plugin-ecommerce/browser';
-
-  function setupCheckout() {
-    const form = document.getElementById('checkout-form') as HTMLFormElement | null;
-    const feedbackEl = document.getElementById('checkout-feedback');
-    if (!form || form.dataset.bound === 'true') return;
-    form.dataset.bound = 'true';
-
-    const requiresShipping = form.dataset.requiresShipping === 'true';
-
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const formData = new FormData(form);
-
-      const shippingAddress = requiresShipping ? {
-        name: String(formData.get('shippingName') || ''),
-        line1: String(formData.get('shippingLine1') || ''),
-        line2: String(formData.get('shippingLine2') || ''),
-        city: String(formData.get('shippingCity') || ''),
-        state: String(formData.get('shippingState') || ''),
-        postalCode: String(formData.get('shippingPostalCode') || ''),
-        country: String(formData.get('shippingCountry') || ''),
-      } : undefined;
-
-      try {
-        if (feedbackEl) feedbackEl.textContent = 'Processing checkout...';
-
-        const result = await startCheckout({
-          customerEmail: String(formData.get('customerEmail') || ''),
-          shippingAddress,
-          billingAddress: shippingAddress,
-        });
-
-        if (result.redirectUrl) {
-          dispatchCartUpdated({ itemCount: 0 });
-          window.location.href = result.redirectUrl;
-          return;
-        }
-
-        throw new Error('Checkout did not return a redirect URL');
-      } catch (error) {
-        if (feedbackEl) feedbackEl.textContent = error instanceof Error ? error.message : 'Failed to complete checkout';
-      }
-    });
-  }
-
-  document.addEventListener('astro:page-load', setupCheckout);
-  setupCheckout();
-</script>
+<script>import '../lib/storefront-checkout';</script>
+<style is:global>
+.checkout__layout{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:32px;align-items:start}.checkout__summary{position:sticky;top:88px}.checkout__intro{font-size:14px;color:#536847;margin:0 0 24px}.checkout__form fieldset{border:0;padding:0;min-width:0}.checkout__form section+section{border-top:1px solid #dfe3dd;margin-top:28px;padding-top:28px}.checkout h2{font-size:18px;font-weight:600;letter-spacing:-.02em;margin:0 0 20px}.checkout h2 span{font-size:11px;color:#687461;margin-right:12px}.checkout__fields{display:grid;grid-template-columns:1fr 1fr;gap:18px}.checkout__fields .wide{grid-column:1/-1}.checkout label{display:grid;gap:8px;font-size:13px;color:#36413a}.checkout input:not([type=radio]),.checkout select{height:48px;min-width:0;width:100%;border:1px solid #cfd6cc;border-radius:8px;background:white;color:#18201e;padding:0 12px;font:inherit;font-size:16px;box-sizing:border-box}.checkout input:user-invalid,.checkout select:user-invalid{border-color:#9f1239}.checkout__hint{font-size:12px;color:#646e68;line-height:1.7;margin:10px 0}.checkout__apartment summary{cursor:pointer;font-size:12px;color:#536847;text-decoration:underline;text-underline-offset:3px}.checkout__apartment label{margin-top:16px}.checkout__rates{display:grid;gap:10px}.checkout__rates label{display:flex;align-items:center;gap:12px;cursor:pointer;border:1px solid #dfe3dd;border-radius:8px;padding:15px}.checkout__rates label:has(:checked){border-color:#536847;background:#f2f5ed;box-shadow:inset 0 0 0 1px #536847}.checkout__rates input{accent-color:#536847;width:18px;height:18px;flex-shrink:0}.checkout__rates span{flex:1}.checkout__rates small{display:block;margin-top:4px;color:#646e68;font-size:11px}.checkout__rates strong{font-weight:600}.checkout__codes{margin:28px 0;border-top:1px solid #dfe3dd;padding-top:24px}.checkout__codes summary{font-size:13px;cursor:pointer;margin-bottom:18px}.checkout__codes button{margin-top:14px;min-height:42px;font-size:12px}.checkout__pay{width:100%;justify-content:space-between}.checkout__reassurance{text-align:center;margin:16px auto 0;max-width:350px}.checkout__summary summary{display:flex;justify-content:space-between;gap:16px;align-items:center;font-size:16px;font-weight:600;cursor:pointer;list-style:none}.checkout__summary summary::-webkit-details-marker{display:none}.checkout__summary summary small{font-size:11px;font-weight:400;color:#646e68;margin-left:8px}.checkout__items{margin:24px 0}.checkout__items article{display:grid;grid-template-columns:56px minmax(0,1fr) auto;gap:12px;align-items:center;padding:14px 0;border-bottom:1px solid #edf0e8}.checkout__items article>a{background:#eeefea;border-radius:6px;overflow:hidden;aspect-ratio:4/5}.checkout__items img{width:100%;height:100%;object-fit:cover}.checkout__items div>a{font-size:13px;font-weight:600}.checkout__items p,.checkout__items small{font-size:11px;color:#646e68;margin:4px 0}.checkout__items strong{font-size:13px;font-weight:500}.checkout__totals{font-size:13px;color:#646e68;margin-bottom:14px}.checkout__totals>div{display:flex;justify-content:space-between;gap:16px;margin:14px 0}.checkout__totals dd{text-align:right;color:#18201e;margin:0}.checkout__total{border-top:1px solid #dfe3dd;padding-top:20px;font-size:18px;color:#18201e}.checkout__total small{display:block;font-size:10px;color:#646e68;margin-top:4px}.checkout__total dd{font-size:24px;font-weight:600;font-variant-numeric:tabular-nums}.checkout__mobile-total{display:none}.checkout__actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:24px}#checkout-feedback{font-size:14px;line-height:1.7}#checkout-feedback:not(:empty){padding:14px;margin-bottom:20px;border-radius:8px;background:#f2f5ed}#checkout-feedback[role=alert],.checkout [data-code-feedback][role=alert]{color:#9f1239}
+@media(max-width:850px){.checkout__layout{grid-template-columns:1fr;gap:20px}.checkout__summary{order:-1;position:static}.checkout__mobile-total{display:inline}.checkout__summary summary{font-size:14px}.checkout__summary summary::after{content:'⌄';font-size:18px}.checkout__summary summary>span:first-child{flex:1}.checkout__fields{grid-template-columns:1fr}.checkout__summary{padding:20px}.checkout__form{padding:24px 20px}}
+</style>

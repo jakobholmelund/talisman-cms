@@ -183,8 +183,8 @@ test('commerce records are described with prices in the store currency, scaled b
   assert.equal(formatMoney(1250, undefined), null);
 
   const product = { id: 'p1', data: { name: 'Poster', slug: 'poster', basePrice: 1250 } };
-  assert.equal(describeCommerceEntry('products', product, {}, 'jpy').subtitle, `/poster • ${text(1250, 'JPY')}`);
-  assert.equal(getRelationOptionLabel('products', product, {}, 'kwd'), `Poster - /poster • ${text(1.25, 'KWD')}`);
+  assert.equal(describeCommerceEntry('products', product, {}, 'jpy').subtitle, `/poster • Base price ${text(1250, 'JPY')}`);
+  assert.equal(getRelationOptionLabel('products', product, {}, 'kwd'), `Poster - /poster • Base price ${text(1.25, 'KWD')}`);
   const value = { id: 'v1', data: { value: 'Blue', priceOverride: 990 } };
   assert.deepEqual(describeCommerceEntry('_ecommerce_product_variant_values', value, {}, 'jpy').details, [`Price override ${text(990, 'JPY')}`]);
   // Without a currency a price is left out rather than shown in the wrong one; titles need none.
@@ -195,8 +195,8 @@ test('commerce records are described with prices in the store currency, scaled b
   // The describer the core calls: the currency comes from the admin's setting, and records of other
   // collections are left to the core's generic description.
   const context = { readSetting: (name) => (name === 'COMMERCE_CURRENCY' ? 'jpy' : null) };
-  assert.equal(describeEntry('products', product, {}, context).subtitle, `/poster • ${text(1250, 'JPY')}`);
-  assert.equal(describeEntry('products', product, {}, { readSetting: () => null }).subtitle, `/poster • ${text(12.5, 'USD')}`);
+  assert.equal(describeEntry('products', product, {}, context).subtitle, `/poster • Base price ${text(1250, 'JPY')}`);
+  assert.equal(describeEntry('products', product, {}, { readSetting: () => null }).subtitle, `/poster • Base price ${text(12.5, 'USD')}`);
   assert.equal(describeEntry('posts', { id: 'x', data: { title: 'Hello' } }, {}, context), null);
   assert.equal(describeEntry('_ecommerce_orders', { id: 'o1', data: {} }, {}, context), null);
   // A stock row names its value, option and product from the loaded flow.

@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { PRODUCT_STATUSES } from './schema';
 import { sql } from 'drizzle-orm';
 
+export { searchCatalog, catalogOffer, type CatalogSearchOptions } from './catalog-discovery';
+
 const byCreation = { createdAt: 'asc', id: 'asc' } as const;
 
 /**

@@ -280,3 +280,16 @@ test('audited count tools preserve exact extended-year versions from legacy seed
  const request={requestKey:crypto.randomUUID(),reason:'Legacy available stock physically counted',lines:[counted(row,8)]};await recordStocktake(env,request,'staff');assert.equal(qty(s),8);assert.equal(s.prepare("SELECT updated_at FROM _ecommerce_products").get().updated_at,legacy+2);
  await assert.rejects(recordStocktake(env,{...request,requestKey:crypto.randomUUID()},'staff'),/No counts/);s.close();
 });
+
+test('direct stock navigation loads a fresh exact record beyond the first page',async()=>{
+ const {sqlite:s,env}=fixture();
+ for(let n=0;n<60;n++)s.prepare("INSERT INTO _ecommerce_products(id,name,slug,status,created_at,updated_at) VALUES (?,? ,?,'active',?,?)").run(`extra-${n}`,`A fixture ${n}`,`extra-${n}`,NOW,NOW);
+ assert.equal((await listStockLocations(env)).rows.some(row=>row.id==='case'),false);
+ const original=(await listStockLocations(env,{targetType:'product',targetId:'case'})).rows[0];
+ assert.equal(original.id,'case');assert.equal(original.type,'product');assert.ok(original.updatedAt);
+ assert.equal((await listStockLocations(env,{targetType:'component',targetId:'case'})).total,0);
+ assert.equal((await listStockLocations(env,{targetType:'product',targetId:'missing'})).total,0);
+ await assert.rejects(listStockLocations(env,{targetType:'product'}));
+ await assert.rejects(listStockLocations(env,{targetId:'case'}));
+ s.close();
+});

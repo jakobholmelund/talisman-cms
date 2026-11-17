@@ -1066,6 +1066,7 @@ const refundSchema = z.object({
   orderId: z.string().regex(/^ord_[0-9a-f-]{36}$/),
   reason: z.string().trim().min(8).max(500),
   amountCents: z.number().int().positive().optional(),
+  requestKey: z.string().min(8).max(128).regex(/^[A-Za-z0-9_-]+$/).optional(),
 }).strict();
 
 /** Restore part of the gift-card tender while leaving a split-paid order open. */
@@ -1073,6 +1074,18 @@ export async function refundGiftCardTender(env: TalismanEnv, actor: string, inpu
   const values = refundSchema.parse(input);
   if (!actor.trim()) throw new Error('Administrator identity is required');
   const db = commerceDb(env);
+  const id = values.requestKey
+    ? `gfr_${await hashGiftCardSecret(`tender-refund:${values.orderId}:${values.requestKey}`)}`
+    : `gfr_${crypto.randomUUID()}`;
+  const replay = async () => {
+    const saved = await db.select().from(giftCardRefunds).where(eq(giftCardRefunds.id, id)).get();
+    if (!saved) return null;
+    if (saved.orderId !== values.orderId || saved.amountCents !== values.amountCents ||
+      saved.adminActor !== actor || saved.reason !== values.reason) throw new Error('This refund request key was used with different details');
+    return { id, orderId: saved.orderId, amountCents: saved.amountCents, duplicate: true };
+  };
+  const previous = await replay();
+  if (previous) return previous;
   const current = await db.select({ giftCardId: orders.giftCardId, giftCardApplied: orders.giftCardApplied,
     giftCardRefundedCents: orders.giftCardRefundedCents, status: orders.status, referralCode: orders.referralCode })
     .from(orders).where(eq(orders.id, values.orderId)).get();
@@ -1081,7 +1094,6 @@ export async function refundGiftCardTender(env: TalismanEnv, actor: string, inpu
   }
   const remaining = current.giftCardApplied - current.giftCardRefundedCents;
   if (!values.amountCents || values.amountCents > remaining) throw new Error('Refund exceeds gift card payment');
-  const id = `gfr_${crypto.randomUUID()}`;
   const now = Math.floor(Date.now() / 1000);
   const statements: BatchItem<'sqlite'>[] = [db.insert(giftCardRefunds).values({ id, cardId: current.giftCardId, orderId: values.orderId,
     amountCents: values.amountCents, adminActor: actor, reason: values.reason, createdAt: at(now) })];
@@ -1091,7 +1103,8 @@ export async function refundGiftCardTender(env: TalismanEnv, actor: string, inpu
     statements.push(...referralReversalStatements(values.orderId, { minOrderCents: policy.minOrderCents, now })
       .map((statement) => db.run(statement)));
   }
-  await commitBatch(db, statements);
+  try { await commitBatch(db, statements); }
+  catch (error) { const saved = await replay(); if (saved) return saved; throw error; }
   return { id, orderId: values.orderId, amountCents: values.amountCents };
 }
 
@@ -1100,6 +1113,15 @@ export async function refundGiftCardOnlyOrder(env: TalismanEnv, actor: string, i
   const values = refundSchema.parse(input);
   if (!actor.trim() || values.amountCents !== undefined) throw new Error('Invalid full refund request');
   const db = commerceDb(env);
+  // A full gift-card-only refund is unique per order. Recover that receipt even after the
+  // order has become refunded; a different actor/reason must not masquerade as the same write.
+  const replay = async () => {
+    const saved = await db.select().from(giftCardOrderRefunds).where(eq(giftCardOrderRefunds.orderId, values.orderId)).get();
+    if (!saved) return null;
+    if (saved.adminActor !== actor || saved.reason !== values.reason) throw new Error('This order already has a different full refund recorded');
+    return { orderId: values.orderId, status: 'refunded', duplicate: true };
+  };
+  const previous = await replay(); if (previous) return previous;
   const order = await db.select({ id: orders.id, giftCardId: orders.giftCardId,
     giftCardApplied: orders.giftCardApplied, giftCardRefundedCents: orders.giftCardRefundedCents,
     creditApplied: orders.creditApplied, paymentProvider: orders.paymentProvider, totalAmount: orders.totalAmount,
@@ -1112,7 +1134,7 @@ export async function refundGiftCardOnlyOrder(env: TalismanEnv, actor: string, i
   const remaining = order.giftCardApplied - order.giftCardRefundedCents;
   const confirmed = (redemptions: typeof giftCardRedemptions | typeof discountRedemptions) =>
     and(eq(redemptions.orderId, order.id), eq(redemptions.status, 'confirmed'));
-  await commitBatch(db, [
+  try { await commitBatch(db, [
     db.insert(giftCardOrderRefunds).values({ orderId: order.id, adminActor: actor, reason: values.reason, createdAt: at(now) }),
     ...(remaining > 0 ? [db.insert(giftCardRefunds).values({ id: `gfr_full_${order.id}`, cardId: order.giftCardId, orderId: order.id,
       amountCents: remaining, adminActor: actor, reason: values.reason, createdAt: at(now) })] : []),
@@ -1125,6 +1147,6 @@ export async function refundGiftCardOnlyOrder(env: TalismanEnv, actor: string, i
       accountId: order.userId, orderId: order.id, kind: 'purchase_credit_refund', amountCents: order.creditApplied, createdAt: at(now) })
       .onConflictDoNothing({ target: [creditLedger.orderId, creditLedger.kind] })] : []),
     db.update(payments).set({ status: 'refunded' }).where(eq(payments.orderId, order.id)),
-  ]);
+  ]); } catch (error) { const saved = await replay(); if (saved) return saved; throw error; }
   return { orderId: order.id, status: 'refunded' };
 }

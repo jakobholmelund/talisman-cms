@@ -37,7 +37,7 @@ registerHooks({
 });
 
 const { bindCommerceApi } = await import('../dist/api.js');
-const { deleteVariantGroup, deleteVariantValue, saveVariantValue } = await import('../dist/variants.js');
+const { deleteVariantGroup, deleteVariantValue, saveVariantValue, runVariantChange } = await import('../dist/variants.js');
 const variantsRoute = (await import('../dist/routes/ecommerce-admin-variants.js')).ALL;
 const { ecommercePlugin } = await import('../dist/index.js');
 const schema = await import('../dist/schema.js');
@@ -760,4 +760,79 @@ test('the variants endpoint directs stock changes to the audited workflow', asyn
   assert.match(refused.json.error, /Stock overview/);
   assert.equal(stockRow(sqlite, 'frame-smoke').quantity, 2);
   sqlite.close();
+});
+
+
+test('one-step variant setup is atomic, bounded and retry-safe without resetting inventory', async () => {
+ const {sqlite,DB,usage}=database();seedVariants(sqlite);
+ const productId=sqlite.prepare('SELECT product_id FROM _ecommerce_product_variants WHERE id=?').get('frame-lens').product_id;
+ const input={action:'createOptionSet',productId,name:'Size',values:['Small','Medium','Large'],requestKey:crypto.randomUUID()};
+ const first=await runVariantChange({DB},input);
+ assert.equal(sqlite.prepare('SELECT count(*) n FROM _ecommerce_product_variant_values WHERE product_variant_id=?').get(first.groupId).n,3);
+ sqlite.prepare('UPDATE _ecommerce_stocks SET quantity=7 WHERE id=?').run(`stock_${first.groupId}_0`);
+ assert.deepEqual(await runVariantChange({DB},input),first);
+ assert.equal(sqlite.prepare('SELECT quantity FROM _ecommerce_stocks WHERE id=?').get(`stock_${first.groupId}_0`).quantity,7);
+ await assert.rejects(runVariantChange({DB},{...input,name:'Changed'}),{status:409});
+ await assert.rejects(runVariantChange({DB},{...input,requestKey:crypto.randomUUID(),values:['Small','small']}),{status:400});
+ const photoInput={...input,requestKey:crypto.randomUUID(),images:['/blue.png',null,'/black.png']};
+ const photoSetup=await runVariantChange({DB},photoInput);
+ assert.equal(sqlite.prepare('SELECT image FROM _ecommerce_product_variant_values WHERE id=?').get(`${photoSetup.groupId}_0`).image,'/blue.png');
+ assert.deepEqual(await runVariantChange({DB},photoInput),photoSetup);
+ await assert.rejects(runVariantChange({DB},{...photoInput,images:['/changed.png',null,'/black.png']}),{status:409});
+ await assert.rejects(runVariantChange({DB},{...input,images:['/blue.png']}),{status:400});
+ const before=count(sqlite,'_ecommerce_product_variants');
+ await assert.rejects(runVariantChange({DB},{...input,requestKey:crypto.randomUUID(),productId:'missing'}),{status:404});
+ assert.equal(count(sqlite,'_ecommerce_product_variants'),before);
+ await runVariantChange({DB},{...input,requestKey:crypto.randomUUID(),values:Array.from({length:50},(_,i)=>`Choice ${i}`)});
+ assert.ok(usage.maxParams<=100);
+ const rollbackKey=crypto.randomUUID();
+ sqlite.exec("CREATE TRIGGER fail_new_stock BEFORE INSERT ON _ecommerce_stocks BEGIN SELECT RAISE(ABORT, 'forced stock failure'); END");
+ await assert.rejects(runVariantChange({DB},{...input,requestKey:rollbackKey}));
+ assert.equal(sqlite.prepare('SELECT count(*) n FROM _ecommerce_product_variants WHERE id=?').get(`setup_${rollbackKey}`).n,0);
+ assert.equal(sqlite.prepare('SELECT count(*) n FROM _ecommerce_product_variant_values WHERE product_variant_id=?').get(`setup_${rollbackKey}`).n,0);
+ sqlite.close();
+});
+
+test('extend an option set without duplicates or altering existing choices, photos and stock', async()=>{
+ const {sqlite,DB,usage}=database();seedVariants(sqlite);
+ const group=sqlite.prepare('SELECT * FROM _ecommerce_product_variants WHERE id=?').get('frame-lens');
+ const existing=sqlite.prepare('SELECT * FROM _ecommerce_product_variant_values WHERE product_variant_id=? ORDER BY id').all(group.id);
+ const inventory=sqlite.prepare('SELECT * FROM _ecommerce_stocks ORDER BY id').all();
+ const input={action:'addOptionValues',productId:group.product_id,groupId:group.id,expectedUpdatedAt:loadedAt(group.updated_at),requestKey:crypto.randomUUID(),values:['Extra large / Blue','Extra large / Rust'],images:['/blue.png',null]};
+ const result=await runVariantChange({DB},input);
+ assert.equal(result.groupId,group.id);
+ assert.deepEqual(sqlite.prepare('SELECT * FROM _ecommerce_product_variant_values WHERE id IN (?,?) ORDER BY id').all(...existing.map(v=>v.id)),existing);
+ for(const row of inventory)assert.deepEqual(sqlite.prepare('SELECT * FROM _ecommerce_stocks WHERE id=?').get(row.id),row);
+ const stockId=`stock_setup_${input.requestKey}_0`;
+ sqlite.prepare('UPDATE _ecommerce_stocks SET quantity=7 WHERE id=?').run(stockId);
+ assert.deepEqual(await runVariantChange({DB},input),result);
+ assert.equal(sqlite.prepare('SELECT quantity FROM _ecommerce_stocks WHERE id=?').get(stockId).quantity,7);
+ await assert.rejects(runVariantChange({DB},{...input,images:['/wrong.png',null]}),{status:409});
+ await assert.rejects(runVariantChange({DB},{...input,requestKey:crypto.randomUUID(),values:['Another'],images:[null]}),{status:409});
+ const fresh=sqlite.prepare('SELECT * FROM _ecommerce_product_variants WHERE id=?').get(group.id);
+ await assert.rejects(runVariantChange({DB},{...input,expectedUpdatedAt:loadedAt(fresh.updated_at),requestKey:crypto.randomUUID(),values:['extra large / blue'],images:[null]}),{status:409});
+ const key=crypto.randomUUID();
+ sqlite.exec("CREATE TRIGGER fail_extension BEFORE INSERT ON _ecommerce_stocks BEGIN SELECT RAISE(ABORT, 'forced failure'); END");
+ await assert.rejects(runVariantChange({DB},{...input,requestKey:key,expectedUpdatedAt:loadedAt(fresh.updated_at),values:['New size'],images:[null]}));
+ assert.equal(sqlite.prepare('SELECT count(*) n FROM _ecommerce_product_variant_values WHERE id=?').get(`setup_${key}_0`).n,0);
+ assert.equal(sqlite.prepare('SELECT updated_at FROM _ecommerce_product_variants WHERE id=?').get(group.id).updated_at,fresh.updated_at);
+ assert.ok(usage.maxParams<=100);sqlite.close();
+});
+
+test('bulk variant images are atomic, retryable and leave prices, SKUs and inventory alone',async()=>{
+ const {sqlite,DB}=database();seedVariants(sqlite);
+ const values=sqlite.prepare('SELECT * FROM _ecommerce_product_variant_values WHERE product_variant_id=? ORDER BY id').all('frame-lens');
+ const stock=sqlite.prepare('SELECT * FROM _ecommerce_stocks ORDER BY id').all();
+ const input={action:'setVariantImages',groupId:'frame-lens',image:'/shared-photo.png',values:values.map(v=>({id:v.id,expectedUpdatedAt:loadedAt(v.updated_at)}))};
+ const result=await runVariantChange({DB},input);
+ assert.deepEqual(await runVariantChange({DB},input),result);
+ for(const before of values){const after=sqlite.prepare('SELECT * FROM _ecommerce_product_variant_values WHERE id=?').get(before.id);assert.equal(after.image,input.image);assert.equal(after.sku,before.sku);assert.equal(after.price_override,before.price_override);}
+ assert.deepEqual(sqlite.prepare('SELECT * FROM _ecommerce_stocks ORDER BY id').all(),stock);
+ const fresh=sqlite.prepare('SELECT * FROM _ecommerce_product_variant_values WHERE product_variant_id=? ORDER BY id').all('frame-lens');
+ sqlite.prepare('UPDATE _ecommerce_product_variant_values SET updated_at=updated_at+1,image=? WHERE id=?').run('/concurrent.png',fresh[1].id);
+ await assert.rejects(runVariantChange({DB},{...input,image:'/new.png',values:fresh.map(v=>({id:v.id,expectedUpdatedAt:loadedAt(v.updated_at)}))}),{status:409});
+ assert.equal(sqlite.prepare('SELECT image FROM _ecommerce_product_variant_values WHERE id=?').get(fresh[0].id).image,input.image);
+ assert.equal(sqlite.prepare('SELECT image FROM _ecommerce_product_variant_values WHERE id=?').get(fresh[1].id).image,'/concurrent.png');
+ await assert.rejects(runVariantChange({DB},{...input,groupId:'missing'}),{status:409});
+ sqlite.close();
 });

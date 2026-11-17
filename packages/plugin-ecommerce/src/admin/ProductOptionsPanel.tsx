@@ -1,4 +1,13 @@
-import React, { useEffect, useId, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
+import { Link, useBlocker } from '@tanstack/react-router';
+import { buildVariantPreview } from './variant-preview';
+import { reconcileVariantDrafts, variantDraftsChanged, type SavedVariantDraft } from './variant-drafts';
+import './commerce-admin.css';
+import ProductChoiceSetup from './ProductChoiceSetup';
+import ProductVariantList from './ProductVariantList';
+import ProductPriceInput from './ProductPriceInput';
+import StockMovements from './StockMovements';
+import type {StockTarget} from './stock-target';
 import { Button } from 'talisman-cms/ui/components/ui/button';
 import { MediaFieldInput } from 'talisman-cms/ui/components/MediaFieldInput';
 import type { AdminEditorPanelProps } from 'talisman-cms/ui/components/editor/panels';
@@ -74,8 +83,9 @@ function toOptionalNumber(value: string) {
 }
 
 function toRequiredNumber(value: string, fallback = 0) {
+  if (!value.trim()) return fallback;
   const parsed = Number(value);
-  return Number.isNaN(parsed) ? fallback : parsed;
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 /** The drafts of the product's saved groups, with their values and stock, from the rows loaded for the product. */
@@ -136,220 +146,32 @@ function buildProductVariantDrafts(rows: ProductRows): ProductVariantGroupDraft[
     });
 }
 
-type PreviewVariantOption = {
-  id: string;
-  label: string;
-  sku: string;
-  imageUrl: string | null;
-  quantity: number;
-  priceCents: number;
-};
-
-type PreviewVariantGroup = {
-  id: string;
-  label: string;
-  values: PreviewVariantOption[];
-};
-
 function formatPreviewPrice(amount: number | null | undefined, currency: string) {
-  return formatMoney(typeof amount === 'number' && !Number.isNaN(amount) ? amount : 0, currency);
+  return typeof amount === 'number' && amount > 0 ? formatMoney(amount, currency) ?? 'Price unavailable' : 'Price unavailable';
 }
 
-function getProductImageUrls(productValues: Record<string, any>) {
-  if (!Array.isArray(productValues.images)) return [];
-
-  return productValues.images
-    .map((image: any) => {
-      if (typeof image === 'string') return image;
-      if (image && typeof image.url === 'string') return image.url;
-      return null;
-    })
-    .filter((value): value is string => Boolean(value));
+/** Keep a row open across saves and refreshes; validation can reveal it without later closing it. */
+function ProductDisclosure({reveal,children,...props}:{reveal:boolean;children:React.ReactNode;className:string;hidden?:boolean}) {
+  const [open,setOpen]=useState(reveal);
+  useEffect(()=>{if(reveal)setOpen(true);},[reveal]);
+  return <details {...props} open={open} onToggle={event=>setOpen(event.currentTarget.open)}>{children}</details>;
 }
 
-function getProductPrimaryImageUrl(productValues: Record<string, any>) {
-  return getProductImageUrls(productValues)[0] ?? null;
-}
-
-function buildPreviewVariantGroups(
-  productValues: Record<string, any>,
-  draftGroups: ProductVariantGroupDraft[],
-  rows: ProductRows
-): PreviewVariantGroup[] {
-  const basePrice = typeof productValues.basePrice === 'number' ? productValues.basePrice : 0;
-  const definitionsById = new Map(
-    (rows._ecommerce_variants || []).map((entry) => [entry.id, entry])
-  );
-
-  return draftGroups.map((group) => {
-    const definition = group.variantId ? definitionsById.get(group.variantId) : null;
-    const label = definition ? definitionTitle(definition, rows) : (group.name || 'Option group');
-
-    return {
-      id: group.localId,
-      label,
-      values: group.values.map((value) => ({
-        id: value.localId,
-        label: value.value || 'Untitled value',
-        sku: value.sku,
-        imageUrl: value.image.trim() || null,
-        quantity: toRequiredNumber(value.stockQuantity, toRequiredNumber(group.inventoryQuantity, 0)),
-        priceCents: toRequiredNumber(value.priceOverride, toOptionalNumber(group.priceOverride) ?? basePrice),
-      })),
-    };
-  }).filter((group) => group.values.length > 0);
-}
-
-function ProductStorefrontPreview({
-  productValues,
-  draftGroups,
-  rows,
-}: {
-  productValues: Record<string, any>;
-  draftGroups: ProductVariantGroupDraft[];
-  rows: ProductRows;
-}) {
-  const imageUrls = getProductImageUrls(productValues);
-  const variantGroups = buildPreviewVariantGroups(productValues, draftGroups, rows);
-  const defaultVariant = variantGroups
-    .flatMap((group) => group.values.map((value) => ({ ...value, groupLabel: group.label })))
-    .find((value) => value.quantity > 0) || null;
-  const previewImageUrl = defaultVariant?.imageUrl ?? getProductPrimaryImageUrl(productValues);
-  const inventory = typeof productValues.inventoryQuantity === 'number' ? productValues.inventoryQuantity : 0;
-  const priceCents = defaultVariant?.priceCents ?? (typeof productValues.basePrice === 'number' ? productValues.basePrice : 0);
-  const currency = storeCurrency();
-  const title = productValues.name || productValues.title || 'Untitled product';
-  const description = productValues.description || 'This product does not have a storefront description yet.';
-  const productType = productValues.type || 'standard';
-  const status = productValues.status || 'draft';
-  const physical = productValues.isPhysical !== false;
-  const inStock = defaultVariant ? defaultVariant.quantity > 0 : inventory > 0 || productType === 'digital';
-  const summaryItems = [
-    { label: 'Status', value: status },
-    { label: 'Type', value: productType },
-    { label: 'Media', value: `${imageUrls.length}` },
-    { label: 'Variant groups', value: `${variantGroups.length}` },
-    { label: 'Physical', value: physical ? 'Ships' : 'Digital' },
-    { label: 'Availability', value: inStock ? 'In stock' : 'Preorder / unavailable' },
-  ];
-
-  return (
-    <div className="space-y-5 rounded-2xl border border-fuchsia-500/20 bg-fuchsia-500/[0.05] p-5">
-      <div>
-        <h3 className="text-lg font-semibold text-white">Storefront Preview</h3>
-        <p className="mt-1 max-w-2xl text-sm leading-relaxed text-zinc-300">
-          This is the customer-facing snapshot of the product you are building, based on the current product fields and variant configuration.
-        </p>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-[1.25fr_0.75fr]">
-        <div className="overflow-hidden rounded-[2rem] border border-white/10 bg-zinc-950/70">
-          <div className="grid gap-0 md:grid-cols-2">
-            <div className="relative aspect-square overflow-hidden border-b border-white/10 bg-gradient-to-br from-white/10 via-transparent to-fuchsia-500/10 md:border-b-0 md:border-r">
-              {previewImageUrl ? (
-                <img src={previewImageUrl} alt={title} className="h-full w-full object-cover" />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center text-center text-sm font-medium uppercase tracking-[0.3em] text-zinc-500">
-                  No hero image
-                </div>
-              )}
-              <div className="absolute left-4 top-4 flex flex-wrap gap-2">
-                <span className={`rounded-full px-3 py-1 text-xs font-medium ${inStock ? 'bg-emerald-500/15 text-emerald-200' : 'bg-amber-500/15 text-amber-200'}`}>
-                  {inStock ? 'In stock' : 'Unavailable'}
-                </span>
-                <span className="rounded-full bg-black/40 px-3 py-1 text-xs font-medium text-zinc-200">
-                  {status}
-                </span>
-              </div>
-            </div>
-
-            <div className="space-y-6 p-6">
-              <div>
-                <div className="text-xs uppercase tracking-[0.25em] text-zinc-500">{productType}</div>
-                <h4 className="mt-2 text-3xl font-semibold tracking-tight text-white">{title}</h4>
-                <div className="mt-3 text-3xl font-black text-fuchsia-300">{formatPreviewPrice(priceCents, currency)}</div>
-              </div>
-
-              <p className="text-sm leading-relaxed text-zinc-300">{description}</p>
-
-              {variantGroups.length > 0 && (
-                <div className="space-y-4 rounded-2xl border border-white/10 bg-black/20 p-4">
-                  {variantGroups.map((group) => (
-                    <div key={group.id}>
-                      <div className="mb-2 flex items-center justify-between gap-3">
-                        <div className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">{group.label}</div>
-                        <div className="text-[11px] text-zinc-500">{group.values.length} options</div>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {group.values.map((value) => {
-                          const isDefault = defaultVariant?.id === value.id;
-                          return (
-                            <span
-                              key={value.id}
-                              className={`rounded-full border px-3 py-1.5 text-xs font-medium ${
-                                isDefault
-                                  ? 'border-fuchsia-400/40 bg-fuchsia-500/20 text-fuchsia-100'
-                                  : 'border-white/10 bg-white/[0.04] text-zinc-300'
-                              }`}
-                            >
-                              {value.label}
-                              {isDefault && <span className="sr-only"> (default)</span>}
-                            </span>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
-                  <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Default selection</div>
-                  <div className="mt-1 text-sm text-white">
-                    {defaultVariant ? `${defaultVariant.groupLabel}: ${defaultVariant.label}` : 'Standard product'}
-                  </div>
-                  {defaultVariant?.imageUrl && (
-                    <div className="mt-2 text-xs text-fuchsia-200">Uses variant-specific image</div>
-                  )}
-                </div>
-                <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
-                  <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Availability</div>
-                  <div className="mt-1 text-sm text-white">
-                    {defaultVariant ? `${defaultVariant.quantity} ready to ship` : `${inventory} in base stock`}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <div className="text-sm font-medium text-white">Customer-facing summary</div>
-            <div className="mt-4 grid gap-3">
-              {summaryItems.map((item) => (
-                <div key={item.label} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
-                  <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">{item.label}</div>
-                  <div className="mt-1 text-sm text-zinc-100">{item.value}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <div className="text-sm font-medium text-white">What shoppers will understand</div>
-            <div className="mt-3 space-y-2 text-sm leading-relaxed text-zinc-300">
-              <p>The hero image and title set the first impression.</p>
-              <p>The current price reflects the product base price or the default variant override.</p>
-              <p>The option chips show which shopper choices exist and which one loads first.</p>
-              <p>The stock summary makes it clear whether the default purchase path is available.</p>
-            </div>
-          </div>
-        </div>
-      </div>
+function ProductStorefrontPreview({ productValues, draftGroups, rows }: { productValues: Record<string, any>; draftGroups: ProductVariantGroupDraft[]; rows: ProductRows }) {
+  const preview = buildVariantPreview(productValues, draftGroups, rows);
+  const [choiceId, setChoiceId] = useState('');
+  const selected = preview.choices.find(choice => choice.id === choiceId) ?? preview.selected;
+  const image = selected.imageUrl || (Array.isArray(productValues.images) ? productValues.images.map((image: any) => typeof image === 'string' ? image : image?.url).find(Boolean) : null);
+  return <section aria-label="Product preview" className="ecom-product-preview">
+    <div className="ecom-product-preview__image">{image ? <img src={image} alt={productValues.name || 'Product'} loading="lazy" /> : <span>No product image</span>}</div>
+    <div><h3 className="text-xs uppercase tracking-wider text-zinc-400">Storefront Preview</h3><h4 className="mt-3 text-2xl font-semibold text-white">{productValues.name || 'Untitled product'}</h4>
+      <p className="my-3 text-xl text-white">{formatPreviewPrice(selected.priceCents, storeCurrency())}</p>
+      <p className="text-sm leading-relaxed text-zinc-400">{productValues.description || 'Add a description to help shoppers choose.'}</p>
+      {preview.groups.map(group => <div key={group.id} className="mt-4"><p className="mb-2 text-xs text-zinc-400">{group.label}</p><div className="flex flex-wrap gap-2">{group.values.map(value => <button key={value.id} type="button" onClick={() => setChoiceId(value.id)} aria-pressed={selected.id === value.id} className="ecom-product-preview__choice">{value.label}</button>)}</div></div>)}
+      <p className="mt-4 text-sm text-zinc-300" role="status">{preview.available(selected) ? selected.quantity === null ? 'Available · no stock tracking' : `${selected.quantity} available · ${selected.stockSource.toLowerCase()}` : 'Currently unavailable'}</p>
+      <p className="mt-2 text-xs text-zinc-500">{productValues.status === 'active' ? 'Active product.' : 'This product is not visible in the store.'} This preview includes your unsaved edits. Checkout verifies stock again.</p>
     </div>
-  );
+  </section>;
 }
 
 function ProductVariantConfigurator({
@@ -367,12 +189,26 @@ function ProductVariantConfigurator({
   onRefresh: () => Promise<void>;
   productValues: Record<string, any>;
 }) {
+  const [setupDirty,setSetupDirty] = useState(false);
+  const [showSetup,setShowSetup] = useState(!(rows._ecommerce_product_variants || []).length);
+  const [liveProductStock,setLiveProductStock] = useState<number|null>(null);
+  const [stockDirty,setStockDirty] = useState(false);
+  const [stockTarget,setStockTarget] = useState<StockTarget|null>(null);
+  const [managementDirty,setManagementDirty] = useState(false);
+  const [savedValueId,setSavedValueId] = useState<string|null>(null);
+  const openStock = (target:StockTarget) => { if(stockDirty){setLocalError('Save or discard the current stock change before choosing another variant.');return;} setStockTarget(target); };
   const [draftGroups, setDraftGroups] = useState<ProductVariantGroupDraft[]>([]);
   const [newDefinitionName, setNewDefinitionName] = useState('');
   const [localError, setLocalError] = useState('');
   const [localStatus, setLocalStatus] = useState('');
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [hasStaleRows, setHasStaleRows] = useState(false);
+  const baseline = useRef<ProductVariantGroupDraft[]>([]);
+  const committed = useRef<SavedVariantDraft>(null);
+  const writing = useRef(false);
+  const dirty = setupDirty || stockDirty || managementDirty || variantDraftsChanged(baseline.current, draftGroups) || Boolean(newDefinitionName.trim());
+  useBlocker({ shouldBlockFn: ({ current, next }) => current.pathname !== next.pathname && (dirty || writing.current)
+    && !window.confirm('You have unsaved changes in this section. Leave this product and discard them?'), enableBeforeUnload: () => dirty || writing.current });
   // The input a required-field message is about, so it reports the error itself.
   const [errorField, setErrorField] = useState<string | null>(null);
   // Focus moves here after a card or the "Load latest" button has gone with the change it made.
@@ -394,10 +230,17 @@ function ProductVariantConfigurator({
       return;
     }
 
-    setDraftGroups(buildProductVariantDrafts(rows));
+    const fresh = buildProductVariantDrafts(rows);
+    const previous = baseline.current;
+    const saved = committed.current;
+    committed.current = null;
+    baseline.current = fresh;
+    setDraftGroups(current => reconcileVariantDrafts(previous, current, fresh, saved));
   }, [productId, rows]);
 
   const variantDefinitions = rows._ecommerce_variants || [];
+  const currentProduct = liveProductStock === null ? productValues : {...productValues,inventoryQuantity:liveProductStock};
+  const preview = buildVariantPreview(currentProduct, draftGroups, rows);
 
   const requestCollection = async (collectionSlug: string, method: 'POST' | 'PUT', payload: Record<string, any>, id?: string) => {
     const url = id
@@ -423,12 +266,14 @@ function ProductVariantConfigurator({
    * The drafts are only rebuilt from a complete read. Until one succeeds, creating a value is refused,
    * because a value saved a moment ago can be missing from the drafts.
    */
-  const reloadRows = async (): Promise<Error | null> => {
+  const reloadRows = async (saved: SavedVariantDraft = null): Promise<Error | null> => {
+    committed.current = saved;
     try {
       await onRefresh();
       setHasStaleRows(false);
       return null;
     } catch (error) {
+      committed.current = null;
       setHasStaleRows(true);
       return error instanceof Error ? error : new Error(String(error));
     }
@@ -438,18 +283,20 @@ function ProductVariantConfigurator({
   const showFieldError = (fieldId: string, message: string) => {
     setLocalError(message);
     setErrorField(fieldId);
-    document.getElementById(fieldId)?.focus();
+    requestAnimationFrame(()=>{const control=document.getElementById(fieldId);let parent=control?.parentElement;while(parent){if(parent instanceof HTMLDetailsElement)parent.open=true;parent=parent.parentElement;}control?.focus();});
   };
 
   const loadLatestRows = async () => {
-    if (busyKey === 'refresh') return;
+    if (writing.current || stockDirty) return;
+    if (dirty && !window.confirm('Replace your unsaved option edits with the latest saved options and stock?')) return;
+    writing.current = true;
     setBusyKey('refresh');
     setLocalError('');
     setErrorField(null);
-    const loadError = await reloadRows();
+    const loadError = await reloadRows('all');
     if (loadError) setLocalError(`${describeRequestError(loadError).replace(/\.?$/, '.')} Your edits are still here.`);
     else setLocalStatus('Loaded the latest options and stock.');
-    setBusyKey(null);
+    writing.current = false; setBusyKey(null);
     // The button sat in the error box, which has changed or gone; the outcome takes focus.
     setFocusTarget({ id: controlId(loadError ? 'error' : 'status') });
   };
@@ -461,33 +308,36 @@ function ProductVariantConfigurator({
    * the saved rows are loaded again, so a retry updates a value instead of creating it twice.
    */
   const sendVariantChange = async (key: string, change: Record<string, any>, messages: { failed: string; done: string }) => {
+    if (writing.current) return false;
+    writing.current = true;
     setBusyKey(key);
     setLocalError('');
     setErrorField(null);
     setLocalStatus('');
     try {
-      await requestEditorApi(`${basePath}/api/ecommerce/variants`, {
+      const response = await requestEditorApi(`${basePath}/api/ecommerce/variants`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(change),
       }, messages.failed);
+      if(change.action==='saveValue'&&typeof response?.result?.value?.id==='string')setSavedValueId(response.result.value.id);
     } catch (error) {
       const failure = error instanceof EditorRequestError ? error : new EditorRequestError(describeRequestError(error), 0);
       if (getVariantChangeRecovery(failure) === 'keep') {
         // Includes an expired session: the edits wait until the admin has signed in again.
         showRequestError(failure);
       } else {
-        const loadError = await reloadRows();
+        const loadError = await reloadRows({ kind: change.action === 'deleteGroup' ? 'group' : 'value', localId: key.slice(key.indexOf(':') + 1) });
         setLocalError(describeVariantChangeFailure(failure, messages.failed, !loadError));
       }
-      setBusyKey(null);
+      writing.current = false; setBusyKey(null);
       return false;
     }
-    setLocalStatus(messages.done);
-    if (await reloadRows()) {
+    if (await reloadRows({ kind: change.action === 'deleteGroup' ? 'group' : 'value', localId: key.slice(key.indexOf(':') + 1) })) {
       setLocalError('The change is saved, but the saved options and stock could not be loaded again. Load them before creating another value.');
     }
-    setBusyKey(null);
+    setLocalStatus(messages.done);
+    writing.current = false; setBusyKey(null);
     return true;
   };
 
@@ -511,10 +361,11 @@ function ProductVariantConfigurator({
   };
 
   const addGroupDraft = () => {
+    const localId = createDraftId('group');
     setDraftGroups((current) => [
       ...current,
       {
-        localId: createDraftId('group'),
+        localId,
         id: null,
         variantId: '',
         name: '',
@@ -526,9 +377,11 @@ function ProductVariantConfigurator({
         values: [],
       },
     ]);
+    setFocusTarget({ id: controlId(localId, 'name') });
   };
 
   const addValueDraft = (groupLocalId: string) => {
+    const localId = createDraftId('value');
     setDraftGroups((current) =>
       current.map((group) =>
         group.localId === groupLocalId
@@ -537,7 +390,7 @@ function ProductVariantConfigurator({
               values: [
                 ...group.values,
                 {
-                  localId: createDraftId('value'),
+                  localId,
                   id: null,
                   value: '',
                   sku: '',
@@ -554,16 +407,18 @@ function ProductVariantConfigurator({
           : group
       )
     );
+    setFocusTarget({ id: controlId(localId, 'label') });
   };
 
   const saveDefinition = async () => {
-    if (busyKey === 'definition') return;
+    if (writing.current || stockDirty) return;
     const trimmedName = newDefinitionName.trim();
     if (!trimmedName) {
       showFieldError(controlId('new-definition'), 'Option definition name is required.');
       return;
     }
 
+    writing.current = true;
     setBusyKey('definition');
     setLocalError('');
     setErrorField(null);
@@ -572,27 +427,31 @@ function ProductVariantConfigurator({
     try {
       await requestCollection('_ecommerce_variants', 'POST', { data: { name: trimmedName } });
       setNewDefinitionName('');
-      await onRefresh();
+      if (await reloadRows()) setLocalError('The definition was created, but options could not refresh. Load the latest options before continuing.');
       setLocalStatus(`Created option definition "${trimmedName}".`);
     } catch (error) {
       showRequestError(error);
     } finally {
-      setBusyKey(null);
+      writing.current = false; setBusyKey(null);
     }
   };
 
   const saveGroup = async (group: ProductVariantGroupDraft) => {
-    if (busyKey === `group:${group.localId}`) return;
+    if (writing.current || stockDirty) return;
     if (!productId) {
       setLocalError('Save the product first so variant groups can attach to it.');
       return;
     }
+
+    if (!group.id && hasStaleRows) { setLocalError('Load the latest options before creating another group.'); return; }
 
     if (!group.name.trim()) {
       showFieldError(controlId(group.localId, 'name'), 'Variant group name is required.');
       return;
     }
 
+    if (group.priceOverride && (!Number.isSafeInteger(Number(group.priceOverride)) || Number(group.priceOverride)<=0)) { showFieldError(controlId(group.localId, 'price'), 'Enter a positive price with the correct currency decimals, or leave it blank to use the product price.'); return; }
+    writing.current = true;
     setBusyKey(`group:${group.localId}`);
     setLocalError('');
     setErrorField(null);
@@ -620,17 +479,17 @@ function ProductVariantConfigurator({
         payload,
         group.id || undefined
       );
-      await onRefresh();
+      if (await reloadRows({ kind: 'group', localId: group.localId })) setLocalError('The group was saved, but options could not refresh. Load the latest options before continuing.');
       setLocalStatus(`Saved variant group "${group.name.trim()}".`);
     } catch (error) {
       showRequestError(error);
     } finally {
-      setBusyKey(null);
+      writing.current = false; setBusyKey(null);
     }
   };
 
   const saveValue = async (group: ProductVariantGroupDraft, value: ProductVariantValueDraft) => {
-    if (busyKey === `value:${value.localId}`) return;
+    if (writing.current || stockDirty) return;
     if (!group.id) {
       setLocalError('Save the variant group before adding values.');
       return;
@@ -647,6 +506,7 @@ function ProductVariantConfigurator({
       return;
     }
 
+    if (value.priceOverride && (!Number.isSafeInteger(Number(value.priceOverride)) || Number(value.priceOverride)<=0)) { showFieldError(controlId(value.localId, 'price'), 'Enter a positive price with the correct currency decimals, or leave it blank to use the default.'); return; }
     // Checkout reserves stock in place, so only write the quantity the user actually changed.
     const stockChanged = !value.stockId || value.savedStockQuantity === null ||
       toRequiredNumber(value.stockQuantity, 0) !== toRequiredNumber(value.savedStockQuantity, 0);
@@ -670,7 +530,7 @@ function ProductVariantConfigurator({
   };
 
   const deleteValue = async (groupLocalId: string, value: ProductVariantValueDraft) => {
-    if (busyKey === `delete-value:${value.localId}`) return;
+    if (writing.current || stockDirty) return;
     if (!value.id) {
       setDraftGroups((current) =>
         current.map((group) =>
@@ -694,7 +554,7 @@ function ProductVariantConfigurator({
   };
 
   const deleteGroup = async (group: ProductVariantGroupDraft) => {
-    if (busyKey === `delete-group:${group.localId}`) return;
+    if (writing.current || stockDirty) return;
     if (!group.id) {
       setDraftGroups((current) => current.filter((candidate) => candidate.localId !== group.localId));
       setFocusTarget({ id: controlId('add-group') });
@@ -713,31 +573,227 @@ function ProductVariantConfigurator({
 
   if (!productId) {
     return (
-      <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.07] p-5">
-        <div className="text-sm font-semibold text-amber-100">Save Product First</div>
+      <div id="commerce-product-options" className="rounded-xl border border-white/10 p-5 scroll-mt-24">
+        <div className="text-sm font-semibold text-amber-100">Next: sizes, colours and stock</div>
         <p className="mt-2 text-sm leading-relaxed text-amber-50/80">
-          Variant groups, values, and stock rows attach to a saved product record. Save the product once, then configure everything here.
+          Create your product above to continue. Then choose its sizes and colours, assign photos and enter starting stock together.
         </p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.05] p-5">
+    <fieldset id="commerce-product-options" disabled={Boolean(busyKey)} aria-busy={Boolean(busyKey)} className="ecom-product-options min-w-0 space-y-6 rounded-2xl border border-white/10 bg-zinc-950/40 p-5 scroll-mt-24">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-white">Options &amp; stock</h2>
+          <h2 className="text-lg font-semibold text-white">Variants &amp; inventory</h2>
           <p className="mt-1 max-w-2xl text-sm leading-relaxed text-zinc-300">
             Set up the choices shoppers can make and the stock available for each one.
           </p>
         </div>
-        <Button id={controlId('add-group')} type="button" variant="outline" onClick={addGroupDraft}>
-          Add Variant Group
-        </Button>
+
       </div>
 
-      <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-        <h3 className="text-sm font-medium text-zinc-100">Option Definitions</h3>
+      <p className="text-xs text-zinc-400">{dirty ? <strong className="text-amber-200">You have unsaved changes in this section.</strong> : 'Your variant changes are saved.'} <Link to="/extensions/commerce-stock" className="text-indigo-300 underline">Receive or adjust inventory →</Link></p>
+      <details className="ecom-product-setup-disclosure" open={showSetup} onToggle={event=>setShowSetup(event.currentTarget.open)}><summary>{draftGroups.length ? "Add a separate option set" : "Add choices or combinations"}</summary><ProductChoiceSetup productId={productId} basePath={basePath} refresh={onRefresh} changed={setSetupDirty} productStatus={productValues.status} onNoVariants={!draftGroups.length?()=>{setShowSetup(false);setSetupDirty(false);openStock({type:'product',id:productId});}:undefined} productPrice={productValues.basePrice} productImages={(productValues.images||[]).map((image:any)=>typeof image==='string'?image:image?.url).filter(Boolean)} onContinue={()=>{setShowSetup(false);requestAnimationFrame(()=>{const list=document.getElementById('commerce-product-variant-list');list?.focus();list?.scrollIntoView({block:'start'});});}}/></details>
+      {(!showSetup||!!draftGroups.length)&&<div className="ecom-product-overview"><div><small>Sellable choices</small><strong>{preview.choices.length}</strong></div><div><small>Available choices</small><strong>{preview.choices.filter(preview.available).length}</strong></div><div><small>Product price</small><strong>{formatPreviewPrice(productValues.basePrice,storeCurrency())}</strong></div></div>}
+      {!showSetup&&!draftGroups.length && <div className="ecom-product-single-stock"><p>This product sells without options. Its inventory belongs to the product.</p><Button type="button" variant="outline" onClick={()=>openStock({type:'product',id:productId})}>Manage product inventory</Button></div>}
+      {stockTarget && <section className="ecom-admin ecom-product-inline-stock" aria-label="Product inventory"><header><h3>Inventory for this choice</h3><Button type="button" variant="outline" disabled={stockDirty} onClick={()=>setStockTarget(null)}>Close inventory</Button></header><StockMovements target={stockTarget} scoped stockLoaded={location=>{if(location.type==='product')setLiveProductStock(location.quantity);}} refreshOverview={onRefresh} draftChanged={setStockDirty}/></section>}
+
+
+      {localError && (
+        <div id={controlId('error')} role="alert" tabIndex={-1} className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200 focus:outline-none">
+          <p>{localError}</p>
+          {hasStaleRows && (
+            <Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => void loadLatestRows()} aria-disabled={busyKey === 'refresh' || undefined} aria-busy={busyKey === 'refresh' || undefined}>
+              {busyKey === 'refresh' ? 'Loading...' : 'Load latest options and stock'}
+            </Button>
+          )}
+        </div>
+      )}
+      {/* Kept mounted so screen readers hear each outcome; empty, it takes no space. */}
+      <div id={controlId('status')} role="status" tabIndex={-1} className={localStatus ? 'rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100 focus:outline-none' : 'sr-only'}>{localStatus}</div>
+
+
+
+      {draftGroups.length === 0 ? (showSetup?null:
+        <div className="rounded-xl border border-dashed border-white/10 bg-black/10 p-6 text-sm text-zinc-400">
+          No options needed? You’re all set. Add choices above only when shoppers need to choose a variant.
+        </div>
+      ) : (
+        <div id="commerce-product-variant-list" tabIndex={-1} className="space-y-5 scroll-mt-24">
+          {draftGroups.map((group, index) => (
+            <div key={group.localId} className="ecom-product-group rounded-xl border border-white/10 bg-black/20 p-5 space-y-5">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <h3>
+                  <span className="block text-xs uppercase tracking-[0.2em] text-emerald-100/60">Option set {index + 1}</span>
+                  <span className="mt-1 block text-base font-medium text-white">{group.name || 'Name your option'}</span>
+                </h3>
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" onClick={() => void saveGroup(group)} aria-disabled={busyKey === `group:${group.localId}` || undefined} aria-busy={busyKey === `group:${group.localId}` || undefined}>
+                    {busyKey === `group:${group.localId}` ? 'Saving...' : group.id ? 'Save option set' : 'Create option set'}
+                  </Button>
+                  <Button type="button" variant="ghost" className="text-red-300" aria-label={`Delete variant group ${group.name || index + 1}`} onClick={() => void deleteGroup(group)} aria-disabled={busyKey === `delete-group:${group.localId}` || undefined} aria-busy={busyKey === `delete-group:${group.localId}` || undefined}>
+                    Delete
+                  </Button>
+                </div>
+              </div>
+
+              <ProductDisclosure className="ecom-option-settings" reveal={!group.id||!!errorField?.startsWith(controlId(group.localId))}><summary>Option name & defaults</summary><div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <label htmlFor={controlId(group.localId, 'definition')} className="text-sm font-medium text-zinc-300">Reusable label (optional)</label>
+                  <select
+                    id={controlId(group.localId, 'definition')}
+                    value={group.variantId}
+                    onChange={(event) => updateGroupDraft(group.localId, { variantId: event.target.value })}
+                    className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
+                  >
+                    <option value="">Select an option definition...</option>
+                    {variantDefinitions.map((definition) => (
+                      <option key={definition.id} value={definition.id}>
+                        {definitionTitle(definition, rows)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor={controlId(group.localId, 'name')} className="text-sm font-medium text-zinc-300">Option name</label>
+                  <input
+                    id={controlId(group.localId, 'name')}
+                    type="text"
+                    value={group.name}
+                    onChange={(event) => updateGroupDraft(group.localId, { name: event.target.value })}
+                    placeholder="e.g. Shirt Sizes"
+                    {...fieldErrorProps(controlId(group.localId, 'name'))}
+                    className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor={controlId(group.localId, 'sku')} className="text-sm font-medium text-zinc-300">Default SKU (optional)</label>
+                  <input
+                    id={controlId(group.localId, 'sku')}
+                    type="text"
+                    value={group.sku}
+                    onChange={(event) => updateGroupDraft(group.localId, { sku: event.target.value })}
+                    placeholder="Optional"
+                    className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor={controlId(group.localId, 'price')} className="text-sm font-medium text-zinc-300">Default price ({storeCurrency().toUpperCase()})</label>
+                  <ProductPriceInput id={controlId(group.localId, 'price')} value={group.priceOverride} onChange={next=>updateGroupDraft(group.localId, {priceOverride:next})} placeholder={formatPreviewPrice(productValues.basePrice,storeCurrency())} {...fieldErrorProps(controlId(group.localId,'price'))}/>
+                </div>
+                {group.values.length===0 && <p className="text-xs text-zinc-400">This option currently sells as one choice. Available: {group.inventoryQuantity}. <button type="button" onClick={()=>group.id&&openStock({type:'variant',id:group.id})}>Manage inventory</button></p>}
+              </div></ProductDisclosure>
+
+              <div className="ecom-product-variants space-y-4 rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <h4 className="text-sm font-medium text-zinc-100">Your sellable variants</h4>
+                    <p className="mt-1 text-xs text-zinc-400">Each row is one choice shoppers can buy. Open a row to change its details.</p>
+                  </div>
+                  <Button id={controlId(group.localId, 'add-value')} type="button" variant="outline" onClick={() => addValueDraft(group.localId)} disabled={!group.id}>
+                    Add a choice
+                  </Button>
+                </div>
+
+                {!group.id && (
+                  <div className="rounded-md border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-100">
+                    Create this option set first, then add its choices. Use the quick setup above to create everything together.
+                  </div>
+                )}
+
+                {group.values.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-white/10 bg-black/10 p-4 text-sm text-zinc-500">
+                    No values configured yet.
+                  </div>
+                ) : (
+                  <ProductVariantList values={group.values.map(value=>({...value,quantity:preview.choices.find(choice=>choice.id===value.localId)?.quantity??null,stockSource:preview.choices.find(choice=>choice.id===value.localId)?.stockSource||''}))} group={group.id && group.updatedAt ? {id:group.id,name:group.name,updatedAt:group.updatedAt,values:group.values}:undefined} productId={productId} productImages={(productValues.images||[]).map((image:any)=>typeof image==='string'?image:image?.url).filter(Boolean)} productPrice={Number(group.priceOverride)||productValues.basePrice} productStatus={productValues.status} basePath={basePath} refresh={onRefresh} changed={setManagementDirty} blocked={setupDirty||stockDirty||managementDirty||!!busyKey||variantDraftsChanged(baseline.current,draftGroups)}>
+                    {(value) => {
+                      const choice = preview.choices.find(choice => choice.id === value.localId)!;
+                      return (
+                      <ProductDisclosure key={value.localId} reveal={!value.id||value.id===savedValueId||!!errorField?.startsWith(controlId(value.localId))} className="ecom-product-option ecom-variant-row rounded-lg border border-white/10 bg-black/20 p-4 space-y-4">
+                        <summary className="ecom-variant-row__summary">{(value.image||(typeof productValues.images?.[0]==='string'?productValues.images[0]:productValues.images?.[0]?.url))?<img src={value.image||(typeof productValues.images?.[0]==='string'?productValues.images[0]:productValues.images[0].url)} alt=""/>:<span className="ecom-variant-row__image" aria-hidden="true">↳</span>}<span className="ecom-variant-row__identity"><strong>{value.value||'New choice'}</strong><small>{value.image?'Own image':'Uses product image'} · {value.sku||group.sku||productValues.sku||'No SKU'}</small></span><span className="ecom-variant-row__price"><strong>{formatPreviewPrice(choice.priceCents,storeCurrency())}</strong><small>{value.priceOverride?'Custom price':'Default price'}</small></span><span className="ecom-variant-row__stock"><strong>{choice.quantity===null?'Not tracked':`${choice.quantity} available`}</strong><small>{choice.stockSource==='Shared components'?'From shared parts':'Inventory'}</small></span><span aria-hidden="true">⌄</span></summary>
+                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                          <div>
+                            <div className="text-sm font-medium text-white">{value.value || 'Untitled value'}</div>
+                            <p className="mt-1 text-xs text-zinc-400">{value.sku || 'No SKU'} · {formatPreviewPrice(toRequiredNumber(value.priceOverride, toOptionalNumber(group.priceOverride) ?? productValues.basePrice ?? 0), storeCurrency())}{value.priceOverride.trim() ? ' override' : ' inherited price'}</p>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button type="button" variant="outline" onClick={() => void saveValue(group, value)} disabled={!group.id} aria-disabled={busyKey === `value:${value.localId}` || undefined} aria-busy={busyKey === `value:${value.localId}` || undefined}>
+                              {busyKey === `value:${value.localId}` ? 'Saving...' : value.id ? 'Save variant' : 'Create variant'}
+                            </Button>
+                            <Button type="button" variant="ghost" className="text-red-300" aria-label={`Delete variant value ${value.value || 'Untitled value'}`} onClick={() => void deleteValue(group.localId, value)} aria-disabled={busyKey === `delete-value:${value.localId}` || undefined} aria-busy={busyKey === `delete-value:${value.localId}` || undefined}>
+                              Delete
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="ecom-product-option-fields grid gap-4 md:grid-cols-2">
+                          <div className="space-y-2">
+                            <label htmlFor={controlId(value.localId, 'label')} className="text-sm font-medium text-zinc-300">Choice name</label>
+                            <input
+                              id={controlId(value.localId, 'label')}
+                              type="text"
+                              value={value.value}
+                              onChange={(event) => updateValueDraft(group.localId, value.localId, { value: event.target.value })}
+                              placeholder="e.g. Small"
+                              {...fieldErrorProps(controlId(value.localId, 'label'))}
+                              className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label htmlFor={controlId(value.localId, 'sku')} className="text-sm font-medium text-zinc-300">SKU (optional)</label>
+                            <input
+                              id={controlId(value.localId, 'sku')}
+                              type="text"
+                              value={value.sku}
+                              onChange={(event) => updateValueDraft(group.localId, value.localId, { sku: event.target.value })}
+                              placeholder="Optional"
+                              className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
+                            />
+                          </div>
+                          <details className="ecom-product-option-image space-y-2"><summary className="cursor-pointer text-sm font-medium text-zinc-300">Variant image {value.image ? '· custom image' : '· uses product image'}</summary><p className="text-xs text-zinc-400">Choose an image only when this variant looks different. Leave it empty to use the product’s main image.</p>
+                            {value.image && <Button type="button" variant="outline" onClick={()=>updateValueDraft(group.localId,value.localId,{image:''})}>Use product image</Button>}
+                            <MediaFieldInput pickerOnly
+                              label={`Variant Image of ${value.value || 'Untitled value'}`}
+                              adminBasePath={basePath}
+                              value={value.image}
+                              onChange={(nextValue) => updateValueDraft(group.localId, value.localId, { image: nextValue })}
+                              placeholder="Uses the product image"
+                            />
+                          </details>
+                          <div className="space-y-2">
+                            <label htmlFor={controlId(value.localId, 'price')} className="text-sm font-medium text-zinc-300">Price ({storeCurrency().toUpperCase()})</label>
+                            <ProductPriceInput id={controlId(value.localId, 'price')} value={value.priceOverride} onChange={next=>updateValueDraft(group.localId, value.localId, {priceOverride:next})} placeholder={formatPreviewPrice(toOptionalNumber(group.priceOverride) ?? productValues.basePrice,storeCurrency())} {...fieldErrorProps(controlId(value.localId,'price'))}/>
+                          </div>
+                          <div className="space-y-2">
+                            <label htmlFor={controlId(value.localId, 'stock')} className="text-sm font-medium text-zinc-300">Stock Quantity</label>
+                            <input
+                              id={controlId(value.localId, 'stock')}
+                              type="text"
+                              value={choice.quantity ?? 'Not tracked'}
+                              disabled readOnly
+                              className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
+                            />
+                            {choice.quantity !== null && <p className="text-xs text-zinc-400">{choice.stockSource}</p>}
+                            {value.id && choice.quantity !== null && (choice.stockSource === 'Shared components' ? <Link to="/extensions/commerce-stock" className="block text-xs text-indigo-300 underline">Manage shared components →</Link> : <Button type="button" variant="outline" onClick={()=>openStock({type:value.stockId?'stock':'variant',id:value.stockId||group.id!})}>Manage inventory</Button>)}
+                          </div>
+                        </div>
+                      </ProductDisclosure>
+                    ); }}
+                  </ProductVariantList>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <details className="rounded-xl border border-white/10 bg-black/20 p-4">
+        <summary className="cursor-pointer text-sm font-medium text-zinc-100">Advanced option setup</summary>
+        <Button id={controlId('add-group')} type="button" variant="outline" onClick={addGroupDraft}>
+          Add option set manually
+        </Button>
         <p className="mt-1 text-xs text-zinc-400">Create reusable option families like Size, Color, or Material.</p>
         <div className="mt-4 flex flex-col gap-3 md:flex-row">
           <label htmlFor={controlId('new-definition')} className="sr-only">New option definition name</label>
@@ -765,222 +821,13 @@ function ProductVariantConfigurator({
             ))
           )}
         </div>
-      </div>
-
-      {localError && (
-        <div id={controlId('error')} role="alert" tabIndex={-1} className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200 focus:outline-none">
-          <p>{localError}</p>
-          {hasStaleRows && (
-            <Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => void loadLatestRows()} aria-disabled={busyKey === 'refresh' || undefined} aria-busy={busyKey === 'refresh' || undefined}>
-              {busyKey === 'refresh' ? 'Loading...' : 'Load latest options and stock'}
-            </Button>
-          )}
-        </div>
-      )}
-      {/* Kept mounted so screen readers hear each outcome; empty, it takes no space. */}
-      <div id={controlId('status')} role="status" tabIndex={-1} className={localStatus ? 'rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100 focus:outline-none' : 'sr-only'}>{localStatus}</div>
-
-      <ProductStorefrontPreview
-        productValues={productValues}
+      </details>
+      <details id="commerce-product-preview" className="scroll-mt-24 rounded-xl border border-white/10 p-4"><summary className="cursor-pointer text-sm font-semibold text-zinc-200">Storefront Preview</summary><div className="mt-4">      <ProductStorefrontPreview
+        productValues={currentProduct}
         draftGroups={draftGroups}
         rows={rows}
-      />
-
-      {draftGroups.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-white/10 bg-black/10 p-6 text-sm text-zinc-400">
-          No variant groups configured for this product yet.
-        </div>
-      ) : (
-        <div className="space-y-5">
-          {draftGroups.map((group, index) => (
-            <div key={group.localId} className="rounded-xl border border-white/10 bg-black/20 p-5 space-y-5">
-              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <h3>
-                  <span className="block text-xs uppercase tracking-[0.2em] text-emerald-100/60">Variant Group {index + 1}</span>
-                  <span className="mt-1 block text-base font-medium text-white">{group.name || 'Untitled variant group'}</span>
-                </h3>
-                <div className="flex gap-2">
-                  <Button type="button" variant="outline" onClick={() => void saveGroup(group)} aria-disabled={busyKey === `group:${group.localId}` || undefined} aria-busy={busyKey === `group:${group.localId}` || undefined}>
-                    {busyKey === `group:${group.localId}` ? 'Saving...' : group.id ? 'Save Group' : 'Create Group'}
-                  </Button>
-                  <Button type="button" variant="destructive" aria-label={`Delete variant group ${group.name || index + 1}`} onClick={() => void deleteGroup(group)} aria-disabled={busyKey === `delete-group:${group.localId}` || undefined} aria-busy={busyKey === `delete-group:${group.localId}` || undefined}>
-                    Delete
-                  </Button>
-                </div>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <label htmlFor={controlId(group.localId, 'definition')} className="text-sm font-medium text-zinc-300">Option Definition</label>
-                  <select
-                    id={controlId(group.localId, 'definition')}
-                    value={group.variantId}
-                    onChange={(event) => updateGroupDraft(group.localId, { variantId: event.target.value })}
-                    className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
-                  >
-                    <option value="">Select an option definition...</option>
-                    {variantDefinitions.map((definition) => (
-                      <option key={definition.id} value={definition.id}>
-                        {definitionTitle(definition, rows)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label htmlFor={controlId(group.localId, 'name')} className="text-sm font-medium text-zinc-300">Group Name</label>
-                  <input
-                    id={controlId(group.localId, 'name')}
-                    type="text"
-                    value={group.name}
-                    onChange={(event) => updateGroupDraft(group.localId, { name: event.target.value })}
-                    placeholder="e.g. Shirt Sizes"
-                    {...fieldErrorProps(controlId(group.localId, 'name'))}
-                    className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label htmlFor={controlId(group.localId, 'sku')} className="text-sm font-medium text-zinc-300">SKU Override</label>
-                  <input
-                    id={controlId(group.localId, 'sku')}
-                    type="text"
-                    value={group.sku}
-                    onChange={(event) => updateGroupDraft(group.localId, { sku: event.target.value })}
-                    placeholder="Optional"
-                    className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label htmlFor={controlId(group.localId, 'price')} className="text-sm font-medium text-zinc-300">Group Price Override (smallest currency unit)</label>
-                  <input
-                    id={controlId(group.localId, 'price')}
-                    type="number"
-                    value={group.priceOverride}
-                    onChange={(event) => updateGroupDraft(group.localId, { priceOverride: event.target.value })}
-                    placeholder="Optional"
-                    className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label htmlFor={controlId(group.localId, 'inventory')} className="text-sm font-medium text-zinc-300">Legacy Inventory Quantity</label>
-                  <input
-                    id={controlId(group.localId, 'inventory')}
-                    type="number"
-                    value={group.inventoryQuantity}
-                    disabled readOnly
-                    onChange={(event) => updateGroupDraft(group.localId, { inventoryQuantity: event.target.value })}
-                    className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-4 rounded-xl border border-white/10 bg-white/[0.02] p-4">
-                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                  <div>
-                    <h4 className="text-sm font-medium text-zinc-100">Variant Values</h4>
-                    <p className="mt-1 text-xs text-zinc-400">These are the shopper-selectable options tied to this group.</p>
-                  </div>
-                  <Button id={controlId(group.localId, 'add-value')} type="button" variant="outline" onClick={() => addValueDraft(group.localId)} disabled={!group.id}>
-                    Add Value
-                  </Button>
-                </div>
-
-                {!group.id && (
-                  <div className="rounded-md border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-100">
-                    Save the group once before creating values and stock rows.
-                  </div>
-                )}
-
-                {group.values.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-white/10 bg-black/10 p-4 text-sm text-zinc-500">
-                    No values configured yet.
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {group.values.map((value) => (
-                      <div key={value.localId} className="rounded-lg border border-white/10 bg-black/20 p-4 space-y-4">
-                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                          <div>
-                            <div className="text-sm font-medium text-white">{value.value || 'Untitled value'}</div>
-                            <p className="mt-1 text-xs text-zinc-400">New stock rows start at zero. Receive or adjust stock in Stock overview with a staff reason.</p>
-                          </div>
-                          <div className="flex gap-2">
-                            <Button type="button" variant="outline" onClick={() => void saveValue(group, value)} disabled={!group.id} aria-disabled={busyKey === `value:${value.localId}` || undefined} aria-busy={busyKey === `value:${value.localId}` || undefined}>
-                              {busyKey === `value:${value.localId}` ? 'Saving...' : value.id ? 'Save Value' : 'Create Value'}
-                            </Button>
-                            <Button type="button" variant="destructive" aria-label={`Delete variant value ${value.value || 'Untitled value'}`} onClick={() => void deleteValue(group.localId, value)} aria-disabled={busyKey === `delete-value:${value.localId}` || undefined} aria-busy={busyKey === `delete-value:${value.localId}` || undefined}>
-                              Delete
-                            </Button>
-                          </div>
-                        </div>
-
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div className="space-y-2">
-                            <label htmlFor={controlId(value.localId, 'label')} className="text-sm font-medium text-zinc-300">Value Label</label>
-                            <input
-                              id={controlId(value.localId, 'label')}
-                              type="text"
-                              value={value.value}
-                              onChange={(event) => updateValueDraft(group.localId, value.localId, { value: event.target.value })}
-                              placeholder="e.g. Small"
-                              {...fieldErrorProps(controlId(value.localId, 'label'))}
-                              className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <label htmlFor={controlId(value.localId, 'sku')} className="text-sm font-medium text-zinc-300">Value SKU</label>
-                            <input
-                              id={controlId(value.localId, 'sku')}
-                              type="text"
-                              value={value.sku}
-                              onChange={(event) => updateValueDraft(group.localId, value.localId, { sku: event.target.value })}
-                              placeholder="Optional"
-                              className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <label htmlFor={controlId(value.localId, 'image')} className="text-sm font-medium text-zinc-300">Variant Image</label>
-                            <MediaFieldInput
-                              inputId={controlId(value.localId, 'image')}
-                              label={`Variant Image of ${value.value || 'Untitled value'}`}
-                              adminBasePath={basePath}
-                              value={value.image}
-                              onChange={(nextValue) => updateValueDraft(group.localId, value.localId, { image: nextValue })}
-                              placeholder="Optional hero image override"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <label htmlFor={controlId(value.localId, 'price')} className="text-sm font-medium text-zinc-300">Price Override (smallest currency unit)</label>
-                            <input
-                              id={controlId(value.localId, 'price')}
-                              type="number"
-                              value={value.priceOverride}
-                              onChange={(event) => updateValueDraft(group.localId, value.localId, { priceOverride: event.target.value })}
-                              placeholder="Optional"
-                              className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <label htmlFor={controlId(value.localId, 'stock')} className="text-sm font-medium text-zinc-300">Stock Quantity</label>
-                            <input
-                              id={controlId(value.localId, 'stock')}
-                              type="number"
-                              value={value.stockQuantity}
-                              disabled readOnly
-                              onChange={(event) => updateValueDraft(group.localId, value.localId, { stockQuantity: event.target.value })}
-                              className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+      /></div></details>
+    </fieldset>
   );
 }
 
@@ -997,6 +844,8 @@ export default function ProductOptionsPanel({ entry, values, basePath }: AdminEd
   const productId = entry?.id || '';
   const [loaded, setLoaded] = useState<LoadedProductRows | null>(null);
   const [loadError, setLoadError] = useState('');
+  const [retry, setRetry] = useState(0);
+  const anchoredProduct = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -1008,7 +857,7 @@ export default function ProductOptionsPanel({ entry, values, basePath }: AdminEd
     return () => {
       cancelled = true;
     };
-  }, [basePath, productId]);
+  }, [basePath, productId, retry]);
 
   // After a change: the rows are read again and replace the shown ones, as long as the panel still
   // shows this product. A refused read rejects, and the configurator reports it and keeps its rows.
@@ -1018,9 +867,21 @@ export default function ProductOptionsPanel({ entry, values, basePath }: AdminEd
   };
 
   const rows = loaded && loaded.productId === productId ? loaded.rows : null;
+  useEffect(() => {
+    if (!rows || anchoredProduct.current === productId) return;
+    const frame = requestAnimationFrame(() => {
+      anchoredProduct.current = productId;
+      const anchor = window.location.hash.slice(1);
+      if (anchor !== 'commerce-product-options' && anchor !== 'commerce-product-preview') return;
+      const target = document.getElementById(anchor);
+      if (target instanceof HTMLDetailsElement) target.open = true;
+      target?.scrollIntoView({ block: 'start' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [rows, productId]);
   if (!rows) {
     return loadError
-      ? <p role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">{loadError}</p>
+      ? <div role="alert" className="space-y-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-3 text-sm text-red-200"><p>{loadError}</p><Button type="button" variant="outline" onClick={() => setRetry(value => value + 1)}>Retry loading options</Button></div>
       : <p className="text-sm text-zinc-400">Loading options and stock...</p>;
   }
 

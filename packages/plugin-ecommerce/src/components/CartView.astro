@@ -2,115 +2,43 @@
 import { formatMoney } from '@talisman-cms/plugin-ecommerce/money';
 import CartItemCard from './CartItemCard.astro';
 import { serializeJsonForScript } from './json-script';
-
-const {
-  items = [],
-  locked = false,
-  pendingOrderId = null,
-  itemCount = 0,
-  requiresShipping = false,
-  subtotal = 0,
-  // The store currency, as a cart quote reports it. Every price is in its minor units.
-  currency = 'usd',
-} = Astro.props;
-
-// Product names are catalog data; escape them so a value cannot close the script tag.
-const serializedState = serializeJsonForScript({
-  items,
-  locked,
-  currency,
-});
+import type { CartItem } from './cart-types';
+import type { ShippingRate } from '@talisman-cms/plugin-ecommerce/browser';
+interface Props {
+  items?: CartItem[]; locked?: boolean; pendingOrderId?: string | null; itemCount?: number; requiresShipping?: boolean;
+  subtotal?: number; currency?: string; pricingError?: string | null;
+  delivery?: { rates: ShippingRate[]; countries: Array<{code:string;name:string}>; deliveryCountries: string[] | null; taxMode: string };
+}
+const { items = [], locked = false, pendingOrderId = null, itemCount = 0, requiresShipping = false, subtotal = 0, currency = 'usd', pricingError = null, delivery } = Astro.props;
+const serializedState = serializeJsonForScript({ items, locked, currency, pricingError, delivery });
+const emptyItem: CartItem = {key:'',productId:'',quantity:1,productName:'',unitPrice:0,lineTotal:0,type:'standard',stockLabel:'',href:'#'};
 ---
-
-<div data-cart-root>
-  <div data-cart-empty-state class:list={['rounded-[2rem] border border-dashed border-gray-200 bg-white/80 px-8 py-20 text-center shadow-sm', items.length > 0 && 'hidden']}>
-    <p class="text-lg font-semibold text-gray-900">Your cart is empty.</p>
-    <p class="mt-2 text-sm text-gray-500">Add a product from the shop to start a checkout session.</p>
-    <a href="/shop" class="mt-6 inline-flex h-11 items-center justify-center rounded-full bg-brand-600 px-6 text-sm font-medium text-white shadow-lg shadow-brand-500/20 transition-colors hover:bg-brand-700">
-      Browse products
-    </a>
+<div class="shopping-cart" data-cart-root>
+  <div data-cart-empty-state class="shopping-cart__empty" hidden={items.length > 0}>
+    <span aria-hidden="true">✧</span><h2>Room for something you’ll love.</h2><p>Your cart is empty. Explore the collection to find your next favorite.</p><a href="/shop" class="shopping-cart__primary">Explore the collection <span aria-hidden="true">↗</span></a>
   </div>
-
-  <div data-cart-content class:list={['grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px]', items.length === 0 && 'hidden']}>
-    <div class="space-y-4">
-      {locked && pendingOrderId && (
-        <div class="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
-          Checkout is currently locked for this cart.
-          <a href={`/checkout/cancel?order=${pendingOrderId}`} class="ml-2 font-semibold text-amber-900 underline underline-offset-4">Release this checkout</a>
-        </div>
-      )}
-
-      <div data-cart-items-list class="space-y-4">
-        {items.map((item) => <CartItemCard item={item} locked={locked} currency={currency} />)}
-      </div>
-
-      <p data-cart-feedback class="text-sm text-gray-500" aria-live="polite"></p>
+  <div class="shopping-cart__feedback" aria-live="polite"><p data-cart-feedback role="status" tabindex="-1">{pricingError}</p><button type="button" data-cart-undo hidden>Undo removal</button><a href="/cart" data-cart-reload hidden>Reload cart</a></div>
+  <div data-cart-content class="shopping-cart__layout" hidden={items.length === 0}>
+    <div>
+      {locked && <div class="shopping-cart__notice"><strong>A checkout is already in progress.</strong><p>Check its status before starting another payment.</p>{pendingOrderId && <><a href={`/checkout/success?order=${encodeURIComponent(pendingOrderId)}`}>Check payment status</a><a href={`/checkout/cancel?order=${encodeURIComponent(pendingOrderId)}`}>Return to editing</a></>}</div>}
+      <div data-cart-items-list>{items.map(item => <CartItemCard item={item} locked={locked} currency={currency} />)}</div>
+      <p class="shopping-cart__note">Items are reserved when checkout starts. Prices and availability are checked before payment.</p>
     </div>
-
-    <aside class="rounded-[2rem] border border-gray-200 bg-white/90 p-6 shadow-sm">
-      <p class="text-sm font-semibold uppercase tracking-[0.25em] text-gray-500">Summary</p>
-      <div class="mt-6 space-y-4">
-        <div class="flex items-center justify-between text-sm text-gray-500">
-          <span>Items</span>
-          <span data-cart-summary-count>{itemCount}</span>
-        </div>
-        <div class="flex items-center justify-between text-sm text-gray-500">
-          <span>Shipping</span>
-          <span data-cart-summary-shipping>{requiresShipping ? 'Calculated at checkout' : 'Not required'}</span>
-        </div>
-        <div class="flex items-center justify-between border-t border-gray-100 pt-4 text-lg font-bold text-gray-900">
-          <span>Subtotal</span>
-          <span data-cart-summary-subtotal>{formatMoney(Number(subtotal || 0), currency)}</span>
-        </div>
-      </div>
-
-      <a
-        data-cart-checkout
-        href="/checkout"
-        class={`mt-6 inline-flex h-12 w-full items-center justify-center rounded-full px-6 text-sm font-medium transition-colors ${locked ? 'pointer-events-none bg-gray-200 text-gray-500' : 'bg-brand-600 text-white shadow-lg shadow-brand-500/20 hover:bg-brand-700'}`}
-      >
-        Proceed to checkout
-      </a>
+    <aside class="shopping-cart__summary" aria-label="Cart summary">
+      <h2>Your order</h2><dl><div><dt>Items (<span data-cart-summary-count>{itemCount}</span>)</dt><dd data-cart-summary-subtotal>{formatMoney(subtotal,currency)}</dd></div><div><dt>Delivery</dt><dd data-cart-summary-shipping>{requiresShipping ? 'Calculated at checkout' : 'Not required'}</dd></div></dl>
+      {delivery && <div data-cart-delivery hidden={!requiresShipping}>
+        <label class="shopping-cart__destination">Deliver to<select data-cart-country aria-label="Delivery country"><option value="">Choose a country</option>{delivery.countries.map(country => <option value={country.code}>{country.name}</option>)}</select></label>
+        <p data-cart-delivery-estimate class="shopping-cart__note" aria-live="polite">See delivery costs before checkout.</p><p data-cart-free-delivery class="shopping-cart__delivery-progress" hidden></p>
+      </div>}
+      <div class="shopping-cart__total"><span>Estimated total</span><strong data-cart-estimated-total>{formatMoney(subtotal,currency)}</strong></div><p data-cart-estimate-note class="shopping-cart__note">Delivery, codes, and any tax are confirmed before payment.</p>
+      <a data-cart-checkout href="/checkout" class="shopping-cart__primary" aria-disabled={locked || Boolean(pricingError)}>Continue to checkout <span aria-hidden="true">→</span></a><p class="shopping-cart__guest">Guest checkout · No account needed</p><a href="/shop" class="shopping-cart__continue">Continue shopping</a>
     </aside>
   </div>
-
-  <template data-cart-item-template>
-    <article class="rounded-[2rem] border border-gray-200 bg-white/90 p-5 shadow-sm">
-      <div class="flex flex-col gap-5 sm:flex-row">
-        <a data-cart-image-link href="#" class="block h-28 w-28 min-w-28 max-w-28 shrink-0 overflow-hidden rounded-[1.5rem] bg-gray-100">
-          <img data-cart-image alt="" class="h-full w-full object-cover hidden" />
-          <div data-cart-image-fallback class="flex h-full w-full items-center justify-center text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">No image</div>
-        </a>
-
-        <div class="flex min-w-0 flex-1 flex-col gap-4">
-          <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <a data-cart-name href="#" class="text-xl font-bold text-gray-900 transition-colors hover:text-brand-600"></a>
-              <p data-cart-variant class="mt-1 text-sm text-gray-500 hidden"></p>
-              <p data-cart-stock class="mt-2 text-xs font-semibold uppercase tracking-[0.2em] text-gray-400"></p>
-            </div>
-            <p data-cart-line-total class="text-lg font-bold text-gray-900"></p>
-          </div>
-
-          <div class="flex flex-wrap items-center gap-3">
-            <div class="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 p-1">
-              <button type="button" class="h-9 w-9 rounded-full text-lg text-gray-600 transition-colors hover:bg-white" data-cart-action="decrement">-</button>
-              <span data-cart-quantity class="min-w-10 px-2 text-center text-sm font-semibold text-gray-900"></span>
-              <button type="button" class="h-9 w-9 rounded-full text-lg text-gray-600 transition-colors hover:bg-white" data-cart-action="increment">+</button>
-            </div>
-            <button type="button" class="text-sm font-medium text-gray-500 transition-colors hover:text-red-600" data-cart-action="remove">
-              Remove
-            </button>
-            <span data-cart-unit-price class="text-sm text-gray-400"></span>
-          </div>
-        </div>
-      </div>
-    </article>
-  </template>
-
+  <template data-cart-item-template><CartItemCard item={emptyItem} currency={currency} /></template>
   <script type="application/json" data-cart-state set:html={serializedState}></script>
 </div>
-
-<script>
-  import './cart-view';
-</script>
+<script>import './cart-view';</script>
+<style is:global>
+.shopping-cart {color:#18201e;font-size:14px}.shopping-cart *{box-sizing:border-box}.shopping-cart [hidden]{display:none!important}.shopping-cart a{color:inherit}.shopping-cart button,.shopping-cart input,.shopping-cart select{font:inherit}.shopping-cart :is(button,a,input,select):focus-visible{outline:2px solid #536847;outline-offset:4px}.shopping-cart button{cursor:pointer}.shopping-cart button:disabled{opacity:.4;cursor:not-allowed}.shopping-cart__layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:48px;align-items:start}.shopping-cart__item{display:flex;gap:24px;padding:26px 0;border-bottom:1px solid #dfe3dd}.shopping-cart__item:first-child{padding-top:0}.shopping-cart__image{flex:0 0 112px;height:132px;border-radius:10px;background:#eeefea;overflow:hidden;display:grid;place-items:center}.shopping-cart__image img{width:100%;height:100%;object-fit:cover}.shopping-cart__image span{font-size:38px;color:#85917d}.shopping-cart__item-body{min-width:0;flex:1}.shopping-cart__item-heading{display:flex;justify-content:space-between;gap:20px;align-items:start}.shopping-cart__item-heading a{font-size:17px;font-weight:600;text-decoration:none}.shopping-cart__item-heading p{color:#646e68;font-size:13px;margin:7px 0}.shopping-cart__item-heading strong{font-size:16px;white-space:nowrap;font-variant-numeric:tabular-nums}.shopping-cart__stock{font-size:12px;color:#536847;margin:10px 0 18px}.shopping-cart__stock[data-unavailable="true"]{color:#9f1239}.shopping-cart__item-actions{display:flex;flex-wrap:wrap;gap:14px;align-items:center}.shopping-cart__quantity{display:flex;align-items:center;border:1px solid #dfe3dd;border-radius:8px;background:white;overflow:hidden}.shopping-cart__quantity button{border:0;background:transparent;width:36px;height:40px;font-size:18px}.shopping-cart__quantity input{border:0;background:transparent;width:40px;min-width:0;text-align:center;appearance:textfield;-moz-appearance:textfield}.shopping-cart__quantity input::-webkit-inner-spin-button{appearance:none}.shopping-cart__item-actions>span{font-size:12px;color:#646e68}.shopping-cart__item-actions>button{margin-left:auto;padding:8px 0;border:0;background:transparent;font-size:12px;color:#646e68;text-decoration:underline;text-underline-offset:4px}.shopping-cart__summary{position:sticky;top:100px;border:1px solid #dfe3dd;background:white;border-radius:16px;padding:26px}.shopping-cart__summary h2{font-size:20px;font-weight:600;margin:0 0 24px}.shopping-cart__summary dl{margin:0}.shopping-cart__summary dl>div,.shopping-cart__total{display:flex;justify-content:space-between;gap:18px;margin:18px 0}.shopping-cart__summary dt{color:#646e68}.shopping-cart__summary dd{text-align:right;font-variant-numeric:tabular-nums}.shopping-cart__total{border-top:1px solid #dfe3dd;padding-top:20px;font-size:17px}.shopping-cart__primary{display:flex;align-items:center;justify-content:space-between;gap:24px;background:#18201e;color:white!important;border-radius:8px;padding:16px 18px;text-decoration:none;font-size:14px;font-weight:550}.shopping-cart__primary[aria-disabled="true"]{opacity:.45;cursor:not-allowed}.shopping-cart__guest{font-size:11px;text-align:center;color:#646e68;margin:14px 0 22px}.shopping-cart__continue{display:block;text-align:center;font-size:12px;text-underline-offset:4px}.shopping-cart__note{font-size:12px;color:#646e68;line-height:1.7;margin:20px 0}.shopping-cart__destination{display:grid;gap:8px;font-size:12px;color:#646e68;margin-top:24px}.shopping-cart__destination select{width:100%;min-height:42px;border:1px solid #dfe3dd;border-radius:8px;background:white;padding:8px;color:#18201e}.shopping-cart__delivery-progress{background:#edf2e8;padding:12px;border-radius:8px;color:#354b32;font-size:12px;line-height:1.6}.shopping-cart__feedback{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-bottom:22px}.shopping-cart__feedback:has(p:empty):not(:has(button:not([hidden]))){display:none}.shopping-cart__feedback p{font-size:13px;line-height:1.6}.shopping-cart__feedback [role="alert"]{color:#9f1239}.shopping-cart__feedback button{border:0;background:transparent;text-decoration:underline;text-underline-offset:4px;padding:8px 0}.shopping-cart__notice{background:#fbf5e9;border:1px solid #e6d8b7;padding:20px;border-radius:12px;margin-bottom:24px;line-height:1.7}.shopping-cart__notice a{display:inline-block;margin:12px 18px 0 0;text-decoration:underline}.shopping-cart__empty{padding:65px 20px;text-align:center;border:1px dashed #dfe3dd;border-radius:16px}.shopping-cart__empty>span{font-size:44px;color:#536847}.shopping-cart__empty h2{font-size:28px;font-weight:500;margin:18px 0}.shopping-cart__empty p{color:#646e68;line-height:1.7}.shopping-cart__empty a{max-width:300px;margin:28px auto 0}
+@media(max-width:900px){.shopping-cart__layout{grid-template-columns:1fr;gap:28px}.shopping-cart__summary{position:static}}@media(max-width:520px){.shopping-cart__item{gap:14px;padding:22px 0}.shopping-cart__image{flex-basis:80px;height:104px}.shopping-cart__item-heading{display:block}.shopping-cart__item-heading a{font-size:15px}.shopping-cart__item-heading strong{display:block;margin-top:10px;font-size:14px}.shopping-cart__item-actions{gap:10px}.shopping-cart__item-actions>span{width:100%;order:3}.shopping-cart__stock{margin:12px 0}.shopping-cart__summary{padding:22px}.shopping-cart__item-actions>button{margin-left:0}}
+</style>

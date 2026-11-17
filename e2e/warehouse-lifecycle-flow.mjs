@@ -33,7 +33,7 @@ export async function warehouseLifecycleFlow(ctx, { fail, expectVisible, expectH
       if(lost){lost=false;return json(route,{result:null});}
       return json(route,{result:{inspectionId:previous.id,orderId,restocked:previous.stock}});
     });
-    await page.goto('/admin/extensions/commerce-orders');const warehouse=page.getByRole('region',{name:`Warehouse ${orderId}`,exact:true});
+    await page.goto('/admin/extensions/commerce-orders');await page.getByRole('region',{name:`Order ${orderId}`,exact:true}).locator('.ecom-admin__order-summary').click();const warehouse=page.getByRole('region',{name:`Warehouse ${orderId}`,exact:true});
     await warehouse.getByText('Inspect received goods · 2 pending',{exact:true}).click();const form=warehouse.getByRole('form',{name:'Inspect return intake-inspection',exact:true});
     await form.getByLabel('Units inspected — Inspection fixture',{exact:true}).fill('1');await form.getByLabel('Inspection result — Inspection fixture',{exact:true}).selectOption('sellable');await form.getByRole('checkbox',{name:'Add approved units to available stock',exact:true}).check();
     await form.getByLabel('Reason for inspection decision',{exact:true}).fill('One unit physically inspected and approved');await form.getByRole('button',{name:'Record inspection decision',exact:true}).click();
@@ -53,7 +53,7 @@ export async function warehouseLifecycleFlow(ctx, { fail, expectVisible, expectH
       const response=await page.request.post('/admin/api/collections/_ecommerce_components/entries',{headers:{Origin:origin},data:{data:{sku:`COUNT-${ctx.runId}-${index}`,name:`Stocktake fixture ${ctx.runId} ${index}`,quantity:0}}});if(!response.ok())fail('stocktake fixture creation failed');const row=await response.json();
       await post('stockMovement',{requestKey:crypto.randomUUID(),targetType:'component',targetId:row.id,kind:'receipt',delta:n,expectedQuantity:0,expectedUpdatedAt:row.updatedAt,reason:'Supplier units checked for physical count fixture'});locations.push(row.id);
     }
-    await page.getByRole('link',{name:'Stock overview',exact:true}).click();const panel=page.getByRole('region',{name:'Stocktakes',exact:true});
+    await page.getByRole('link',{name:'Stock overview',exact:true}).click();await page.getByText('Count & reconcile inventory',{exact:true}).click();const panel=page.getByRole('region',{name:'Stocktakes',exact:true});
     await panel.getByLabel('Find stock to count',{exact:true}).fill(`Stocktake fixture ${ctx.runId}`);await panel.getByRole('button',{name:'Find stock to count',exact:true}).click();await panel.getByText('Available stock records',{exact:true}).click();
     await panel.getByRole('button',{name:`Add to count · Stocktake fixture ${ctx.runId} 0`,exact:true}).click();await panel.getByRole('button',{name:`Add to count · Stocktake fixture ${ctx.runId} 1`,exact:true}).click();
     const countForm=panel.getByRole('form',{name:'Stocktake count',exact:true});const a=countForm.getByLabel(`Counted units — Stocktake fixture ${ctx.runId} 0`,{exact:true}),b=countForm.getByLabel(`Counted units — Stocktake fixture ${ctx.runId} 1`,{exact:true});

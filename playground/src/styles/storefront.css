@@ -1,0 +1,22 @@
+body[data-theme="light"] { background:#fafbf8; }
+.store-skip { position:fixed;top:8px;left:16px;z-index:100;background:#18201e;color:white;padding:12px 20px;border-radius:8px;transform:translateY(-150%); }
+.store-skip:focus {transform:translateY(0)}
+.store-page { color:#18201e;padding:28px 0 48px; }
+.store-page [hidden] {display:none!important}
+.store-page :is(a,button,input,select,summary):focus-visible { outline:2px solid #4f46e5;outline-offset:4px; }
+.store-heading { display:flex;justify-content:space-between;align-items:end;gap:20px;padding-bottom:28px;margin-bottom:32px;border-bottom:1px solid #dfe3dd; }
+.store-heading h1 { font-size:clamp(32px,4.5vw,54px);font-weight:500;letter-spacing:-.05em;line-height:1.1;margin:12px 0 0; }
+.store-eyebrow { font-size:11px;text-transform:uppercase;letter-spacing:.16em;color:#646e68;margin:0; }
+.store-text-link {font-size:13px;text-decoration:underline;text-underline-offset:4px; }
+.store-button {display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:12px 22px;border:1px solid #18201e;border-radius:8px;background:#18201e;color:white;font-size:14px;cursor:pointer;text-decoration:none;gap:12px;}
+.store-button.secondary {background:transparent;color:#18201e}
+.store-button:disabled {opacity:.5;cursor:not-allowed}
+.store-notice {padding:16px 20px;background:#f8f3e7;border:1px solid #e4d8b9;border-radius:10px;color:#69562f;font-size:14px;line-height:1.7;margin-bottom:24px;}
+.store-panel {background:white;border:1px solid #dfe3dd;border-radius:16px;padding:clamp(20px,3vw,32px);min-width:0;}
+.store-footer {border-top:1px solid #dfe3dd;max-width:1216px;width:calc(100% - 48px);margin:auto;padding:32px 0 40px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:24px;color:#646e68;font-size:12px;line-height:1.8;}
+.store-footer > a {font-size:20px;color:#18201e;font-weight:600;}
+.store-footer span {display:block;font-size:11px;font-weight:400;color:#646e68;margin-top:6px;}
+.store-footer nav {display:flex;gap:24px;align-items:start}
+.store-footer p {flex-basis:100%;font-size:11px;margin:0}
+@media(max-width:700px){.store-page{padding-top:16px}.store-heading{align-items:start;flex-direction:column;gap:16px;margin-bottom:24px}.store-footer{width:calc(100% - 32px)}}
+@media print {header,.store-footer,.store-skip,.receipt-actions,[data-customer-returns],[data-talisman-order-tracking]{display:none!important}main{padding:0!important}.store-panel{border:0;padding:0}.store-page{padding:0}}

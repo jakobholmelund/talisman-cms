@@ -121,6 +121,7 @@
     "./admin/OrderRecoveryHistory": "./src/admin/OrderRecoveryHistory.tsx",
     "./admin/OrderWarehouse": "./src/admin/OrderWarehouse.tsx",
     "./admin/Orders": "./src/admin/Orders.tsx",
+    "./admin/ProductCatalogue": "./src/admin/ProductCatalogue.tsx",
     "./admin/ProductOptionsPanel": "./src/admin/ProductOptionsPanel.tsx",
     "./admin/Promotions": "./src/admin/Promotions.tsx",
     "./admin/PurchaseOrders": "./src/admin/PurchaseOrders.tsx",

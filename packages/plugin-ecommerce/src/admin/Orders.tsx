@@ -1,3 +1,5 @@
+import {useAttentionTarget} from './attention-target';
+import { orderReference, customerOrderPath } from '../order-reference';
 import React, { useEffect, useRef, useState, type FormEvent } from 'react';
 import { adminRequest, CommerceAdmin, errorText, Feedback, Field, money, Panel, Stat } from './common';
 import OrderRecoveryHistory from './OrderRecoveryHistory';
@@ -5,7 +7,7 @@ import OrderWarehouse from './OrderWarehouse';
 import OrderAdjustments from './OrderAdjustments';
 import ReconcileReview from './ReconcileReview';
 
-type View = 'awaiting' | 'recent';
+type View = 'awaiting' | 'recent' | 'partial' | 'shipped' | 'refunded' | 'disputed';
 type Address = { name?: string; line1?: string; line2?: string; city?: string; state?: string; postalCode?: string; country?: string };
 type Item = {
   productId: string; variantId: string | null; quantity: number; lineTotal: number;
@@ -28,14 +30,38 @@ type Order = {
 type OrdersPage = { view: View; pageSize: number; awaitingCount: number; nextCursor: string | null; orders: Order[] };
 
 const PAGE_SIZE = 50;
-const views: Record<View, string> = { awaiting: 'Awaiting shipment', recent: 'All recent orders' };
+const views: Record<View, string> = { awaiting: 'Awaiting shipment', recent: 'All recent orders', partial: 'Partly shipped', shipped: 'Shipped', refunded: 'Refunds', disputed: 'Disputes' };
+const oldestFirst = (view: View) => ['awaiting', 'partial', 'disputed'].includes(view);
 const fulfillmentLabels: Record<string, string> = { unfulfilled: 'Not shipped', partially_fulfilled: 'Partly shipped', fulfilled: 'Shipped' };
 const statusLabel = (status: string) => status.replaceAll('_', ' ').replace(/^./, letter => letter.toUpperCase());
 const formText = (values: FormData, name: string) => String(values.get(name) || '').trim();
 const when = (value: string) => new Date(value).toLocaleString();
 const tracking = (value: Tracking) => [value.carrier, value.trackingNumber].filter(Boolean).join(' · ') || 'No carrier or tracking number';
 
+/** Keep an opened order mounted when collapsed, preserving forms and request keys. Unopened
+ * orders do not mount the warehouse, recovery and refund readers for every row in the queue. */
+function OrderCard({ order, children, initiallyOpen }: { order: Order; children: React.ReactNode; initiallyOpen: boolean }) {
+  const [opened, setOpened] = useState(initiallyOpen);
+  const [expanded, setExpanded] = useState(initiallyOpen);
+  const units = order.items.reduce((sum, item) => sum + item.quantity, 0);
+  const charged = order.amounts.find(amount => amount.key === 'charged' || amount.key === 'total');
+  const total = charged ? charged.cents - order.amounts.filter(amount=>['giftCard','storeCredit'].includes(amount.key)).reduce((sum,amount)=>sum+amount.cents,0) : null;
+  return <section className="ecom-admin__order" aria-label={`Order ${order.id}`}>
+    <details open={expanded} onToggle={event => { setExpanded(event.currentTarget.open); if (event.currentTarget.open) setOpened(true); }}>
+      <summary className="ecom-admin__order-summary">
+        <span className="ecom-admin__order-customer"><strong>{order.customerEmail || 'Guest order'}</strong><small title={order.id}>{orderReference(order.id)}</small></span>
+        <span className="ecom-admin__order-date"><time dateTime={order.createdAt}>{new Date(order.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time><small>{units} {units === 1 ? 'item' : 'items'}{order.shippingAddress?.country ? ` · ${order.shippingAddress.country}` : ''}</small></span>
+        <span className="ecom-admin__order-badges"><span className="ecom-admin__badge" data-tone={['disputed', 'refunded', 'partially_refunded'].includes(order.status) ? 'warning' : order.status === 'paid' ? 'success' : 'neutral'}>{statusLabel(order.status)}</span><span className="ecom-admin__badge" data-tone={order.fulfillmentStatus === 'fulfilled' ? 'success' : 'neutral'}>{fulfillmentLabels[order.fulfillmentStatus] ?? statusLabel(order.fulfillmentStatus)}</span></span>
+        <span className="ecom-admin__order-total">{total!==null ? money(total, order.currency) : '—'}<small>Order total</small></span>
+        <span className="ecom-admin__order-chevron" aria-hidden="true">⌄</span>
+      </summary>
+      {opened && <div className="ecom-admin__order-detail">{children}</div>}
+    </details>
+  </section>;
+}
+
 export default function Orders() {
+  const {hash,target}=useAttentionTarget();
   const [view, setView] = useState<View>('awaiting');
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
@@ -101,6 +127,8 @@ export default function Orders() {
     return () => { active.current = false; ++latest.current; };
   }, []);
 
+  useEffect(()=>{if(target?.kind==='order'&&selected.current.query!==target.id){setSearch(target.id);select('recent',target.id);}},[hash]);
+
   async function run(task: () => Promise<unknown>) {
     if (writing.current || loading.current || readFailed.current) return;
     writing.current = true; setBusy(true);
@@ -165,41 +193,40 @@ export default function Orders() {
   const loadMore = () => run(() => load(page?.nextCursor, true));
 
   return <CommerceAdmin current="orders">
-    <p className="ecom-admin__intro">Confirmed purchases, payment recovery, and shipping. Payment and fulfillment are tracked separately, so a refund never hides a shipment. Admin test orders are excluded. Item names and SKUs come from the current catalog.</p>
-    <div className="ecom-admin__stats">
+    <header className="ecom-admin__attention-header ecom-admin__order-header"><div><h2>Every order, in view.</h2><p className="ecom-admin__intro">Review, prepare, and follow up on customer orders.</p></div><button type="button" className="ecom-admin__secondary" disabled={blocked} onClick={() => { show(''); void load(); }}>Refresh orders</button></header>
+    <div className="ecom-admin__stats ecom-admin__order-stats">
       <Stat label="Awaiting shipment" value={page ? page.awaitingCount : '—'} detail="Paid real orders not yet shipped in full" />
       <Stat label="Loaded" value={page ? orders.length : '—'} detail={`${views[view]}, ${PAGE_SIZE} per page`} />
     </div>
-    <form className="ecom-admin__toolbar" aria-label="Order search" onSubmit={find}>
-      <Field label="View"><select aria-label="View" disabled={busy} value={view} onChange={event => select(event.target.value as View, selected.current.query)}>
-        <option value="awaiting">{views.awaiting} (oldest first)</option>
-        <option value="recent">{views.recent} (newest first)</option>
-      </select></Field>
-      <Field label="Find an order"><input type="search" readOnly={busy} value={search} maxLength={254} onChange={event => setSearch(event.target.value)} placeholder="Exact order ID or email address" /></Field>
+    <div className="ecom-admin__views" role="group" aria-label="Order views">{Object.entries(views).map(([key, label]) => <button key={key} type="button" aria-pressed={view === key} disabled={busy} onClick={() => select(key as View, selected.current.query)}>{label}{key === 'awaiting' && page && <span>{page.awaitingCount}</span>}</button>)}</div>
+    <form className="ecom-admin__toolbar ecom-admin__order-search" aria-label="Order search" onSubmit={find}>
+      <Field label="Find an order"><input type="search" readOnly={busy} value={search} maxLength={254} onChange={event => setSearch(event.target.value)} placeholder="Order reference, full ID or email address" /></Field>
       <button type="submit" aria-disabled={busy}>Search</button>
-      {query && <button type="button" className="ecom-admin__secondary" aria-disabled={busy} onClick={clearSearch}>Clear search</button>}
       <button type="button" className="ecom-admin__secondary" aria-disabled={blocked} onClick={() => void reconcile()}>Check pending payments</button>
     </form>
     <div ref={feedback} tabIndex={-1}><Feedback message={message} error={error} /></div>
-    <ReconcileReview refreshKey={page} />
+    {query && <p className="ecom-admin__active-search">Searching for <strong>{query}</strong> in {views[view].toLowerCase()}. <button type="button" className="ecom-admin__secondary" disabled={busy} onClick={clearSearch}>Clear search</button></p>}
     {reading && <p role="status" className="ecom-admin__muted">Loading orders…</p>}
     {retryCursor !== undefined && <button type="button" aria-disabled={reading || busy} onClick={() => {
       if (writing.current || loading.current) return;
       show(''); void load(retryCursor, true);
     }}>Retry loading orders</button>}
-    {page && !orders.length && <Panel title={query ? 'No matching orders' : view === 'awaiting' ? 'Nothing awaiting shipment' : 'No orders yet'}>
+    {page && !orders.length && <Panel title={query ? 'No matching orders' : view === 'awaiting' ? 'You’re all caught up' : 'No orders in this view'}>
       <p className="ecom-admin__muted">{query ? `No order in ${views[view].toLowerCase()} has this exact ID or email address.`
-        : view === 'awaiting' ? 'Paid real orders that still need to ship appear here, oldest first.' : 'Confirmed real purchases appear here, newest first.'}</p>
+        : view === 'awaiting' ? 'Every paid order has shipped. New orders that need your attention will appear here.' : `Orders matching ${views[view].toLowerCase()} will appear here.`}</p>
+      {(query || view !== 'recent') && <button type="button" className="ecom-admin__secondary" disabled={busy} onClick={() => select('recent', query)}>Search all recent orders</button>}
     </Panel>}
     {orders.map(order => {
       const address = order.shippingAddress;
-      return <Panel key={order.id} title={order.customerEmail || order.id} label={`Order ${order.id}`}>
+      return <OrderCard key={order.id} order={order} initiallyOpen={Boolean(query) && orders.length === 1}>
         <div className="ecom-admin__row"><span><code>{order.id}</code><small>Placed {when(order.createdAt)} · Payment: {statusLabel(order.status)} · Fulfillment: {fulfillmentLabels[order.fulfillmentStatus] ?? statusLabel(order.fulfillmentStatus)}</small></span></div>
+        <div className="ecom-admin__row"><span><strong>Customer order page</strong><small>Receipts, parcels, returns and refund updates. The customer must sign in or use their checkout browser.</small></span><button type="button" className="ecom-admin__secondary" onClick={async event => { const button = event.currentTarget; try { await navigator.clipboard.writeText(new URL(customerOrderPath(order.id), window.location.origin).href); button.textContent = 'Customer link copied'; } catch { button.textContent = 'Could not copy — try again'; } }}>Copy customer link</button></div>
         <h3>Items</h3>
         <ul>{order.items.map((item, index) => <li key={index}>
           {item.quantity} × {item.productName ?? `${item.productId} (no longer in the catalog)`}{item.variantLabel ? ` — ${item.variantLabel}` : ''}
           {item.sku ? ` · SKU ${item.sku}` : ' · No SKU'} · {money(item.lineTotal, order.currency)}
         </li>)}</ul>
+        <OrderWarehouse order={order} refreshOrders={() => load()} parentBlocked={blocked} canRecord={() => !cannotRecord()} draftChanged={dirty => { if (dirty) warehouseDrafts.current.add(order.id); else warehouseDrafts.current.delete(order.id); }} />
         <details><summary>Order activity</summary>
           <p className="ecom-admin__muted">Recorded shipments, stock returns, tender refunds and email status. Sent means accepted by the email provider.</p>
           {order.activity?.length ? <ul>{order.activity.map(event => <li key={event.id}>
@@ -250,11 +277,12 @@ export default function Orders() {
             </form>
           </details>
         </React.Fragment>)}
-        <OrderWarehouse order={order} refreshOrders={() => load()} parentBlocked={blocked} canRecord={() => !cannotRecord()} draftChanged={dirty => { if (dirty) warehouseDrafts.current.add(order.id); else warehouseDrafts.current.delete(order.id); }} />
-      </Panel>;
+
+      </OrderCard>;
     })}
-    {page && <p ref={summary} role="status" tabIndex={-1} className="ecom-admin__muted">Showing {orders.length} {orders.length === 1 ? 'order' : 'orders'}{view === 'awaiting' ? ' awaiting shipment, oldest first' : ', newest first'}; {PAGE_SIZE} per page.</p>}
+    {page && <p ref={summary} role="status" tabIndex={-1} className="ecom-admin__muted">Showing {orders.length} {orders.length === 1 ? 'order' : 'orders'} in {views[view].toLowerCase()}, {oldestFirst(view) ? 'oldest' : 'newest'} first; {PAGE_SIZE} per page.</p>}
     {page?.nextCursor && <div className="ecom-admin__actions"><button type="button" className="ecom-admin__secondary" aria-disabled={blocked} onClick={() => void loadMore()}>Load {PAGE_SIZE} more</button></div>}
-    <p className="ecom-admin__muted">Refund Stripe charges in Stripe. Gift card tender refunds are managed in Gift cards.</p>
+    <ReconcileReview refreshKey={page} />
+    <p className="ecom-admin__muted">Payment and shipping are tracked separately. Admin test orders are excluded. Item names and SKUs reflect the current catalog. Refund Stripe charges in Stripe; manage gift card tender refunds in Gift cards.</p>
   </CommerceAdmin>;
 }

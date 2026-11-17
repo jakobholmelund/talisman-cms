@@ -1,340 +1,178 @@
 ---
 import Layout from '../../layouts/Layout.astro';
-import { createDbClient, getClient } from 'talisman-cms/client';
 import { env as cfEnv } from 'cloudflare:workers';
-import { eq, inArray } from 'drizzle-orm';
-import {
-  productVariants,
-  productVariantValues,
-  stocks,
-  variants as variantDefinitions,
-} from '@talisman-cms/plugin-ecommerce/schema';
+import { catalogOffer, readCatalog } from '@talisman-cms/plugin-ecommerce/catalog';
+import { serializeJsonForScript } from '@talisman-cms/plugin-ecommerce/components/json-script.ts';
 import { formatMoney, getStoreCurrency } from '../../lib/commerce';
-import { getPrimaryProductImage } from '../../lib/product-media';
 import { getMediaImageSrcSet } from 'talisman-cms/helpers';
 
 const { id } = Astro.params;
-if (!id) return Astro.redirect('/shop');
-
-const env = { DB: (cfEnv as any).DB, KV: (cfEnv as any).KV };
-const cms = getClient(env);
-const product = await cms.entries.find('products', id, { depth: 0, cache: false }).catch(() => null);
-
-if (!product) return Astro.redirect('/shop');
-
-const db = createDbClient(cfEnv as any);
-const productVariantGroups = await db.select().from(productVariants).where(eq(productVariants.productId, id));
-const definitionIds = productVariantGroups.map((group) => group.variantId).filter((value): value is string => Boolean(value));
-const variantDefinitionRows = definitionIds.length > 0
-  ? await db.select().from(variantDefinitions).where(inArray(variantDefinitions.id, definitionIds))
-  : [];
-const productVariantIds = productVariantGroups.map((group) => group.id);
-const productVariantValueRows = productVariantIds.length > 0
-  ? await db.select().from(productVariantValues).where(inArray(productVariantValues.productVariantId, productVariantIds))
-  : [];
-const productVariantValueIds = productVariantValueRows.map((row) => row.id);
-const stockRows = productVariantValueIds.length > 0
-  ? await db.select().from(stocks).where(inArray(stocks.productVariantValueId, productVariantValueIds))
-  : [];
-
-const productName = product.data.name ?? product.data.title ?? 'Untitled product';
-const priceCents = product.data.basePrice ?? product.data.price ?? 0;
+const product = id ? (await readCatalog(cfEnv as any, { ids: [id], status: ['active'] }))[0] : null;
+if (!product) return Astro.rewrite('/404');
 const currency = getStoreCurrency(cfEnv as any);
-const formattedPrice = formatMoney(priceCents, currency);
-const imageUrl = getPrimaryProductImage(product.data);
-const inventory = product.data.inventoryQuantity ?? 0;
-const inStock = inventory > 0 || product.data.type === 'digital';
-const variantGroups = productVariantGroups.map((group) => {
-  const definition = variantDefinitionRows.find((row) => row.id === group.variantId);
-  const values = productVariantValueRows
-    .filter((row) => row.productVariantId === group.id)
-    .map((row) => {
-      const stock = stockRows.find((stockRow) => stockRow.productVariantValueId === row.id);
-      const resolvedPrice = row.priceOverride ?? group.priceOverride ?? priceCents;
-      return {
-        id: row.id,
-        label: row.value,
-        sku: row.sku,
-        imageUrl: row.image ?? null,
-        quantity: stock?.quantity ?? group.inventoryQuantity ?? 0,
-        priceCents: resolvedPrice,
-      };
-    });
-
-  return {
-    id: group.id,
-    label: definition?.name ?? group.name,
-    values,
-  };
-}).filter((group) => group.values.length > 0);
-const defaultVariant = variantGroups.flatMap((group) => group.values).find((value) => value.quantity > 0) ?? variantGroups[0]?.values[0] ?? null;
-const initialHeroImageUrl = defaultVariant?.imageUrl ?? imageUrl;
+const offer = catalogOffer(product);
+const selected = offer.choices.find(choice => choice.id === Astro.url.searchParams.get('variant')) ?? offer.selected;
+const available = selected.price > 0 && (selected.quantity === null || selected.quantity > 0);
+const related = (await readCatalog(cfEnv as any, {status:['active'],limit:5})).filter(item=>item.id!==product.id).slice(0,3);
+const images = [...new Set([
+  ...(product.images as unknown[] ?? []).flatMap(image => typeof image === 'string' ? [image] : image && typeof image === 'object' && 'url' in image && typeof image.url === 'string' ? [image.url] : []),
+  ...offer.options.flatMap(option => option.image ? [option.image] : []),
+])];
+const heroImage = selected.image ?? images[0];
+const state = serializeJsonForScript({ id: product.id, currency, choices: offer.choices, selected: selected.id, defaultImage: images[0], images, available: available });
 ---
-
-<Layout title={`${productName} | Shop`} description={product.data.description}>
-  <div class="py-12 md:py-20 animate-fade-in-up">
-    <!-- Breadcrumbs -->
-    <nav class="flex mb-8 text-sm text-text-muted" aria-label="Breadcrumb">
-      <ol class="inline-flex items-center space-x-1 md:space-x-3">
-        <li class="inline-flex items-center">
-          <a href="/" class="hover:text-brand-600 transition-colors text-gray-500">Home</a>
-        </li>
-        <li>
-          <div class="flex items-center">
-            <svg class="w-3 h-3 text-gray-400 mx-1" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 6 10">
-              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m1 9 4-4-4-4"/>
-            </svg>
-            <a href="/shop" class="hover:text-brand-600 transition-colors text-gray-500 ml-1 md:ml-2">Shop</a>
-          </div>
-        </li>
-        <li aria-current="page">
-          <div class="flex items-center">
-            <svg class="w-3 h-3 text-gray-400 mx-1" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 6 10">
-              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m1 9 4-4-4-4"/>
-            </svg>
-            <span class="text-gray-900 ml-1 md:ml-2 font-medium">{productName}</span>
-          </div>
-        </li>
-      </ol>
-    </nav>
-
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-12 lg:gap-24">
-      {/* Product Image Area */}
-      <div class="aspect-square bg-gray-100 rounded-[2.5rem] flex items-center justify-center p-8 border border-gray-200 shadow-inner relative overflow-hidden">
-        <div class="absolute inset-0 bg-gradient-to-br from-brand-50 to-transparent opacity-50"></div>
-        <img
-          id="product-hero-image"
-          src={initialHeroImageUrl ?? undefined}
-          srcset={initialHeroImageUrl ? getMediaImageSrcSet(initialHeroImageUrl) : undefined}
-          sizes="(min-width: 768px) 50vw, 100vw"
-          alt={productName}
-          width="800"
-          height="800"
-          loading="eager"
-          fetchpriority="high"
-          transition:name={`product-image-${product.id}`}
-          class:list={[
-            'w-full h-full object-cover rounded-[2rem] shadow-xl -rotate-3 hover:rotate-0 transition-transform duration-500 cursor-crosshair',
-            !initialHeroImageUrl && 'hidden',
-          ]}
-        />
-        <div
-          id="product-hero-fallback"
-          class:list={[
-            'w-full h-full bg-white rounded-[2rem] shadow-xl flex items-center justify-center -rotate-3 hover:rotate-0 transition-transform duration-500 cursor-crosshair',
-            initialHeroImageUrl && 'hidden',
-          ]}
-        >
-          <span class="text-gray-300 font-bold text-3xl">No Image</span>
-        </div>
+<Layout title={`${product.name} | Talisman`} description={product.description || undefined}>
+  <article class="product" data-product-page>
+    <nav class="product__breadcrumb" aria-label="Breadcrumb"><a href="/shop">The collection</a><span aria-hidden="true">/</span><span aria-current="page">{product.name}</span></nav>
+    <div class="product__layout">
+      <div class="product__gallery">
+        <div class="product__hero">{heroImage ? <><img id="product-hero-image" src={heroImage} srcset={getMediaImageSrcSet(heroImage)} sizes="(min-width: 768px) 50vw, 100vw" alt={product.name} width="900" height="1000" fetchpriority="high" /><button type="button" class="product__zoom" data-zoom aria-label={`Enlarge image of ${product.name}`}>Enlarge <span aria-hidden="true">↗</span></button></> : <span aria-hidden="true">◇</span>}</div>
+        {images.length > 1 && <div class="product__thumbnails" role="group" aria-label="Product images">{images.map((image, index) => <button type="button" data-gallery-image={image} data-srcset={getMediaImageSrcSet(image)} aria-label={`View image ${index + 1} of ${product.name}`} aria-pressed={image === heroImage}><img src={image} alt="" width="90" height="100" loading="lazy" /></button>)}</div>}
       </div>
-
-      {/* Product Details Area */}
-      <div class="flex flex-col justify-center">
-        <div class="mb-2">
-          <span class={`inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ${inStock ? 'bg-green-50 text-green-700 ring-green-600/20' : 'bg-amber-50 text-amber-700 ring-amber-600/20'}`}>
-            {inStock ? 'In Stock' : 'Preorder'}
-          </span>
-        </div>
-        <h1 class="text-4xl sm:text-5xl font-extrabold text-gray-900 tracking-tight mb-4">{productName}</h1>
-        <p class="text-3xl font-black text-brand-600 mb-8" data-currency={currency}>{formattedPrice}</p>
-        
-        <div class="prose prose-lg text-gray-600 mb-10">
-          <p>{product.data.description || 'This premium item does not have a detailed description yet.'}</p>
-        </div>
-
-        {variantGroups.length > 0 && (
-          <div class="mb-10 space-y-6 rounded-[2rem] border border-gray-200 bg-white/80 p-6 shadow-sm">
-            {variantGroups.map((group) => (
-              <section>
-                <div class="mb-3 flex items-center justify-between gap-3">
-                  <h2 class="text-sm font-semibold uppercase tracking-[0.2em] text-gray-500">{group.label}</h2>
-                  <span class="text-xs text-gray-400">{group.values.length} options</span>
-                </div>
-                <div class="flex flex-wrap gap-3">
-                  {group.values.map((value) => (
-                    <button
-                      type="button"
-                      class={`variant-choice rounded-full border px-4 py-2 text-sm font-medium transition-colors ${defaultVariant?.id === value.id ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-200 bg-white text-gray-900 hover:border-brand-300 hover:text-brand-700'}`}
-                      data-variant-id={value.id}
-                      data-price={value.priceCents}
-                      data-stock={value.quantity}
-                      data-label={value.label}
-                      data-sku={value.sku ?? ''}
-                      data-image={value.imageUrl ?? ''}
-                      data-image-srcset={value.imageUrl ? getMediaImageSrcSet(value.imageUrl) : undefined}
-                    >
-                      {value.label}
-                    </button>
-                  ))}
-                </div>
-              </section>
-            ))}
-            <div class="grid gap-4 border-t border-gray-100 pt-5 text-sm sm:grid-cols-2">
-              <div>
-                <p class="font-semibold text-gray-900">Selected option</p>
-                <p id="selected-variant-label" class="text-gray-600">{defaultVariant?.label ?? 'Standard product'}</p>
-              </div>
-              <div>
-                <p class="font-semibold text-gray-900">Availability</p>
-                <p id="selected-variant-stock" class="text-gray-600">
-                  {defaultVariant ? `${defaultVariant.quantity} ready to ship` : 'Uses product stock'}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div class="border-t border-gray-200 pt-8 mt-auto flex flex-col sm:flex-row gap-4">
-          <button
-            id="add-to-cart-button"
-            type="button"
-            class="inline-flex h-12 w-full sm:w-auto items-center justify-center rounded-full bg-brand-600 px-8 text-base font-medium text-white shadow-xl shadow-brand-500/30 transition-all hover:-translate-y-0.5 hover:bg-brand-700 hover:shadow-lg"
-            data-product-id={product.id}
-            data-default-variant-id={defaultVariant?.id ?? ''}
-            data-default-variant-label={defaultVariant?.label ?? 'Standard product'}
-            data-default-variant-stock={defaultVariant ? `${defaultVariant.quantity} ready to ship` : 'Uses product stock'}
-            data-default-image-url={imageUrl ?? ''}
-            data-default-image-srcset={imageUrl ? getMediaImageSrcSet(imageUrl) : undefined}
-          >
-            Add to Cart
-          </button>
-          <button id="buy-now-button" type="button" class="inline-flex h-12 w-full sm:w-auto items-center justify-center rounded-full bg-brand-100 px-8 text-base font-medium text-brand-900 shadow-sm transition-all hover:bg-brand-200">
-            Buy Now
-          </button>
-          <a href="/cart" class="inline-flex h-12 w-full sm:w-auto items-center justify-center rounded-full border border-gray-200 bg-white px-8 text-base font-medium text-gray-900 transition-colors hover:border-brand-200 hover:text-brand-700">
-            View Cart
-          </a>
-        </div>
-        <p id="cart-feedback" class="mt-4 text-sm text-gray-500" aria-live="polite"></p>
-        
-        <div class="mt-8 flex items-center text-sm text-gray-500 space-x-4">
-          <div class="flex items-center">
-            <svg class="mr-2 h-5 w-5 text-brand-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clip-rule="evenodd" />
-            </svg>
-            Free shipping
-          </div>
-          <div class="flex items-center">
-            <svg class="mr-2 h-5 w-5 text-brand-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clip-rule="evenodd" />
-            </svg>
-            Secure checkout
-          </div>
-        </div>
+      <div class="product__details">
+        <p class="product__eyebrow">{product.categories[0]?.name ?? 'The Talisman collection'}</p>
+        <h1>{product.name}</h1>
+        <p class="product__price" data-product-price>{selected.price > 0 ? formatMoney(selected.price, currency) : 'Price unavailable'}</p>
+        <p class="product__description">{product.description}</p>
+        <form class="product__purchase" data-purchase-form>
+          {offer.options.length > 0 && <fieldset><legend>Choose your option</legend><div class="product__choices">{offer.options.map(option => <button type="button" data-choice={option.id} aria-pressed={option.id === selected.id}><span>{option.label}</span>{option.quantity === 0 && <small>Sold out</small>}</button>)}</div></fieldset>}
+          <p class="product__stock" data-product-stock role="status">{available ? selected.quantity === null ? 'Available' : `${selected.quantity} available` : 'Currently unavailable'}</p>
+          <div class="product__buy-row"><label class="product__quantity">Quantity<input name="quantity" type="number" inputmode="numeric" min="1" max={Math.min(99, selected.quantity ?? 99)} value="1" required disabled={!available} /></label><button class="product__add" type="submit" disabled={!available}>{available ? 'Add to cart' : 'Currently unavailable'}<span aria-hidden="true">↗</span></button></div>
+          <button class="product__buy-now" type="submit" name="intent" value="checkout" disabled={!available}>Buy now</button>
+          <p class="product__feedback" data-product-feedback role="status" tabindex="-1"></p>
+          <a class="product__cart-link" href="/cart">View your cart →</a>
+        </form>
+        <div class="product__assurance"><span aria-hidden="true">✓</span><p>No account needed to check out. Review your order before payment.</p></div>
+        <details class="product__information"><summary>Delivery & payment</summary><p>{product.isPhysical ? 'Delivery options, shipping charges, and any taxes are confirmed at checkout before you pay.' : 'This product does not require shipping.'} Availability is checked again when you check out.</p></details>
+        <details class="product__information"><summary>Product details</summary><p>{product.description || product.name}</p>{product.sku && <p>SKU: {product.sku}</p>}</details>
       </div>
     </div>
-  </div>
+    {images.length > 0 && <dialog class="product__lightbox" data-lightbox aria-label={`Images of ${product.name}`}><button type="button" data-close-lightbox aria-label="Close image viewer">Close ×</button><img data-lightbox-image src={heroImage} alt={product.name} /><div class="product__lightbox-controls">{images.length>1 && <button type="button" data-image-previous aria-label="Previous image">←</button>}<span data-image-count aria-live="polite"></span>{images.length>1 && <button type="button" data-image-next aria-label="Next image">→</button>}</div></dialog>}
+    {related.length>0 && <section class="product__related" aria-labelledby="related-heading"><div><h2 id="related-heading">A little more to explore.</h2><a href="/shop">View the collection →</a></div><div class="product__related-grid">{related.map(item=>{const itemOffer=catalogOffer(item);const image=itemOffer.selected.image || (typeof item.images?.[0]==='string'?item.images[0]:(item.images?.[0] as {url?:string})?.url);return <a href={`/shop/${encodeURIComponent(item.id)}`}><div>{image?<img src={image} alt="" width="320" height="360" loading="lazy"/>:<span aria-hidden="true">◇</span>}</div><h3>{item.name}</h3><p>{itemOffer.minPrice!==itemOffer.maxPrice?'From ':''}{formatMoney(itemOffer.minPrice,currency)}</p></a>;})}</div></section>}
+    <script type="application/json" data-product-state set:html={state}></script>
+  </article>
 </Layout>
-
 <script>
   import { actions } from 'astro:actions';
   import { dispatchCartUpdated } from '@talisman-cms/plugin-ecommerce/browser';
   import { formatMoney } from '@talisman-cms/plugin-ecommerce/money';
-
-  function initProductPage() {
-    const addToCartButton = document.getElementById('add-to-cart-button');
-    if (!addToCartButton || addToCartButton.dataset.initialized === 'true') return;
-    addToCartButton.dataset.initialized = 'true';
-
-    const buyNowButton = document.getElementById('buy-now-button');
-    const feedbackEl = document.getElementById('cart-feedback');
-    const labelEl = document.getElementById('selected-variant-label');
-    const stockEl = document.getElementById('selected-variant-stock');
-    const priceHeading = document.querySelector('p.text-3xl.font-black.text-brand-600');
-    const heroImage = document.getElementById('product-hero-image');
-    const heroFallback = document.getElementById('product-hero-fallback');
-    const variantButtons = Array.from(document.querySelectorAll('.variant-choice'));
-
-    const productId = addToCartButton.dataset.productId || '';
-    const defaultVariantId = addToCartButton.dataset.defaultVariantId || '';
-    const defaultVariantLabel = addToCartButton.dataset.defaultVariantLabel || 'Standard product';
-    const defaultVariantStock = addToCartButton.dataset.defaultVariantStock || 'Uses product stock';
-    const defaultProductImageUrl = addToCartButton.dataset.defaultImageUrl || '';
-    const defaultProductImageSrcset = addToCartButton.dataset.defaultImageSrcset || '';
-
-    let selectedVariantId = defaultVariantId;
-
-    function setActiveVariant(button: Element | null) {
-      const htmlBtn = button as HTMLElement | null;
-      selectedVariantId = htmlBtn?.dataset.variantId || '';
-      for (const candidate of variantButtons) {
-        const isActive = candidate === button;
-        candidate.classList.toggle('border-brand-600', isActive);
-        candidate.classList.toggle('bg-brand-600', isActive);
-        candidate.classList.toggle('text-white', isActive);
-        candidate.classList.toggle('border-gray-200', !isActive);
-        candidate.classList.toggle('bg-white', !isActive);
-        candidate.classList.toggle('text-gray-900', !isActive);
-      }
-
-      if (labelEl) labelEl.textContent = htmlBtn?.dataset.label || defaultVariantLabel;
-      if (stockEl) {
-        const stock = Number(htmlBtn?.dataset.stock || 0);
-        stockEl.textContent = button ? `${stock} ready to ship` : defaultVariantStock;
-      }
-      if (priceHeading instanceof HTMLElement && priceHeading.dataset.currency && htmlBtn?.dataset.price) {
-        priceHeading.textContent = formatMoney(Number(htmlBtn.dataset.price), priceHeading.dataset.currency);
-      }
-      if (heroImage instanceof HTMLImageElement) {
-        const nextImageUrl = htmlBtn?.dataset.image || defaultProductImageUrl;
-        heroImage.srcset = htmlBtn?.dataset.imageSrcset || defaultProductImageSrcset;
-        heroImage.src = nextImageUrl;
-        heroImage.classList.toggle('hidden', !nextImageUrl);
-        heroFallback?.classList.toggle('hidden', Boolean(nextImageUrl));
-      }
+  import { getMediaImageSrcSet } from 'talisman-cms/helpers';
+  function setupProduct() {
+    const root = document.querySelector<HTMLElement>('[data-product-page]');
+    if (!root || root.dataset.bound) return;
+    root.dataset.bound = 'true';
+    type Choice = { id: string | null; label: string; image: string | null; price: number; quantity: number | null };
+    const state = JSON.parse(root.querySelector('[data-product-state]')?.textContent || '{}') as { id: string; currency: string; choices: Choice[]; selected: string | null; defaultImage?: string; images: string[] };
+    const form = root.querySelector<HTMLFormElement>('[data-purchase-form]')!;
+    const quantity = form.elements.namedItem('quantity') as HTMLInputElement;
+    const feedback = root.querySelector<HTMLElement>('[data-product-feedback]')!;
+    const primary = form.querySelector<HTMLButtonElement>('.product__add')!;
+    const checkout = form.querySelector<HTMLButtonElement>('.product__buy-now')!;
+    const choices = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-choice]'));
+    let selected = state.choices.find(choice => choice.id === state.selected) ?? state.choices[0];
+    let busy = false;
+    let redirecting = false;
+    let needsReview = false;
+    function showImage(src?: string) {
+      const hero = root!.querySelector<HTMLImageElement>('#product-hero-image');
+      if (hero && src) { hero.src = src; hero.srcset = getMediaImageSrcSet(src) ?? ''; }
+      root!.querySelectorAll<HTMLButtonElement>('[data-gallery-image]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.galleryImage === src)));
     }
-
-    for (const button of variantButtons) {
-      button.addEventListener('click', () => setActiveVariant(button));
+    function refresh() {
+      const available = selected.price > 0 && (selected.quantity === null || selected.quantity > 0);
+      root!.querySelector('[data-product-price]')!.textContent = selected.price > 0 ? formatMoney(selected.price, state.currency) : 'Price unavailable';
+      root!.querySelector('[data-product-stock]')!.textContent = available ? selected.quantity === null ? 'Available' : `${selected.quantity} available` : 'Currently unavailable — choose another option.';
+      choices.forEach(button => { button.setAttribute('aria-pressed', String(button.dataset.choice === selected.id)); button.disabled = busy; });
+      quantity.max = String(Math.min(99, selected.quantity ?? 99));
+      quantity.disabled = busy || !available;
+      primary.disabled = checkout.disabled = busy || needsReview || !available;
+      primary.firstChild!.textContent = busy ? 'Adding…' : available ? 'Add to cart' : 'Currently unavailable';
     }
-
-    async function handleAddToCart() {
-      if (feedbackEl) feedbackEl.textContent = 'Adding to cart...';
-
-      const { data, error } = await actions.addToCart({
-        productId,
-        variantId: selectedVariantId || undefined,
-        quantity: 1,
-      });
-
-      if (error) {
-        throw new Error(error.message || 'Failed to update cart');
-      }
-
-      const items = data?.cart?.items || [];
-      const itemCount = Array.isArray(items)
-        ? items.reduce((total: number, item: any) => total + Number(item.quantity || 0), 0)
-        : 1;
-
-      dispatchCartUpdated({ itemCount });
-
-      if (feedbackEl) {
-        feedbackEl.textContent = `Cart updated. ${itemCount} item${itemCount === 1 ? '' : 's'} in cart.`;
-      }
-    }
-
-    addToCartButton.addEventListener('click', async () => {
+    choices.forEach(button => button.addEventListener('click', () => {
+      if (busy) return;
+      selected = state.choices.find(choice => choice.id === button.dataset.choice)!;
+      const url=new URL(window.location.href);if(selected.id)url.searchParams.set('variant',selected.id);else url.searchParams.delete('variant');history.replaceState(history.state,'',url);
+      quantity.value = '1'; feedback.textContent = ''; refresh(); showImage(selected.image ?? state.defaultImage);
+    }));
+    root.querySelectorAll<HTMLButtonElement>('[data-gallery-image]').forEach(button => button.addEventListener('click', () => showImage(button.dataset.galleryImage)));
+    const dialog=root.querySelector<HTMLDialogElement>('[data-lightbox]');
+    let imageIndex=0;
+    const displayZoom=()=>{if(!dialog)return;dialog.querySelector<HTMLImageElement>('[data-lightbox-image]')!.src=state.images[imageIndex];dialog.querySelector('[data-image-count]')!.textContent=`${imageIndex+1} / ${state.images.length}`;};
+    const moveImage=(direction:number)=>{imageIndex=(imageIndex+direction+state.images.length)%state.images.length;displayZoom();};
+    root.querySelector('[data-zoom]')?.addEventListener('click',()=>{imageIndex=Math.max(0,state.images.indexOf(root.querySelector<HTMLImageElement>('#product-hero-image')!.getAttribute('src')!));displayZoom();dialog?.showModal();});
+    dialog?.querySelector('[data-close-lightbox]')?.addEventListener('click',()=>dialog.close());
+    dialog?.querySelector('[data-image-previous]')?.addEventListener('click',()=>moveImage(-1));
+    dialog?.querySelector('[data-image-next]')?.addEventListener('click',()=>moveImage(1));
+    dialog?.addEventListener('keydown',event=>{if(event.key==='ArrowLeft'){event.preventDefault();moveImage(-1);}if(event.key==='ArrowRight'){event.preventDefault();moveImage(1);}});
+    dialog?.addEventListener('click',event=>{if(event.target===dialog)dialog.close();});
+    form.addEventListener('submit' , async event => {
+      event.preventDefault();
+      if (busy || needsReview || !form.reportValidity() || selected.price <= 0 || selected.quantity === 0) return;
+      const amount = Number(quantity.value);
+      if (!Number.isInteger(amount) || amount < 1 || amount > Math.min(99, selected.quantity ?? 99)) return;
+      const buyNow = (event.submitter as HTMLButtonElement | null)?.value === 'checkout';
+      let definiteRefusal = false;
+      busy = true; refresh(); feedback.setAttribute('role', 'status'); feedback.textContent = 'Adding to your cart…';
       try {
-        await handleAddToCart();
-      } catch (error) {
-        if (feedbackEl) feedbackEl.textContent = error instanceof Error ? error.message : 'Failed to update cart';
-      }
+        const { data, error } = await actions.addToCart({ productId: state.id, variantId: selected.id ?? undefined, quantity: amount });
+        if (error) { definiteRefusal = ['BAD_REQUEST','NOT_FOUND','TOO_MANY_REQUESTS','CONFLICT','UNAUTHORIZED','FORBIDDEN'].includes(error.code); throw new Error(error.message || 'Could not update your cart. Please try again.'); }
+        const itemCount = (data?.cart?.items ?? []).reduce((sum: number, item: { quantity: number }) => sum + item.quantity, 0);
+        dispatchCartUpdated({ itemCount });
+        feedback.textContent = `Added to your cart. ${itemCount} ${itemCount === 1 ? 'item' : 'items'} ready to review.`;
+        if (buyNow) { window.location.assign('/checkout'); redirecting = true; return; }
+      } catch (cause) {
+        needsReview = !definiteRefusal;
+        feedback.setAttribute('role', 'alert'); feedback.textContent = needsReview ? 'We couldn’t confirm the update. Your item may already be in the cart. Review your cart before adding it again.' : cause instanceof Error ? cause.message : 'Could not update your cart. Please try again.'; feedback.focus({ preventScroll: true });
+      } finally { if (!redirecting) { busy = false; refresh(); } }
     });
-
-    buyNowButton?.addEventListener('click', async () => {
-      try {
-        await handleAddToCart();
-        window.location.href = '/checkout';
-      } catch (error) {
-        if (feedbackEl) feedbackEl.textContent = error instanceof Error ? error.message : 'Failed to update cart';
-      }
-    });
-
-    const activeButton = variantButtons.find((button) => (button as HTMLElement).dataset.variantId === defaultVariantId) || null;
-    setActiveVariant(activeButton);
+    refresh();
   }
-
-  document.addEventListener('astro:page-load', initProductPage);
-  initProductPage();
+  document.addEventListener('astro:page-load', setupProduct);
+  setupProduct();
 </script>
+<style>
+  .product { color: #18201e; padding: 28px 0 60px; }
+  .product :is(a, button, input, summary):focus-visible { outline: 2px solid #4f46e5; outline-offset: 4px; }
+  .product__breadcrumb { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: #646e68; margin-bottom: 32px; }
+  .product__breadcrumb a { text-decoration: underline; text-underline-offset: 4px; }
+  .product__layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: clamp(32px, 6vw, 96px); align-items: start; }
+  .product__hero { position:relative; aspect-ratio: 9 / 10; border-radius: 18px; overflow: hidden; background: #eeefea; display: grid; place-items: center; }
+  .product__hero img { width: 100%; height: 100%; object-fit: cover; }
+  .product__hero > span { font-size: 100px; color: #a7b0a2; }
+  .product__thumbnails { display: flex; gap: 10px; overflow-x: auto; padding: 14px 4px; }
+  .product__thumbnails button { flex: 0 0 70px; width: 70px; height: 80px; border: 2px solid transparent; border-radius: 8px; overflow: hidden; cursor: pointer; padding: 3px; background: transparent; }
+  .product__thumbnails button[aria-pressed="true"] { border-color: #536847; }
+  .product__thumbnails img { width: 100%; height: 100%; object-fit: cover; border-radius: 4px; }
+  .product__details { position: sticky; top: 100px; }
+  .product__eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .15em; color: #646e68; margin: 8px 0 16px; }
+  .product h1 { font-size: clamp(34px, 4vw, 54px); font-weight: 500; letter-spacing: -.05em; line-height: 1.12; margin: 0 0 18px; }
+  .product__price { font-size: 24px; font-variant-numeric: tabular-nums; margin: 0 0 24px; }
+  .product__description { color: #646e68; font-size: 15px; line-height: 1.8; margin-bottom: 32px; white-space: pre-line; }
+  .product__purchase fieldset { border: 0; padding: 0; margin: 0 0 18px; min-width: 0; }
+  .product__purchase legend { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+  .product__choices { display: flex; flex-wrap: wrap; gap: 8px; }
+  .product button { font: inherit; cursor: pointer; }
+  .product__choices button { border: 1px solid #d6dcd2; background: #fff; border-radius: 8px; padding: 11px 14px; text-align: left; font-size: 13px; }
+  .product__choices button[aria-pressed="true"] { border-color: #536847; background: #edf2e8; box-shadow: inset 0 0 0 1px #536847; }
+  .product__choices small { display: block; color: #78664d; font-size: 10px; margin-top: 4px; }
+  .product__stock { font-size: 12px; color: #536847; margin: 18px 0; }
+  .product__buy-row { display: flex; align-items: end; gap: 12px; }
+  .product__quantity { display: grid; gap: 7px; font-size: 11px; }
+  .product__quantity input { width: 76px; height: 50px; border: 1px solid #d6dcd2; border-radius: 8px; background: #fff; text-align: center; font-size: 15px; }
+  .product__add { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex: 1; height: 50px; padding: 0 20px; background: #18201e; color: #fff; border: 0; border-radius: 8px; font-size: 14px !important; }
+  .product__buy-now { width: 100%; height: 48px; background: transparent; border: 1px solid #18201e; border-radius: 8px; margin-top: 10px; font-size: 13px !important; }
+  .product button:disabled { opacity: .5; cursor: not-allowed; }
+  .product__feedback { font-size: 13px; line-height: 1.6; margin: 14px 0 8px; }
+  .product__feedback[role="alert"] { color: #9f1239; }
+  .product__cart-link { font-size: 12px; text-decoration: underline; text-underline-offset: 4px; }
+  .product__assurance { display: flex; align-items: baseline; gap: 10px; margin: 28px 0; font-size: 12px; line-height: 1.7; color: #646e68; }
+  .product__information { padding: 18px 0; border-top: 1px solid #dfe3dd; }
+  .product__information summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+  .product__information p { font-size: 13px; line-height: 1.8; color: #646e68; margin-top: 14px; }
+  .product__zoom{position:absolute;right:14px;bottom:14px;background:#ffffffed;border:0;border-radius:6px;padding:10px 14px;font-size:12px!important;display:flex;gap:16px}
+  .product__lightbox{position:fixed;inset:0;margin:auto;border:0;border-radius:12px;width:min(94vw,1000px);height:min(90vh,1000px);max-height:90dvh;padding:48px 20px 60px;background:#fafbf8;color:#18201e}
+  .product__lightbox::backdrop{background:#18201ec9}.product__lightbox>img{width:100%;height:100%;object-fit:contain}.product__lightbox>button{position:absolute;top:12px;right:14px;background:white;border:1px solid #dfe3dd;border-radius:6px;padding:8px 12px;font-size:13px}.product__lightbox-controls{position:absolute;bottom:12px;left:0;right:0;display:flex;justify-content:center;align-items:center;gap:24px;font-size:12px}.product__lightbox-controls button{width:40px;height:36px;border:1px solid #dfe3dd;border-radius:6px;background:white}
+  .product__related{margin-top:70px;padding-top:32px;border-top:1px solid #dfe3dd}.product__related>div:first-child{display:flex;justify-content:space-between;align-items:baseline;gap:20px;margin-bottom:24px}.product__related h2{font-size:26px;font-weight:500;letter-spacing:-.04em}.product__related>div>a{font-size:12px}.product__related-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}.product__related-grid a>div{aspect-ratio:4/3;background:#eeefea;border-radius:10px;overflow:hidden;display:grid;place-items:center}.product__related-grid img{width:100%;height:100%;object-fit:cover}.product__related h3{font-size:15px;font-weight:600;margin:14px 0 6px}.product__related p{font-size:13px;color:#646e68;margin:0}
+  @media(max-width:520px){.product__related-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.product__related>div:first-child{display:block}.product__related h2{margin-bottom:12px}}
+  @media (max-width: 700px) { .product__layout { grid-template-columns: 1fr; gap: 24px; } .product__details { position: static; } .product__hero { aspect-ratio: 1; } }
+</style>

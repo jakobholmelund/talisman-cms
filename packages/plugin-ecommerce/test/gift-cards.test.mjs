@@ -29,7 +29,7 @@ const schema = await import('../dist/schema.js');
 const { issueAdminGiftCard, startGiftCardPurchase, confirmGiftCardPurchase, getPurchasedGiftCard,
   evaluateGiftCard, setGiftCardActive, getGiftCardsAdmin, getGiftCardReviewsAdmin, resolveGiftCardReview,
   reencryptGiftCardCodes, getGiftCardKeyStatus, giftCardPurchaseHoldStatements,
-  replaceAdminGiftCardCode, refundGiftCardTender } = await import('../dist/gift-cards.js');
+  replaceAdminGiftCardCode, refundGiftCardTender, refundGiftCardOnlyOrder } = await import('../dist/gift-cards.js');
 
 
 /** The D1 shim from shared-components.test.mjs; `beforeNextBatch` runs once before the next batch. */
@@ -1010,5 +1010,31 @@ test('the plugin schema only names gift card columns the migrations create', () 
     const created = new Set(sqlite.prepare('SELECT name FROM pragma_table_info(?)').all(name).map((column) => column.name));
     for (const column of columns) assert.ok(created.has(column.name), `${name}.${column.name} is declared but no migration creates it`);
   }
+  sqlite.close();
+});
+
+
+test('a lost gift-card refund response is recovered once, with immutable amount and actor', async()=>{
+  const {sqlite,DB}=database(),env=giftEnv(DB),api=bindCommerceApi({env,paymentAdapters:[stripe]});
+  const card=await issueAdminGiftCard(env,'admin-1',{amountCents:5000,reason:'Refund recovery test card'});
+  const order=await spend(api,card.code);
+  const input={orderId:order.id,amountCents:1000,reason:'One returned item inspected',requestKey:crypto.randomUUID()};
+  const originalBatch=DB.batch.bind(DB);let lose=true;
+  DB.batch=async statements=>{const result=await originalBatch(statements);if(lose){lose=false;throw new Error('Connection lost after commit');}return result;};
+  const first=await refundGiftCardTender(env,'admin-1',input);
+  const second=await refundGiftCardTender(env,'admin-1',input);
+  assert.equal(first.id,second.id);assert.equal(second.duplicate,true);
+  assert.equal(ledgerBalance(sqlite,card.id),3000);
+  for(const change of [{amountCents:500},{reason:'Different return on same key'}])await assert.rejects(refundGiftCardTender(env,'admin-1',{...input,...change}),/different details/);
+  await assert.rejects(refundGiftCardTender(env,'other-admin',input),/different details/);
+  assert.equal(ledgerBalance(sqlite,card.id),3000);
+  const full={orderId:order.id,reason:'Remaining order refund approved',requestKey:crypto.randomUUID()};
+  lose=true;
+  assert.equal((await refundGiftCardOnlyOrder(env,'admin-1',full)).status,'refunded');
+  assert.equal((await refundGiftCardOnlyOrder(env,'admin-1',full)).duplicate,true);
+  assert.equal(ledgerBalance(sqlite,card.id),5000);
+  assert.equal(row(sqlite,'SELECT gift_card_refunded_cents FROM _ecommerce_orders WHERE id=?',order.id).gift_card_refunded_cents,3000);
+  await assert.rejects(refundGiftCardOnlyOrder(env,'other-admin',full),/different full refund/);
+  assert.equal(row(sqlite,'SELECT inventory_quantity FROM _ecommerce_products WHERE id=?','frame').inventory_quantity,49,'refund does not restock unreceived goods');
   sqlite.close();
 });

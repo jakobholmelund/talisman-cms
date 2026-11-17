@@ -21,3 +21,5 @@ export { receiveReplacementReturn, inspectReplacementReturn } from './replacemen
 export { verifyExchangeCharge } from './recovery-payments';
 
 export { readOrderRecoveryHistory } from './recovery-journal';
+
+export { readAdminCatalogue, readCatalogueSelection, updateCatalogue } from './catalog-admin';

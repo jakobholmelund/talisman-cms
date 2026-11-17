@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css';
+import '../styles/storefront.css';
 import Navigation from '../components/Navigation.astro';
 import Footer from '../components/Footer.astro';
 import { ClientRouter } from 'astro:transitions';
@@ -8,9 +9,13 @@ import DaisyUiThemeInjector from '@talisman-cms/plugin-ui-daisyui/components/Dai
 interface Props {
 	title?: string;
   description?: string;
+  storefront?: boolean;
 }
 
 const { title = "Talisman CMS Showcase", description = "A beautiful showcase built with Talisman CMS and Astro" } = Astro.props;
+const commerce = Astro.props.storefront || /^\/(?:shop|cart|checkout|account)(?:\/|$)/.test(Astro.url.pathname);
+// The navigation contains the shopper’s basket count.
+if (commerce) Astro.response.headers.set('Cache-Control', 'private, no-store');
 ---
 
 <!doctype html>
@@ -23,14 +28,15 @@ const { title = "Talisman CMS Showcase", description = "A beautiful showcase bui
     <meta name="description" content={description} />
 		<title>{title}</title>
     <DaisyUiThemeInjector />
-    <ClientRouter />
+    {!Astro.url.pathname.startsWith('/account') && <ClientRouter />}
 	</head>
-	<body class="flex flex-col relative min-h-screen">
+	<body data-theme={commerce ? 'light' : undefined} class="flex flex-col relative min-h-screen">
     <div class="fixed inset-0 -z-10 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-base-300/40 via-base-200/20 to-transparent"></div>
-    <Navigation />
-		<main class="flex-grow pt-24 pb-16 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full">
+    <a class="store-skip" href="#main-content">Skip to content</a>
+    <Navigation commerce={commerce} />
+		<main id="main-content" tabindex="-1" class="flex-grow pt-24 pb-16 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full">
 			<slot />
 		</main>
-    <Footer />
+    {commerce ? <footer class="store-footer"><a href="/shop">Talisman<span>Considered goods. Everyday possibilities.</span></a><nav aria-label="Store footer"><a href="/shop">Explore the collection</a><a href="/account" data-astro-reload>Your orders</a><a href="/cart">Your cart</a></nav><p>From your first find to what comes next. Orders, delivery updates and returns, all together.</p></footer> : <Footer />}
 	</body>
 </html>

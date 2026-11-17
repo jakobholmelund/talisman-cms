@@ -11,7 +11,8 @@ const { orderId } = Astro.props;
 <script>
   import { getOrderStatus } from '@talisman-cms/plugin-ecommerce/browser';
   import { renderOrderTracking } from './order-tracking-view';
-  for (const root of document.querySelectorAll<HTMLElement>('[data-talisman-order-tracking]')) {
+  function setupTracking() { for (const root of document.querySelectorAll<HTMLElement>('[data-talisman-order-tracking]')) {
+    if(root.dataset.bound) continue; root.dataset.bound='true';
     const message = root.querySelector<HTMLElement>('[data-tracking-status]')!;
     const content = root.querySelector<HTMLElement>('[data-tracking-details]')!;
     const button = root.querySelector<HTMLButtonElement>('[data-refresh-tracking]')!;
@@ -28,9 +29,13 @@ const { orderId } = Astro.props;
         message.textContent = content.childElementCount ? 'Could not refresh. Displayed details may be out of date; please try again.' : 'Could not load parcel details. Please try again.';
       } finally { busy = false; button.disabled = false; }
     };
+    const refreshOrder=(event:Event)=>{if((event as CustomEvent).detail?.orderId===root.dataset.orderId)void load();};
+    document.addEventListener('talisman:refresh-order',refreshOrder);
+    document.addEventListener('astro:before-swap',()=>document.removeEventListener('talisman:refresh-order',refreshOrder),{once:true});
     button.addEventListener('click', () => void load());
     void load();
-  }
+  }}
+  document.addEventListener('astro:page-load',setupTracking);setupTracking();
 </script>
 <style is:global>
   .talisman-order-tracking { margin: 2rem 0; max-width: 48rem; overflow-wrap: anywhere; }
@@ -38,7 +43,8 @@ const { orderId } = Astro.props;
   .talisman-order-tracking h3 { font-size: 1.1rem; margin: 1.5rem 0 .5rem; }
   .talisman-order-tracking ul { padding-left: 1.5rem; margin: .75rem 0; }
   .talisman-order-tracking li { margin: .5rem 0; }
-  .talisman-order-tracking article { padding: 1rem 0; border-top: 1px solid #aaa5; }
+  .talisman-order-tracking article { padding: 1rem; border: 1px solid #dfe3dd; border-radius:10px; margin:14px 0; background:#fafbf8; }
+  .talisman-order-tracking h4 {font-weight:600;font-size:14px;margin:0 0 10px}
   .talisman-order-tracking button { padding: .6rem 1rem; border: 1px solid currentColor; border-radius: .5rem; font: inherit; background: transparent; cursor: pointer; }
   .talisman-order-tracking button:disabled { opacity: .6; cursor: wait; }
 </style>

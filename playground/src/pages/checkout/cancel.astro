@@ -1,31 +1,24 @@
 ---
 import Layout from '../../layouts/Layout.astro';
 import { env as cfEnv } from 'cloudflare:workers';
-import { createCommerceApi } from '../../lib/commerce';
-
-const orderId = Astro.url.searchParams.get('order');
-if (orderId) {
-  const api = createCommerceApi(cfEnv as any);
-  await api.orders.cancel(orderId);
-}
+import { getOrderSummary } from '../../lib/commerce';
+Astro.response.headers.set('Cache-Control', 'private, no-store');
+const summary = await getOrderSummary(cfEnv as any, Astro.url.searchParams.get('order'), Astro.cookies);
+const pending = summary?.order.status === 'pending';
+const cancelled = summary?.order.status === 'cancelled';
+if (!summary) Astro.response.status = 404;
 ---
-
-<Layout title="Checkout Cancelled | Talisman CMS Showcase" description="Cancelled checkout state for the Talisman storefront demo.">
-  <section class="py-12 animate-fade-in-up">
-    <div class="mx-auto max-w-2xl rounded-[2.5rem] border border-amber-200 bg-amber-50 p-8 text-center shadow-sm">
-      <p class="text-sm font-semibold uppercase tracking-[0.3em] text-amber-700">Checkout cancelled</p>
-      <h1 class="mt-3 text-4xl font-black tracking-tight text-amber-950">Your cart is unlocked again</h1>
-      <p class="mt-3 text-sm text-amber-900">
-        Any pending order for this checkout was marked as cancelled, and you can return to the cart or retry checkout.
-      </p>
-      <div class="mt-8 flex flex-wrap justify-center gap-3">
-        <a href="/checkout?cancelled=1" class="inline-flex h-11 items-center justify-center rounded-full bg-amber-900 px-6 text-sm font-medium text-white transition-colors hover:bg-amber-950">
-          Retry checkout
-        </a>
-        <a href="/cart" class="inline-flex h-11 items-center justify-center rounded-full border border-amber-300 bg-white px-6 text-sm font-medium text-amber-950 transition-colors hover:bg-amber-100">
-          Review cart
-        </a>
-      </div>
-    </div>
-  </section>
+<Layout title="Review checkout | Talisman" description="Check your order before returning to your cart.">
+  <section class="store-page"><div class="store-panel checkout-cancel" data-cancel-checkout data-order-id={summary?.order.id}>
+    <p class="store-eyebrow">Your checkout</p><h1>{pending ? 'Need to make a change?' : cancelled ? 'Your checkout is cancelled.' : summary ? 'Check your order first.' : 'This order isn’t available here.'}</h1>
+    <p>{pending ? 'Cancel this pending checkout to edit your cart. We’ll check the payment status first so a completed payment stays protected.' : cancelled ? 'You can return to your cart and start again.' : summary ? 'This checkout is no longer pending. Open your order for its current payment status.' : 'Open the order link from the browser you used at checkout, or sign in to the account used for your purchase.'}</p>
+    <p data-cancel-feedback role="status" tabindex="-1"></p>
+    <div class="cancel-actions">{pending && <button type="button" class="store-button" data-cancel-button>Cancel checkout and edit cart</button>}{summary && <a href={`/checkout/success?order=${encodeURIComponent(summary.order.id)}`} class="store-button secondary">View order status</a>}<a href="/cart" class="store-text-link">Return to cart</a></div>
+  </div></section>
 </Layout>
+<script>
+  import {cancelCheckout} from '@talisman-cms/plugin-ecommerce/browser';
+  function setup(){const root=document.querySelector<HTMLElement>('[data-cancel-checkout]');if(!root||root.dataset.bound)return;root.dataset.bound='true';const button=root.querySelector<HTMLButtonElement>('[data-cancel-button]');const feedback=root.querySelector<HTMLElement>('[data-cancel-feedback]')!;button?.addEventListener('click',async()=>{button.disabled=true;feedback.textContent='Checking payment status…';try{const result=await cancelCheckout(root.dataset.orderId!);if(result.status==='cancelled'){window.location.assign('/cart');return;}feedback.textContent='This order could not be cancelled. View its status before trying again.';feedback.setAttribute('role','alert');}catch(error){feedback.textContent=error instanceof Error?error.message:'Could not confirm cancellation. Please try again.';feedback.setAttribute('role','alert');button.disabled=false;}feedback.focus();});}
+  document.addEventListener('astro:page-load',setup);setup();
+</script>
+<style>.checkout-cancel{max-width:700px;margin:32px auto}.checkout-cancel h1{font-size:36px;line-height:1.2;letter-spacing:-.04em;margin:16px 0}.checkout-cancel p:not(.store-eyebrow){font-size:15px;color:#646e68;line-height:1.8}.cancel-actions{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-top:28px}[data-cancel-feedback][role=alert]{color:#9f1239!important}</style>

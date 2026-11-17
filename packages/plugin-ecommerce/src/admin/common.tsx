@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, type ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 import { adminRequest as requestAdminApi } from 'talisman-cms/ui/sdk';
-import { adminTestCheckout } from 'virtual:talisman-cms/ecommerce-admin';
+import { adminTestCheckout, productsCollectionSlug } from 'virtual:talisman-cms/ecommerce-admin';
 import { formatMoney, fromMinorUnits, toMinorUnits } from '@talisman-cms/plugin-ecommerce/money';
 import { storeCurrency } from './currency';
 import './commerce-admin.css';
@@ -59,12 +59,18 @@ const tools: Array<{ key: CommerceTool; label: string }> = [
   ...(adminTestCheckout ? [{ key: 'test-checkout' as const, label: 'Test checkout' }] : []),
 ];
 
+/** Keep case references in the fragment; each destination reloads its authorized record. */
+export function CommerceCaseLink({tool,kind,id,orderId,children}:{tool:CommerceTool;kind:string;id:string;orderId:string;children:ReactNode}) {
+  return <Link to="/extensions/$extensionPath" params={{extensionPath:`commerce-${tool}`}} hash={new URLSearchParams({kind,id,orderId}).toString()}>{children}</Link>;
+}
+
 export function CommerceAdmin({ current, children }: { current: CommerceTool; children: ReactNode }) {
   const primary = new Set<CommerceTool>(['attention', 'orders', 'stock', 'returns']);
   const toolLink = (tool: typeof tools[number]) => <Link key={tool.key} to="/extensions/$extensionPath" params={{ extensionPath: `commerce-${tool.key}` }} aria-current={current === tool.key ? 'page' : undefined}>{tool.label}</Link>;
   return <div className="ecom-admin">
     <nav className="ecom-admin__nav" aria-label="Commerce tools">
       <Link to="/commerce">Commerce workspace</Link>
+      <Link to={`/commerce/${productsCollectionSlug}`}>Products</Link>
       {tools.filter(tool => primary.has(tool.key)).map(toolLink)}
       <details key={current} className="ecom-admin__more-tools" open={!primary.has(current)}><summary>More commerce tools</summary><div>{tools.filter(tool => !primary.has(tool.key)).map(toolLink)}</div></details>
     </nav>

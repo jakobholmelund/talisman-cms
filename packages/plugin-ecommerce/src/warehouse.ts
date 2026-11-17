@@ -163,9 +163,9 @@ const locations = sql`WITH locations AS (
  UNION ALL SELECT 'component', id, name, sku, quantity, updated_at FROM _ecommerce_components
 )`;
 export async function listStockLocations(env: TalismanEnv, input: unknown = {}) {
-  const v = z.object({ search: z.string().trim().max(100).default(''), offset: z.coerce.number().int().min(0).max(1000000).default(0) }).strict().parse(input);
+  const v = z.object({ search: z.string().trim().max(100).default(''), offset: z.coerce.number().int().min(0).max(1000000).default(0), targetType: z.enum(['product','variant','stock','component']).optional(), targetId: id.optional() }).strict().refine(value => Boolean(value.targetType) === Boolean(value.targetId), 'Choose a stock type and ID together').parse(input);
   const pattern = `%${v.search.replace(/[\\%_]/g, c => `\\${c}`)}%`, db = commerceDb(env);
-  const where = sql`(name LIKE ${pattern} ESCAPE '\\' OR COALESCE(sku, '') LIKE ${pattern} ESCAPE '\\')`;
+  const where = sql`(name LIKE ${pattern} ESCAPE '\\' OR COALESCE(sku, '') LIKE ${pattern} ESCAPE '\\') AND ${v.targetType ? sql`type = ${v.targetType} AND id = ${v.targetId}` : sql`1`}`;
   const [rows, total] = await db.batch([
     db.all<{ type: keyof typeof STOCK_COLUMNS; id: string; name: string; sku: string | null; quantity: number; updated: number }>(sql`${locations} SELECT * FROM locations WHERE ${where} ORDER BY name, type, id LIMIT 50 OFFSET ${v.offset}`),
     db.all<{ n: number }>(sql`${locations} SELECT count(*) n FROM locations WHERE ${where}`),

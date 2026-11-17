@@ -9,6 +9,7 @@ import { evaluateGiftCard } from '../gift-cards';
 import { readCartSessionToken } from '../cookies';
 import { CODE_CHECK_LIMIT_MESSAGE, codeChecksOverBasketLimit, codeChecksOverNetworkLimit } from '../code-check-limits';
 import { minimumChargeAmount } from '../money';
+import { chooseShippingRate, shippingCharge } from '../shipping';
 import { StoreSettingsError, readStoreSettings, reportStoreSettingsError } from '../store-settings';
 
 // `customerEmail` is still accepted in any form so existing storefronts keep working, but the preview
@@ -16,6 +17,8 @@ import { StoreSettingsError, readStoreSettings, reportStoreSettingsError } from 
 // lengths only bound the body; a code of the wrong shape gets the same refusal as any other.
 const previewSchema = z.object({ code: z.string().trim().max(200).optional(),
   giftCardCode: z.string().trim().max(200).optional(),
+  shippingCountry: z.string().trim().length(2).optional(),
+  shippingRateId: z.string().regex(/^[a-z0-9_-]{1,40}$/).optional(),
   customerEmail: z.unknown().optional() }).strict();
 
 export const POST: APIRoute = async ({ request, cookies }) => {
@@ -42,7 +45,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   if (!token) return Response.json({ error: 'Basket not found' }, { status: 404, headers });
   try {
     // Invalid store settings stop the preview before the basket or account is read.
-    readStoreSettings(runtimeEnv);
+    const settings = readStoreSettings(runtimeEnv);
     const account = await findCustomerSession(runtimeEnv, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
     const api = bindCommerceApi({ env: runtimeEnv });
     // Links the browser basket to a signed-in account like the cart route, but never creates a basket.
@@ -59,9 +62,15 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       lines: quote.lines.map(line => ({ productId: line.productId,
         quantity: line.quantity, priceAtPurchase: line.unitAmount }))
     }) : null;
-    const creditApplied = Math.min(Math.max(0, account?.creditBalance ?? 0),
-      Math.max(0, quote.totalAmount - (promotion?.amount ?? 0) - minimumChargeAmount(quote.currency)));
-    const afterCredit = quote.totalAmount - (promotion?.amount ?? 0) - creditApplied;
+    const merchandise = quote.totalAmount - (promotion?.amount ?? 0);
+    // Older storefronts can still request a merchandise-only preview. With a destination, use
+    // checkout's canonical delivery price, including free-delivery thresholds after discounts.
+    const rate = quote.requiresShipping && parsed.data.shippingCountry && settings.shippingRates.length
+      ? chooseShippingRate(settings, parsed.data.shippingCountry.toUpperCase(), parsed.data.shippingRateId) : null;
+    const shipping = rate ? shippingCharge(rate, merchandise) : 0;
+    const creditApplied = Math.min(Math.max(0, account?.creditBalance ?? 0), merchandise,
+      Math.max(0, merchandise + shipping - minimumChargeAmount(quote.currency)));
+    const afterCredit = merchandise + shipping - creditApplied;
     const giftCard = parsed.data.giftCardCode
       ? await evaluateGiftCard(runtimeEnv, parsed.data.giftCardCode, afterCredit) : null;
     return Response.json({ code: promotion?.code ?? null, type: promotion?.type ?? null,

@@ -1,0 +1,11 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import '../../styles/customer-hub.css';
+Astro.response.headers.set('Cache-Control', 'private, no-store');
+Astro.response.headers.set('Referrer-Policy', 'no-referrer');
+Astro.response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+---
+<Layout title="Your secure sign-in | Talisman" description="Confirm your email to open your Talisman account.">
+  <section class="store-page hub-verify" data-account-verify><div class="store-panel hub-signin"><span class="hub-monogram" aria-hidden="true">T</span><p class="store-eyebrow">Your Talisman</p><h1>One last step.</h1><p data-verify-detail>Checking your secure sign-in link…</p><form data-verify-form hidden><button type="submit" class="store-button">Confirm and sign in →</button></form><p data-verify-feedback role="status" aria-live="polite"></p><a href="/account" data-new-signin class="store-text-link">Use another email or request a new link</a><p class="hub-signin-footnote">Only continue if this is your email. Opening this page alone doesn’t sign you in.</p><noscript><p>Please enable JavaScript to confirm your secure sign-in link.</p></noscript></div></section>
+</Layout>
+<script>import '../../lib/customer-hub';</script>

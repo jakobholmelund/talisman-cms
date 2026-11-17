@@ -103,3 +103,27 @@ test('a lost cart reply refreshes authoritative state before the next queued int
     assert.deepEqual(sent, [3,4]); assert.equal(state.items[0].quantity, 4);
   } finally { Object.assign(globalThis, saved); }
 });
+
+test('direct quantities and undo are saved against current server state, including new prices', { skip: needsTypeStripping }, async () => {
+  const saved = globalThis.document;
+  globalThis.document = { querySelectorAll: () => [] };
+  try {
+    const { createCartUpdateQueue } = await import('../src/components/cart-view.ts');
+    const state = {items:[{...poster}],locked:false,currency:'usd'};
+    const sent=[];
+    const queue=createCartUpdateQueue(state,async items=>{
+      sent.push(items.map(item=>item.quantity));
+      return {items:items.map(({productId,quantity})=>({productId,quantity})),quote:{currency:'usd',lines:items.map(item=>({productId:item.productId,unitAmount:1600,lineTotal:1600*item.quantity}))}};
+    },()=>{},()=>{});
+    await queue('quantity','poster','',4);
+    assert.equal(state.items[0].quantity,4);
+    await queue('remove','poster'); assert.equal(state.items.length,0);
+    await queue('restore','poster','',4);
+    assert.equal(state.items[0].productName,'Poster');
+    assert.equal(state.items[0].lineTotal,6400);
+    await queue('quantity','poster','',0);
+    await queue('quantity','poster','',1.5);
+    await queue('quantity','poster','',100);
+    assert.deepEqual(sent,[[4],[],[4]],'invalid direct edits never remove a line or write');
+  } finally {globalThis.document=saved;}
+});

@@ -1,4 +1,6 @@
 ---
+import { readStoreSettings } from '@talisman-cms/plugin-ecommerce';
+import { deliveryDetails } from '../lib/delivery';
 import Layout from '../layouts/Layout.astro';
 import { env as cfEnv } from 'cloudflare:workers';
 import CartView from '@talisman-cms/plugin-ecommerce/components/CartView.astro';
@@ -8,22 +10,28 @@ import {
   getPendingOrderForCart,
 } from '../lib/commerce';
 
+Astro.response.headers.set('Cache-Control', 'private, no-store');
 const sessionToken = getCartSessionToken(Astro.cookies, { create: true, secure: Astro.url.protocol === 'https:' });
-const cartState = await getHydratedCart(cfEnv as any, sessionToken);
+const cartState = await getHydratedCart(cfEnv as any, sessionToken, Astro.cookies);
+let delivery;
+try { delivery = deliveryDetails(readStoreSettings(cfEnv)); } catch { /* Checkout reports unavailable configuration. */ }
 const pendingOrder = await getPendingOrderForCart(cfEnv as any, cartState.cart?.id);
 ---
 
-<Layout title="Cart | Talisman CMS Showcase" description="Review the items in your Talisman storefront cart.">
-  <section class="py-12 animate-fade-in-up">
-    <div class="mb-8 flex items-end justify-between border-b border-gray-100 pb-4">
+<Layout title="Your cart | Talisman" description="Review the items in your Talisman storefront cart.">
+  <section class="store-page">
+    <div class="store-heading">
       <div>
-        <p class="text-sm font-semibold uppercase tracking-[0.3em] text-brand-600">Cart</p>
-        <h1 class="mt-2 text-4xl font-black tracking-tight text-gray-900">Your shopping cart</h1>
+        <p class="store-eyebrow">Cart</p>
+        <h1 >Good choices.</h1>
       </div>
-      <a href="/shop" class="text-sm font-medium text-brand-600 transition-colors hover:text-brand-700">Keep shopping</a>
+      <a href="/shop" class="store-text-link">Keep shopping</a>
     </div>
 
+    {Astro.url.searchParams.get('checkout') === 'unavailable' && <p class="store-notice" role="alert">Checkout is temporarily unavailable. Your cart is here when you’re ready to try again.</p>}
     <CartView
+      delivery={delivery}
+      pricingError={cartState.pricingError}
       items={cartState.items}
       locked={cartState.locked}
       pendingOrderId={pendingOrder?.id ?? null}

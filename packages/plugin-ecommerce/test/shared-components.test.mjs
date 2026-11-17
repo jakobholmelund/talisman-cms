@@ -1404,7 +1404,7 @@ test('an administrator can fully refund a gift-card-only order with an audit rea
   assert.equal(sqlite.prepare('SELECT admin_actor FROM _ecommerce_gift_card_order_refunds WHERE order_id = ?')
     .get(order.id).admin_actor, 'admin-1');
   await assert.rejects(refundGiftCardOnlyOrder({ DB }, 'admin-1', { orderId: order.id,
-    reason: 'Duplicate refund attempt' }), /Only paid/);
+    reason: 'Duplicate refund attempt' }), /different full refund/);
   sqlite.close();
 });
 

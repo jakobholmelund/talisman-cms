@@ -54,7 +54,10 @@ try {
     }
   }
 
-  window.addEventListener(eventName, (event) => {
-    updateCartCountBadges(event.detail?.itemCount);
-  });
+  // A navigation or a second badge must not install another lasting window listener.
+  window.__talismanCartBadgeEvents ||= new Set();
+  if (!window.__talismanCartBadgeEvents.has(eventName)) {
+    window.__talismanCartBadgeEvents.add(eventName);
+    window.addEventListener(eventName, (event) => updateCartCountBadges(event.detail?.itemCount));
+  }
 </script>

@@ -15,7 +15,7 @@ export const ORDERS_PAGE_SIZE = 50;
 /** The largest page a request may ask for. */
 export const ORDERS_PAGE_MAX = 100;
 
-export type OrdersView = 'awaiting' | 'recent';
+export type OrdersView = 'awaiting' | 'recent' | 'partial' | 'shipped' | 'refunded' | 'disputed';
 export type FulfillmentStatus = 'unfulfilled' | 'partially_fulfilled' | 'fulfilled';
 
 /** Invalid input to the orders queue or to a shipment write. The admin route answers it with 400. */
@@ -35,6 +35,10 @@ const VIEWS: Record<OrdersView, { where: SQL; ascending: boolean }> = {
   awaiting: { where: sql`${ordersTable.status} IN ('paid','partially_refunded') AND ${ordersTable.fulfillmentStatus} <> 'fulfilled' AND ${REAL_ORDER}`, ascending: true },
   // Real orders past checkout, newest first.
   recent: { where: sql`${ordersTable.status} NOT IN ('pending','cancelled','draft') AND ${REAL_ORDER}`, ascending: false },
+  partial: { where: sql`${ordersTable.status} IN ('paid','partially_refunded') AND ${ordersTable.fulfillmentStatus} = 'partially_fulfilled' AND ${REAL_ORDER}`, ascending: true },
+  shipped: { where: sql`${ordersTable.status} NOT IN ('pending','cancelled','draft') AND ${ordersTable.fulfillmentStatus} = 'fulfilled' AND ${REAL_ORDER}`, ascending: false },
+  refunded: { where: sql`${ordersTable.status} IN ('refunded','partially_refunded') AND ${REAL_ORDER}`, ascending: false },
+  disputed: { where: sql`${ordersTable.status} = 'disputed' AND ${REAL_ORDER}`, ascending: true },
 };
 
 /** The order columns the queue lists, with the amounts `orderAmounts` labels. */
@@ -52,7 +56,7 @@ type Shipment = { id: string; createdAt: string; adminActor: string; note: strin
 const optionalText = (max: number) => z.string().trim().max(max).nullish().transform((value) => value || null);
 
 const listSchema = z.object({
-  view: z.enum(['awaiting', 'recent']).default('awaiting'),
+  view: z.enum(['awaiting', 'recent', 'partial', 'shipped', 'refunded', 'disputed']).default('awaiting'),
   // Room for an order id of about 3,000 ASCII characters; checkout writes ids of 40.
   cursor: z.string().max(4096).nullish(),
   limit: z.number().int().min(1).max(ORDERS_PAGE_MAX).default(ORDERS_PAGE_SIZE),
@@ -163,7 +167,9 @@ export async function listCommerceOrdersAdmin(env: TalismanEnv, options: {
     // Order emails have an index on lower(customer_email), `_ecommerce_orders_customer_email_idx`.
     conditions.push(eq(sql`lower(${ordersTable.customerEmail})`, values.query.toLowerCase()));
   } else if (values.query) {
-    conditions.push(eq(ordersTable.id, values.query));
+    const reference = values.query.match(/^TAL-([0-9a-f]{12})$/i)?.[1];
+    // References are display/search aids. If two IDs share a suffix, return both for staff to disambiguate.
+    conditions.push(reference ? sql`lower(substr(${ordersTable.id}, -13)) = ${`-${reference.toLowerCase()}`}` : eq(ordersTable.id, values.query));
   }
   if (values.cursor) {
     // A row comparison, so the page continues through the index's (created_at, id) order.

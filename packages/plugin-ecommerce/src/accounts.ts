@@ -1,4 +1,6 @@
 export { manageShopperData, ShopperPrivacyError } from './shopper-privacy';
+export { readCustomerHub } from './customer-hub';
+export { orderReference, customerOrderPath, customerOrderDestination } from './order-reference';
 import { and, count, eq, gt, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { TalismanEnv } from 'talisman-cms/client';
 import { commerceDb } from './db';

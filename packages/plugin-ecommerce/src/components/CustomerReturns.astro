@@ -4,7 +4,7 @@ const {orderId}=Astro.props;
 ---
 <section class="talisman-customer-returns" data-customer-returns data-order-id={orderId} aria-label="Return requests">
   <h2>Return requests</h2>
-  <p>Request a return for received items. Wait for staff approval and return instructions before sending goods. Receiving goods and any refund are handled separately.</p>
+  <p>Need a different fit, or something not quite right? Request a return or exchange for received items here.</p><ol class="returns-steps" aria-label="How returns work"><li><strong>1. Make your request</strong><span>Choose items, quantities and a reason.</span></li><li><strong>2. Wait for approval</strong><span>Follow the store’s instructions before sending anything.</span></li><li><strong>3. Follow the progress</strong><span>Track inspection, refunds or your replacement here.</span></li></ol>
   <p data-return-status role="status" aria-live="polite">Loading return requests…</p>
   <div data-return-history></div>
   <div data-refund-history aria-label="Return refunds"></div>
@@ -29,9 +29,11 @@ const {orderId}=Astro.props;
 </section>
 <script>
   import {mountCustomerReturns} from './customer-returns-view';
-  for(const root of document.querySelectorAll<HTMLElement>('[data-customer-returns]')) mountCustomerReturns(root);
+  function setupReturns(){for(const root of document.querySelectorAll<HTMLElement>('[data-customer-returns]')) mountCustomerReturns(root);}
+  document.addEventListener('astro:page-load',setupReturns);setupReturns();
 </script>
 <style is:global>
+  .returns-steps{list-style:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;padding:18px 0;margin:16px 0;border-block:1px solid #dfe3dd}.returns-steps strong{display:block;font-size:13px;margin-bottom:7px}.returns-steps span{display:block;font-size:12px;color:#646e68;line-height:1.7}@media(max-width:600px){.returns-steps{grid-template-columns:1fr;gap:14px}}
   .talisman-customer-returns{margin:2rem 0;max-width:48rem;overflow-wrap:anywhere}
   .talisman-customer-returns h2{font-size:1.5rem;margin:1rem 0}
   .talisman-customer-returns article{border-top:1px solid #aaa5;padding:1rem 0}

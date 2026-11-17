@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+import { catalogueFlow } from './catalogue-flow.mjs';
+import { existingProductFlow } from './existing-product-flow.mjs';
+import { productWorkspaceFlow } from './product-workspace-flow.mjs';
+import { commerceJourneyFlow } from './commerce-journey-flow.mjs';
+import { customerHubFlow } from './customer-hub-flow.mjs';
+import { storefrontFlow } from './storefront-flow.mjs';
 import { commerceTriageFlow } from './commerce-triage-flow.mjs';
 // Browser checks for the admin SPA. Drives Google Chrome through playwright-core against a running
 // playground build (astro preview / wrangler dev) and writes a JSON report. No test runner: every step
@@ -436,14 +442,14 @@ function variantGroupCard(page, groupName) {
   return page
     .locator('div')
     .filter({ has: page.getByRole('button', { name: `Delete variant group ${groupName}`, exact: true }) })
-    .filter({ has: page.getByLabel('Group Name') })
+    .filter({ has: page.getByLabel('Option name', {exact:true}) })
     .last();
 }
 
 function variantValueCard(scope, page, valueLabel) {
   return scope
-    .locator('div')
-    .filter({ has: page.getByRole('button', { name: `Delete variant value ${valueLabel}`, exact: true }) })
+    .locator('details.ecom-variant-row')
+    .filter({ has: page.getByRole('button', { name: `Delete variant value ${valueLabel}`, exact: true, includeHidden: true }) })
     .filter({ has: page.getByLabel('Stock Quantity') })
     .last();
 }
@@ -525,6 +531,12 @@ const steps = {
   'promotions-workflow': ctx => promotionsFlow(ctx, { fail, expectVisible, expectHidden, expectValue, expectNoAlert, waitUntil }),
 
   'commerce-warehouse': ctx => warehouseFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
+  'commerce-journey': ctx => commerceJourneyFlow(ctx, {expectVisible,waitUntil}),
+  'product-catalogue': ctx => catalogueFlow(ctx, {expectVisible,waitUntil,makePng}),
+  'existing-product': ctx => existingProductFlow(ctx, {expectVisible,waitUntil,makePng}),
+  'product-workspace': ctx => productWorkspaceFlow(ctx, {fail,expectVisible,expectHidden,expectValue,waitUntil,makePng}),
+  'customer-hub': ctx => customerHubFlow(ctx, {expectVisible,waitUntil}),
+  storefront: ctx => storefrontFlow(ctx, {expectVisible,waitUntil}),
   'customer-exchange': ctx => customerExchangeFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'commerce-recoveries': ctx => commerceRecoveryFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
   'commerce-purchasing': ctx => commercePurchasingFlow(ctx, { fail, expectVisible, expectHidden, expectValue, waitUntil }),
@@ -1868,14 +1880,16 @@ const steps = {
     page.on('request', onRequest);
 
     await openEntry(page, 'products', productId, 'commerce');
-    const optionsHeading = page.getByRole('heading', { name: 'Options & stock' });
+    const optionsHeading = page.getByRole('heading', { name: 'Variants & inventory' });
     await expectVisible(optionsHeading, 'the "Options & stock" configurator');
 
-    await page.getByRole('button', { name: 'Add Variant Group', exact: true }).click();
-    const groupNameInputs = page.getByLabel('Group Name');
+    await page.getByText('Advanced option setup', {exact:true}).click();
+    await page.getByRole('button', { name: 'Add option set manually', exact: true }).click();
+    const groupNameInputs = page.getByLabel('Option name', {exact:true});
     await expectVisible(groupNameInputs.last(), 'the new variant group card');
+    if (!await groupNameInputs.last().evaluate(node => node === document.activeElement)) fail('new variant group did not focus its name');
     await groupNameInputs.last().fill(groupName);
-    const createGroup = page.getByRole('button', { name: 'Create Group', exact: true });
+    const createGroup = page.getByRole('button', { name: 'Create option set', exact: true });
     const groupResponse = await clickAndAwaitResponse(
       page,
       createGroup.last(),
@@ -1888,34 +1902,85 @@ const steps = {
 
     const groupCard = variantGroupCard(page, groupName);
     await expectVisible(groupCard, `the card of the group "${groupName}"`);
-    await groupCard.getByRole('button', { name: 'Add Value', exact: true }).click();
-    const valueLabelInputs = groupCard.getByLabel('Value Label');
+    await groupCard.getByRole('button', { name: 'Add a choice', exact: true }).click();
+    const valueLabelInputs = groupCard.getByLabel('Choice name');
     await expectVisible(valueLabelInputs.last(), 'the new value card');
+    if (!await valueLabelInputs.last().evaluate(node => node === document.activeElement)) fail('new variant value did not focus its label');
     await valueLabelInputs.last().fill(valueLabel);
     if (!await groupCard.getByLabel('Stock Quantity').last().isDisabled()) fail('options stock can bypass the audited tools');
     const valueResponse = await clickAndAwaitResponse(
       page,
-      groupCard.getByRole('button', { name: 'Create Value', exact: true }).last(),
+      groupCard.getByRole('button', { name: 'Create variant', exact: true }).last(),
       apiResponse('POST', apiPath('/ecommerce/variants')),
       'creating the variant value'
     );
     if (!valueResponse.ok()) fail(`creating the variant value was refused with ${await responseSummary(valueResponse)}`);
     await expectVisible(page.getByText(`Saved variant value "${valueLabel}".`), 'the "Saved variant value" notice');
     await expectNoAlert(page, 'after creating the value');
+    // Saving one row must not replace an unfinished edit in another row.
+    await groupCard.getByRole('button', { name: 'Add a choice', exact: true }).click();
+    await groupCard.getByLabel('Choice name').last().fill(`${valueLabel} second`);
+    await groupCard.getByRole('button', { name: 'Create variant', exact: true }).last().click();
+    await expectVisible(page.getByText(`Saved variant value "${valueLabel} second".`), 'second value saved');
+    const firstValue = variantValueCard(groupCard, page, valueLabel);
+    const secondValue = variantValueCard(groupCard, page, `${valueLabel} second`);
+    if (await firstValue.getAttribute('open') === null) await firstValue.locator('summary').first().click();
+    if (await secondValue.getAttribute('open') === null) await secondValue.locator('summary').first().click();
+    await firstValue.getByLabel('SKU (optional)').fill(`FIRST-${ctx.runId}`);
+    await secondValue.getByLabel('SKU (optional)').fill(`SECOND-${ctx.runId}`);
+    await firstValue.getByRole('button', { name: 'Save variant', exact: true }).click();
+    await expectVisible(page.getByText(`Saved variant value "${valueLabel}".`), 'first value update saved');
+    await expectValue(secondValue.getByLabel('SKU (optional)'), `SECOND-${ctx.runId}`, 'neighboring variant draft survives another value save');
+    await secondValue.getByRole('button', { name: 'Save variant', exact: true }).click();
+    await expectVisible(page.getByText(`Saved variant value "${valueLabel} second".`), 'neighboring draft saved');
+
 
     await page.reload();
     await expectVisible(optionsHeading, 'the configurator after reloading');
     const reloadedGroup = variantGroupCard(page, groupName);
     await expectVisible(reloadedGroup, `the group "${groupName}" after reloading`);
-    await expectValue(reloadedGroup.getByLabel('Group Name'), groupName, 'the Group Name after reloading');
+    await reloadedGroup.getByText('Option name & defaults', {exact:true}).click();
+    await expectValue(reloadedGroup.getByLabel('Option name', {exact:true}), groupName, 'the Group Name after reloading');
     const reloadedValue = variantValueCard(reloadedGroup, page, valueLabel);
     await expectVisible(reloadedValue, `the value "${valueLabel}" after reloading`);
-    await expectValue(reloadedValue.getByLabel('Value Label'), valueLabel, 'the Value Label after reloading');
+    await reloadedValue.locator('summary').first().click();
+    await expectValue(reloadedValue.getByLabel('Choice name'), valueLabel, 'the Value Label after reloading');
     await expectValue(reloadedValue.getByLabel('Stock Quantity'), stock, 'the Stock Quantity after reloading');
     page.off('request', onRequest);
     if (groupReads === 0) fail('the product editor did not read the variant groups');
     if (unscopedReads.length > 0) fail(`the product editor listed whole collections or another product's rows: ${unscopedReads.join(', ')}`);
+    await reloadedValue.getByRole('button', {name:'Manage inventory',exact:true}).click();
+    await expectVisible(page.getByRole('region', {name:'Product inventory',exact:true}), 'inline inventory for the selected variant');
+    await expectVisible(page.getByRole('form', {name:'Stock change',exact:true}), 'scoped stock adjustment');
     return `product ${productId}: group, value and stock ${stock} persisted`;
+  },
+
+  async 'product-options-recovery'(ctx) {
+    const { page } = ctx.admin;
+    const productId = await ensureProduct(ctx);
+    const pattern = '**/api/collections/_ecommerce_product_variants/entries?*';
+    const refuse = route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Options temporarily unavailable' }) });
+    await page.route(pattern, refuse);
+    try {
+      await openEntry(page, 'products', productId, 'commerce');
+      const retry = page.getByRole('button', { name: 'Retry loading options', exact: true });
+      await expectVisible(retry, 'recoverable failed options read');
+      const draft = `Unfinished product ${ctx.runId}`;
+      await labelled(page, 'Name').fill(draft);
+      await page.getByRole('link', { name: 'Variants & inventory', exact: true }).click();
+      await page.unroute(pattern, refuse);
+      await retry.click();
+      await expectVisible(page.getByRole('heading', { name: 'Variants & inventory', exact: true }), 'recovered options panel');
+      await expectValue(labelled(page, 'Name'), draft, 'product draft survives option recovery');
+      await waitUntil('the options shortcut should scroll to the panel once its data loads', async () => {
+        const top = await page.locator('#commerce-product-options').evaluate(node => node.getBoundingClientRect().top);
+        return top >= 0 && top < 200;
+      });
+    } finally {
+      await page.unroute(pattern, refuse);
+      await page.reload().catch(() => {});
+    }
+    return 'failed options read retries in place and preserves unfinished product fields';
   },
 
   async 'preview-follows-typing'(ctx) {
@@ -1924,10 +1989,11 @@ const steps = {
     const typed = `E2E preview ${ctx.runId}`;
 
     await openEntry(page, 'products', productId, 'commerce');
+    await page.locator('#commerce-product-preview > summary').click();
     await expectVisible(page.getByRole('heading', { name: 'Storefront Preview' }), 'the storefront preview');
     const nameInput = labelled(page, 'Name');
     await expectVisible(nameInput, 'the product Name field');
-    const previewTitle = page.getByRole('heading', { level: 4 });
+    const previewTitle = page.getByRole('region', { name: 'Product preview' }).getByRole('heading', { level: 4 });
     const before = await visibleText(previewTitle);
 
     await nameInput.fill('');
@@ -2308,9 +2374,9 @@ async function runStep(ctx, name) {
       clearTimeout(timer);
     }
   } catch (error) {
-    status = 'fail';
+    status = error?.skip ? 'skip' : 'fail';
     message = describeError(error);
-    await saveScreenshot(ctx, name).catch(() => {});
+    if (status === 'fail') await saveScreenshot(ctx, name).catch(() => {});
   }
   const result = { name, status, ms: Date.now() - startedAt, message };
   if (KNOWN_GAPS.has(name)) result.knownGap = true;

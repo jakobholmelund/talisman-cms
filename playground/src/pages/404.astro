@@ -1,0 +1,8 @@
+---
+import Layout from '../layouts/Layout.astro';
+Astro.response.status = 404;
+---
+<Layout title="Page not found | Talisman" storefront description="Find your way back to the Talisman collection.">
+  <section class="store-page"><div class="store-panel missing-page"><p class="store-eyebrow">A little off course</p><h1>Let’s find your next favorite.</h1><p>This page or product is no longer available. There’s more to explore in the collection.</p><div><a href="/shop" class="store-button">Explore the collection →</a><a href="/cart" class="store-button secondary">Return to your cart</a></div></div></section>
+</Layout>
+<style>.missing-page{max-width:740px;margin:50px auto;text-align:center;padding:60px 28px}.missing-page h1{font-size:clamp(32px,4vw,48px);font-weight:500;letter-spacing:-.05em;line-height:1.2;margin:18px 0}.missing-page p:not(.store-eyebrow){max-width:430px;margin:0 auto;color:#646e68;font-size:15px;line-height:1.8}.missing-page>div{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin-top:28px}</style>

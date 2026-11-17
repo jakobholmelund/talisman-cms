@@ -13,6 +13,7 @@ export type RefundStatus=typeof RETURN_REFUND_STATUSES[number]|'review'|'unavail
 export type RefundQueue={offset:number;total:number;filter:string;orderId:string;rows:Array<{id:string;orderId:string;status:RefundStatus;amountMinor:number;currency:string;createdAt:string}>};
 type Decision=typeof returnRefundDecisions.$inferSelect;
 export type RefundCase={receiptId:string;orderId:string;currency:string;version:string;status:RefundStatus;amountMinor:number;
+  paymentProvider:string|null; giftCardRemainingMinor:number; requestId:string|null;
   items:Array<{name:string;quantity:number}>;history:Array<Pick<Decision,'id'|'status'|'amountMinor'|'allocations'|'reason'|'actor'>&{actorName:string;createdAt:string}>;
   sources:Array<{kind:typeof REFUND_SOURCE_KINDS[number];id:string;amountMinor:number;availableMinor:number;createdAt:string|null}>};
 const sourceRows=sql`SELECT 'provider' AS kind,id,order_id,amount_cents,created_at FROM _ecommerce_provider_refunds
@@ -30,12 +31,13 @@ export async function listRefundFollowUp(env:TalismanEnv,input:unknown={}):Promi
 }
 export async function readRefundCase(env:TalismanEnv,input:unknown):Promise<RefundCase>{
  const v=z.object({receiptId:id}).strict().parse(input),db=commerceDb(env);
- const r=await db.query.returnReceipts.findFirst({where:{id:v.receiptId},with:{order:{columns:{id:true,items:true,currency:true,paymentProvider:true,userId:true}},refundDecisions:{orderBy:(_t,{sql})=>sql`rowid`}}});
+ const r=await db.query.returnReceipts.findFirst({where:{id:v.receiptId},with:{requestLinks:true,order:{columns:{id:true,items:true,currency:true,paymentProvider:true,giftCardApplied:true,giftCardRefundedCents:true,userId:true}},refundDecisions:{orderBy:(_t,{sql})=>sql`rowid`}}});
  if(!r||r.order.paymentProvider==='admin_test')throw new CommerceOperationsConflict('Received return is unavailable.');
  const [sources,names,items]=await Promise.all([db.all<{kind:typeof REFUND_SOURCE_KINDS[number];id:string;amountMinor:number;availableMinor:number;createdAt:number|null}>(sql`WITH sources AS (${sourceRows}) SELECT kind,id,amount_cents AS amountMinor,created_at AS createdAt,
  amount_cents-COALESCE((SELECT sum(json_extract(a.value,'$.amountMinor')) FROM _ecommerce_return_refund_decisions d,json_each(d.allocations) a WHERE d.status='settled' AND json_extract(a.value,'$.kind')=sources.kind AND json_extract(a.value,'$.sourceId')=sources.id),0) AS availableMinor FROM sources WHERE order_id=${r.orderId} ORDER BY created_at,id`),adminActorNames(env,r.refundDecisions.map(d=>d.actor)),describeOrderItems(env,r.items.map(i=>({...r.order.items[i.lineIndex],quantity:i.quantity})))]);
  const latest=r.refundDecisions.at(-1),erased=r.order.userId?await db.select({id:shopperAudits.id}).from(shopperAudits).where(sql`${shopperAudits.accountId}=${r.order.userId} AND ${shopperAudits.action}='anonymize'`).limit(1).get():null;
  return {receiptId:r.id,orderId:r.orderId,currency:r.order.currency,version:latest?.id??r.id,status:erased?'unavailable':latest?.status??'review',amountMinor:latest?.amountMinor??0,
+ requestId:r.requestLinks[0]?.requestId??null,paymentProvider:r.order.paymentProvider,giftCardRemainingMinor:Math.max(0,r.order.giftCardApplied-r.order.giftCardRefundedCents),
  items:items.map(i=>({name:[i.productName||'Ordered item',i.variantLabel].filter(Boolean).join(' / '),quantity:i.quantity})),
  history:r.refundDecisions.map(d=>({id:d.id,status:d.status,amountMinor:d.amountMinor,allocations:d.allocations,reason:d.reason,actor:d.actor,actorName:names.get(d.actor)??d.actor,createdAt:d.createdAt.toISOString()})),
  sources:sources.map(s=>({...s,createdAt:s.createdAt===null?null:new Date(s.createdAt*1000).toISOString()}))};

@@ -729,3 +729,26 @@ test('different order lines sharing a component restock their combined captured 
  const receipt=await receiveOrderReturn({DB},{orderId:order.id,reason:'One of each choice physically received',requestKey:crypto.randomUUID(),items:[{lineIndex:0,quantity:1,condition:'sellable',restock:true},{lineIndex:1,quantity:1,condition:'sellable',restock:true}]},'staff');
  assert.equal(receipt.restocked.length,1);assert.equal(receipt.restocked[0].quantity,5);assert.equal(sqlite.prepare('SELECT quantity FROM _ecommerce_components').get().quantity,15);sqlite.close();
 });
+
+test('task queues isolate partial, shipped, refund and dispute work while keeping payment and fulfillment separate', async () => {
+  const { sqlite, DB } = database();
+  try {
+    const partial = insertOrder(sqlite);
+    await fulfillCommerceOrder({ DB }, 'admin', shipment(partial, { completesOrder: false }));
+    const shipped = insertOrder(sqlite);
+    await fulfillCommerceOrder({ DB }, 'admin', shipment(shipped));
+    const refunded = insertOrder(sqlite, { status: 'refunded' });
+    const partlyRefunded = insertOrder(sqlite, { status: 'partially_refunded', amounts: { providerRefunded: 100 } });
+    const disputed = insertOrder(sqlite, { status: 'disputed' });
+    insertOrder(sqlite, { status: 'disputed', provider: 'admin_test' });
+    const ids = async view => (await listCommerceOrdersAdmin({ DB }, { view })).orders.map(order => order.id).sort();
+    assert.deepEqual(await ids('partial'), [partial]);
+    assert.deepEqual(await ids('shipped'), [shipped]);
+    assert.deepEqual(await ids('refunded'), [refunded, partlyRefunded].sort());
+    assert.deepEqual(await ids('disputed'), [disputed]);
+    const first = await listCommerceOrdersAdmin({ DB }, { view: 'refunded', limit: 1 });
+    const next = await listCommerceOrdersAdmin({ DB }, { view: 'refunded', limit: 1, cursor: first.nextCursor });
+    assert.equal(new Set([...first.orders, ...next.orders].map(order => order.id)).size, 2);
+    await assert.rejects(listCommerceOrdersAdmin({ DB }, { view: 'shipped', cursor: first.nextCursor }), { name: 'FulfillmentInputError' });
+  } finally { sqlite.close(); }
+});

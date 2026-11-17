@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {orderReference} from '../dist/accounts.js';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -253,7 +254,7 @@ test('duplicate webhooks send one order confirmation, with the items, the amount
   assert.equal(message.replyTo, 'hello@shop.test');
   assert.equal(message.subject, 'Your Talisman Vision order is confirmed');
   assert.equal(message.headers['X-Talisman-Email'], 'order-confirmation');
-  for (const line of [`We have received your payment for order ${order.id}`, '2 × The Forest Floor (Lens: Amber): $240.00',
+  for (const line of [`We have received your payment for order ${orderReference(order.id)}`, '2 × The Forest Floor (Lens: Amber): $240.00',
     '1 × Travel case: $20.00', 'Items subtotal: $260.00', 'Gift card: -$50.00', 'Amount charged: $210.00',
     'Shipping to\nTest Buyer\n1 Main St\nAustin, TX, 78701\nUnited States', 'Seller\nTalisman Vision\nEmail: hello@shop.test']) {
     assert.ok(message.text.includes(line), line);
@@ -573,21 +574,21 @@ test('the shipment email carries the carrier and tracking number and says whethe
   const [, parcel] = store.sent;
   assert.equal(parcel.subject, 'Part of your Talisman Vision order has shipped');
   assert.equal(parcel.headers['X-Talisman-Email'], 'order-shipment');
-  for (const line of [`We shipped a parcel of your order ${order.id} on`, 'More parcels will follow.', 'Carrier: DHL',
+  for (const line of [`We shipped a parcel of your order ${orderReference(order.id)} on`, 'More parcels will follow.', 'Carrier: DHL',
     'Tracking number: JD0001']) assert.ok(parcel.text.includes(line), line);
   assert.equal(delivery(store.sqlite, 'shipment', first.fulfillmentId).status, 'sent');
 
   await ship({ carrier: 'DHL', trackingNumber: null });
   const last = store.sent[2];
   assert.equal(last.subject, 'The rest of your Talisman Vision order has shipped');
-  assert.ok(last.text.includes(`We shipped the last parcel of your order ${order.id}`));
+  assert.ok(last.text.includes(`We shipped the last parcel of your order ${orderReference(order.id)}`));
   assert.ok(last.text.includes('This parcel has no tracking number.'));
   assert.ok(!last.text.includes('Tracking number:'));
 
   const whole = await paidOrder(store);
   await fulfillCommerceOrder(store.env, 'admin-1', { orderId: whole.id, carrier: 'UPS', trackingNumber: '1Z999', note: 'Parcel handed over' });
   assert.equal(store.sent.at(-1).subject, 'Your Talisman Vision order has shipped');
-  assert.ok(store.sent.at(-1).text.includes(`We shipped your order ${whole.id} on`));
+  assert.ok(store.sent.at(-1).text.includes(`We shipped your order ${orderReference(whole.id)} on`));
 });
 
 test('a correction sends updated details once the shipment email went out; an unsent email carries them', async (t) => {

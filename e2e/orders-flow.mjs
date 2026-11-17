@@ -88,11 +88,16 @@ export async function ordersFlow(ctx, { fail, expectVisible, expectHidden, expec
     await page.getByRole('button', { name: 'Retry loading orders', exact: true }).click();
     await expectVisible(card(order.id), 'recovered orders'); await settle();
     await expectNoAlert(page, 'recovered orders');
+    if (await page.getByRole('heading', { name: 'Record shipment', exact: true }).count()) fail('unopened rows mounted their warehouse forms');
+    await card(order.id).locator('.ecom-admin__order-summary').click();
     await card(order.id).getByText('Order activity', { exact: true }).click();
     await expectVisible(card(order.id).getByText('Alex', { exact: true }), 'activity staff name');
     await expectVisible(card(order.id).getByText(/Returned one parcel/), 'activity restock reason');
     if (await page.getByRole('region', { name: /^Order ord_browser_/ }).count() !== 50) fail('orders first page was not bounded');
     await form().getByLabel('Shipment note', { exact: true }).fill('Keep this draft parcel');
+    await card(order.id).locator('.ecom-admin__order-summary').click();
+    await card(order.id).locator('.ecom-admin__order-summary').click();
+    await expectValue(form().getByLabel('Shipment note', { exact: true }), 'Keep this draft parcel', 'collapsing an order preserves its parcel draft');
     failRead = true;
     await page.getByRole('button', { name: 'Load 50 more', exact: true }).click();
     await expectVisible(page.getByRole('alert').filter({ hasText: 'Orders temporarily unavailable' }), 'failed orders next page');
@@ -157,7 +162,7 @@ export async function ordersFlow(ctx, { fail, expectVisible, expectHidden, expec
     if (writes.length !== beforeFinal + 1) fail('final parcel was recorded more than once');
     await page.getByRole('button', { name: 'Retry loading orders', exact: true }).click();
     await expectVisible(page.getByRole('heading', { name: 'No matching orders', exact: true }), 'completed order left queue');
-    await page.getByRole('combobox', { name: 'View', exact: true }).selectOption('recent');
+    await page.getByRole('group', { name: 'Order views' }).getByRole('button', { name: 'All recent orders', exact: true }).click();
     await expectVisible(card(order.id), 'shipped order in recent view'); await settle();
     await expectVisible(card(order.id).getByText(/Payment: Paid · Fulfillment: Shipped/), 'payment separate from shipping');
     if (await card(order.id).getByRole('button', { name: 'Record shipment', exact: true }).count()) fail('fully shipped order offered another parcel');
@@ -166,6 +171,12 @@ export async function ordersFlow(ctx, { fail, expectVisible, expectHidden, expec
     await page.getByRole('button', { name: 'Clear search', exact: true }).click();
     await expectVisible(card(order.id), 'clear order search');
     return 'real local list contract; controlled reads/writes cover privacy, pagination, stale failures, retry keys, partial/final parcels, corrections and refresh recovery';
+  } catch (cause) {
+    if (ctx.options.artifacts) {
+      const { join } = await import('node:path');
+      await page.screenshot({ path: join(ctx.options.artifacts, 'orders-active-failure.png'), fullPage: true });
+    }
+    throw cause;
   } finally {
     if (pendingRead) await pendingRead.abort().catch(() => {});
     if (pendingWrite) await pendingWrite.abort().catch(() => {});

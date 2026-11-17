@@ -172,6 +172,9 @@ test('stock overview matches checkout precedence, shared part requirements and g
   assert.deepEqual(Object.fromEntries(result.rows.map(row=>[row.id,row.quantity])),{base:2,parts:2,stock:3,'legacy-group':4});
   const all=await readStockOverview({DB},{filter:'all'});assert.equal(all.rows.find(row=>row.id==='fallback').quantity,8);
   assert.ok(!all.rows.some(row=>['options','draft','digital','group','legacy'].includes(row.id)));
+  assert.deepEqual(all.rows.map(row=>[row.id,row.targetType,row.targetId]).sort(), [
+    ['base','product','base'],['fallback','variant','group'],['legacy-group','variant','legacy-group'],['parts',null,null],['stock','stock','stock-stock']
+  ].sort(), 'actions point at the physical count, never at derived shared-component availability');
   const parts=await readStockOverview({DB},{view:'components'});assert.equal(parts.total,1);assert.equal(parts.rows[0].id,'part');
   sqlite.exec("UPDATE _ecommerce_components SET quantity=0 WHERE id='part'");
   assert.equal((await readStockOverview({DB},{filter:'unavailable'})).rows[0].id,'parts');

@@ -4,16 +4,12 @@ import { bindCommerceApi } from '@talisman-cms/plugin-ecommerce/api';
 import { StripePaymentAdapter } from '@talisman-cms/plugin-ecommerce/adapters/stripe';
 import {
   orders,
-  products,
-  productVariantValues,
-  productVariants,
-  stocks,
-  variants as variantDefinitions,
 } from '@talisman-cms/plugin-ecommerce/schema';
 import { createDbClient, type TalismanEnv } from 'talisman-cms/client';
 import { CUSTOMER_SESSION_COOKIE, findCustomerSession } from '@talisman-cms/plugin-ecommerce/accounts';
 import { ensureCartSession, readCartSessionToken, readOrderAccess, type CookieJar } from '@talisman-cms/plugin-ecommerce/cookies';
 import { getPrimaryProductImage } from './product-media';
+import { catalogOffer, readCatalog, type CatalogProduct } from '@talisman-cms/plugin-ecommerce/catalog';
 
 export { formatMoney } from '@talisman-cms/plugin-ecommerce/money';
 
@@ -30,6 +26,9 @@ export interface ResolvedLineItem {
   unitPrice: number;
   lineTotal: number;
   type: string;
+  isPhysical: boolean;
+  availableQuantity: number | null;
+  unavailable: boolean;
   stockLabel: string;
   href: string;
 }
@@ -72,122 +71,58 @@ export function getStoreCurrency(env: RuntimeEnv) {
   return readStoreCurrency(env);
 }
 
-async function resolveLineItem(
-  db: ReturnType<typeof createDbClient>,
-  item: { productId: string; variantId?: string; quantity: number },
-  unitPriceOverride?: number
-): Promise<ResolvedLineItem | null> {
-  const product = await db.select().from(products).where(eq(products.id, item.productId)).get();
-  if (!product) return null;
-
-  let imageUrl = getPrimaryProductImage(product);
-
-  let productName = product.name;
-  let variantLabel: string | undefined;
-  let unitPrice = unitPriceOverride ?? product.basePrice;
-  let stockLabel = product.type === 'digital'
-    ? 'Delivered instantly'
-    : `${product.inventoryQuantity} available`;
-
-  if (item.variantId) {
-    const variantValue = await db.select().from(productVariantValues).where(eq(productVariantValues.id, item.variantId)).get();
-    if (variantValue) {
-      const group = await db.select().from(productVariants).where(eq(productVariants.id, variantValue.productVariantId)).get();
-      const stock = await db.select().from(stocks).where(eq(stocks.productVariantValueId, variantValue.id)).get();
-      const definition = group?.variantId
-        ? await db.select().from(variantDefinitions).where(eq(variantDefinitions.id, group.variantId)).get()
-        : null;
-
-      variantLabel = definition?.name
-        ? `${definition.name}: ${variantValue.value}`
-        : `${group?.name ?? 'Variant'}: ${variantValue.value}`;
-      unitPrice = unitPriceOverride ?? variantValue.priceOverride ?? group?.priceOverride ?? product.basePrice;
-      imageUrl = variantValue.image || imageUrl;
-      stockLabel = product.type === 'digital'
-        ? 'Delivered instantly'
-        : `${stock?.quantity ?? group?.inventoryQuantity ?? 0} available`;
-    } else {
-      const legacyVariant = await db.select().from(productVariants).where(eq(productVariants.id, item.variantId)).get();
-      if (legacyVariant) {
-        variantLabel = legacyVariant.name;
-        unitPrice = unitPriceOverride ?? legacyVariant.priceOverride ?? product.basePrice;
-        stockLabel = product.type === 'digital'
-          ? 'Delivered instantly'
-          : `${legacyVariant.inventoryQuantity} available`;
-      }
-    }
-  }
-
+/** Keep unavailable/deleted lines visible so shoppers can remove them; never silently drop a purchase. */
+function resolveLineItem(product: CatalogProduct | undefined, item: { productId: string; variantId?: string | null; quantity: number }, unitPriceOverride?: number): ResolvedLineItem {
+  const offer = product ? catalogOffer(product) : null;
+  const choice = offer?.choices.find(choice => (choice.id ?? '') === (item.variantId ?? ''));
+  const unavailable = !product || product.status !== 'active' || !choice || choice.price <= 0;
+  const availableQuantity = choice?.quantity ?? (product?.type === 'standard' ? 0 : null);
+  const unitPrice = unitPriceOverride ?? choice?.price ?? product?.basePrice ?? 0;
+  const variantLabel = item.variantId ? choice?.label ?? 'Unavailable option' : undefined;
   return {
-    key: `${item.productId}:${item.variantId ?? 'default'}`,
-    productId: item.productId,
-    variantId: item.variantId,
-    quantity: item.quantity,
-    productName,
-    variantLabel,
-    imageUrl,
-    unitPrice,
-    lineTotal: unitPrice * item.quantity,
-    type: product.type,
-    stockLabel,
-    href: `/shop/${product.id}`
+    key: `${item.productId}:${item.variantId ?? 'default'}`, productId: item.productId, variantId: item.variantId || undefined,
+    quantity: item.quantity, productName: product?.name ?? 'Unavailable product', variantLabel,
+    imageUrl: choice?.image || getPrimaryProductImage(product), unitPrice, lineTotal: unitPrice * item.quantity,
+    type: product?.type ?? 'standard', isPhysical: product?.isPhysical ?? true, availableQuantity, unavailable,
+    stockLabel: unavailable ? 'Currently unavailable' : availableQuantity === null ? 'Available' : availableQuantity === 0 ? 'Out of stock' : `${availableQuantity} available`,
+    href: `/shop/${encodeURIComponent(item.productId)}${item.variantId ? `?variant=${encodeURIComponent(item.variantId)}` : ''}`,
   };
 }
 
-export async function getHydratedCart(env: RuntimeEnv, sessionToken?: string | null) {
+export async function getHydratedCart(env: RuntimeEnv, sessionToken?: string | null, cookies?: CookieJar) {
   const currency = getStoreCurrency(env);
-  if (!sessionToken) {
-    return {
-      cart: null,
-      items: [] as ResolvedLineItem[],
-      subtotal: 0,
-      itemCount: 0,
-      requiresShipping: false,
-      locked: false,
-      currency,
-    };
-  }
-
   const api = createCommerceApi(env);
-  const cart = await api.carts.getOrCreate(sessionToken);
-  
-  if (!cart) {
-    return {
-      cart: null,
-      items: [] as ResolvedLineItem[],
-      subtotal: 0,
-      itemCount: 0,
-      requiresShipping: false,
-      locked: false,
-      currency,
-    };
+  const customer = cookies ? await findCustomerSession(env, cookies.get(CUSTOMER_SESSION_COOKIE)?.value) : null;
+  // Rendering is read-only: the mutation routes claim/create the basket when the shopper acts.
+  const guest = sessionToken ? await api.carts.find(sessionToken) : null;
+  const owned = customer ? await api.carts.find(undefined, customer.id) : null;
+  const cart = guest?.items.length ? guest : owned ?? guest;
+  const catalog = cart?.items.length ? await readCatalog(env, { ids: [...new Set(cart.items.map(item => item.productId))] }) : [];
+  const byId = new Map(catalog.map(product => [product.id, product]));
+  let quote: Awaited<ReturnType<typeof api.carts.quote>> | null = null;
+  let pricingError: string | null = null;
+  const locked = Boolean(cart?.checkoutSessionId || cart?.closed);
+  if (cart?.items.length && !locked) {
+    try { quote = await api.carts.quote(cart.id); }
+    catch { pricingError = 'Some items have changed or are unavailable. Review their quantities or remove them before checkout.'; }
   }
-
-  const db = createDbClient(env);
-  const items = (await Promise.all(cart.items.map((item) => resolveLineItem(db, item)))).filter(Boolean) as ResolvedLineItem[];
-
-  return {
-    cart,
-    items,
-    subtotal: items.reduce((total, item) => total + item.lineTotal, 0),
+  const items = (cart?.items ?? []).map(item => resolveLineItem(byId.get(item.productId), item,
+    quote?.lines.find(line => line.productId === item.productId && (line.variantId || '') === (item.variantId || ''))?.unitAmount));
+  return { cart, items, subtotal: quote?.totalAmount ?? items.reduce((total, item) => total + item.lineTotal, 0),
     itemCount: items.reduce((total, item) => total + item.quantity, 0),
-    requiresShipping: items.some((item) => item.type !== 'digital'),
-    locked: Boolean(cart.checkoutSessionId || cart.closed),
-    currency,
-  };
+    requiresShipping: quote?.requiresShipping ?? items.some(item => item.isPhysical), locked, currency, pricingError };
 }
 
 export async function getOrderSummary(env: RuntimeEnv, orderId: string | null | undefined, cookies: CookieJar) {
   if (!orderId) return null;
 
-  const db = createDbClient(env);
   const customer = await findCustomerSession(env, cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
   const order = await bindCommerceApi({ env }).orders.findForSession(orderId, readCartSessionToken(cookies), customer?.id, readOrderAccess(cookies, orderId));
   if (!order) return null;
 
-  const items = (await Promise.all(
-    order.items.map((item) => resolveLineItem(db, item, item.priceAtPurchase))
-  )).filter(Boolean) as ResolvedLineItem[];
+  const catalog = order.items.length ? await readCatalog(env, { ids: [...new Set(order.items.map(item => item.productId))] }) : [];
+  const byId = new Map(catalog.map(product => [product.id, product]));
+  const items = order.items.map(item => resolveLineItem(byId.get(item.productId), item, item.priceAtPurchase));
 
   return {
     order,

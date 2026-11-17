@@ -1,84 +1,38 @@
 ---
 import Layout from '../../layouts/Layout.astro';
-import Card from '../../components/Card.astro';
-import Hero from '../../components/Hero.astro';
-import { getClient } from 'talisman-cms/client';
+import CatalogBrowser from '@talisman-cms/plugin-ecommerce/components/CatalogBrowser.astro';
+import { searchCatalog, type CatalogSearchOptions } from '@talisman-cms/plugin-ecommerce/catalog';
 import { env as cfEnv } from 'cloudflare:workers';
-import { formatMoney, getStoreCurrency } from '../../lib/commerce';
-import { getPrimaryProductImage } from '../../lib/product-media';
+import { getStoreCurrency } from '../../lib/commerce';
 
-const env = { DB: (cfEnv as any).DB, KV: (cfEnv as any).KV };
-const cms = getClient(env);
+const params = Astro.url.searchParams;
+const sort = params.get('sort') ?? 'newest';
+const type = params.get('type') ?? '';
+const requestedPage = Number(params.get('page'));
+const options: CatalogSearchOptions = {
+  query: (params.get('q') ?? '').slice(0, 120), category: (params.get('category') ?? '').slice(0, 128),
+  type: ['standard', 'digital', 'subscription'].includes(type) ? type as CatalogSearchOptions['type'] : '',
+  sort: ['newest', 'price-asc', 'price-desc', 'name'].includes(sort) ? sort as CatalogSearchOptions['sort'] : 'newest',
+  inStock: params.get('stock') === 'available', page: Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1,
+};
+let catalog: Awaited<ReturnType<typeof searchCatalog>> | null = null;
+try { catalog = await searchCatalog(cfEnv as any, options); } catch { Astro.response.status = 503; }
 const currency = getStoreCurrency(cfEnv as any);
-const products = await cms.entries.findMany('products', { depth: 0, cache: false }).catch(() => []);
-
-function getProductName(product: any) {
-  return product.data.name ?? product.data.title ?? 'Untitled product';
-}
-
-function getProductPrice(product: any) {
-  return product.data.basePrice ?? product.data.price ?? 0;
-}
-
-function getInventory(product: any) {
-  return product.data.inventoryQuantity ?? 0;
-}
 ---
 
-<Layout title="Shop | Talisman CMS E-commerce Showcase">
-  <Hero 
-    heading="The Shop" 
-    subheading="Browse our selection of premium items powered by the Talisman CMS Native E-Commerce Plugin." 
-  />
-
-  <div class="py-12">
-    <div class="mb-8 flex justify-between items-center border-b border-gray-100 pb-4">
-      <h2 class="text-2xl font-bold text-gray-900">All Products ({products.length})</h2>
-      <div class="flex gap-4 text-sm text-text-muted">
-        <span class="font-medium text-brand-600 cursor-pointer">All</span>
-        <span class="cursor-pointer hover:text-gray-900 transition-colors">Physical</span>
-        <span class="cursor-pointer hover:text-gray-900 transition-colors">Digital</span>
-      </div>
-    </div>
-
-    {products.length === 0 ? (
-      <div class="text-center py-24 bg-gray-50 rounded-2xl border border-gray-100 border-dashed">
-        <svg class="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
-        </svg>
-        <h3 class="text-sm font-semibold text-gray-900">No products</h3>
-        <p class="mt-1 text-sm text-gray-500">Get started by adding some products in the Admin side.</p>
-        <div class="mt-6">
-          <a href="/admin/collections/products" target="_blank" class="inline-flex items-center rounded-md bg-brand-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-brand-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600">
-            Add Product
-          </a>
-        </div>
-      </div>
-    ) : (
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
-        {products.map((product) => (
-          <Card
-            href={`/shop/${product.id}`}
-            title={getProductName(product)}
-            image={getPrimaryProductImage(product.data) ?? undefined}
-            imageTransitionName={`product-image-${product.id}`}
-          >
-            <p slot="header" class={`text-xs font-semibold uppercase tracking-wider mb-2 ${getInventory(product) > 0 || product.data.type === 'digital' ? 'text-green-600' : 'text-amber-600'}`}>
-              {getInventory(product) > 0 || product.data.type === 'digital' ? 'In Stock' : 'Low Stock'}
-            </p>
-            <h3 slot="header" class="text-xl font-bold text-gray-900 group-hover:text-brand-600 transition-colors mb-2 line-clamp-1">
-              {getProductName(product)}
-            </h3>
-            
-            <p class="text-gray-600 line-clamp-2 h-10 mb-4 text-sm">
-              {product.data.description || 'A premium product powered by Talisman CMS.'}
-            </p>
-            <div class="flex flex-col mt-auto pt-4 border-t border-gray-100">
-              <span class="text-2xl font-black text-gray-900">{formatMoney(getProductPrice(product), currency)}</span>
-            </div>
-          </Card>
-        ))}
-      </div>
-    )}
-  </div>
+<Layout title="The collection | Talisman" description="Explore the Talisman collection. Find your favorite, choose your options, and make it yours.">
+  <header class="shop-heading"><div><p>Considered goods. Everyday possibilities.</p><h1>Find your next<br /><em>favorite.</em></h1></div><span>Explore the collection at your own pace.<br />The right details make all the difference.</span></header>
+  {catalog ? <CatalogBrowser catalog={catalog} currency={currency} /> : <section class="shop-unavailable" role="alert"><h2>The collection is taking a moment.</h2><p>We couldn’t load the products. Please try again.</p><a href={Astro.url.pathname + Astro.url.search}>Try again</a></section>}
 </Layout>
+
+<style>
+  .shop-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 24px; padding: 40px 0 48px; border-bottom: 1px solid #dfe3dd; color: #18201e; }
+  .shop-heading p { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #646e68; margin: 0 0 20px; }
+  .shop-heading h1 { font-size: clamp(48px, 7vw, 84px); font-weight: 500; letter-spacing: -.065em; line-height: 1.05; margin: 0; }
+  .shop-heading em { font-family: Georgia, serif; font-weight: 400; color: #536847; }
+  .shop-heading > span { color: #646e68; font-size: 13px; line-height: 1.9; padding-bottom: 6px; }
+  .shop-unavailable { text-align: center; padding: 80px 24px; color: #18201e; }
+  .shop-unavailable h2 { font-size: 28px; margin-bottom: 16px; }
+  .shop-unavailable a { display: inline-block; margin-top: 24px; text-decoration: underline; }
+  @media (max-width: 700px) { .shop-heading { padding: 20px 0 28px; gap: 20px; } .shop-heading p { margin-bottom: 14px; } .shop-heading > span { display: none; } }
+</style>

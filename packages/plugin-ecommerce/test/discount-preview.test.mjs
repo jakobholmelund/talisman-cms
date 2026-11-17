@@ -178,8 +178,8 @@ function addGiftCard(sqlite, code, { balance = 5000, status = 'active' } = {}) {
   const now = Math.floor(Date.now() / 1000);
   sqlite.prepare(`INSERT INTO _ecommerce_gift_cards (id, code_hash, code_suffix, encrypted_code, source,
     admin_actor, admin_reason, initial_cents, balance_cents, currency, status, created_at, updated_at)
-    VALUES (?, ?, ?, 'unused', 'admin', 'admin@shop.test', 'Preview test card', 5000, ?, 'usd', ?, ?, ?)`)
-    .run(`gift_${crypto.randomUUID()}`, createHash('sha256').update(code).digest('hex'), code.slice(-4), balance, status, now, now);
+    VALUES (?, ?, ?, 'unused', 'admin', 'admin@shop.test', 'Preview test card', ?, ?, 'usd', ?, ?, ?)`)
+    .run(`gift_${crypto.randomUUID()}`, createHash('sha256').update(code).digest('hex'), code.slice(-4), Math.max(5000,balance), balance, status, now, now);
 }
 
 const giftCode = (digit) => `GIFT-${digit.toUpperCase().repeat(32)}`;
@@ -476,5 +476,28 @@ test('the preview answers an overlong code with the same refusal and ignores a m
   assert.deepEqual([longGift.status, longGift.json], [409, { error: REFUSED, field: 'giftCardCode' }]);
   const email = await preview(DB, { code: 'SAVE10', customerEmail: 'not-an-email' }, { basket: 'guest-browser' });
   assert.deepEqual([email.status, email.json], [200, priced]);
+  sqlite.close();
+});
+
+
+test('gift-card previews include selected delivery and use discounted free-delivery thresholds',async()=>{
+  const {sqlite,DB}=database();await basket(DB,'shipping-browser');
+  addGiftCard(sqlite,giftCode('a'),{balance:20000});addCode(sqlite,'SAVE10');
+  const env={...enabled(DB),TALISMAN_COMMERCE_SHIPPING_RATES:JSON.stringify([
+    {id:'standard',label:'Standard',amount:800,countries:['US'],freeOver:11500},
+    {id:'express',label:'Express',amount:2000,countries:['US']}
+  ])};
+  const estimate=body=>call(discountRoute,env,{path:'/api/ecommerce/discount',cookies:{[CART_SESSION_COOKIE]:'shipping-browser'},body:{giftCardCode:giftCode('a'),shippingCountry:'US',...body}});
+  const free=await estimate({shippingRateId:'standard'});
+  assert.equal(free.json.giftCardApplied,12000);assert.equal(free.json.cardAmount,0);
+  const discounted=await estimate({shippingRateId:'standard',code:'SAVE10'});
+  assert.equal(discounted.json.giftCardApplied,11600);assert.equal(discounted.json.cardAmount,0);
+  const express=await estimate({shippingRateId:'express'});
+  assert.equal(express.json.giftCardApplied,14000);assert.equal(express.json.cardAmount,0);
+  assert.equal((await estimate({shippingRateId:'bogus'})).status,409);
+  assert.equal((await estimate({shippingCountry:'SG',shippingRateId:'express'})).status,409);
+  signIn(sqlite,'credit-shopper','credit-token');sqlite.exec("UPDATE _ecommerce_customer_accounts SET credit_balance=50000 WHERE id='credit-shopper'");
+  const credit=await call(discountRoute,env,{path:'/api/ecommerce/discount',cookies:{[CART_SESSION_COOKIE]:'shipping-browser',[CUSTOMER_SESSION_COOKIE]:'credit-token'},body:{giftCardCode:giftCode('a'),shippingCountry:'US',shippingRateId:'express'}});
+  assert.equal(credit.json.creditApplied,12000);assert.equal(credit.json.giftCardApplied,2000,'gift card pays delivery after merchandise credit');
   sqlite.close();
 });

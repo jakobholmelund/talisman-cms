@@ -1,4 +1,5 @@
 import type { CustomerReturns } from './return-request-types';
+export { orderReference, customerOrderPath, customerOrderDestination } from './order-reference';
 export type { CustomerReturns } from './return-request-types';
 import type { CustomerOrderTracking } from './order-tracking';
 export type { CustomerOrderTracking } from './order-tracking';
@@ -61,9 +62,9 @@ export function activateNewCustomerAccount(orderId: string) {
  * sign-in email budget is spent: only existing customers still receive a link, and every address
  * gets this same answer.
  */
-export function requestCustomerEmailSignIn(email: string, options: { turnstileToken?: string } = {}) {
+export function requestCustomerEmailSignIn(email: string, options: { turnstileToken?: string; orderId?: string } = {}) {
   return commerceRequest<{ accepted: true; limited?: true }>('/api/ecommerce/account', 'POST',
-    options.turnstileToken === undefined ? { email } : { email, turnstileToken: options.turnstileToken });
+    { email, ...options });
 }
 
 type SignInLocation = Pick<Location, 'pathname' | 'search' | 'hash'>;
@@ -214,3 +215,6 @@ export function submitCustomerReturn(data:{orderId:string;requestKey:string;reas
 export function cancelReturnRequest(data:{orderId:string;requestId:string;requestKey:string;expectedVersion:string}) { return commerceRequest<{eventId:string}>('/api/ecommerce/returns','POST',{action:'cancel',data}); }
 
 export function getCustomerExchangeChoices(data:{orderId:string;lineIndex:number;search?:string;offset?:number}) { return commerceRequest<{rows:Array<{productId:string;variantId:string|null;name:string;sku:string|null;price:number}>;total:number;offset:number;currency:string;originalUnitPrice:number}>('/api/ecommerce/returns','POST',{action:'exchangeChoices',data}); }
+export { shippingOptionsFor } from './shipping';
+
+export type { ShippingRate } from './store-settings';

@@ -112,12 +112,14 @@ export function describeCommerceEntry(
   const data = getEntryData(entry);
 
   if (collectionSlug === productsCollectionSlug) {
+    const image = Array.isArray(data.images) ? data.images.map((image: any) => typeof image === 'string' ? image : image?.url).find((url: unknown) => typeof url === 'string' && url) : undefined;
     return {
+      ...(image ? { imageUrl: image } : {}),
       title: data.name || entry.slug || entry.id,
       subtitle: compact([
         data.slug ? `/${data.slug}` : null,
         data.sku ? `SKU ${data.sku}` : null,
-        formatMoney(data.basePrice, currency),
+        formatMoney(data.basePrice, currency) ? `Base price ${formatMoney(data.basePrice, currency)}` : null,
       ]).join(' • '),
       details: compact([
         data.type ? `Type: ${data.type}` : null,
