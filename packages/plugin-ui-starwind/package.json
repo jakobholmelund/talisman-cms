@@ -69,6 +69,6 @@
     "astro": "^7.4.12",
     "talisman-cms": "workspace:*",
     "tsup": "^8.5.1",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   }
 }
