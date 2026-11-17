@@ -61,6 +61,7 @@ declare module 'virtual:talisman-cms/admin-extensions' {
     plugin: string;
     workspace: LazyExoticComponent<ComponentType<any>> | null;
   }>;
+  export const adminCollectionViews: Array<{ slug: string; nativeSchemaExport?: string; component: LazyExoticComponent<ComponentType<any>> }>;
   export const adminEditorPanels: Array<{
     id: string;
     placement: AdminEditorPanelDefinition['placement'];

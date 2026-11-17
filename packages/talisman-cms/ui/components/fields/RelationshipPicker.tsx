@@ -41,6 +41,7 @@ export function RelationshipPicker({
   const selections = normalizeRelationSelections(field, value);
   const selectedKeys = new Set(selections.map(getRelationSelectionKey));
   const targetKey = JSON.stringify(getRelationTargets(field));
+  const multipleTargets = getRelationTargets(field).length > 1;
   const [searchableFields, setSearchableFields] = useState<Record<string, any[]>>({});
   const [searchFields, setSearchFields] = useState<Record<string, string>>({});
   const searchFieldsKey = JSON.stringify(searchFields);
@@ -188,7 +189,7 @@ export function RelationshipPicker({
 
       {Object.entries(searchableFields).map(([slug, fields]) => fields.length ? (
         <label key={slug} className="flex items-center gap-2 text-xs text-zinc-400">
-          Search {slug} by
+          Search {multipleTargets ? slug : field.label} by
           <select aria-label={`Search ${field.label} in ${slug} by`} className="rounded border border-white/10 bg-zinc-950 p-1" value={searchFields[slug] || fields.find((candidate: any) => ['title', 'name', 'label', 'filename', 'email'].includes(candidate.name))?.name || fields[0].name} onChange={(event) => setSearchFields((current) => ({ ...current, [slug]: event.target.value }))}>
             {fields.map((candidate: any) => <option key={candidate.name} value={candidate.name}>{candidate.label || candidate.name}</option>)}
           </select>
@@ -207,11 +208,12 @@ export function RelationshipPicker({
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-medium text-zinc-100">{description.title}</span>
-                      <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[10px] uppercase tracking-wider text-zinc-400">
+                      {multipleTargets && <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[10px] uppercase tracking-wider text-zinc-400">
                         {selection.relationTo}
-                      </span>
+                      </span>}
                     </div>
                     {description.subtitle && <div className="mt-1 text-xs text-zinc-400">{description.subtitle}</div>}
+                    {description.details.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{description.details.map(detail => <span key={detail} className="rounded-full border border-white/10 px-2 py-0.5 text-xs text-zinc-300">{detail}</span>)}</div>}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {field.hasMany && (
@@ -255,9 +257,9 @@ export function RelationshipPicker({
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-medium text-zinc-100">{description.title}</span>
-                    <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[10px] uppercase tracking-wider text-zinc-400">
+                    {multipleTargets && <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[10px] uppercase tracking-wider text-zinc-400">
                       {option.collectionSlug}
-                    </span>
+                    </span>}
                   </div>
                   {description.subtitle && <div className="mt-1 text-xs text-zinc-400">{description.subtitle}</div>}
                 </div>

@@ -1,5 +1,7 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
+import { adminCollectionViews } from 'virtual:talisman-cms/admin-extensions';
+import React, { Suspense, useEffect, useId, useRef, useState } from 'react';
 import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router';
+import { describeEntry } from '../../lib/entry-describers';
 import { Input } from '../ui/input';
 import { COLLECTION_PAGE_SIZE, COLLECTION_MAX_PAGE, getCollectionListOptions, normalizeCollectionListSearch, type CollectionListSearch } from '../../lib/collection-list';
 import { Card } from '../ui/card';
@@ -40,7 +42,7 @@ function getStatusBadgeClass(status: string | undefined) {
   return 'bg-zinc-800/80 text-zinc-300 border-zinc-700 shadow-none';
 }
 
-export function CollectionEntriesPage({ collection, entries, hasNextPage, listSearch, listError, slug, section }: {
+function GenericCollectionEntriesPage({ collection, entries, hasNextPage, listSearch, listError, slug, section }: {
   collection: any;
   entries: any[];
   hasNextPage: boolean;
@@ -175,6 +177,7 @@ export function CollectionEntriesPage({ collection, entries, hasNextPage, listSe
             ) : (
               entries.map((entry: any) => {
                 const data = parseEntryData(entry);
+                const description = describeEntry(slug, entry, {});
                 const pageTitle = typeof data.title === 'string' && data.title.length > 0 ? data.title : 'Untitled page';
                 // A record without a naming field is shown as its collection plus the end of its id.
                 const entryName = [data.title, data.name, data.customerEmail, data.email, data.code, data.value, entry.slug]
@@ -202,7 +205,7 @@ export function CollectionEntriesPage({ collection, entries, hasNextPage, listSe
                         onClick={(event) => event.stopPropagation()}
                         className="font-medium text-zinc-100 group-hover:text-indigo-400 transition-colors flex items-center gap-2 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/60"
                       >
-                        <span aria-hidden="true" className="w-1.5 h-1.5 rounded-full bg-zinc-700 group-hover:bg-indigo-400 transition-colors" />
+                        {description.imageUrl ? <img src={description.imageUrl} alt="" loading="lazy" width="48" height="48" className="h-12 w-12 shrink-0 rounded-lg border border-white/10 object-cover" /> : <span aria-hidden="true" className="w-1.5 h-1.5 rounded-full bg-zinc-700 group-hover:bg-indigo-400 transition-colors" />}
                         {rowLabel}
                       </Link>
                       <div className={`text-xs text-zinc-500 mt-1 ml-3.5 tracking-tight group-hover:text-zinc-400 transition-colors ${isPagesCollection ? '' : 'font-mono'}`}>
@@ -211,7 +214,7 @@ export function CollectionEntriesPage({ collection, entries, hasNextPage, listSe
                             {pendingRename.liveSlug}
                             <span className="ml-2 font-sans text-amber-300/90">renames to {pendingRename.nextSlug} on publish</span>
                           </>
-                        ) : entry.slug}
+                        ) : description.subtitle || entry.slug}
                       </div>
                     </TableCell>
                     {isPagesCollection && (
@@ -267,3 +270,14 @@ export function CollectionEntriesPage({ collection, entries, hasNextPage, listSe
   );
 }
 
+
+/** Keep the collection URL and editor back links while letting a plugin own its list workflow. */
+export function CollectionEntriesPage(props: React.ComponentProps<typeof GenericCollectionEntriesPage>) {
+  const router=useRouter();
+  const view=adminCollectionViews.find(view=>view.slug===props.slug && (!view.nativeSchemaExport || view.nativeSchemaExport===props.collection?.nativeSchemaMapping?.exportName));
+  if(view && getCollectionPermissions(props.collection,router.options.context.user).canRead){
+    const Component=view.component;
+    return <Suspense fallback={<p role="status">Loading catalogue…</p>}><Component collection={props.collection} section={props.section} adminBasePath={router.options.context.adminBasePath || '/admin'} /></Suspense>;
+  }
+  return <GenericCollectionEntriesPage {...props}/>;
+}

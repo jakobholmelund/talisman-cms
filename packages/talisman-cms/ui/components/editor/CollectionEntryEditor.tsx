@@ -150,6 +150,7 @@ function getEditorFields(collection: any, isNew: boolean) {
   if (!collection?.fields) return [];
 
   return collection.fields.filter((field: any) => {
+    if (field.editorHidden) return false;
     if (!isNativeCollection(collection)) {
       return true;
     }
@@ -492,8 +493,10 @@ export function CollectionEntryEditor({
   const versioningEnabled = !nativeCollection;
   const supportsRawView = !nativeCollection && !presetCollection;
   const editorFields = getEditorFields(collection, isNew);
+  const editorSections = [...new Set<string>(editorFields.map((field: any) => field.editorSection || ""))];
+  const groupedFields = editorSections.some(Boolean);
   const nativeIdColumn = getNativeIdColumn(collection);
-  const recordLabel = nativeCollection ? 'record' : 'entry';
+  const recordLabel = collection.singularName?.toLowerCase() || (nativeCollection ? 'record' : 'entry');
 
   const [currentEntry, setCurrentEntry] = useState<any>(initialEntry);
   const [revisions, setRevisions] = useState<any[]>(initialRevisions || []);
@@ -639,15 +642,16 @@ export function CollectionEntryEditor({
 
   if (!collection) return <div>Collection not found.</div>;
 
-  const currentStatus = getEntryStatus(currentEntry, collection);
+  const currentStatus = isNew ? 'not saved' : getEntryStatus(currentEntry, collection);
   const entryActionsLocked = isWorking || pendingTransition !== null;
   const pendingSlugRename = versioningEnabled ? getPendingSlugRename(currentEntry, entrySlug) : null;
   const formatSlugForDisplay = (value: string) => (slug === 'pages' ? getPagePath(value) : value);
   const panelsBeforeFields = getEditorPanels(collection, 'before-fields');
   const panelsAfterForm = getEditorPanels(collection, 'after-form');
+  const splitEditor = nativeCollection && panelsAfterForm.length > 0;
   // Fields that server code changes in place (Plugin: saveOnlyIfChanged), so a refused save may be
   // another process's doing, not another editor's.
-  const hasInPlaceFields = editorFields.some((field: any) => field.saveOnlyIfChanged);
+  const hasInPlaceFields = (collection?.fields || []).some((field: any) => field.saveOnlyIfChanged);
 
   const parseEditorValues = () => {
     if (supportsRawView && viewMode === 'raw') {
@@ -815,7 +819,7 @@ export function CollectionEntryEditor({
   const openCreatedEntry = (createdEntryId: string) => {
     moveCollapsedState(collapseStorageKey, `talisman-cms:collapsed:collection:${slug}:${createdEntryId}`);
     leavingEditorRef.current = true;
-    void navigate({ ...getSectionEntryLink(section, slug, createdEntryId), replace: true, search: true });
+    void navigate({ ...getSectionEntryLink(section, slug, createdEntryId), replace: true, search: true, ...(collection.editorCreateNext ? {hash:collection.editorCreateNext} : {}) });
   };
 
   // Keep only what the user changed. Re-applying the whole form would write back fields that
@@ -1108,7 +1112,7 @@ export function CollectionEntryEditor({
 
       <div className="mb-8">
         <h1 className="text-3xl font-semibold tracking-tight text-white shadow-sm">
-          {isNew ? `New ${nativeCollection ? 'Record' : 'Entry'}` : <span className="text-zinc-400 font-medium text-2xl mr-2">Edit:</span>}
+          {isNew ? `New ${collection.singularName || (nativeCollection ? 'Record' : 'Entry')}` : <span className="text-zinc-400 font-medium text-2xl mr-2">Edit:</span>}
           {!isNew && <span className="bg-gradient-to-r from-indigo-400 to-indigo-300 bg-clip-text text-transparent">{displayLabel}</span>}
         </h1>
         <p className="text-zinc-400 mt-2 text-sm max-w-xl">
@@ -1118,7 +1122,7 @@ export function CollectionEntryEditor({
       </div>
 
       <ReadOnlyFieldContext.Provider value={!canSave}>
-      <div className="space-y-8 w-full">
+      <div className={splitEditor ? "grid min-w-0 grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1fr)_280px]" : "space-y-8 w-full"}>
         {/* A fieldset, so a read-only record disables its controls for the keyboard too, not only for the mouse. */}
         <fieldset disabled={!canSave || undefined} aria-describedby={writeNotice ? `${slugInputId}-readonly` : undefined} className={`min-w-0 space-y-6 scroll-mt-24 ${!canSave ? 'pointer-events-none opacity-80' : ''}`}>
           <Card>
@@ -1149,7 +1153,7 @@ export function CollectionEntryEditor({
                     </div>
                   )}
 
-                  {nativeCollection && (
+                  {nativeCollection && !groupedFields && (
                     <div className="bg-white/[0.02] border border-white/5 rounded-lg p-5">
                       <div className="text-sm font-medium text-zinc-300">Record fields</div>
                       <p className="text-sm text-zinc-400 mt-2">Changes to this record are saved directly.</p>
@@ -1159,13 +1163,13 @@ export function CollectionEntryEditor({
                     </div>
                   )}
 
-                  <div className="pt-2">
+                  <div id="entry-fields" className="pt-2 scroll-mt-24">
                      <div className="flex items-center justify-between mb-6 pb-4 border-b border-white/5">
                          <h2 className="text-base font-medium block text-white flex items-center gap-2">
                            <span aria-hidden="true" className="p-1 rounded bg-indigo-500/10 text-indigo-400">
                              <Database size={14} />
                            </span>
-                           {nativeCollection ? 'Record fields' : 'Content fields'}
+                           {groupedFields ? 'Details' : nativeCollection ? 'Record fields' : 'Content fields'}
                          </h2>
                          {supportsRawView && (
                            <button 
@@ -1204,7 +1208,9 @@ export function CollectionEntryEditor({
                                       collapseStorageKey={collapseStorageKey}
                                     />
                                 ) : (
-                                    editorFields.map((field: any) => (
+                                    editorSections.map(section => <section key={section || 'fields'} className="space-y-6">
+                                      {section && <h3 className="border-b border-white/10 pb-3 text-sm font-semibold text-white">{section}</h3>}
+                                      {editorFields.filter((field: any) => (field.editorSection || '') === section).map((field: any) => (
                                         <FieldRenderer
                                             key={field.name}
                                             field={field}
@@ -1214,7 +1220,8 @@ export function CollectionEntryEditor({
                                             relationSupportEntries={relationSupportEntries}
                                             collapseStorageKey={collapseStorageKey}
                                         />
-                                    ))
+                                      ))}
+                                    </section>)
                                 )}
                             </div>
                           </ServerFieldErrorsContext.Provider>
@@ -1226,7 +1233,7 @@ export function CollectionEntryEditor({
           </Card>
         </fieldset>
 
-        <div className="space-y-8">
+        <div id="entry-save-actions" className={splitEditor ? "min-w-0 space-y-8 self-start xl:sticky xl:top-24" : "space-y-8"}>
            <Card>
               <CardContent className="pt-6 space-y-6">
                  <div>
@@ -1236,14 +1243,14 @@ export function CollectionEntryEditor({
                      {currentStatus.charAt(0).toUpperCase() + currentStatus.slice(1)}
                    </output>
                    {!versioningEnabled && (
-                     <p className="text-xs text-zinc-500 mt-2">Native collections bypass the draft/publish workflow and revision history.</p>
+                     <p className="text-xs text-zinc-500 mt-2">Changes take effect when you save.</p>
                    )}
                  </div>
 
                  <div className="pt-2">
                     {/* The buttons stay focusable while an action runs (aria-disabled); the status line says what is happening. */}
                     {canSave && <Button ref={saveButtonRef} onClick={handleManualSaveClick} aria-disabled={entryActionsLocked || undefined} aria-busy={working?.action === 'save' || undefined} className="w-full gap-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-400 hover:to-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_25px_rgba(99,102,241,0.5)] transition-all duration-300 border-0 h-11 text-base">
-                      <Save size={18} /> {isWorking ? 'Working...' : versioningEnabled ? 'Save Draft' : 'Save Changes'}
+                      <Save size={18} /> {isWorking ? 'Working...' : isNew && collection.singularName ? `Create ${collection.singularName.toLowerCase()}` : versioningEnabled ? 'Save Draft' : 'Save Changes'}
                     </Button>}
                     {(canPublish || canArchive) && (
                       <div className="grid grid-cols-2 gap-3 mt-3">
@@ -1423,10 +1430,10 @@ export function CollectionEntryEditor({
               </CardContent>
            </Card>
         </div>
+      </div>
         {panelsAfterForm.length > 0 && <fieldset disabled={!canSave || undefined} aria-describedby={writeNotice ? `${slugInputId}-readonly` : undefined} className={`min-w-0 space-y-8 scroll-mt-24 ${!canSave ? 'pointer-events-none opacity-80' : ''}`}>
           <EditorPanels panels={panelsAfterForm} form={form} {...panelProps} />
         </fieldset>}
-      </div>
       </ReadOnlyFieldContext.Provider>
       {conflictReview && <Suspense fallback={<p role="status" className="text-sm text-zinc-400">Loading conflict review…</p>}>
         <ConflictReviewDialog {...conflictReview} fields={editorFields} onClose={() => setConflictReview(null)} onApply={applyConflictReview} getReturnFocus={() => saveButtonRef.current} />

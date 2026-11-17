@@ -15,6 +15,8 @@ export type EntryDescription = {
   title: string;
   subtitle: string;
   details: string[];
+  /** Optional image for catalog and relationship summaries. */
+  imageUrl?: string;
 };
 
 /** What a describer may ask the admin for. */
@@ -84,6 +86,7 @@ export function describeEntryWith(
           title: description.title || String(entry.id),
           subtitle: description.subtitle || '',
           details: Array.isArray(description.details) ? description.details : [],
+          ...(typeof description.imageUrl === 'string' && description.imageUrl ? { imageUrl: description.imageUrl } : {}),
         };
       }
     }

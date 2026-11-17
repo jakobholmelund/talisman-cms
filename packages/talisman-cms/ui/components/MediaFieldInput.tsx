@@ -73,7 +73,13 @@ export function MediaFieldInput({
   invalid,
   required,
   label,
+  pickerOnly = false,
+  showPreview = true,
 }: {
+  /** Show only upload/library controls, for gallery selection rather than URL editing. */
+  pickerOnly?: boolean;
+  /** Hide the duplicate asset preview when the surrounding editor already shows it. */
+  showPreview?: boolean;
   adminBasePath: string;
   value: string;
   onChange: (value: string) => void;
@@ -167,18 +173,19 @@ export function MediaFieldInput({
   return (
     <div className="space-y-3">
       <div className="flex flex-col gap-3 md:flex-row">
-        <input
+        {!pickerOnly && <input
           id={inputId}
           type="text"
           value={value}
           onChange={(event) => onChange(event.target.value)}
           onBlur={onBlur}
           placeholder={placeholder}
+          aria-label={!inputId ? label : undefined}
           aria-invalid={invalid || undefined}
           aria-describedby={describedBy}
           aria-required={required || undefined}
           className="w-full bg-zinc-950/50 border border-white/10 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner"
-        />
+        />}
         <div className="flex gap-2">
           <input
             ref={fileInputRef}
@@ -217,7 +224,7 @@ export function MediaFieldInput({
         </div>
       )}
 
-      {hasValue && (
+      {hasValue && showPreview && (
         <div className="overflow-hidden rounded-lg border border-white/10 bg-black/30">
           {(currentSelection ? isPreviewableImage(currentSelection) : value.startsWith('http') || value.startsWith('/') || value.startsWith('data:')) ? (
             <img src={value} alt={currentSelection?.altText || currentSelection?.filename || 'Selected media'} className="h-40 w-full object-cover" />
@@ -244,7 +251,7 @@ export function MediaFieldInput({
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-medium text-zinc-100">Media Library</div>
-              <div className="mt-1 text-xs text-zinc-400">Select an uploaded asset to write its URL into this field.</div>
+              <div className="mt-1 text-xs text-zinc-400">Choose an image from your media library.</div>
             </div>
             <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => void refreshLibrary()} aria-disabled={isLoadingLibrary || isLoadingMore || undefined} aria-busy={isLoadingLibrary || undefined}>
               <RefreshCw size={14} className={isLoadingLibrary ? 'animate-spin' : ''} />

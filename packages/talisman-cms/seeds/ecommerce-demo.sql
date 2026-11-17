@@ -133,7 +133,7 @@ VALUES
     'Signal Cap',
     'signal-cap',
     'DEMO-SIGNAL-CAP',
-    'A low-profile six-panel cap with color options and enough stock to test inventory flows.',
+    'A low-profile six-panel cap in easy-to-wear color options.',
     json_array('https://images.unsplash.com/photo-1514327605112-b887c0e61c0a?auto=format&fit=crop&w=1200&q=80'),
     json_array('demo_cat_apparel'),
     json_array('demo_tag_featured', 'demo_tag_limited'),

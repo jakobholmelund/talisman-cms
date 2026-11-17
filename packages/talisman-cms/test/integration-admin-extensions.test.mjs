@@ -93,3 +93,11 @@ test('the admin registry and the config modules carry the sections, panels, desc
   assert.match(server, /export const adminSections = \["reviews"\];/);
   assert.match(server, /export const adminSettings = \["REVIEWS_LOCALE"\];/);
 });
+
+test('collection list views are lazy, unique and validated without replacing ordinary lists',()=>{
+ const plugin=reviewsPlugin({adminCollectionViews:[{slug:'reviews',componentPath:'reviews-plugin/admin/List'}]});
+ const registration=setup({plugins:[plugin]});const registry=vitePlugin(registration,'admin-extensions');const source=registry.load(registry.resolveId('virtual:talisman-cms/admin-extensions'));
+ assert.match(source,/adminCollectionViews = \[\{ slug: "reviews", component: lazy\(\(\) => import\("reviews-plugin\/admin\/List"\)\)/);
+ assert.throws(()=>setup({plugins:[reviewsPlugin({adminCollectionViews:[{slug:'reviews',componentPath:''}]})]}),/needs a slug and componentPath/);
+ assert.throws(()=>setup({plugins:[plugin,{name:'second',adminCollectionViews:plugin.adminCollectionViews}]}),/already registered/);
+});

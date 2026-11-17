@@ -1,9 +1,11 @@
 import React, { lazy, Suspense, useContext, useId } from 'react';
+import {AutoSlugInput} from './AutoSlugInput';
+import {MoneyFieldInput} from './MoneyFieldInput';
+import {ImageGalleryField} from './ImageGalleryField';
 import { Button } from '../ui/button';
 import { MediaFieldInput } from '../MediaFieldInput';
 import { buildDefaultValues, isRelationshipFieldType } from '../../lib/page-builder';
 import { formatFieldErrors, ServerFieldErrorsContext } from './field-errors';
-import { RelationFieldSummary } from './RelationFieldSummary';
 import { RelationshipPicker } from './RelationshipPicker';
 import type { RelationOptions, RelationSupportEntries } from './relations';
 
@@ -68,6 +70,8 @@ export function FieldRenderer({ field, form, fieldPath, relationOptions, relatio
     <input id={controlId} value={String(fieldApi.state.value ?? '')} readOnly disabled className="w-full rounded-md border border-white/10 bg-zinc-950/50 px-3 py-2.5 text-sm" />
     <p className="text-xs text-zinc-400">Managed outside this editor.</p>
   </div>} />;
+
+  if (field.type === 'array' && field.adminPresentation === 'gallery') return <form.Field name={fieldName} children={(fieldApi:any)=><section data-field-path={fieldName} className="space-y-4 rounded-xl border border-white/10 p-5"><h3 className="text-sm font-medium text-zinc-200">{field.label}</h3><ImageGalleryField value={fieldApi.state.value||[]} basePath={adminBasePath} disabled={readOnly} onChange={value=>{clearServerFieldError(fieldName);fieldApi.handleChange(value);}}/>{getErrorMessages(fieldApi).length>0&&<p role="alert" className="text-sm text-red-300">{getErrorMessages(fieldApi).join(', ')}</p>}</section>}/>;
 
   if (field.type === 'array') {
     return (
@@ -198,6 +202,10 @@ export function FieldRenderer({ field, form, fieldPath, relationOptions, relatio
                 onBlur={fieldApi.handleBlur}
                 className={`w-full bg-zinc-950/50 border rounded-md p-3 text-sm focus:outline-none focus:ring-2 transition-all shadow-inner ${hasError ? 'border-red-500/50 focus:ring-red-500/50' : 'border-white/10 focus:ring-indigo-500/50 focus:border-indigo-500/50'}`}
               />
+            ) : field.adminPresentation === 'slug' && field.generateFrom ? (
+              <form.Subscribe selector={(state:any)=>state.values[field.generateFrom]} children={(source:unknown)=><AutoSlugInput {...controlProps} source={source} value={fieldApi.state.value || ''} onChange={handleValueChange} onBlur={fieldApi.handleBlur}/>}/>
+            ) : field.type === 'number' && field.adminPresentation === 'money' ? (
+              <MoneyFieldInput {...controlProps} value={fieldApi.state.value} onChange={handleValueChange} onBlur={fieldApi.handleBlur}/>
             ) : field.type === 'select' ? (
               <select
                 {...controlProps}
@@ -209,7 +217,7 @@ export function FieldRenderer({ field, form, fieldPath, relationOptions, relatio
                 <option value="">Select an option...</option>
                 {(field.options || []).map((option: string) => (
                   <option key={option} value={option}>
-                    {option}
+                    {field.optionLabels?.[option] || option}
                   </option>
                 ))}
               </select>
@@ -260,14 +268,6 @@ export function FieldRenderer({ field, form, fieldPath, relationOptions, relatio
                 onChange={(e) => handleValueChange(field.type === 'number' ? (e.target.value ? Number(e.target.value) : field.required ? undefined : null) : e.target.value)}
                 onBlur={fieldApi.handleBlur}
                 className={`w-full bg-zinc-950/50 border rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 transition-all shadow-inner ${hasError ? 'border-red-500/50 focus:ring-red-500/50' : 'border-white/10 focus:ring-indigo-500/50 focus:border-indigo-500/50'}`}
-              />
-            )}
-
-            {isRelationshipFieldType(field.type) && (
-              <RelationFieldSummary
-                field={field}
-                value={fieldApi.state.value}
-                relationSupportEntries={relationSupportEntries}
               />
             )}
 
