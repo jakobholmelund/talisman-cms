@@ -81,7 +81,7 @@
     "@types/node": "^26.6.2",
     "astro": "^7.4.12",
     "talisman-cms": "workspace:*",
-    "tsup": "^8.5.1",
+    "tsup": "^9.0.0",
     "typescript": "^5.9.3",
     "drizzle-orm": "rc"
   }
