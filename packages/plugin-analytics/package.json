@@ -81,7 +81,7 @@
     "astro": "^7.4.12",
     "react": "^19.3.0",
     "talisman-cms": "workspace:*",
-    "tsup": "^8.5.1",
+    "tsup": "^9.0.0",
     "typescript": "^5.9.3"
   }
 }
