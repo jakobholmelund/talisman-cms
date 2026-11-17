@@ -1,5 +1,5 @@
 import {useAttentionTarget} from './attention-target';
-import { orderReference, customerOrderPath } from '../order-reference';
+import { orderReference, customerOrderPath } from '@talisman-cms/plugin-ecommerce/browser';
 import React, { useEffect, useRef, useState, type FormEvent } from 'react';
 import { adminRequest, CommerceAdmin, errorText, Feedback, Field, money, Panel, Stat } from './common';
 import OrderRecoveryHistory from './OrderRecoveryHistory';

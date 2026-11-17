@@ -1,4 +1,4 @@
-import { formatMoney as formatMinorUnits } from '../money';
+import { formatMoney as formatMinorUnits } from '@talisman-cms/plugin-ecommerce/money';
 import type { CustomerOrderTracking } from '@talisman-cms/plugin-ecommerce/browser';
 /** Every catalog and tracking value is text, never interpreted as markup or a carrier URL. */
 export function renderOrderTracking(root: HTMLElement, data: CustomerOrderTracking) {

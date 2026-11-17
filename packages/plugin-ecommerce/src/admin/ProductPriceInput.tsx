@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { currencyMinorUnits, fromMinorUnits } from "../money";
+import { currencyMinorUnits, fromMinorUnits } from "@talisman-cms/plugin-ecommerce/money";
 import { storeCurrency } from "./currency";
 /** Display major units while keeping the existing minor-unit draft and API contract. */
 export default function ProductPriceInput({

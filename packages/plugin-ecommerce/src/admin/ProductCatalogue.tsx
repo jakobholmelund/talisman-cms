@@ -5,7 +5,7 @@ import type {
   CatalogueFilters,
   CatalogueRow,
   readAdminCatalogue,
-} from "../catalog-admin";
+} from "@talisman-cms/plugin-ecommerce/operations";
 import { adminRequest, errorText, money, storeCurrency } from "./common";
 import { useOperationsRead } from "./operations-common";
 import { useWarehouseWrite } from "./warehouse-write";

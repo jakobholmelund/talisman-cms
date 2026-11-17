@@ -23,3 +23,4 @@ export { verifyExchangeCharge } from './recovery-payments';
 export { readOrderRecoveryHistory } from './recovery-journal';
 
 export { readAdminCatalogue, readCatalogueSelection, updateCatalogue } from './catalog-admin';
+export type { CatalogueFilters, CatalogueRow } from './catalog-admin';
