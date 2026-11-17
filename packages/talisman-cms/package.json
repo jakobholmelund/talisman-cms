@@ -162,7 +162,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/react-form": "^1.33.5",
     "@tanstack/react-router": "^1.170.46",
-    "@tanstack/router-vite-plugin": "1.167.40",
+    "@tanstack/router-vite-plugin": "1.167.49",
     "@tiptap/pm": "^3.31.3",
     "@tiptap/react": "^3.31.3",
     "@tiptap/starter-kit": "^3.31.3",
