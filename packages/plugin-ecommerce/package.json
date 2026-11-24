@@ -173,10 +173,10 @@
     "talisman-cms": "workspace:^"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261113.1",
+    "@cloudflare/workers-types": "^5.20261121.1",
     "@tanstack/react-router": "^1.170.46",
     "@types/react": "^19.3.0",
-    "astro": "^7.4.12",
+    "astro": "^7.4.13",
     "drizzle-kit": "rc",
     "drizzle-orm": "rc",
     "kysely": "0.29.6",

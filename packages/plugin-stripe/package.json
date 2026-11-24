@@ -77,9 +77,9 @@
     "drizzle-orm": "^1.0.0-rc.4"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261113.1",
+    "@cloudflare/workers-types": "^5.20261121.1",
     "@types/node": "^26.6.2",
-    "astro": "^7.4.12",
+    "astro": "^7.4.13",
     "talisman-cms": "workspace:*",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",

@@ -66,7 +66,7 @@
     "talisman-cms": "workspace:^"
   },
   "devDependencies": {
-    "astro": "^7.4.12",
+    "astro": "^7.4.13",
     "talisman-cms": "workspace:*",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"

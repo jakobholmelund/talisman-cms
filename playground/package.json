@@ -13,14 +13,14 @@
     "astro": "astro"
   },
   "dependencies": {
-    "@astrojs/cloudflare": "^14.4.8",
+    "@astrojs/cloudflare": "^14.4.9",
     "@talisman-cms/plugin-analytics": "workspace:*",
     "@talisman-cms/plugin-ecommerce": "workspace:*",
     "@talisman-cms/plugin-stripe": "workspace:*",
     "@talisman-cms/plugin-ui-daisyui": "workspace:*",
     "@talisman-cms/plugin-ui-starwind": "workspace:*",
     "@tanstack/react-router": "^1.170.46",
-    "astro": "^7.4.12",
+    "astro": "^7.4.13",
     "drizzle-orm": "rc",
     "zod": "^4.6.7",
     "react": "^19.3.0",
