@@ -75,10 +75,10 @@
     "talisman-cms": "workspace:^"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261113.1",
+    "@cloudflare/workers-types": "^5.20261121.1",
     "@types/node": "^26.6.2",
     "@types/react": "^19.3.0",
-    "astro": "^7.4.12",
+    "astro": "^7.4.13",
     "react": "^19.3.0",
     "talisman-cms": "workspace:*",
     "tsup": "^8.5.1",
